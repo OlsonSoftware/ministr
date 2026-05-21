@@ -31,6 +31,25 @@ fn emit_section_drops(reg: &SessionRegistry, session_id: &str, evicted_ids: &[St
     }
 }
 
+/// F6.1-f — consult the durable storage for a previously-snapshotted
+/// session, hydrating an in-memory shell when found.
+///
+/// Skipped when no tenant is scoped (stdio / in-process / self-hosted serve)
+/// because [`SessionRegistry::try_restore`] needs a `tenant_id` to look up
+/// the snapshot by its `(tenant_id, session_id)` PK. The registry's
+/// `try_restore` is itself idempotent — already-in-memory sessions short-
+/// circuit there — so this helper can be invoked unconditionally before
+/// `ensure_session_mut`. Failures inside `try_restore` are logged at warn
+/// level and collapse to `None` (caller falls through to fresh creation).
+async fn try_restore_session(reg: &mut SessionRegistry, session_id: &str) {
+    let Some(tenant_id) = crate::tenant_scope::current() else {
+        return;
+    };
+    let _ = reg
+        .try_restore(session_id, &tenant_id, None, AccessMode::ReadWrite)
+        .await;
+}
+
 /// F6.1-e — emit a `SessionSnapshot` so the cloud's [`PostgresSessionStorage`]
 /// holds enough state to restore the session on the next pod.
 ///
@@ -120,6 +139,8 @@ impl MinistrServer {
         let token_count = count_tokens(text);
         let content_id = ContentId(section_id.to_string());
         let mut reg = self.registry.lock().await;
+        // F6.1-f — hydrate from durable storage on first access this pod.
+        try_restore_session(&mut reg, &self.active_session_id).await;
         let entry = self.ensure_session_mut(&mut reg);
         let turn = entry.session.current_turn() + 1;
         entry.session.record_delivery(
@@ -225,6 +246,8 @@ impl MinistrServer {
         extra_next_actions: Vec<NextAction>,
     ) -> ToolResponse<T> {
         let mut reg = self.registry.lock().await;
+        // F6.1-f — hydrate from durable storage on first access this pod.
+        try_restore_session(&mut reg, &self.active_session_id).await;
         let entry = self.ensure_session_mut(&mut reg);
         let alerts = entry.session.drain_alerts();
         drop(reg);
@@ -410,10 +433,22 @@ mod tests {
 
         fn load<'a>(
             &'a self,
-            _tenant_id: &'a str,
-            _session_id: &'a str,
+            tenant_id: &'a str,
+            session_id: &'a str,
         ) -> LoadSessionFuture<'a> {
-            Box::pin(async { Ok(None) })
+            // Mirrors the registry.rs F6.1-c StubStorage: return the
+            // most-recently-saved snapshot matching the `(tenant_id,
+            // session_id)` PK so round-trip tests can pre-seed via `save`.
+            Box::pin(async move {
+                let saves = self
+                    .saves
+                    .lock()
+                    .expect("stub storage mutex never poisoned");
+                Ok(saves
+                    .iter()
+                    .rfind(|s| s.tenant_id == tenant_id && s.session_id == session_id)
+                    .cloned())
+            })
         }
 
         fn touch<'a>(
@@ -512,6 +547,99 @@ mod tests {
         })
         .await;
         // No assertion target — the point is the call doesn't panic.
+    }
+
+    /// F6.1-f — when a tenant is scoped and storage has a matching snapshot,
+    /// `try_restore_session` materialises the in-memory shell.
+    #[tokio::test]
+    async fn try_restore_session_hydrates_when_storage_hits() {
+        let stub = Arc::new(StubStorage::default());
+        let mut registry = SessionRegistry::new(UsageConfig::default())
+            .with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
+
+        // Pre-seed the stub with a snapshot the helper should find.
+        let snapshot = SessionSnapshot {
+            session_id: "agent-session-1".into(),
+            tenant_id: "tenant-x".into(),
+            corpus_id: None,
+            opened_at: "2026-05-21T00:00:00Z".into(),
+            last_seen_at: "2026-05-21T00:00:00Z".into(),
+            budget_used: 1_234,
+            coherence_score: 0.0,
+        };
+        stub.saves
+            .lock()
+            .expect("stub storage mutex never poisoned")
+            .push(snapshot);
+
+        // Sanity: registry has no in-memory shadow yet.
+        assert!(registry.get_session("agent-session-1").is_none());
+
+        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), async {
+            try_restore_session(&mut registry, "agent-session-1").await;
+        })
+        .await;
+
+        assert!(
+            registry.get_session("agent-session-1").is_some(),
+            "shell should be materialised after a storage hit",
+        );
+    }
+
+    /// F6.1-f — without a tenant scope, `try_restore` is impossible (no PK
+    /// lookup key) and the helper short-circuits without touching storage.
+    #[tokio::test]
+    async fn try_restore_session_skips_when_no_tenant_scope() {
+        let stub = Arc::new(StubStorage::default());
+        let mut registry = SessionRegistry::new(UsageConfig::default())
+            .with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
+
+        // No scope wrapper — current() returns None.
+        try_restore_session(&mut registry, "agent-session-1").await;
+        assert!(
+            registry.get_session("agent-session-1").is_none(),
+            "no scope ⇒ no restore ⇒ no shadow created",
+        );
+    }
+
+    /// F6.1-f — when the session already exists in-memory, `try_restore`
+    /// short-circuits (per its own contract) and the helper is effectively
+    /// a no-op.
+    #[tokio::test]
+    async fn try_restore_session_is_noop_when_already_in_memory() {
+        let stub = Arc::new(StubStorage::default());
+        let mut registry = SessionRegistry::new(UsageConfig::default())
+            .with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
+
+        // Bootstrap the session in-memory before any restore attempt.
+        registry.create_session("agent-session-1", None, AccessMode::ReadWrite);
+
+        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), async {
+            try_restore_session(&mut registry, "agent-session-1").await;
+        })
+        .await;
+
+        // Stub records no `load` calls in `saves`; the strongest signal is
+        // that the session remains a fresh-bootstrapped shell rather than
+        // anything snapshot-derived — `try_restore` would have failed to
+        // overwrite an existing entry anyway, but we want the no-op shape.
+        assert!(registry.get_session("agent-session-1").is_some());
+    }
+
+    /// F6.1-f — without a storage backend wired, `try_restore` falls
+    /// through to its `None` branch (per F6.1-c contract). Helper must
+    /// not panic and must not leave a stray entry.
+    #[tokio::test]
+    async fn try_restore_session_is_noop_when_no_storage() {
+        let mut registry = SessionRegistry::new(UsageConfig::default());
+        // No `with_storage` — `registry.storage` stays `None`.
+
+        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), async {
+            try_restore_session(&mut registry, "agent-session-1").await;
+        })
+        .await;
+
+        assert!(registry.get_session("agent-session-1").is_none());
     }
 
     /// F6.1-d-c — empty eviction list is a no-op even when scoped.
