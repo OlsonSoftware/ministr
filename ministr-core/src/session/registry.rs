@@ -32,8 +32,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use ministr_api::{SessionSnapshot, SessionStorage};
+use ministr_api::{DropEntry, DropsLedger, SessionSnapshot, SessionStorage};
 use tracing::warn;
 
 use super::types::{AccessMode, Session, SessionId};
@@ -77,6 +78,27 @@ pub struct SessionRegistry {
     /// [`Self::persist_snapshot`] helper collapses to a no-op when
     /// this is `None` — caller-site checkpoint code can be unconditional.
     storage: Option<Arc<dyn SessionStorage>>,
+    /// F6.1-d-b — optional drops ledger backend. `Some` when the
+    /// cloud has wired `PostgresDropsLedger`; `None` for self-hosted
+    /// serve. The [`Self::record_drops`] helper collapses to a no-op
+    /// when this is `None`. Restore-side hydration ([`Self::try_restore`])
+    /// consults this when present to return the persisted drop list
+    /// alongside the snapshot.
+    drops_ledger: Option<Arc<dyn DropsLedger>>,
+}
+
+/// F6.1-d-b — return shape for [`SessionRegistry::try_restore`].
+/// Carries both the snapshot (where the session was) and the drops
+/// ledger (what got evicted before the snapshot was written). The
+/// caller is free to ignore `drops` if it doesn't yet have a way to
+/// hydrate evicted-content awareness back into the live session.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RestoredSession {
+    /// The snapshot the durable backend held for this session.
+    pub snapshot: SessionSnapshot,
+    /// Drops the ledger has on file for this session, oldest first.
+    /// Empty when no ledger is wired or no drops were recorded.
+    pub drops: Vec<DropEntry>,
 }
 
 impl SessionRegistry {
@@ -87,6 +109,7 @@ impl SessionRegistry {
             sessions: HashMap::new(),
             default_budget_config,
             storage: None,
+            drops_ledger: None,
         }
     }
 
@@ -106,6 +129,64 @@ impl SessionRegistry {
     pub fn with_storage(mut self, storage: Arc<dyn SessionStorage>) -> Self {
         self.storage = Some(storage);
         self
+    }
+
+    /// F6.1-d-b — wire a durable [`DropsLedger`] backend so the
+    /// registry can persist eviction events and hydrate them on
+    /// resume. Self-hosted serve leaves this `None` and drops live
+    /// only in the in-memory tracker. Mirrors [`Self::with_storage`]'s
+    /// shape so cloud-side wiring composes cleanly.
+    #[must_use]
+    pub fn with_drops_ledger(mut self, ledger: Arc<dyn DropsLedger>) -> Self {
+        self.drops_ledger = Some(ledger);
+        self
+    }
+
+    /// F6.1-d-b — fire-and-forget batch append of drop events.
+    /// Spawns one tokio task per claim id; failures log at warn but
+    /// never propagate. The caller is the eventual MCP server tool
+    /// handler (or wherever the WindowEstimator returns non-empty
+    /// evicted ids); the registry itself doesn't yet observe
+    /// evictions automatically.
+    ///
+    /// `evicted_at` is captured at this call site so the ledger row
+    /// reflects when the agent actually lost the claim rather than
+    /// when the ledger backend persisted it — matches the
+    /// migration's wall-clock policy.
+    ///
+    /// No-op when no ledger backend has been wired; callers can
+    /// invoke unconditionally.
+    pub fn record_drops(&self, tenant_id: &str, session_id: &str, claim_ids: &[String]) {
+        let Some(ledger) = self.drops_ledger.as_ref() else {
+            return;
+        };
+        if claim_ids.is_empty() {
+            return;
+        }
+        // Single wall-clock capture so a batch of evictions from one
+        // record_tokens call shares the same timestamp — useful for
+        // chronological replay (drops in the same batch are
+        // semantically simultaneous).
+        let evicted_at = iso8601_now();
+        for claim_id in claim_ids {
+            let entry = DropEntry {
+                session_id: session_id.to_owned(),
+                tenant_id: tenant_id.to_owned(),
+                claim_id: claim_id.clone(),
+                evicted_at: evicted_at.clone(),
+            };
+            let ledger = Arc::clone(ledger);
+            tokio::spawn(async move {
+                if let Err(e) = ledger.append(&entry).await {
+                    warn!(
+                        error = ?e,
+                        session_id = %entry.session_id,
+                        claim_id = %entry.claim_id,
+                        "drops ledger: append failed (live session unaffected)",
+                    );
+                }
+            });
+        }
     }
 
     /// F6.1-c — consult the durable backend for a previously-snapshotted
@@ -146,7 +227,7 @@ impl SessionRegistry {
         tenant_id: &str,
         budget_config: Option<UsageConfig>,
         access_mode: AccessMode,
-    ) -> Option<SessionSnapshot> {
+    ) -> Option<RestoredSession> {
         if self.sessions.contains_key(id) {
             return None;
         }
@@ -163,6 +244,25 @@ impl SessionRegistry {
                 );
                 return None;
             }
+        };
+
+        // F6.1-d-b — best-effort drops hydration. Empty vec on
+        // miss / error keeps the caller's match arm simple; a real
+        // ledger outage doesn't block the restore.
+        let drops = match self.drops_ledger.as_ref() {
+            Some(ledger) => match ledger.list_for_session(tenant_id, id).await {
+                Ok(rows) => rows,
+                Err(e) => {
+                    warn!(
+                        error = ?e,
+                        session_id = %id,
+                        tenant_id = %tenant_id,
+                        "session restore: drops ledger load failed (proceeding without drops)",
+                    );
+                    Vec::new()
+                }
+            },
+            None => Vec::new(),
         };
         // Materialise a fresh in-memory shell. Same shape as
         // create_session — the caller-visible side effect is "the
@@ -189,7 +289,7 @@ impl SessionRegistry {
                 let _ = entry.budget.seed_prior_consumption(clamped);
             }
         }
-        Some(snapshot)
+        Some(RestoredSession { snapshot, drops })
     }
 
     /// F6.1-b — fire-and-forget snapshot save. The caller builds the
@@ -334,6 +434,50 @@ impl SessionRegistry {
     }
 }
 
+/// F6.1-d-b — capture wall-clock as an ISO-8601 UTC string for
+/// drop-ledger entries. Mirrors `ministr_mcp::task::iso8601_now`'s
+/// civil-calendar math so the format matches what
+/// `PostgresSessionStorage`'s `to_char` returns.
+fn iso8601_now() -> String {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    format_iso8601(secs)
+}
+
+fn format_iso8601(secs: u64) -> String {
+    const SECONDS_PER_DAY: u64 = 86400;
+    const DAYS_PER_400Y: u64 = 146_097;
+    const DAYS_PER_100Y: u64 = 36_524;
+    const DAYS_PER_4Y: u64 = 1461;
+    const DAYS_PER_Y: u64 = 365;
+
+    let time_of_day = secs % SECONDS_PER_DAY;
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+    let seconds = time_of_day % 60;
+
+    let mut days = secs / SECONDS_PER_DAY;
+    days += 719_468;
+
+    let era = days / DAYS_PER_400Y;
+    let day_of_era = days % DAYS_PER_400Y;
+    let year_of_era = (day_of_era - day_of_era / (DAYS_PER_4Y - 1) + day_of_era / DAYS_PER_100Y
+        - day_of_era / (DAYS_PER_400Y - 1))
+        / DAYS_PER_Y;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (DAYS_PER_Y * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let mp = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    if month <= 2 {
+        year += 1;
+    }
+
+    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,10 +506,11 @@ mod tests {
         assert!(registry.session_ids().is_empty());
     }
 
-    // ── F6.1-b — durable-snapshot plumbing ──────────────────────────
+    // ── F6.1-b/d — durable-snapshot + drops plumbing ────────────────
 
     use ministr_api::{
-        LoadSessionFuture, SaveSessionFuture, SessionMutFuture, SessionStorageError,
+        AppendDropFuture, DropsLedgerError, ListDropsFuture, LoadSessionFuture,
+        SaveSessionFuture, SessionMutFuture, SessionStorageError,
     };
     use std::sync::{Arc, Mutex};
 
@@ -508,7 +653,10 @@ mod tests {
             .await;
         assert_eq!(
             restored,
-            Some(fixture_snapshot()),
+            Some(RestoredSession {
+                snapshot: fixture_snapshot(),
+                drops: Vec::new(),
+            }),
             "round-trip the persisted snapshot back to the caller",
         );
         assert!(
@@ -533,7 +681,13 @@ mod tests {
                 AccessMode::ReadWrite,
             )
             .await;
-        assert_eq!(restored, Some(snap.clone()));
+        assert_eq!(
+            restored,
+            Some(RestoredSession {
+                snapshot: snap.clone(),
+                drops: Vec::new(),
+            }),
+        );
         // The in-memory tracker should reflect the persisted
         // consumption — F6.1's "budget preserved across pods" criterion.
         let entry = registry.get_session(&snap.session_id).expect("shell exists");
@@ -636,7 +790,10 @@ mod tests {
             .await;
         assert_eq!(
             restored,
-            Some(snap),
+            Some(RestoredSession {
+                snapshot: snap,
+                drops: Vec::new(),
+            }),
             "fresh pod hydrates the same snapshot pod-1 persisted",
         );
         assert!(pod2.contains("agent-1"));
@@ -659,6 +816,152 @@ mod tests {
         let saves = stub.saves.lock().unwrap();
         assert_eq!(saves.len(), 1, "expected exactly one save call");
         assert_eq!(saves[0], snap, "round-trip captured the snapshot fields");
+    }
+
+    // ── F6.1-d-b — drops ledger plumbing + restore hook ─────────────
+
+    #[derive(Debug, Default)]
+    struct StubLedger {
+        rows: Mutex<Vec<DropEntry>>,
+    }
+
+    impl DropsLedger for StubLedger {
+        fn append<'a>(&'a self, entry: &'a DropEntry) -> AppendDropFuture<'a> {
+            let owned = entry.clone();
+            Box::pin(async move {
+                self.rows.lock().unwrap().push(owned);
+                Ok::<(), DropsLedgerError>(())
+            })
+        }
+        fn list_for_session<'a>(
+            &'a self,
+            tenant_id: &'a str,
+            session_id: &'a str,
+        ) -> ListDropsFuture<'a> {
+            Box::pin(async move {
+                let rows = self.rows.lock().unwrap();
+                Ok(rows
+                    .iter()
+                    .filter(|r| r.tenant_id == tenant_id && r.session_id == session_id)
+                    .cloned()
+                    .collect())
+            })
+        }
+    }
+
+    #[test]
+    fn registry_drops_ledger_defaults_to_none() {
+        let registry = default_registry();
+        // record_drops on a no-ledger registry must be a no-op.
+        registry.record_drops(
+            "tenant",
+            "session",
+            &["c1".to_string(), "c2".to_string()],
+        );
+    }
+
+    #[test]
+    fn with_drops_ledger_attaches_backend() {
+        let stub = Arc::new(StubLedger::default());
+        let registry =
+            default_registry().with_drops_ledger(Arc::clone(&stub) as Arc<dyn DropsLedger>);
+        assert!(
+            registry.drops_ledger.is_some(),
+            "with_drops_ledger should populate the field",
+        );
+    }
+
+    #[tokio::test]
+    async fn record_drops_fires_one_entry_per_claim() {
+        let stub = Arc::new(StubLedger::default());
+        let registry =
+            default_registry().with_drops_ledger(Arc::clone(&stub) as Arc<dyn DropsLedger>);
+        registry.record_drops(
+            "tenant-uuid",
+            "sess-1",
+            &["c1".to_string(), "c2".to_string(), "c3".to_string()],
+        );
+        // record_drops spawns one task per claim; wait for them.
+        for _ in 0..100 {
+            tokio::task::yield_now().await;
+            if stub.rows.lock().unwrap().len() == 3 {
+                break;
+            }
+        }
+        let rows = stub.rows.lock().unwrap();
+        assert_eq!(rows.len(), 3, "one ledger entry per evicted claim");
+        let claim_ids: Vec<_> = rows.iter().map(|r| r.claim_id.clone()).collect();
+        // Order isn't guaranteed across tokio::spawn — verify set equality.
+        let mut sorted = claim_ids;
+        sorted.sort();
+        assert_eq!(sorted, vec!["c1", "c2", "c3"]);
+    }
+
+    #[test]
+    fn record_drops_empty_claim_list_is_noop() {
+        let stub = Arc::new(StubLedger::default());
+        let registry =
+            default_registry().with_drops_ledger(Arc::clone(&stub) as Arc<dyn DropsLedger>);
+        registry.record_drops("tenant-uuid", "sess-1", &[]);
+        assert_eq!(stub.rows.lock().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn try_restore_includes_persisted_drops() {
+        let storage = Arc::new(StubStorage::default());
+        let ledger = Arc::new(StubLedger::default());
+        // Pre-seed both backends: pod-1 lifecycle.
+        storage.saves.lock().unwrap().push(fixture_snapshot());
+        ledger.rows.lock().unwrap().push(DropEntry {
+            session_id: fixture_snapshot().session_id.clone(),
+            tenant_id: fixture_snapshot().tenant_id.clone(),
+            claim_id: "evicted-c1".into(),
+            evicted_at: "2026-05-21T00:30:00Z".into(),
+        });
+        ledger.rows.lock().unwrap().push(DropEntry {
+            session_id: fixture_snapshot().session_id.clone(),
+            tenant_id: fixture_snapshot().tenant_id.clone(),
+            claim_id: "evicted-c2".into(),
+            evicted_at: "2026-05-21T00:45:00Z".into(),
+        });
+        // Pod-2 cold start.
+        let mut pod2 = default_registry()
+            .with_storage(Arc::clone(&storage) as Arc<dyn SessionStorage>)
+            .with_drops_ledger(Arc::clone(&ledger) as Arc<dyn DropsLedger>);
+        let restored = pod2
+            .try_restore(
+                &fixture_snapshot().session_id,
+                &fixture_snapshot().tenant_id,
+                None,
+                AccessMode::ReadWrite,
+            )
+            .await
+            .expect("restore should hit");
+        assert_eq!(restored.snapshot, fixture_snapshot());
+        assert_eq!(restored.drops.len(), 2, "both drop events should hydrate");
+        assert_eq!(restored.drops[0].claim_id, "evicted-c1");
+        assert_eq!(restored.drops[1].claim_id, "evicted-c2");
+    }
+
+    #[tokio::test]
+    async fn try_restore_drops_empty_when_no_ledger_wired() {
+        let storage = Arc::new(StubStorage::default());
+        storage.saves.lock().unwrap().push(fixture_snapshot());
+        let mut pod2 =
+            default_registry().with_storage(Arc::clone(&storage) as Arc<dyn SessionStorage>);
+        let restored = pod2
+            .try_restore(
+                &fixture_snapshot().session_id,
+                &fixture_snapshot().tenant_id,
+                None,
+                AccessMode::ReadWrite,
+            )
+            .await
+            .expect("restore should hit");
+        assert!(
+            restored.drops.is_empty(),
+            "no ledger wired → empty drops vec on restore",
+        );
     }
 
     #[test]
