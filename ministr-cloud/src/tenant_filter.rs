@@ -69,9 +69,31 @@ impl TenantCorpusFilter for PostgresTenantCorpusFilter {
             };
             let owner: Option<String> = row.get("tenant_id");
             match owner {
-                None => Ok(true), // legacy / pre-multi-tenant — permissive
-                Some(t) => Ok(t == tenant_subject),
+                None => return Ok(true), // legacy / pre-multi-tenant — permissive
+                Some(t) if t == tenant_subject => return Ok(true),
+                Some(_) => {}
             }
+            // F3.2-i — direct ownership didn't match. Check the
+            // corpus ACL: an org-grant on this corpus + the
+            // tenant_subject's membership in that org admits the
+            // call. The lookup is a single index-friendly join (see
+            // migration 0005's `idx_cloud_corpus_acl_org` partial
+            // unique index + the F1.2 `idx_org_members_user`
+            // index).
+            let acl_row = client
+                .query_opt(
+                    "SELECT 1
+                     FROM cloud_corpus_acl a
+                     JOIN org_members m ON m.org_id = a.org_id
+                     WHERE a.corpus_id = $1
+                       AND a.org_id IS NOT NULL
+                       AND m.user_id = $2::uuid
+                     LIMIT 1",
+                    &[&corpus_id, &tenant_subject],
+                )
+                .await
+                .map_err(map_err("tenant filter: acl query"))?;
+            Ok(acl_row.is_some())
         })
     }
 

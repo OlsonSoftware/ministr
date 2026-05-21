@@ -40,6 +40,9 @@ use ministr_mcp::auth::Tenant;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
+use super::corpus_acl::{
+    AclEntry, corpus_owner_tenant, list_acl, revoke_org_share, share_with_org,
+};
 use super::invites::{DEFAULT_INVITE_TTL, create_invite};
 use super::repo::{
     OrgError, OrgRow, OrgWithRole, create_org, list_org_members, list_orgs_for_user, member_role,
@@ -193,6 +196,18 @@ pub fn orgs_routes(state: OrgsState) -> Router {
         .route("/api/v1/orgs", get(list_handler).post(create_handler))
         .route("/api/v1/orgs/{id}/members", get(members_handler))
         .route("/api/v1/orgs/{id}/invites", post(create_invite_handler))
+        // F3.2-i — share/unshare/list ACL grants on a corpus. Mounted
+        // on the orgs router (not the daemon write router) because
+        // the resource lives in cloud_corpus_acl + cloud_corpora,
+        // not in the daemon's CorpusRegistry. Authz: corpus owner.
+        .route(
+            "/api/v1/corpora/{corpus_id}/share",
+            post(share_handler).get(list_share_handler),
+        )
+        .route(
+            "/api/v1/corpora/{corpus_id}/share/{org_id}",
+            axum::routing::delete(revoke_share_handler),
+        )
         .with_state(state)
 }
 
@@ -431,6 +446,112 @@ fn hex_nibble(b: u8) -> char {
     }
 }
 
+/// `POST /api/v1/corpora/{corpus_id}/share` request body. v0 admits
+/// `scope = "read"` only; `org_id` is required.
+#[derive(Debug, Deserialize)]
+struct ShareRequest {
+    org_id: String,
+    #[serde(default)]
+    scope: Option<String>,
+}
+
+/// `POST /api/v1/corpora/{corpus_id}/share` response. Echoes the
+/// created or updated `AclEntry`.
+#[derive(Debug, Serialize)]
+struct ShareResponse {
+    entry: AclEntry,
+}
+
+/// `GET /api/v1/corpora/{corpus_id}/share` response.
+#[derive(Debug, Serialize)]
+struct ListShareResponse {
+    entries: Vec<AclEntry>,
+}
+
+async fn share_handler(
+    State(state): State<OrgsState>,
+    full_tenant: Option<Extension<Tenant>>,
+    Path(corpus_id): Path<String>,
+    Json(body): Json<ShareRequest>,
+) -> Result<(StatusCode, Json<ShareResponse>), OrgsApiError> {
+    let user_id = tenant_user_id(full_tenant)?;
+    assert_corpus_owner(&state.pool, &corpus_id, &user_id).await?;
+
+    let scope = body.scope.unwrap_or_else(|| "read".to_owned());
+    if scope != "read" {
+        return Err(OrgsApiError::InvalidShareScope);
+    }
+
+    // Caller must be a member of the org they're sharing with. This
+    // prevents an owner from doxing a corpus to an arbitrary org id
+    // they don't belong to — the share is meant to be a deliberate
+    // act between communities the caller is already inside.
+    let role = member_role(&state.pool, &body.org_id, &user_id)
+        .await
+        .map_err(OrgsApiError::Repo)?;
+    if role.is_none() {
+        return Err(OrgsApiError::Forbidden);
+    }
+
+    let entry = share_with_org(&state.pool, &corpus_id, &body.org_id, &scope, &user_id)
+        .await
+        .map_err(OrgsApiError::Repo)?;
+    Ok((StatusCode::CREATED, Json(ShareResponse { entry })))
+}
+
+async fn revoke_share_handler(
+    State(state): State<OrgsState>,
+    full_tenant: Option<Extension<Tenant>>,
+    Path((corpus_id, org_id)): Path<(String, String)>,
+) -> Result<StatusCode, OrgsApiError> {
+    let user_id = tenant_user_id(full_tenant)?;
+    assert_corpus_owner(&state.pool, &corpus_id, &user_id).await?;
+
+    let removed = revoke_org_share(&state.pool, &corpus_id, &org_id)
+        .await
+        .map_err(OrgsApiError::Repo)?;
+    // 204 whether or not a row was actually removed — DELETE is
+    // idempotent, and surfacing absence as 404 would let an attacker
+    // distinguish "you don't own this corpus" from "you do but the
+    // grant was already revoked".
+    let _ = removed;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_share_handler(
+    State(state): State<OrgsState>,
+    full_tenant: Option<Extension<Tenant>>,
+    Path(corpus_id): Path<String>,
+) -> Result<Json<ListShareResponse>, OrgsApiError> {
+    let user_id = tenant_user_id(full_tenant)?;
+    assert_corpus_owner(&state.pool, &corpus_id, &user_id).await?;
+
+    let entries = list_acl(&state.pool, &corpus_id)
+        .await
+        .map_err(OrgsApiError::Repo)?;
+    Ok(Json(ListShareResponse { entries }))
+}
+
+/// F3.2-i — assert the caller owns the corpus. Looks up
+/// `cloud_corpora.tenant_id` (which F2.x-d stamps at upsert) and
+/// checks equality with `tenant_subject == users.id::text`. Returns
+/// `Forbidden` on mismatch / NULL owner / corpus-not-found — same
+/// shape for all three to avoid existence-leak, mirrors
+/// `members_handler`'s 403-vs-404 convention.
+async fn assert_corpus_owner(
+    pool: &deadpool_postgres::Pool,
+    corpus_id: &str,
+    tenant_subject: &str,
+) -> Result<(), OrgsApiError> {
+    let owner = corpus_owner_tenant(pool, corpus_id)
+        .await
+        .map_err(OrgsApiError::Repo)?;
+    match owner {
+        Some(t) if t == tenant_subject => Ok(()),
+        _ => Err(OrgsApiError::Forbidden),
+    }
+}
+
 async fn members_handler(
     State(state): State<OrgsState>,
     full_tenant: Option<Extension<Tenant>>,
@@ -482,6 +603,9 @@ enum OrgsApiError {
     /// F3.1b-i — `email` field on the invite payload was empty or
     /// missing an `@`.
     InvalidInviteEmail,
+    /// F3.2-i — `scope` on the share payload was outside the v0
+    /// allowlist (currently `"read"` only).
+    InvalidShareScope,
     /// Repo layer failure. Validation errors map to 422; everything
     /// else logs at warn + returns 500 without leaking detail.
     Repo(OrgError),
@@ -502,6 +626,11 @@ impl IntoResponse for OrgsApiError {
             Self::InvalidInviteEmail => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "invite email must contain '@'",
+            )
+                .into_response(),
+            Self::InvalidShareScope => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "share scope must be 'read'",
             )
                 .into_response(),
             Self::Repo(OrgError::InvalidName) => {
