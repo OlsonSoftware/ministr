@@ -262,10 +262,20 @@ pub(crate) async fn cmd_serve_http(
     // dispatch path gates `corpus_id` lookups by tenant. Self-hosted serve
     // (no cloud Postgres pool) keeps the unfiltered constructor; cross-
     // tenant access there is meaningless because there's only one user.
-    let server = if let Some(pool) = cloud_pool.as_ref() {
-        let filter: std::sync::Arc<dyn ministr_api::TenantCorpusFilter> = std::sync::Arc::new(
-            ministr_cloud::PostgresTenantCorpusFilter::new(Arc::clone(pool)),
-        );
+    //
+    // F3.2-iii — the same `PostgresTenantCorpusFilter` struct also
+    // implements `TenantCorpusVisibility` (the daemon-side list filter).
+    // Build it once as a concrete `Arc` and cast to both trait objects
+    // so the MCP gate and the daemon list share a single instance —
+    // identical SQL pool, identical visibility semantics.
+    let tenant_filter_concrete = cloud_pool.as_ref().map(|pool| {
+        std::sync::Arc::new(ministr_cloud::PostgresTenantCorpusFilter::new(
+            Arc::clone(pool),
+        ))
+    });
+    let server = if let Some(concrete) = tenant_filter_concrete.as_ref() {
+        let filter: std::sync::Arc<dyn ministr_api::TenantCorpusFilter> =
+            Arc::clone(concrete) as _;
         tracing::info!(
             "PostgresTenantCorpusFilter wired — /mcp tool calls gated by cloud_corpora.tenant_id"
         );
@@ -357,6 +367,18 @@ pub(crate) async fn cmd_serve_http(
     // (sub-bullet 4) share that same pool.
 
     let mut daemon_state = ministr_daemon::state::AppState::from_arc(Arc::clone(&corpus_registry));
+    // F3.2-iii — wire the visibility filter into the daemon-side
+    // `GET /api/v1/corpora` handler. Same concrete instance as the
+    // MCP gate (constructed above); the cast to `dyn
+    // TenantCorpusVisibility` exposes the list-side method.
+    if let Some(concrete) = tenant_filter_concrete.as_ref() {
+        let visibility: std::sync::Arc<dyn ministr_api::TenantCorpusVisibility> =
+            Arc::clone(concrete) as _;
+        daemon_state = daemon_state.with_corpus_visibility(visibility);
+        tracing::info!(
+            "PostgresTenantCorpusFilter visibility wired — GET /api/v1/corpora filtered by tenant + ACL"
+        );
+    }
     if let Some(pool) = cloud_pool.as_ref() {
         let sink: std::sync::Arc<dyn ministr_api::UsageSink> =
             std::sync::Arc::new(ministr_cloud::PostgresUsageSink::from_arc(Arc::clone(pool)));

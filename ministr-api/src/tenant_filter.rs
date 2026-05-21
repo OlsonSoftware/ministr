@@ -46,6 +46,14 @@ pub type DefaultCorpusFuture<'a> = Pin<
     Box<dyn Future<Output = Result<Option<String>, TenantFilterError>> + Send + 'a>,
 >;
 
+/// Future shape returned by [`TenantCorpusVisibility::visible_corpus_ids`].
+/// Yields the set of `corpus_id`s a tenant is allowed to see — `None`
+/// means "no filter applied" (self-hosted serve), `Some(vec)` is the
+/// explicit allow-list.
+pub type VisibleCorpusFuture<'a> = Pin<
+    Box<dyn Future<Output = Result<Option<Vec<String>>, TenantFilterError>> + Send + 'a>,
+>;
+
 /// Decides whether a tenant may dispatch tool calls against a corpus.
 ///
 /// Implementations must be `Send + Sync` so they can be stored as
@@ -79,6 +87,35 @@ pub trait TenantCorpusFilter: Send + Sync + std::fmt::Debug {
     }
 }
 
+/// F3.2-iii — decide which `corpus_id`s a tenant is allowed to see
+/// when enumerating corpora (the GET `/api/v1/corpora` list).
+///
+/// Decoupled from [`TenantCorpusFilter`] because the cardinality is
+/// different — list operations return a set, access-control checks
+/// return a yes/no. The open-core seam is the same: trait lives in
+/// `ministr-api` (MIT) so the daemon's `AppState` can store it
+/// without depending on `ministr-cloud`.
+///
+/// # Semantics
+///
+/// `None` ⇒ no filter applied. Callers should return the full list
+/// (preserves the self-hosted / single-tenant `ministr serve`
+/// posture where no visibility filter is wired).
+///
+/// `Some(vec)` ⇒ exhaustive allow-list. Callers intersect with the
+/// in-memory registry's list and return only the survivors.
+pub trait TenantCorpusVisibility: Send + Sync + std::fmt::Debug {
+    /// Return the set of `corpus_id`s `tenant_subject` is allowed to
+    /// see. In the cloud implementation, this is the union of
+    /// `cloud_corpora.tenant_id = tenant_subject` and any
+    /// `cloud_corpus_acl` grants the tenant inherits through
+    /// `org_members`.
+    fn visible_corpus_ids<'a>(
+        &'a self,
+        tenant_subject: &'a str,
+    ) -> VisibleCorpusFuture<'a>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,9 +129,24 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct OpenVisibility;
+
+    impl TenantCorpusVisibility for OpenVisibility {
+        fn visible_corpus_ids<'a>(&'a self, _: &'a str) -> VisibleCorpusFuture<'a> {
+            Box::pin(async { Ok(None) })
+        }
+    }
+
     #[test]
     fn trait_is_dyn_compatible() {
         fn assert_dyn(_: &dyn TenantCorpusFilter) {}
         assert_dyn(&AlwaysAllow);
+    }
+
+    #[test]
+    fn visibility_is_dyn_compatible() {
+        fn assert_dyn(_: &dyn TenantCorpusVisibility) {}
+        assert_dyn(&OpenVisibility);
     }
 }
