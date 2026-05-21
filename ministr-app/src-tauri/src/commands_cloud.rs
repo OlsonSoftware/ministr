@@ -1941,6 +1941,17 @@ pub async fn cloud_list_sessions() -> Result<Vec<CloudSessionSummary>, CommandEr
 /// POST `/api/v1/sessions/{id}/export` — fetch the tar bundle, parse
 /// it locally, return a structured payload the React inspector can
 /// render without re-parsing the tar in JS.
+///
+/// # F6.2-c dual-response handling
+///
+/// When the cloud has a `SessionBundleStore` wired, `handle_export`
+/// returns JSON `{url, expires_at}` instead of inline tar bytes — the
+/// caller follows the signed URL with a GET (no bearer needed; the
+/// signature is in the query string). When the store is not wired
+/// (self-hosted, dev, no signing secret), the route streams the tar
+/// inline as `application/x-tar`. We branch on the response's
+/// content-type header so the inspector UI sees the same parsed
+/// payload in both shapes.
 #[tauri::command]
 pub async fn cloud_fetch_session_bundle(
     session_id: String,
@@ -1959,12 +1970,55 @@ pub async fn cloud_fetch_session_bundle(
             format!("session export returned HTTP {}", resp.status()),
         ));
     }
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| CommandError::new(ErrorKind::Io, format!("read session tar: {e}")))?;
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let bytes = if content_type.starts_with("application/json") {
+        // F6.2-c — cloud returned a signed URL. Follow it (no bearer;
+        // the signature is in the query). The URL points back at our
+        // own `/api/v1/sessions/bundles/...` endpoint which streams
+        // the tar bytes via the cloud's `verify_and_get`.
+        let body = resp
+            .bytes()
+            .await
+            .map_err(|e| CommandError::new(ErrorKind::Io, format!("read signed url body: {e}")))?;
+        let signed: SignedBundleResponse = serde_json::from_slice(&body)
+            .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse signed url json: {e}")))?;
+        let follow = client
+            .get(&signed.url)
+            .send()
+            .await
+            .map_err(|e| CommandError::new(ErrorKind::Io, format!("get {}: {e}", signed.url)))?;
+        if !follow.status().is_success() {
+            return Err(CommandError::new(
+                ErrorKind::Io,
+                format!("signed bundle URL returned HTTP {}", follow.status()),
+            ));
+        }
+        follow
+            .bytes()
+            .await
+            .map_err(|e| CommandError::new(ErrorKind::Io, format!("read signed bundle: {e}")))?
+    } else {
+        resp.bytes()
+            .await
+            .map_err(|e| CommandError::new(ErrorKind::Io, format!("read session tar: {e}")))?
+    };
     parse_session_bundle_tar(&bytes)
         .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse session tar: {e}")))
+}
+
+/// Shape of the JSON response returned by `handle_export` when the
+/// cloud-side bundle store is wired (F6.2-c). Mirrors
+/// `ministr_api::SignedBundleUrl`.
+#[derive(Debug, serde::Deserialize)]
+struct SignedBundleResponse {
+    url: String,
+    #[allow(dead_code)]
+    expires_at: String,
 }
 
 /// Walk the tar entries in one pass and assemble [`CloudSessionBundle`].

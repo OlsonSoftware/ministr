@@ -395,6 +395,34 @@ pub(crate) async fn cmd_serve_http(
             );
             state = state.with_drops_ledger(ledger);
         }
+        // F6.2-c — when the bundle-store env is configured (Azure
+        // account + signing secret + cloud base URL), attach the
+        // `CloudSessionBundleStore` so `handle_export` uploads + returns
+        // a signed URL JSON response. Self-hosted serve / missing env
+        // leaves `bundle_store = None` and the F6.2-a/b inline-tar
+        // shape continues to ship.
+        match ministr_cloud::build_session_bundle_store_from_env(
+            cloud_env.cloud_base_url.as_deref(),
+        ) {
+            Ok(Some(store)) => {
+                tracing::info!(
+                    "session bundle store wired — uploads to blob + returns signed URL"
+                );
+                let store: Arc<dyn ministr_api::SessionBundleStore> = Arc::new(store);
+                state = state.with_bundle_store(store);
+            }
+            Ok(None) => {
+                tracing::debug!(
+                    "session bundle store disabled — handle_export streams inline tar"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "session bundle store construction failed — falling back to inline tar"
+                );
+            }
+        }
         state
     };
     let session_export_router =
