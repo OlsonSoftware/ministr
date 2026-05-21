@@ -156,6 +156,21 @@ pub struct SurveyParams {
                        Omit for the session's primary corpus. Call ministr_projects to list labels."
     )]
     pub project: Option<String>,
+
+    /// F6.3-a — cross-corpus fan-out. When set and non-empty, runs the
+    /// query against each listed corpus (own corpora or Atlas slugs
+    /// like `atlas/react`), tags each hit with `source_corpus`, and
+    /// merges all results sorted by score descending — truncated to
+    /// `top_k`. When omitted or empty, behaviour is unchanged (single
+    /// corpus resolved through `project`). Mutually compatible with
+    /// `project`: when both are set, `corpus_ids` wins.
+    #[serde(default)]
+    #[schemars(
+        description = "Optional cross-corpus list. When set and non-empty, fans the query out \
+                       across each corpus_id (own corpora or Atlas slugs), tags hits with \
+                       source_corpus, and merges results by score. Omit to query a single corpus."
+    )]
+    pub corpus_ids: Option<Vec<String>>,
 }
 
 /// Parameters for the `ministr_read` tool.

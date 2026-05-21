@@ -24,6 +24,7 @@ pub(super) fn api_survey_to_service(r: ministr_api::query::SurveyResult) -> Surv
         score: r.score,
         text: r.text,
         heading_path: r.heading_path,
+        source_corpus: r.source_corpus,
     }
 }
 
@@ -430,6 +431,7 @@ mod tests {
             score: 0.91,
             text: "the body".into(),
             heading_path: Some(vec!["A".into(), "B".into()]),
+            source_corpus: Some("atlas/react".into()),
         };
         let svc = api_survey_to_service(api.clone());
         assert_eq!(svc.content_id, api.content_id);
@@ -437,6 +439,7 @@ mod tests {
         assert!((svc.score - api.score).abs() < f32::EPSILON);
         assert_eq!(svc.text, api.text);
         assert_eq!(svc.heading_path, api.heading_path);
+        assert_eq!(svc.source_corpus, api.source_corpus);
     }
 
     #[test]
