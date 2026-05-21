@@ -39,6 +39,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (2, include_str!("../migrations/0002_usage_rollups.sql")),
     (3, include_str!("../migrations/0003_corpus_registry.sql")),
     (4, include_str!("../migrations/0004_org_invites.sql")),
+    (5, include_str!("../migrations/0005_cloud_corpus_acl.sql")),
 ];
 
 /// Errors surfaced by [`connect`] and [`run_migrations`].
@@ -187,7 +188,8 @@ mod tests {
         let client = pool.get().await.expect("conn");
         client
             .batch_execute(
-                "DROP TABLE IF EXISTS audit_events CASCADE;
+                "DROP TABLE IF EXISTS cloud_corpus_acl CASCADE;
+                 DROP TABLE IF EXISTS audit_events CASCADE;
                  DROP TABLE IF EXISTS usage_events CASCADE;
                  DROP TABLE IF EXISTS api_keys CASCADE;
                  DROP TABLE IF EXISTS corpus_acl CASCADE;

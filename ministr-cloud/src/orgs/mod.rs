@@ -22,11 +22,15 @@
 //! routes (`cmd_serve_http` only merges `orgs_routes` when
 //! `cloud_pool.is_some()`).
 
+pub mod corpus_acl;
 pub mod invites;
 pub mod repo;
 pub mod routes;
 pub mod seats;
 
+pub use corpus_acl::{
+    AclEntry, acl_grants_access, corpus_owner_tenant, list_acl, revoke_org_share, share_with_org,
+};
 pub use invites::{
     CreatedInvite, ConsumeOutcome, DEFAULT_INVITE_TTL, InviteRow, consume_invite, create_invite,
 };
