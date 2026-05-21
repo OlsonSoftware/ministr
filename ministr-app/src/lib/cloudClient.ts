@@ -66,6 +66,32 @@ export interface CloudAclEntry {
   created_at: string;
 }
 
+/**
+ * Mirrors `ministr_cloud::api_keys::ApiKeyRow` (F3.4a). One row in the
+ * caller's active-keys list — secret fields (`hash`, raw token) are
+ * deliberately absent; only `prefix` (first 8 chars of the random
+ * portion) is shown so the user can label the row in their UI.
+ */
+export interface CloudApiKey {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+  created_at: string;
+}
+
+/**
+ * `POST /api/v1/api_keys` response (F3.4a). The `token` field carries
+ * the raw `mst_pk_…` bearer EXACTLY ONCE — the cloud cannot recover
+ * it after this response. Callers must display + copy it immediately
+ * and never store or log it.
+ */
+export interface CloudCreatedApiKey extends CloudApiKey {
+  token: string;
+}
+
 /** Minimal subset of `ministr_api::corpus::CorpusInfo` the panel renders. */
 export interface CloudCorpusInfo {
   corpus_id: string;
@@ -185,6 +211,18 @@ export const cloudClient = {
   /** F3.2-ii — revoke an org's grant. Idempotent on the server side. */
   revokeCorpusShare: (corpusId: string, orgId: string) =>
     invoke<void>("cloud_revoke_corpus_share", { corpusId, orgId }),
+  /** F3.4b — list the caller's active service-account API keys. */
+  listApiKeys: () => invoke<CloudApiKey[]>("cloud_list_api_keys"),
+  /**
+   * F3.4b — mint a new service-account API key. The returned `token`
+   * is the raw `mst_pk_…` bearer; the cloud never returns it again.
+   * Default scopes are `"ministr:read ministr:write"` when omitted.
+   */
+  createApiKey: (name: string, scopes?: string) =>
+    invoke<CloudCreatedApiKey>("cloud_create_api_key", { name, scopes }),
+  /** F3.4b — soft-revoke a key. */
+  revokeApiKey: (keyId: string) =>
+    invoke<void>("cloud_revoke_api_key", { keyId }),
   /**
    * Open the SSE progress stream for a corpus on the remote server.
    * Returns the Channel; consumers attach `.onmessage` and let the

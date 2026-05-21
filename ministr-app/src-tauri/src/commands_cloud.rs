@@ -1315,6 +1315,121 @@ pub async fn cloud_revoke_corpus_share(
     Ok(())
 }
 
+// ── F3.4b — Service-account API keys ────────────────────────────────────────
+
+/// One API key as returned by GET `/api/v1/api_keys`. Mirrors
+/// `ministr_cloud::api_keys::ApiKeyRow`. `prefix` is the first 8 chars
+/// of the random portion of the raw secret (NOT the full token).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CloudApiKey {
+    pub id: String,
+    pub name: String,
+    pub prefix: String,
+    pub scopes: String,
+    pub last_used_at: Option<String>,
+    pub expires_at: Option<String>,
+    pub created_at: String,
+}
+
+/// POST `/api/v1/api_keys` response. Carries the raw bearer token
+/// EXACTLY ONCE — the cloud only stores its hash + prefix afterwards.
+/// Callers MUST surface the token to the user immediately and never
+/// log it.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CloudCreatedApiKey {
+    #[serde(flatten)]
+    pub key: CloudApiKey,
+    /// The full `mst_pk_…` bearer token. Returned exactly once.
+    pub token: String,
+}
+
+/// GET `/api/v1/api_keys` — list the caller's active (non-revoked)
+/// service-account keys, newest first.
+#[tauri::command]
+pub async fn cloud_list_api_keys() -> Result<Vec<CloudApiKey>, CommandError> {
+    let (client, endpoint, token) = authed_client(10)?;
+    let url = format!("{endpoint}/api/v1/api_keys");
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("get {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("list api_keys returned HTTP {}", resp.status()),
+        ));
+    }
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse api_keys: {e}")))?;
+    let keys = body
+        .get("keys")
+        .cloned()
+        .unwrap_or(serde_json::Value::Array(Vec::new()));
+    serde_json::from_value::<Vec<CloudApiKey>>(keys)
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse api_keys payload: {e}")))
+}
+
+/// POST `/api/v1/api_keys` — mint a new service-account key. `scopes`
+/// is optional; the cloud falls back to `"ministr:read ministr:write"`
+/// when omitted. Returns the new row PLUS the raw token (which the
+/// cloud never returns again).
+#[tauri::command]
+pub async fn cloud_create_api_key(
+    name: String,
+    scopes: Option<String>,
+) -> Result<CloudCreatedApiKey, CommandError> {
+    let (client, endpoint, token) = authed_client(10)?;
+    let url = format!("{endpoint}/api/v1/api_keys");
+    let mut body = serde_json::json!({ "name": name });
+    if let Some(s) = scopes.as_deref()
+        && !s.trim().is_empty()
+    {
+        body["scopes"] = serde_json::Value::String(s.to_owned());
+    }
+    let resp = client
+        .post(&url)
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("post {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("create api_key returned HTTP {}", resp.status()),
+        ));
+    }
+    resp.json::<CloudCreatedApiKey>()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse api_key create: {e}")))
+}
+
+/// DELETE `/api/v1/api_keys/{id}` — soft-revoke a key. Idempotent
+/// from the user's perspective (the cloud returns 404 on a re-DELETE
+/// of an already-revoked key; the UI treats 404 as "already revoked").
+#[tauri::command]
+pub async fn cloud_revoke_api_key(key_id: String) -> Result<(), CommandError> {
+    let (client, endpoint, token) = authed_client(10)?;
+    let url = format!("{endpoint}/api/v1/api_keys/{key_id}");
+    let resp = client
+        .delete(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("delete {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("revoke api_key returned HTTP {}", resp.status()),
+        ));
+    }
+    Ok(())
+}
+
 /// POST `/reindex` on the configured cloud endpoint. Returns the
 /// server-assigned `job_id` that can later be subscribed to via SSE.
 #[tauri::command]
