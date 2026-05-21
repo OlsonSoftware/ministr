@@ -2182,3 +2182,36 @@ pub(crate) fn cmd_atlas_manifest() -> miette::Result<()> {
     println!("{json}");
     Ok(())
 }
+
+/// `ministr audit prune --retention-days N` — F3.7c daily-retention
+/// cron entrypoint. Drops `audit_events` rows older than
+/// `retention_days` days; logs the row count + elapsed wall-clock so
+/// the cron's structured-log dashboard can render the operation.
+///
+/// Requires `MINISTR_PG_URL` to be set — the cloud Postgres connection
+/// string the rest of `cmd_serve_http` already consumes. Exits with a
+/// miette error (non-zero status) if the env var is missing or the
+/// DELETE fails; the Container Apps Job's failure-retry policy can
+/// then alert.
+pub(crate) async fn cmd_audit_prune(retention_days: u32) -> miette::Result<()> {
+    let pg_url = std::env::var("MINISTR_PG_URL").map_err(|_| {
+        miette::miette!(
+            "ministr audit prune requires MINISTR_PG_URL (the cloud Postgres connection string)"
+        )
+    })?;
+    let pool = ministr_cloud::connect(&pg_url)
+        .into_diagnostic()
+        .wrap_err("open cloud postgres pool")?;
+    tracing::info!(retention_days, "audit prune starting");
+    let outcome = ministr_cloud::prune_audit_events(&pool, retention_days)
+        .await
+        .into_diagnostic()
+        .wrap_err("prune audit_events")?;
+    tracing::info!(
+        deleted = outcome.deleted,
+        elapsed_ms = u64::try_from(outcome.elapsed.as_millis()).unwrap_or(u64::MAX),
+        retention_days = outcome.retention_days,
+        "audit prune complete"
+    );
+    Ok(())
+}

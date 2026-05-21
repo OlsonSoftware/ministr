@@ -189,6 +189,14 @@ enum Command {
         action: AtlasAction,
     },
 
+    /// Audit-log operator commands (F3.7c+). Invoked by the daily
+    /// retention-pruning cron in cloud deployments; runnable
+    /// locally for ad-hoc cleanup.
+    Audit {
+        #[command(subcommand)]
+        action: AuditAction,
+    },
+
     /// Cloud operator commands. `check` smoke-tests every wired
     /// integration (Postgres, Stripe, GitHub OAuth, GitHub App, blob
     /// backend) and exits with the number of failed probes — drop
@@ -196,6 +204,24 @@ enum Command {
     Cloud {
         #[command(subcommand)]
         action: CloudAction,
+    },
+}
+
+/// Subcommands for `ministr audit` — audit-log operator commands.
+/// Invoked by the Azure Container Apps Job on the daily cron
+/// schedule (F3.7c); also runnable locally during development.
+#[derive(Debug, Subcommand)]
+enum AuditAction {
+    /// Drop `audit_events` rows older than `--retention-days`. The
+    /// daily cron runs this; manual invocations are idempotent (a
+    /// re-run on a freshly-pruned table simply deletes 0 rows).
+    Prune {
+        /// Retention window in days. Defaults to
+        /// `ministr_cloud::DEFAULT_AUDIT_RETENTION_DAYS` (90), which
+        /// matches the Team-tier audit retention in §3 of ROADMAP.
+        /// F5.3 immutable audit retains forever and skips this cron.
+        #[arg(long, default_value_t = ministr_cloud::DEFAULT_AUDIT_RETENTION_DAYS)]
+        retention_days: u32,
     },
 }
 
@@ -601,6 +627,11 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
         Command::Atlas { action } => match action {
             AtlasAction::Reindex => commands::cmd_atlas_reindex().await,
             AtlasAction::Manifest => commands::cmd_atlas_manifest(),
+        },
+        Command::Audit { action } => match action {
+            AuditAction::Prune { retention_days } => {
+                commands::cmd_audit_prune(retention_days).await
+            }
         },
         Command::Cloud { action } => match action {
             CloudAction::Check => {
