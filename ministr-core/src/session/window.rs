@@ -11,6 +11,16 @@ use serde::{Deserialize, Serialize};
 
 use super::types::DropPolicy;
 
+/// F6.1-c-followup — sentinel `content_id` used by
+/// [`WindowEstimator::record_prior_consumption`] to mark synthetic
+/// pre-seeded budget consumption restored from a [`SessionStorage`]
+/// snapshot. The leading double underscores match the
+/// `__ministr_*` convention reserved for internal sentinels — agent
+/// content_ids are user-derived and shouldn't start with that prefix.
+///
+/// [`SessionStorage`]: ministr_api::SessionStorage
+pub const PRIOR_CONSUMPTION_CONTENT_ID: &str = "__ministr_restored_prior__";
+
 /// A record of a single delivery in the window estimator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WindowEntry {
@@ -98,6 +108,22 @@ impl WindowEstimator {
     #[must_use]
     pub fn record(&mut self, content_id: &str, token_count: usize) -> Vec<String> {
         self.record_with_scores(content_id, token_count, None)
+    }
+
+    /// F6.1-c-followup — record a synthetic "prior consumption" entry
+    /// against a sentinel content id. Used by
+    /// [`crate::session::SessionRegistry::try_restore`] to seed the
+    /// budget tracker with the snapshot's `budget_used` value so a
+    /// resumed session resumes with the same pressure level it had
+    /// pre-restore. The sentinel id ([`PRIOR_CONSUMPTION_CONTENT_ID`])
+    /// is unlikely to collide with any real content_id but is exposed
+    /// publicly so consumers (eviction predicates, logs) can identify
+    /// it deterministically.
+    ///
+    /// Returns evicted content ids — typically empty when the snapshot
+    /// is well-formed (`budget_used ≤ capacity`).
+    pub fn record_prior_consumption(&mut self, token_count: usize) -> Vec<String> {
+        self.record_with_scores(PRIOR_CONSUMPTION_CONTENT_ID, token_count, None)
     }
 
     /// Record a delivery with optional FSRS retrievability scores.

@@ -162,6 +162,23 @@ impl UsageTracker {
         Self { config, window }
     }
 
+    /// F6.1-c-followup — seed the tracker with prior consumption
+    /// recovered from a [`SessionStorage`] snapshot. The bookkeeping
+    /// uses [`crate::session::window::PRIOR_CONSUMPTION_CONTENT_ID`]
+    /// as a sentinel content id so the entry is identifiable but
+    /// can't collide with real agent content. The caller is
+    /// `SessionRegistry::try_restore`, which calls this immediately
+    /// after creating the in-memory shell so the restored session
+    /// resumes with the same pressure level it had pre-restore.
+    ///
+    /// Returns evicted content ids — typically empty when the
+    /// snapshot is well-formed (`budget_used ≤ capacity`).
+    ///
+    /// [`SessionStorage`]: ministr_api::SessionStorage
+    pub fn seed_prior_consumption(&mut self, token_count: usize) -> Vec<String> {
+        self.window.record_prior_consumption(token_count)
+    }
+
     /// Record a token delivery against the budget.
     ///
     /// Returns the content IDs of any entries evicted from the window model
