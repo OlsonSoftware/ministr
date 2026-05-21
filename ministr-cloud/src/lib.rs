@@ -56,6 +56,7 @@ pub mod mail;
 pub mod orgs;
 pub mod quota;
 pub mod ratelimit;
+pub mod session_bundle_store;
 pub mod session_storage;
 pub mod tenant_filter;
 pub mod users;
@@ -90,6 +91,10 @@ pub use tenant_filter::PostgresTenantCorpusFilter;
 pub use index_job_sink::PostgresIndexJobSink;
 pub use drops_ledger::PostgresDropsLedger;
 pub use mail::LogOnlyMailSender;
+pub use session_bundle_store::{
+    build_from_env as build_session_bundle_store_from_env, CloudSessionBundleStore,
+    DEFAULT_SESSION_BUNDLE_CONTAINER, DEFAULT_SIGNED_URL_TTL_SECS,
+};
 pub use session_storage::PostgresSessionStorage;
 pub use embedding::{OpenAiAuth, OpenAiConfig, OpenAiEmbedder, DEFAULT_DIMENSIONS};
 pub use db::{connect, run_migrations, DbError};

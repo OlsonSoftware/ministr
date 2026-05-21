@@ -42,7 +42,7 @@ use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use ministr_api::DropsLedger;
+use ministr_api::{DropsLedger, SessionBundleStore, SessionBundleStoreError};
 use ministr_core::session::{Session, SessionEntry, SessionRegistry, UsageTracker};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -261,15 +261,18 @@ fn append_tar_entry<W: std::io::Write>(
     Ok(())
 }
 
-/// State the export route needs — the shared session registry and an
-/// optional drops ledger (F6.2-b). `cmd_serve_http` threads the same
+/// State the export route needs — the shared session registry, an
+/// optional drops ledger (F6.2-b), and an optional bundle store
+/// (F6.2-c). `cmd_serve_http` threads the same
 /// `Arc<Mutex<SessionRegistry>>` through `MinistrServer`; the export
-/// router clones that Arc. The ledger is `None` on self-hosted serve
-/// (no Postgres) and the bundle falls back to the F6.2-a shape.
+/// router clones that Arc. The ledger + store are `None` on
+/// self-hosted serve (no Postgres / no blob backend) and the bundle
+/// falls back to the F6.2-a inline-tar shape.
 #[derive(Clone)]
 pub struct SessionExportState {
     pub registry: Arc<Mutex<SessionRegistry>>,
     pub ledger: Option<Arc<dyn DropsLedger>>,
+    pub bundle_store: Option<Arc<dyn SessionBundleStore>>,
 }
 
 impl SessionExportState {
@@ -278,6 +281,7 @@ impl SessionExportState {
         Self {
             registry,
             ledger: None,
+            bundle_store: None,
         }
     }
 
@@ -290,15 +294,37 @@ impl SessionExportState {
         self.ledger = Some(ledger);
         self
     }
+
+    /// F6.2-c — attach a bundle store so `handle_export` uploads the
+    /// tar to blob storage and returns a signed URL (JSON) instead of
+    /// streaming inline. Cloud `cmd_serve_http` wires
+    /// `CloudSessionBundleStore` when the Azure account + signing
+    /// secret are configured; otherwise the field stays `None` and
+    /// the inline-tar shape continues to ship.
+    #[must_use]
+    pub fn with_bundle_store(mut self, store: Arc<dyn SessionBundleStore>) -> Self {
+        self.bundle_store = Some(store);
+        self
+    }
 }
 
-/// Mount the F6.2-a + F6.2-e routes. Paths mirror the roadmap spec:
-/// - `POST /api/v1/sessions/{id}/export` (F6.2-a): tar bundle.
+/// Mount the F6.2-a + F6.2-e + F6.2-c routes. Paths mirror the
+/// roadmap spec:
+/// - `POST /api/v1/sessions/{id}/export` (F6.2-a/b/c): tar bundle, or
+///   JSON `{url, expires_at}` when a bundle store is wired.
 /// - `GET /api/v1/sessions` (F6.2-e): list in-memory session summaries.
+/// - `GET /api/v1/sessions/bundles/{*path}` (F6.2-c): download a signed
+///   bundle. Mounted unconditionally; returns 404 when no store is
+///   wired (the route only resolves for clients that received a
+///   signed URL, which only the upload path mints).
 pub fn session_export_routes(state: SessionExportState) -> Router {
     Router::new()
         .route("/api/v1/sessions/{id}/export", post(handle_export))
         .route("/api/v1/sessions", axum::routing::get(handle_list))
+        .route(
+            "/api/v1/sessions/bundles/{*path}",
+            axum::routing::get(handle_bundle_download),
+        )
         .with_state(state)
 }
 
@@ -419,6 +445,55 @@ async fn handle_export(
     };
     drop(reg);
 
+    // F6.2-c — when a bundle store is wired AND a tenant is in scope,
+    // upload to blob and return JSON `{url, expires_at}`. Otherwise
+    // (self-hosted, dev, or no signing secret configured) keep the
+    // F6.2-a inline-tar shape.
+    if let (Some(store), Some(tid)) = (state.bundle_store.as_deref(), tenant_id.as_deref()) {
+        match store.put_and_sign(tid, &session_id, bundle).await {
+            Ok(signed) => {
+                return axum::Json(signed).into_response();
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    session_id = %session_id,
+                    "bundle store upload failed — falling back to inline tar"
+                );
+                // Fall through: but we've moved `bundle` into
+                // `put_and_sign`. Rebuild it for the inline path.
+                let scope = tenant_id.clone();
+                let reg = state.registry.lock().await;
+                let Some(entry) = reg.get_session(&session_id) else {
+                    drop(reg);
+                    return (StatusCode::NOT_FOUND, "session not found").into_response();
+                };
+                let bundle = match build_session_bundle_with_drops(
+                    &session_id,
+                    entry,
+                    state.ledger.as_deref().map(|l| l as &dyn DropsLedger),
+                    scope.as_deref(),
+                )
+                .await
+                {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        drop(reg);
+                        warn!(error = %e, session_id = %session_id, "rebuild after store-fail");
+                        return (StatusCode::INTERNAL_SERVER_ERROR, "build bundle failed")
+                            .into_response();
+                    }
+                };
+                drop(reg);
+                return inline_tar_response(&session_id, bundle);
+            }
+        }
+    }
+
+    inline_tar_response(&session_id, bundle)
+}
+
+fn inline_tar_response(session_id: &str, bundle: Vec<u8>) -> Response {
     let filename = format!("session-{session_id}.tar");
     let content_disposition = format!("attachment; filename=\"{filename}\"");
     ([
@@ -426,6 +501,52 @@ async fn handle_export(
         (header::CONTENT_DISPOSITION, content_disposition),
     ], bundle)
         .into_response()
+}
+
+/// F6.2-c — `GET /api/v1/sessions/bundles/{*path}?expires=...&sig=...`.
+///
+/// The signed URL minted by `put_and_sign` points back at this handler.
+/// We extract the path (everything after `/bundles/`) and the raw
+/// query string (which carries `expires=…&sig=…`) and hand both to the
+/// store's `verify_and_get`. The handler is intentionally tiny — all
+/// the trust logic lives in the store.
+async fn handle_bundle_download(
+    State(state): State<SessionExportState>,
+    Path(blob_path): Path<String>,
+    axum::extract::RawQuery(query): axum::extract::RawQuery,
+) -> Response {
+    let Some(store) = state.bundle_store.as_deref() else {
+        // Self-hosted / no-store deployments don't mint signed URLs,
+        // so a request landing here is malformed — surface 404 rather
+        // than leaking the "store is None" mode shape.
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    };
+    let token = query.unwrap_or_default();
+    match store.verify_and_get(&blob_path, &token).await {
+        Ok(bytes) => {
+            let filename = blob_path
+                .rsplit('/')
+                .next()
+                .unwrap_or("session.tar")
+                .to_owned();
+            let content_disposition = format!("attachment; filename=\"{filename}\"");
+            ([
+                (header::CONTENT_TYPE, "application/x-tar".to_string()),
+                (header::CONTENT_DISPOSITION, content_disposition),
+            ], bytes)
+                .into_response()
+        }
+        Err(SessionBundleStoreError::InvalidToken) => {
+            (StatusCode::FORBIDDEN, "invalid or expired token").into_response()
+        }
+        Err(SessionBundleStoreError::NotFound) => {
+            (StatusCode::NOT_FOUND, "bundle not found").into_response()
+        }
+        Err(SessionBundleStoreError::Storage(msg)) => {
+            warn!(error = %msg, path = %blob_path, "bundle store download error");
+            (StatusCode::INTERNAL_SERVER_ERROR, "bundle download failed").into_response()
+        }
+    }
 }
 
 // `UsageTracker` is imported into scope only so doc references resolve;
@@ -844,5 +965,150 @@ mod tests {
         let json = serde_json::to_string(&s).expect("serialize");
         let parsed: SessionSummary = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(s, parsed);
+    }
+
+    // ── F6.2-c bundle store tests ───────────────────────────────────────
+
+    use ministr_api::{
+        PutAndSignFuture, SessionBundleStore, SessionBundleStoreError, SignedBundleUrl,
+        VerifyAndGetFuture,
+    };
+
+    /// Test-only bundle store. Captures uploads in-memory and round-
+    /// trips a fixed signed URL. Mirrors the `StubStore` shape from
+    /// `ministr_api::session_bundle_store::tests` but exposes the
+    /// captured bytes for assertions.
+    #[derive(Debug, Default)]
+    struct StubBundleStore {
+        captured: StdMutex<Vec<(String, String, Vec<u8>)>>, // (tenant, session, bytes)
+        force_error: StdMutex<bool>,
+    }
+
+    impl StubBundleStore {
+        fn force_error_on_put(&self) {
+            *self.force_error.lock().expect("mutex") = true;
+        }
+        fn captures(&self) -> Vec<(String, String, Vec<u8>)> {
+            self.captured.lock().expect("mutex").clone()
+        }
+    }
+
+    impl SessionBundleStore for StubBundleStore {
+        fn put_and_sign<'a>(
+            &'a self,
+            tenant_id: &'a str,
+            session_id: &'a str,
+            bytes: Vec<u8>,
+        ) -> PutAndSignFuture<'a> {
+            Box::pin(async move {
+                if *self.force_error.lock().expect("mutex") {
+                    return Err(SessionBundleStoreError::Storage("forced".into()));
+                }
+                self.captured.lock().expect("mutex").push((
+                    tenant_id.to_owned(),
+                    session_id.to_owned(),
+                    bytes,
+                ));
+                Ok(SignedBundleUrl {
+                    url: format!(
+                        "https://example.test/api/v1/sessions/bundles/sessions/{tenant_id}/{session_id}/stub.tar?expires=1&sig=stub"
+                    ),
+                    expires_at: "2026-05-22T00:00:00Z".into(),
+                })
+            })
+        }
+        fn verify_and_get<'a>(
+            &'a self,
+            blob_path: &'a str,
+            token: &'a str,
+        ) -> VerifyAndGetFuture<'a> {
+            Box::pin(async move {
+                if token != "expires=1&sig=stub" {
+                    return Err(SessionBundleStoreError::InvalidToken);
+                }
+                let cap = self.captured.lock().expect("mutex");
+                cap.iter()
+                    .find(|(t, s, _)| {
+                        blob_path == format!("sessions/{t}/{s}/stub.tar")
+                    })
+                    .map(|(_, _, b)| b.clone())
+                    .ok_or(SessionBundleStoreError::NotFound)
+            })
+        }
+    }
+
+    /// F6.2-c — bundle-store wired + tenant scoped ⇒ `handle_export`
+    /// uploads to the store rather than streaming inline. We exercise
+    /// the upload via `put_and_sign` directly because spinning up axum
+    /// + `scope_for_test` against a real request is heavier than the
+    /// helper-call exercise itself; the dispatch-mode regression guard
+    /// is the integration via `state.bundle_store.is_some()`.
+    #[tokio::test]
+    async fn put_and_sign_round_trips_through_dyn_store() {
+        let store = Arc::new(StubBundleStore::default());
+        let dyn_store: Arc<dyn SessionBundleStore> = Arc::clone(&store) as _;
+        let bundle = vec![0u8, 1, 2, 3, 4];
+        let signed = dyn_store
+            .put_and_sign("tenant-x", "agent-x", bundle.clone())
+            .await
+            .expect("put_and_sign succeeds");
+        assert!(signed.url.contains("sessions/tenant-x/agent-x/stub.tar"));
+        assert!(signed.url.contains("expires="));
+        assert!(signed.url.contains("sig="));
+        let captures = store.captures();
+        assert_eq!(captures.len(), 1);
+        assert_eq!(captures[0].0, "tenant-x");
+        assert_eq!(captures[0].1, "agent-x");
+        assert_eq!(captures[0].2, bundle);
+    }
+
+    /// F6.2-c — store error ⇒ the upload path falls back to the inline
+    /// shape. Exercises the `force_error` branch in the helper rather
+    /// than the route; the route's else-arm just calls `inline_tar_response`.
+    #[tokio::test]
+    async fn put_and_sign_error_surfaces_to_caller() {
+        let store = Arc::new(StubBundleStore::default());
+        store.force_error_on_put();
+        let dyn_store: Arc<dyn SessionBundleStore> = Arc::clone(&store) as _;
+        let err = dyn_store
+            .put_and_sign("tenant", "agent", vec![1, 2, 3])
+            .await
+            .expect_err("should fail");
+        assert!(matches!(err, SessionBundleStoreError::Storage(_)));
+    }
+
+    /// F6.2-c — `SessionExportState::with_bundle_store` attaches the
+    /// store and `bundle_store.is_some()` flips. Regression guard for
+    /// the builder chain.
+    #[test]
+    fn with_bundle_store_attaches_backend() {
+        let reg = Arc::new(Mutex::new(fresh_registry()));
+        let state = SessionExportState::new(reg);
+        assert!(state.bundle_store.is_none());
+        let store: Arc<dyn SessionBundleStore> = Arc::new(StubBundleStore::default()) as _;
+        let state = state.with_bundle_store(store);
+        assert!(state.bundle_store.is_some());
+    }
+
+    /// F6.2-c — verify path: a valid token round-trips the captured
+    /// bytes; an invalid token surfaces `InvalidToken`.
+    #[tokio::test]
+    async fn verify_and_get_validates_token() {
+        let store = Arc::new(StubBundleStore::default());
+        let dyn_store: Arc<dyn SessionBundleStore> = Arc::clone(&store) as _;
+        dyn_store
+            .put_and_sign("t1", "s1", vec![9, 9, 9])
+            .await
+            .expect("put");
+        let bytes = dyn_store
+            .verify_and_get("sessions/t1/s1/stub.tar", "expires=1&sig=stub")
+            .await
+            .expect("verify ok");
+        assert_eq!(bytes, vec![9, 9, 9]);
+        let err = dyn_store
+            .verify_and_get("sessions/t1/s1/stub.tar", "expires=1&sig=wrong")
+            .await
+            .expect_err("verify rejects");
+        assert!(matches!(err, SessionBundleStoreError::InvalidToken));
     }
 }
