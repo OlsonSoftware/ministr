@@ -31,6 +31,10 @@
 //! ```
 
 use std::collections::HashMap;
+use std::sync::Arc;
+
+use ministr_api::{SessionSnapshot, SessionStorage};
+use tracing::warn;
 
 use super::types::{AccessMode, Session, SessionId};
 use super::usage::{UsageConfig, UsageTracker};
@@ -67,6 +71,12 @@ pub struct SessionRegistry {
     sessions: HashMap<String, SessionEntry>,
     /// Default budget configuration for new sessions.
     default_budget_config: UsageConfig,
+    /// F6.1-b — optional durable-snapshot backend. `Some` when the
+    /// cloud has wired `PostgresSessionStorage`; `None` for
+    /// self-hosted serve (sessions remain in-memory). The
+    /// [`Self::persist_snapshot`] helper collapses to a no-op when
+    /// this is `None` — caller-site checkpoint code can be unconditional.
+    storage: Option<Arc<dyn SessionStorage>>,
 }
 
 impl SessionRegistry {
@@ -76,7 +86,53 @@ impl SessionRegistry {
         Self {
             sessions: HashMap::new(),
             default_budget_config,
+            storage: None,
         }
+    }
+
+    /// F6.1-b — wire a durable [`SessionStorage`] backend so the
+    /// registry can checkpoint live sessions to persistent storage.
+    /// Self-hosted serve leaves the field `None` and sessions remain
+    /// in-memory. The cloud's `cmd_serve_http` calls this with a
+    /// `PostgresSessionStorage` so a pod restart preserves session
+    /// state.
+    ///
+    /// The registry itself does NOT decide when to snapshot — that's
+    /// a caller-side concern (F6.1-c will wire the choke point at
+    /// `MinistrServer::ensure_session_mut` or the equivalent). This
+    /// method only opens the seam; callers invoke
+    /// [`Self::persist_snapshot`] when they want a checkpoint to fire.
+    #[must_use]
+    pub fn with_storage(mut self, storage: Arc<dyn SessionStorage>) -> Self {
+        self.storage = Some(storage);
+        self
+    }
+
+    /// F6.1-b — fire-and-forget snapshot save. The caller builds the
+    /// [`SessionSnapshot`] (it has the tenant + corpus context the
+    /// registry doesn't carry today) and hands it off; this method
+    /// spawns a tokio task that calls the backend's `save`. Failures
+    /// log at warn level but never propagate — a storage hiccup must
+    /// not break a live tool call.
+    ///
+    /// No-op when no storage backend has been wired (self-hosted serve
+    /// or pre-F6.1 cloud deployments). Callers can invoke
+    /// unconditionally.
+    pub fn persist_snapshot(&self, snapshot: SessionSnapshot) {
+        let Some(storage) = self.storage.as_ref() else {
+            return;
+        };
+        let storage = Arc::clone(storage);
+        tokio::spawn(async move {
+            if let Err(e) = storage.save(&snapshot).await {
+                warn!(
+                    error = ?e,
+                    session_id = %snapshot.session_id,
+                    tenant_id = %snapshot.tenant_id,
+                    "session snapshot: save failed (live session unaffected)",
+                );
+            }
+        });
     }
 
     /// Create a new session with the given ID, budget config, and access mode.
@@ -220,6 +276,99 @@ mod tests {
         let registry = default_registry();
         assert_eq!(registry.session_count(), 0);
         assert!(registry.session_ids().is_empty());
+    }
+
+    // ── F6.1-b — durable-snapshot plumbing ──────────────────────────
+
+    use ministr_api::{
+        LoadSessionFuture, SaveSessionFuture, SessionMutFuture, SessionStorageError,
+    };
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Debug, Default)]
+    struct StubStorage {
+        saves: Mutex<Vec<SessionSnapshot>>,
+    }
+
+    impl SessionStorage for StubStorage {
+        fn save<'a>(&'a self, snapshot: &'a SessionSnapshot) -> SaveSessionFuture<'a> {
+            let owned = snapshot.clone();
+            Box::pin(async move {
+                self.saves.lock().unwrap().push(owned);
+                Ok::<(), SessionStorageError>(())
+            })
+        }
+        fn load<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _session_id: &'a str,
+        ) -> LoadSessionFuture<'a> {
+            Box::pin(async { Ok(None) })
+        }
+        fn touch<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _session_id: &'a str,
+        ) -> SessionMutFuture<'a> {
+            Box::pin(async { Ok(()) })
+        }
+        fn delete<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _session_id: &'a str,
+        ) -> SessionMutFuture<'a> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    fn fixture_snapshot() -> SessionSnapshot {
+        SessionSnapshot {
+            session_id: "agent-1".into(),
+            tenant_id: "tenant-uuid".into(),
+            corpus_id: Some("corpus-a".into()),
+            opened_at: "2026-05-21T00:00:00Z".into(),
+            last_seen_at: "2026-05-21T00:00:00Z".into(),
+            budget_used: 42,
+            coherence_score: 0.91,
+        }
+    }
+
+    #[test]
+    fn registry_storage_defaults_to_none() {
+        let registry = default_registry();
+        // Persist a snapshot on a registry with no storage — must
+        // collapse to a no-op without panic.
+        registry.persist_snapshot(fixture_snapshot());
+    }
+
+    #[test]
+    fn with_storage_attaches_backend() {
+        let stub = Arc::new(StubStorage::default());
+        let registry =
+            default_registry().with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
+        assert!(
+            registry.storage.is_some(),
+            "with_storage should populate the field",
+        );
+    }
+
+    #[tokio::test]
+    async fn persist_snapshot_fires_through_storage() {
+        let stub = Arc::new(StubStorage::default());
+        let registry = default_registry()
+            .with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
+        let snap = fixture_snapshot();
+        registry.persist_snapshot(snap.clone());
+        // persist_snapshot spawns the work; give the task a turn.
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+            if !stub.saves.lock().unwrap().is_empty() {
+                break;
+            }
+        }
+        let saves = stub.saves.lock().unwrap();
+        assert_eq!(saves.len(), 1, "expected exactly one save call");
+        assert_eq!(saves[0], snap, "round-trip captured the snapshot fields");
     }
 
     #[test]

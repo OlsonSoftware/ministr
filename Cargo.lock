@@ -4880,6 +4880,7 @@ dependencies = [
  "hnsw_rs",
  "ignore",
  "logos",
+ "ministr-api",
  "notify",
  "ort",
  "parking_lot",
