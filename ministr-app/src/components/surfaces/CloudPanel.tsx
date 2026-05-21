@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  BarChart3,
   Check,
   ChevronDown,
   ChevronRight,
@@ -63,6 +64,7 @@ import {
   type CloudCreatedWebhookSub,
   type CloudHealth,
   type CloudOrg,
+  type CloudOrgUsage,
   type CloudProgressEvent,
   type CloudStatus,
   type CloudUsage,
@@ -516,6 +518,8 @@ export function CloudPanel() {
       <ApiKeysSection authenticated={!!status?.authenticated} />
 
       <WebhooksSection authenticated={!!status?.authenticated} />
+
+      <OrgUsageSection authenticated={!!status?.authenticated} />
 
       <section className="flex flex-col gap-2 border-t border-border-soft pt-5">
         <Button
@@ -1999,6 +2003,320 @@ function ShowWebhookSecretDialog({
         </Button>
       </div>
     </DialogShell>
+  );
+}
+
+// ── Org usage section (F3.3b) ──────────────────────────────────────────────
+
+interface OrgUsageSectionProps {
+  authenticated: boolean;
+}
+
+/**
+ * Per-member totals across the lookback window, derived client-side
+ * from the F3.3a per-day-per-kind rollups.
+ */
+interface MemberTotals {
+  user_id: string;
+  email: string;
+  /** Rolled-up totals per kind (e.g. query.served → 1234). */
+  rollup: Map<string, number>;
+  /** Today's not-yet-rolled-up partial totals per kind. */
+  partial: Map<string, number>;
+}
+
+/**
+ * F3.3b — org-level usage dashboard surface.
+ *
+ * Reuses the WebhooksSection org-picker pattern: members across all
+ * orgs the user belongs to flow through a single dropdown. The
+ * selected org's per-member totals render below as a table.
+ *
+ * SOLID note: aggregation happens client-side because F3.3c (cost
+ * projection + CSV) will need the raw per-day shape anyway; deriving
+ * member totals here keeps the backend response shape stable.
+ */
+function OrgUsageSection({ authenticated }: OrgUsageSectionProps) {
+  const [orgs, setOrgs] = useState<CloudOrg[]>([]);
+  const [selectedOrgId, setSelectedOrgId] = useState<string>("");
+  const [usage, setUsage] = useState<CloudOrgUsage | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<null | "list-orgs" | "load-usage">(null);
+
+  useEffect(() => {
+    if (!authenticated) {
+      setOrgs([]);
+      setSelectedOrgId("");
+      setUsage(null);
+      return;
+    }
+    let cancelled = false;
+    setBusy("list-orgs");
+    void cloudClient
+      .listOrgs()
+      .then((list) => {
+        if (cancelled) return;
+        setOrgs(list);
+        if (list.length > 0 && !selectedOrgId) {
+          setSelectedOrgId(list[0].id);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setOrgs([]);
+      })
+      .finally(() => {
+        if (!cancelled) setBusy(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // selectedOrgId intentionally NOT in deps — fetch once per auth flip.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated]);
+
+  const refresh = useCallback(async () => {
+    if (!authenticated || !selectedOrgId) {
+      setUsage(null);
+      return;
+    }
+    setBusy("load-usage");
+    setListError(null);
+    try {
+      setUsage(await cloudClient.getOrgUsage(selectedOrgId));
+    } catch (e) {
+      setListError(String(e));
+      setUsage(null);
+    } finally {
+      setBusy(null);
+    }
+  }, [authenticated, selectedOrgId]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  // Aggregate the raw rollups into per-member totals. v0 strategy:
+  // walk every row, accumulate Map<kind, total> per user. Today's
+  // partial folds into a separate map so the UI can render
+  // "1,234 + 56 today".
+  const members = useMemo(() => {
+    if (!usage) return [] as MemberTotals[];
+    const byUser = new Map<string, MemberTotals>();
+    const get = (user_id: string, email: string): MemberTotals => {
+      let m = byUser.get(user_id);
+      if (!m) {
+        m = { user_id, email, rollup: new Map(), partial: new Map() };
+        byUser.set(user_id, m);
+      }
+      return m;
+    };
+    for (const r of usage.rollups) {
+      const m = get(r.user_id, r.email);
+      m.rollup.set(r.kind, (m.rollup.get(r.kind) ?? 0) + r.total);
+    }
+    for (const p of usage.today_partial) {
+      const m = get(p.user_id, p.email);
+      m.partial.set(p.kind, (m.partial.get(p.kind) ?? 0) + p.total);
+    }
+    return Array.from(byUser.values()).sort((a, b) =>
+      a.email.localeCompare(b.email),
+    );
+  }, [usage]);
+
+  // Org-wide totals (sum across all members) for the header summary.
+  const totals = useMemo(() => {
+    const rollup = new Map<string, number>();
+    const partial = new Map<string, number>();
+    for (const m of members) {
+      for (const [k, v] of m.rollup) rollup.set(k, (rollup.get(k) ?? 0) + v);
+      for (const [k, v] of m.partial) partial.set(k, (partial.get(k) ?? 0) + v);
+    }
+    return { rollup, partial };
+  }, [members]);
+
+  return (
+    <section className="flex flex-col gap-3 border-t border-border-soft pt-5">
+      <div className="flex items-center justify-between">
+        <h3 className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+          Team usage
+        </h3>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={refresh}
+          disabled={!authenticated || !selectedOrgId || busy === "load-usage"}
+        >
+          {busy === "load-usage" ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="size-3.5" />
+          )}
+          Refresh
+        </Button>
+      </div>
+
+      <p className="text-xs text-text-muted">
+        Per-seat breakdown of <span className="font-mono">query.served</span>,{" "}
+        <span className="font-mono">index.minutes</span>, and{" "}
+        <span className="font-mono">atlas.queries</span> from the last{" "}
+        {usage?.range_days ?? 30} days. Sums match the live Stripe invoice
+        within ±1.
+      </p>
+
+      {!authenticated && (
+        <div className="rounded-md border border-border-soft bg-surface-overlay px-3 py-2 text-sm text-text-muted">
+          Sign in to view team usage.
+        </div>
+      )}
+
+      {authenticated && orgs.length === 0 && (
+        <div className="rounded-md border border-border-soft bg-surface-overlay px-3 py-2 text-sm text-text-muted">
+          {busy === "list-orgs"
+            ? "Loading orgs…"
+            : "You're not in any orgs yet — usage is org-scoped."}
+        </div>
+      )}
+
+      {authenticated && orgs.length > 0 && (
+        <label className="flex flex-col gap-1.5">
+          <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+            Org
+          </span>
+          <select
+            value={selectedOrgId}
+            onChange={(e) => setSelectedOrgId(e.target.value)}
+            className="h-9 px-3 rounded-md border border-border bg-surface font-mono text-sm text-text focus:outline-none focus:border-border-hover"
+          >
+            {orgs.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.name} ({o.role})
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      {listError && (
+        <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-text font-mono">
+          {listError}
+        </div>
+      )}
+
+      {authenticated && selectedOrgId && members.length === 0 && !listError && (
+        <div className="rounded-md border border-border-soft bg-surface-overlay px-3 py-2 text-sm text-text-muted">
+          {busy === "load-usage"
+            ? "Loading usage…"
+            : "No usage recorded for this org in the selected window."}
+        </div>
+      )}
+
+      {members.length > 0 && (
+        <>
+          <UsageTotalsRow totals={totals} memberCount={members.length} />
+          <UsageMembersTable members={members} />
+        </>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Render `1,234` (or `1,234 (+56 today)` when there's a partial). The
+ * Tauri panel's monospace cells don't need a charting library — a
+ * dense numeric table is the right shape for a 3-seat team's totals.
+ */
+function formatUsageCell(rollup: number, partial: number): string {
+  const base = rollup.toLocaleString();
+  return partial > 0 ? `${base} (+${partial.toLocaleString()} today)` : base;
+}
+
+function UsageTotalsRow({
+  totals,
+  memberCount,
+}: {
+  totals: { rollup: Map<string, number>; partial: Map<string, number> };
+  memberCount: number;
+}) {
+  const kinds: Array<{ key: string; label: string }> = [
+    { key: "query.served", label: "Queries" },
+    { key: "index.minutes", label: "Index min" },
+    { key: "atlas.queries", label: "Atlas" },
+  ];
+  return (
+    <div className="rounded-md border border-border-soft bg-surface-overlay px-3 py-2 flex items-center gap-4">
+      <div className="flex items-center gap-1.5">
+        <BarChart3 className="size-3.5 text-text-muted" />
+        <span className="font-mono text-xs uppercase tracking-[0.08em] text-text-muted">
+          Org total · {memberCount} member{memberCount === 1 ? "" : "s"}
+        </span>
+      </div>
+      <div className="flex gap-4 ml-auto">
+        {kinds.map(({ key, label }) => (
+          <div key={key} className="flex flex-col items-end">
+            <span className="text-xs text-text-muted">{label}</span>
+            <span className="font-mono text-xs text-text">
+              {formatUsageCell(
+                totals.rollup.get(key) ?? 0,
+                totals.partial.get(key) ?? 0,
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function UsageMembersTable({ members }: { members: MemberTotals[] }) {
+  return (
+    <div className="rounded-md border border-border-soft bg-surface overflow-hidden">
+      <table className="w-full text-sm">
+        <thead className="bg-surface-overlay border-b border-border-soft">
+          <tr className="text-left text-xs font-mono uppercase tracking-[0.08em] text-text-muted">
+            <th className="px-3 py-2 font-semibold">Member</th>
+            <th className="px-3 py-2 font-semibold text-right">Queries</th>
+            <th className="px-3 py-2 font-semibold text-right">Index min</th>
+            <th className="px-3 py-2 font-semibold text-right">Atlas</th>
+          </tr>
+        </thead>
+        <tbody>
+          {members.map((m) => (
+            <tr key={m.user_id} className="border-b border-border-soft last:border-b-0">
+              <td className="px-3 py-2 align-top">
+                <div className="text-xs text-text">{m.email}</div>
+                <div className="font-mono text-xs text-text-muted">
+                  {m.user_id.slice(0, 8)}…
+                </div>
+              </td>
+              <td className="px-3 py-2 align-top text-right">
+                <span className="font-mono text-xs text-text">
+                  {formatUsageCell(
+                    m.rollup.get("query.served") ?? 0,
+                    m.partial.get("query.served") ?? 0,
+                  )}
+                </span>
+              </td>
+              <td className="px-3 py-2 align-top text-right">
+                <span className="font-mono text-xs text-text">
+                  {formatUsageCell(
+                    m.rollup.get("index.minutes") ?? 0,
+                    m.partial.get("index.minutes") ?? 0,
+                  )}
+                </span>
+              </td>
+              <td className="px-3 py-2 align-top text-right">
+                <span className="font-mono text-xs text-text">
+                  {formatUsageCell(
+                    m.rollup.get("atlas.queries") ?? 0,
+                    m.partial.get("atlas.queries") ?? 0,
+                  )}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
