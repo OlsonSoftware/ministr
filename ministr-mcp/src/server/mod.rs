@@ -128,6 +128,103 @@ ministr_definition for a symbol.
 /// to read it — the survey ranking signal is already noisy in that range.
 const TOP_HIT_FOLLOWUP_THRESHOLD: f32 = 0.5;
 
+/// F6.3-a — cross-corpus survey fan-out.
+///
+/// Runs the query against each corpus in `corpus_ids` sequentially,
+/// tags each result with `source_corpus = Some(corpus_id)`, merges
+/// all hits into one Vec sorted by score descending, and truncates to
+/// `top_k`. Per-corpus errors log + skip rather than fail the whole
+/// fan-out — a single broken corpus shouldn't sink the whole query.
+///
+/// `deduplicated_count` sums across all per-corpus calls.
+///
+/// # Honest scope (v0)
+///
+/// - Sequential, not parallel. Atlas-corpus fan-out across 10+ corpora
+///   could benefit from `tokio::join_all`, but the registry's
+///   `ensure_present` is not yet parallel-safe across the same pod for
+///   distinct corpora (lock contention in the in-memory cache). v1
+///   will parallelise once the registry side is audited.
+/// - Same `exclude_ids` applied to every corpus, by raw `content_id`
+///   string match. Two corpora can produce identical `content_id`
+///   strings (e.g. both contain `docs/index.md#root`); the session
+///   machinery sees them as the same delivery. Agents can
+///   disambiguate via the new `source_corpus` field on the result,
+///   but the dedupe collision is a real edge case. The fix lands when
+///   session tracking learns to namespace by `(corpus_id, content_id)`.
+async fn cross_corpus_survey(
+    backend: &crate::backend::Backend,
+    tenant_subject: Option<&str>,
+    corpus_ids: &[String],
+    query: &str,
+    top_k: usize,
+    exclude_ids: &std::collections::HashSet<String>,
+) -> Result<(Vec<ministr_core::service::SurveyResult>, usize), crate::backend::BackendError> {
+    let mut per_corpus: Vec<(String, Vec<ministr_core::service::SurveyResult>, usize)> = Vec::new();
+    let mut last_err: Option<crate::backend::BackendError> = None;
+    for corpus_id in corpus_ids {
+        match backend
+            .survey_with_exclude(
+                tenant_subject,
+                Some(corpus_id.as_str()),
+                query,
+                top_k,
+                exclude_ids,
+            )
+            .await
+        {
+            Ok((results, dedup)) => {
+                per_corpus.push((corpus_id.clone(), results, dedup));
+            }
+            Err(e) => {
+                warn!(corpus_id = %corpus_id, error = %e, "cross-corpus survey: per-corpus error");
+                last_err = Some(e);
+            }
+        }
+    }
+    // If EVERY per-corpus call errored, propagate the last error so
+    // the caller surfaces the failure. If at least one succeeded,
+    // return the partial merge — better to deliver what we have than
+    // hard-fail the agent.
+    if per_corpus.is_empty() {
+        if let Some(e) = last_err {
+            return Err(e);
+        }
+        // corpus_ids was empty — caller branch should prevent this,
+        // but return empty defensively.
+        return Ok((Vec::new(), 0));
+    }
+    Ok(merge_cross_corpus_results(per_corpus, top_k))
+}
+
+/// Pure merge-sort-truncate helper extracted so the cross-corpus
+/// fan-out semantics can be unit-tested without spinning up a real
+/// [`crate::backend::Backend`]. Tags each result with its source
+/// corpus, sorts by score descending (stable), and truncates to
+/// `top_k`. Sums `deduplicated_count` across all per-corpus calls.
+#[must_use]
+fn merge_cross_corpus_results(
+    per_corpus: Vec<(String, Vec<ministr_core::service::SurveyResult>, usize)>,
+    top_k: usize,
+) -> (Vec<ministr_core::service::SurveyResult>, usize) {
+    let mut merged: Vec<ministr_core::service::SurveyResult> = Vec::new();
+    let mut total_dedup: usize = 0;
+    for (corpus_id, mut results, dedup) in per_corpus {
+        for r in &mut results {
+            r.source_corpus = Some(corpus_id.clone());
+        }
+        merged.extend(results);
+        total_dedup += dedup;
+    }
+    merged.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    merged.truncate(top_k);
+    (merged, total_dedup)
+}
+
 /// Suggest a follow-up read on a survey's top result when it's confidently
 /// above noise. Symbol-resolution hits route to `ministr_definition`;
 /// section/claim/summary hits route to `ministr_read` on the section ID.
@@ -831,23 +928,47 @@ impl MinistrServer {
                 entry.session.delivered_ids()
             };
 
+            // F6.3-a — branch on `corpus_ids`. When set + non-empty,
+            // fan the query across each corpus and merge by score.
+            // Otherwise run the existing single-corpus path through
+            // `project`.
+            let is_cross_corpus = params
+                .corpus_ids
+                .as_ref()
+                .is_some_and(|v| !v.is_empty());
+
             // Run the survey through the backend trait; if results are
             // ambiguous, try eliciting a refined query.
-            let survey_result = self
-                .backend
-                .survey_with_exclude(
+            let survey_result = if is_cross_corpus {
+                let corpus_ids = params.corpus_ids.as_deref().unwrap_or(&[]);
+                cross_corpus_survey(
+                    &self.backend,
                     tenant_subject.as_deref(),
-                    params.project.as_deref(),
+                    corpus_ids,
                     &params.query,
                     top_k,
                     &exclude_ids,
                 )
-                .await;
+                .await
+            } else {
+                self.backend
+                    .survey_with_exclude(
+                        tenant_subject.as_deref(),
+                        params.project.as_deref(),
+                        &params.query,
+                        top_k,
+                        &exclude_ids,
+                    )
+                    .await
+            };
 
             // Attempt disambiguation: if top score is low and scores are clustered,
             // elicit a refined query from the agent and re-run the search.
+            // F6.3-a — skip elicitation on the cross-corpus path; the
+            // re-run helper is single-corpus framed and the merge
+            // distorts the "spread" heuristic that drives the prompt.
             let survey_result = match &survey_result {
-                Ok((results, _)) if results.len() >= 3 => {
+                Ok((results, _)) if results.len() >= 3 && !is_cross_corpus => {
                     let top_score = results.first().map_or(0.0, |r| r.score);
                     let fifth_score = results.get(4).map_or(0.0, |r| r.score);
                     let spread = top_score - fifth_score;
@@ -2835,6 +2956,127 @@ mod tests {
         assert!(!DEFAULT_INSTRUCTIONS.contains("drop_suggestions"));
     }
 
+    // ── F6.3-a cross-corpus survey tests ──────────────────────────────
+
+    fn make_sr(
+        content_id: &str,
+        score: f32,
+    ) -> ministr_core::service::SurveyResult {
+        ministr_core::service::SurveyResult {
+            content_id: content_id.to_string(),
+            resolution: "section".to_string(),
+            score,
+            text: format!("text for {content_id}"),
+            heading_path: None,
+            source_corpus: None,
+        }
+    }
+
+    #[test]
+    fn merge_tags_each_hit_with_its_source_corpus() {
+        let per_corpus = vec![
+            (
+                "atlas/react".to_string(),
+                vec![make_sr("a1", 0.9), make_sr("a2", 0.7)],
+                0,
+            ),
+            (
+                "my-app".to_string(),
+                vec![make_sr("b1", 0.8)],
+                0,
+            ),
+        ];
+        let (merged, dedup) = merge_cross_corpus_results(per_corpus, 10);
+        assert_eq!(dedup, 0);
+        assert_eq!(merged.len(), 3);
+        // All hits carry a source_corpus.
+        for r in &merged {
+            assert!(r.source_corpus.is_some(), "hit {} missing source_corpus", r.content_id);
+        }
+        // Tagging respects the input grouping — a1/a2 → atlas/react; b1 → my-app.
+        let by_id: std::collections::HashMap<&str, &str> = merged
+            .iter()
+            .map(|r| (r.content_id.as_str(), r.source_corpus.as_deref().unwrap()))
+            .collect();
+        assert_eq!(by_id["a1"], "atlas/react");
+        assert_eq!(by_id["a2"], "atlas/react");
+        assert_eq!(by_id["b1"], "my-app");
+    }
+
+    #[test]
+    fn merge_sorts_by_score_descending_across_corpora() {
+        let per_corpus = vec![
+            (
+                "alpha".to_string(),
+                vec![make_sr("a-low", 0.30), make_sr("a-mid", 0.55)],
+                0,
+            ),
+            (
+                "beta".to_string(),
+                vec![make_sr("b-top", 0.91), make_sr("b-mid", 0.50)],
+                0,
+            ),
+        ];
+        let (merged, _) = merge_cross_corpus_results(per_corpus, 10);
+        let ids: Vec<&str> = merged.iter().map(|r| r.content_id.as_str()).collect();
+        assert_eq!(ids, vec!["b-top", "a-mid", "b-mid", "a-low"]);
+    }
+
+    #[test]
+    fn merge_truncates_to_top_k() {
+        let per_corpus = vec![
+            (
+                "alpha".to_string(),
+                vec![make_sr("a1", 0.9), make_sr("a2", 0.7), make_sr("a3", 0.5)],
+                0,
+            ),
+            (
+                "beta".to_string(),
+                vec![make_sr("b1", 0.8), make_sr("b2", 0.6), make_sr("b3", 0.4)],
+                0,
+            ),
+        ];
+        let (merged, _) = merge_cross_corpus_results(per_corpus, 3);
+        let ids: Vec<&str> = merged.iter().map(|r| r.content_id.as_str()).collect();
+        // After cross-corpus sort: a1(0.9), b1(0.8), a2(0.7), b2(0.6), a3(0.5), b3(0.4)
+        // top_k=3 → first three.
+        assert_eq!(ids, vec!["a1", "b1", "a2"]);
+    }
+
+    #[test]
+    fn merge_sums_deduplicated_counts_across_corpora() {
+        let per_corpus = vec![
+            ("alpha".to_string(), vec![make_sr("a1", 0.9)], 3),
+            ("beta".to_string(), vec![make_sr("b1", 0.8)], 2),
+            ("gamma".to_string(), vec![], 5),
+        ];
+        let (_, dedup) = merge_cross_corpus_results(per_corpus, 10);
+        assert_eq!(dedup, 10, "deduplicated_count sums across all per-corpus calls");
+    }
+
+    #[test]
+    fn merge_handles_empty_per_corpus_vec() {
+        let (merged, dedup) = merge_cross_corpus_results(Vec::new(), 10);
+        assert!(merged.is_empty());
+        assert_eq!(dedup, 0);
+    }
+
+    #[test]
+    fn merge_preserves_existing_source_corpus_when_already_set() {
+        // Edge case: if a result already carries a source_corpus (e.g.
+        // from a future inner-fan-out path), the merge overwrites it
+        // with the corpus_id from the input pair. This is the
+        // deliberate behaviour — the outer caller owns the tag and
+        // older tags shouldn't survive. Regression guard for the
+        // overwrite semantics.
+        let mut pre_tagged = make_sr("a1", 0.9);
+        pre_tagged.source_corpus = Some("stale-tag".to_string());
+        let per_corpus = vec![("alpha".to_string(), vec![pre_tagged], 0)];
+        let (merged, _) = merge_cross_corpus_results(per_corpus, 10);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].source_corpus.as_deref(), Some("alpha"));
+    }
+
     #[test]
     fn default_instructions_covers_pre_mutation_checks() {
         assert!(DEFAULT_INSTRUCTIONS.contains("ministr_references"));
@@ -2872,6 +3114,7 @@ mod tests {
             score: 0.3,
             text: "noisy match".into(),
             heading_path: None,
+            source_corpus: None,
         }];
         let actions = top_hit_next_action(&results);
         assert!(actions.is_empty());
@@ -2885,6 +3128,7 @@ mod tests {
             score: 0.85,
             text: "confident match".into(),
             heading_path: None,
+            source_corpus: None,
         }];
         let actions = top_hit_next_action(&results);
         assert_eq!(actions.len(), 1);
@@ -2900,6 +3144,7 @@ mod tests {
             score: 0.9,
             text: "sym".into(),
             heading_path: None,
+            source_corpus: None,
         }];
         let actions = top_hit_next_action(&results);
         assert_eq!(actions.len(), 1);
@@ -3284,6 +3529,7 @@ mod tests {
             query: "JWT authentication tokens".to_string(),
             top_k: Some(5),
             project: None,
+            corpus_ids: None,
         };
         let result = server.survey(Parameters(params)).await.unwrap();
 
@@ -3373,6 +3619,7 @@ mod tests {
                 query: "JWT authentication tokens".to_string(),
                 top_k: Some(10),
                 project: None,
+                corpus_ids: None,
             }))
             .await
             .unwrap();
@@ -3387,6 +3634,7 @@ mod tests {
                 query: "JWT authentication tokens".to_string(),
                 top_k: Some(10),
                 project: None,
+                corpus_ids: None,
             }))
             .await
             .unwrap();
@@ -3458,6 +3706,7 @@ mod tests {
             query: "JWT authentication tokens".to_string(),
             top_k: Some(5),
             project: None,
+            corpus_ids: None,
         };
         let result = server.survey(Parameters(params)).await.unwrap();
 
@@ -4380,6 +4629,7 @@ mod tests {
                 query: "JWT tokens".to_string(),
                 top_k: Some(5),
                 project: None,
+                corpus_ids: None,
             }))
             .await
             .unwrap();

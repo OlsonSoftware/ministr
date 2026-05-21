@@ -123,6 +123,7 @@ impl QueryService {
                 score: sr.score,
                 text,
                 heading_path,
+                source_corpus: None,
             });
         }
 
@@ -218,6 +219,7 @@ impl QueryService {
                 score: sr.score,
                 text,
                 heading_path,
+                source_corpus: None,
             });
 
             if results.len() >= collect_k {

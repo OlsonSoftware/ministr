@@ -13,6 +13,7 @@ pub fn survey_result(r: ministr_core::service::SurveyResult) -> query::SurveyRes
         score: r.score,
         text: r.text,
         heading_path: r.heading_path,
+        source_corpus: r.source_corpus,
     }
 }
 
