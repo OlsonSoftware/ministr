@@ -11,6 +11,7 @@
 //! No heavy dependencies here: only serde, schemars, tokio, and std.
 
 pub mod activity;
+pub mod api_key;
 pub mod blob_sink;
 pub mod client;
 pub mod coherence;
@@ -27,6 +28,9 @@ pub mod tenant_filter;
 pub mod transport;
 pub mod usage;
 
+pub use api_key::{
+    ApiKeyError, ApiKeyResolver, ResolveApiKeyFuture, ResolvedApiKey, TouchLastUsedFuture,
+};
 pub use blob_sink::BlobSink;
 pub use corpora_repo::{CorporaRepo, CorporaRepoError, CorpusRegistration, RepoFuture};
 pub use corpus_restorer::{CorpusRestoreError, CorpusRestorer, RestoreFuture};

@@ -40,6 +40,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (3, include_str!("../migrations/0003_corpus_registry.sql")),
     (4, include_str!("../migrations/0004_org_invites.sql")),
     (5, include_str!("../migrations/0005_cloud_corpus_acl.sql")),
+    (6, include_str!("../migrations/0006_api_keys_columns.sql")),
 ];
 
 /// Errors surfaced by [`connect`] and [`run_migrations`].

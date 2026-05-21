@@ -36,6 +36,7 @@
 
 #![deny(unsafe_code)]
 
+pub mod api_keys;
 pub mod auth;
 pub mod billing;
 pub mod blob;
@@ -55,6 +56,11 @@ pub mod ratelimit;
 pub mod tenant_filter;
 pub mod users;
 
+pub use api_keys::{
+    ApiKeyRow, ApiKeysError, ApiKeysState, CreatedApiKey, DEFAULT_API_KEY_SCOPE,
+    PostgresApiKeyResolver, TOKEN_PREFIX, api_keys_routes, create_user_api_key,
+    list_user_api_keys, revoke_user_api_key,
+};
 pub use billing::{
     billing_routes, checkout_routes, record_usage, rollup_day, stripe_webhook_routes,
     BillingState, CheckoutState, EnvPriceCatalog, PartialRow, PostgresUsageSink, PriceCatalog,

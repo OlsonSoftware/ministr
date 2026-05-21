@@ -557,6 +557,21 @@ pub(crate) async fn cmd_serve_http(
             cloud_env.pg_url.as_deref(),
         )
         .await?;
+        // F3.4a — wire the API-key resolver so the existing OAuth
+        // token-validation middleware also authenticates `mst_pk_…`
+        // service-account tokens. Cloud-only: the resolver needs the
+        // Postgres pool to consult `api_keys`. Self-hosted serve
+        // leaves the store untouched and only OAuth tokens
+        // authenticate there.
+        let store = if let Some(pool) = cloud_pool.as_ref() {
+            let resolver = ministr_cloud::PostgresApiKeyResolver::new((**pool).clone()).into_dyn();
+            tracing::info!(
+                "PostgresApiKeyResolver wired — `mst_pk_…` tokens authenticate via api_keys table"
+            );
+            store.with_api_key_resolver(resolver)
+        } else {
+            store
+        };
         let protected = ministr_mcp::auth::protected_router(mcp_router, store.clone());
         let protected_bundles = ministr_mcp::auth::scope_protected_router(
             bundle_router,
@@ -733,6 +748,27 @@ pub(crate) async fn cmd_serve_http(
             composed = composed.merge(orgs_protected);
             tracing::info!(
                 "orgs endpoints mounted — POST /api/v1/orgs, GET /api/v1/orgs, GET /api/v1/orgs/{{id}}/members, POST /api/v1/orgs/{{id}}/invites"
+            );
+
+            // F3.4a — service-account API keys (mint, list, revoke).
+            // Cloud-only: backed by the `api_keys` table. Mounted behind
+            // `ministr:read` because every action targets the caller's
+            // own keys (the WHERE clauses join on the calling tenant's
+            // user_id). Create + revoke are write operations but they
+            // do not touch corpus data, so the `:write` scope's quota
+            // + rate-limit layers are intentionally bypassed — the
+            // same posture as the orgs router.
+            let api_keys_router = ministr_cloud::api_keys_routes(
+                ministr_cloud::ApiKeysState { pool: (**pool).clone() },
+            );
+            let api_keys_protected = ministr_mcp::auth::scope_protected_router(
+                api_keys_router,
+                store.clone(),
+                "ministr:read",
+            );
+            composed = composed.merge(api_keys_protected);
+            tracing::info!(
+                "api_keys endpoints mounted — POST /api/v1/api_keys, GET /api/v1/api_keys, DELETE /api/v1/api_keys/{{id}}"
             );
 
             // F2.6 — Atlas v0 pilot. Manifest + per-slug query stubs.
