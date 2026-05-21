@@ -185,6 +185,152 @@ pub async fn corpus_owner_tenant(
     Ok(row.and_then(|r| r.get::<_, Option<String>>("tenant_id")))
 }
 
+/// Outcome of one [`transfer_corpus_to_org`] call. The handler
+/// returns these variants as distinct HTTP status codes so the UI
+/// can render different messages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransferOutcome {
+    /// `tenant_id` flipped from `caller_user_id` to `target_org_id`,
+    /// and an ACL row was minted so existing visibility-filter logic
+    /// surfaces the corpus to org members. Carries the prior tenant
+    /// (the caller's user UUID) so the audit event echoes both sides.
+    Transferred {
+        /// The `tenant_id` before the transfer (`caller_user_id`).
+        previous_tenant_id: String,
+        /// The `tenant_id` after the transfer (`org_id`).
+        new_tenant_id: String,
+    },
+    /// Caller is not the current owner of the corpus. Encompasses
+    /// "corpus not found" + "`tenant_id` IS NULL" + "`tenant_id` !=
+    /// caller" — same response shape for all three so an attacker
+    /// can't distinguish them. Mirrors `assert_corpus_owner` in
+    /// `routes.rs`.
+    NotOwner,
+    /// The corpus's `tenant_id` already matches the target org's id —
+    /// nothing to do. Distinguished from `Transferred` so the route
+    /// can return 200 (vs 201) and the audit feed doesn't get a
+    /// duplicate `corpus.transferred` event on retry.
+    AlreadyOnTarget,
+}
+
+/// F3.2-iv — transfer a corpus's ownership from a user tenant to an
+/// org tenant. Single transaction:
+///
+/// 1. `SELECT tenant_id FROM cloud_corpora WHERE corpus_id = $1 FOR UPDATE`
+///    serialises against concurrent transfer + share attempts.
+/// 2. Ownership check: returns [`TransferOutcome::NotOwner`] when the
+///    row's `tenant_id` is NULL, missing, or differs from the
+///    caller's user UUID.
+/// 3. Short-circuit [`TransferOutcome::AlreadyOnTarget`] when the row's
+///    `tenant_id` already matches `target_org_id`.
+/// 4. `UPDATE cloud_corpora SET tenant_id = $org_id::uuid`.
+/// 5. `INSERT INTO cloud_corpus_acl` with `scope = 'write'` for the
+///    org. `ON CONFLICT DO UPDATE` mirrors [`share_with_org`] so a
+///    later re-share keeps the scope monotone.
+///
+/// The ACL insert means existing F3.2-iii visibility logic
+/// (`cloud_corpus_acl JOIN org_members`) surfaces the corpus to every
+/// member of the target org without any filter rewrite.
+///
+/// # Errors
+///
+/// - [`OrgError::Sql`] on DB failure or FK violation (org id not in
+///   `orgs`, etc.).
+/// - [`OrgError::GetConn`] when the pool is empty.
+pub async fn transfer_corpus_to_org(
+    pool: &Pool,
+    corpus_id: &str,
+    target_org_id: &str,
+    caller_user_id: &str,
+) -> Result<TransferOutcome, OrgError> {
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|e| OrgError::GetConn(format!("transfer_corpus_to_org: {e}")))?;
+    let tx = conn
+        .transaction()
+        .await
+        .map_err(|e| OrgError::Sql(format!("begin txn: {e}")))?;
+
+    // FOR UPDATE so concurrent transfers / shares serialise.
+    let owner_row = tx
+        .query_opt(
+            "SELECT tenant_id::text AS tenant_id
+             FROM cloud_corpora
+             WHERE corpus_id = $1
+             FOR UPDATE",
+            &[&corpus_id],
+        )
+        .await
+        .map_err(|e| OrgError::Sql(format!("lock cloud_corpora: {e}")))?;
+
+    let Some(row) = owner_row else {
+        // Corpus row absent — collapse to NotOwner to avoid existence
+        // leak. The commit-on-early-return mirrors the invite path.
+        tx.commit()
+            .await
+            .map_err(|e| OrgError::Sql(format!("commit (missing): {e}")))?;
+        return Ok(TransferOutcome::NotOwner);
+    };
+
+    let current_tenant: Option<String> = row.get("tenant_id");
+    let Some(current_tenant) = current_tenant else {
+        tx.commit()
+            .await
+            .map_err(|e| OrgError::Sql(format!("commit (null tenant): {e}")))?;
+        return Ok(TransferOutcome::NotOwner);
+    };
+
+    if current_tenant == target_org_id {
+        tx.commit()
+            .await
+            .map_err(|e| OrgError::Sql(format!("commit (idempotent): {e}")))?;
+        return Ok(TransferOutcome::AlreadyOnTarget);
+    }
+
+    if current_tenant != caller_user_id {
+        tx.commit()
+            .await
+            .map_err(|e| OrgError::Sql(format!("commit (not owner): {e}")))?;
+        return Ok(TransferOutcome::NotOwner);
+    }
+
+    // Re-stamp tenant_id to the org's UUID. The COALESCE on later
+    // upserts (F2.x-d) leaves this stable across boot-time
+    // `restore()` calls.
+    tx.execute(
+        "UPDATE cloud_corpora SET tenant_id = $1::uuid WHERE corpus_id = $2",
+        &[&target_org_id, &corpus_id],
+    )
+    .await
+    .map_err(|e| OrgError::Sql(format!("update cloud_corpora.tenant_id: {e}")))?;
+
+    // Mint the ACL row so the existing F3.2-iii visibility-filter
+    // arm (`cloud_corpus_acl JOIN org_members`) surfaces the corpus
+    // to every member of the target org. `scope = 'write'` matches
+    // the semantics of "this org owns the corpus now"; the v0 share
+    // surface still only accepts `'read'` from external callers.
+    tx.execute(
+        "INSERT INTO cloud_corpus_acl
+           (corpus_id, org_id, scope, granted_by)
+         VALUES ($1, $2::uuid, 'write', $3::uuid)
+         ON CONFLICT (corpus_id, org_id) WHERE org_id IS NOT NULL DO UPDATE
+           SET scope = 'write', granted_by = EXCLUDED.granted_by",
+        &[&corpus_id, &target_org_id, &caller_user_id],
+    )
+    .await
+    .map_err(|e| OrgError::Sql(format!("insert cloud_corpus_acl: {e}")))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| OrgError::Sql(format!("commit (transferred): {e}")))?;
+
+    Ok(TransferOutcome::Transferred {
+        previous_tenant_id: caller_user_id.to_owned(),
+        new_tenant_id: target_org_id.to_owned(),
+    })
+}
+
 /// F3.2-i — extended F2.x-b filter check: does an ACL grant the
 /// `tenant_subject` access to `corpus_id` via membership in an org
 /// that's been granted? Two-way join: `cloud_corpus_acl` ↔
@@ -231,6 +377,42 @@ mod tests {
     //! above mirror the same idioms.
 
     use super::*;
+
+    #[test]
+    fn transfer_outcome_variants_are_distinguishable() {
+        // The handler maps these to distinct HTTP codes; locking in
+        // the discriminator means a future refactor that unifies
+        // variants can't silently collapse the response shape.
+        let t = TransferOutcome::Transferred {
+            previous_tenant_id: "u".into(),
+            new_tenant_id: "o".into(),
+        };
+        assert_ne!(t, TransferOutcome::NotOwner);
+        assert_ne!(t, TransferOutcome::AlreadyOnTarget);
+        assert_ne!(TransferOutcome::NotOwner, TransferOutcome::AlreadyOnTarget);
+    }
+
+    #[test]
+    fn transfer_outcome_transferred_carries_both_sides() {
+        // The audit event echoes previous_tenant_id (the caller, the
+        // user who initiated the transfer) AND new_tenant_id (the
+        // org). Both must be carried through the outcome so the
+        // handler can stamp them on the AuditEntry without re-reading.
+        let t = TransferOutcome::Transferred {
+            previous_tenant_id: "caller-uuid".into(),
+            new_tenant_id: "org-uuid".into(),
+        };
+        match t {
+            TransferOutcome::Transferred {
+                previous_tenant_id,
+                new_tenant_id,
+            } => {
+                assert_eq!(previous_tenant_id, "caller-uuid");
+                assert_eq!(new_tenant_id, "org-uuid");
+            }
+            _ => panic!("expected Transferred variant"),
+        }
+    }
 
     #[test]
     fn acl_entry_serialises_canonically() {
