@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowRight,
   BarChart3,
   Check,
   ChevronDown,
@@ -714,6 +715,7 @@ function CorporaSection({ authenticated }: CorporaSectionProps) {
         <ShareDialog
           corpusId={shareFor}
           onClose={() => setShareFor(null)}
+          onTransferred={() => void refresh()}
         />
       )}
 
@@ -990,6 +992,12 @@ function RegisterDialog({ onClose, onSuccess }: RegisterDialogProps) {
 interface ShareDialogProps {
   corpusId: string;
   onClose: () => void;
+  /**
+   * F3.2-iv-b — fires after a successful corpus transfer. The parent
+   * refreshes its corpus list so the now-org-owned corpus re-renders
+   * with the new tenant context.
+   */
+  onTransferred?: () => void;
 }
 
 /**
@@ -998,12 +1006,19 @@ interface ShareDialogProps {
  * caller is a member of (the cloud rejects sharing with a non-member
  * org with 403, so the dropdown mirrors what the server admits).
  */
-function ShareDialog({ corpusId, onClose }: ShareDialogProps) {
+function ShareDialog({ corpusId, onClose, onTransferred }: ShareDialogProps) {
   const [orgs, setOrgs] = useState<CloudOrg[]>([]);
   const [shares, setShares] = useState<CloudAclEntry[]>([]);
   const [selectedOrgId, setSelectedOrgId] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<null | "load" | "share" | "revoke">(null);
+  const [busy, setBusy] = useState<null | "load" | "share" | "revoke" | "transfer">(null);
+  // F3.2-iv-b — transfer flow runs through a confirm step so a stray
+  // click doesn't move the corpus off the user's tenant. Tracks the
+  // org id the user intends to transfer to, or null when no
+  // confirmation is open.
+  const [transferTargetOrgId, setTransferTargetOrgId] = useState<string | null>(null);
+  const [transferSelectId, setTransferSelectId] = useState("");
+  const [transferNote, setTransferNote] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setBusy("load");
@@ -1039,6 +1054,15 @@ function ShareDialog({ corpusId, onClose }: ShareDialogProps) {
     [orgs, sharedOrgIds],
   );
 
+  // F3.2-iv-b — transfer requires owner/admin role on the target org
+  // (the cloud rejects member-only callers with 403). Restrict the
+  // picker to orgs where the caller has the necessary role; hide a
+  // confusing "tried it but got 403" feedback loop.
+  const transferableOrgs = useMemo(
+    () => orgs.filter((o) => o.role === "owner" || o.role === "admin"),
+    [orgs],
+  );
+
   const onShare = async () => {
     if (!selectedOrgId) return;
     setBusy("share");
@@ -1069,6 +1093,31 @@ function ShareDialog({ corpusId, onClose }: ShareDialogProps) {
 
   const orgName = (orgId: string | null | undefined) =>
     (orgId && orgs.find((o) => o.id === orgId)?.name) || orgId || "—";
+
+  const onTransferConfirm = async () => {
+    if (!transferTargetOrgId) return;
+    setBusy("transfer");
+    setError(null);
+    setTransferNote(null);
+    try {
+      const resp = await cloudClient.transferCorpusToOrg(corpusId, transferTargetOrgId);
+      setTransferNote(
+        resp.transferred
+          ? `Transferred to ${orgName(transferTargetOrgId)}.`
+          : `Already owned by ${orgName(transferTargetOrgId)} — no change.`,
+      );
+      setTransferTargetOrgId(null);
+      setTransferSelectId("");
+      // Always refresh — even on the idempotent path, parent state
+      // may have been stale.
+      await refresh();
+      onTransferred?.();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   return (
     <DialogShell
@@ -1156,6 +1205,61 @@ function ShareDialog({ corpusId, onClose }: ShareDialogProps) {
         )}
       </div>
 
+      {/* F3.2-iv-b — transfer ownership. Sits below the share UI
+          because it's a more destructive action: direct ownership is
+          replaced by org-member access. Restricted to orgs where the
+          caller is owner/admin (cloud rejects member-only with 403). */}
+      <div className="flex flex-col gap-1.5 border-t border-border-soft pt-3">
+        <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+          Transfer ownership
+        </span>
+        <p className="text-xs text-text-muted">
+          Move this corpus into an org. Members of the org will see it; you'll
+          still see it via your org membership but the org owns it.
+        </p>
+        <label className="flex flex-col gap-1.5">
+          <select
+            value={transferSelectId}
+            onChange={(e) => setTransferSelectId(e.target.value)}
+            disabled={busy === "load" || transferableOrgs.length === 0}
+            className="h-9 px-3 rounded-md border border-border bg-surface font-mono text-sm text-text focus:outline-none focus:border-border-hover"
+          >
+            <option value="">
+              {busy === "load"
+                ? "Loading…"
+                : transferableOrgs.length === 0
+                  ? orgs.length === 0
+                    ? "You're not in any orgs yet"
+                    : "No org where you're owner/admin"
+                  : "Select an org…"}
+            </option>
+            {transferableOrgs.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.name} ({o.role})
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="flex justify-end">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setTransferTargetOrgId(transferSelectId)}
+            disabled={!transferSelectId || busy === "transfer"}
+            title="Transfer corpus to the selected org"
+          >
+            <ArrowRight className="size-3.5" />
+            Transfer…
+          </Button>
+        </div>
+      </div>
+
+      {transferNote && (
+        <div className="rounded-md border border-border-soft bg-surface-overlay px-3 py-2 text-xs font-mono text-text-muted">
+          {transferNote}
+        </div>
+      )}
+
       {error && (
         <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs font-mono text-text">
           {error}
@@ -1167,6 +1271,28 @@ function ShareDialog({ corpusId, onClose }: ShareDialogProps) {
           Close
         </Button>
       </div>
+
+      <ConfirmDialog
+        open={!!transferTargetOrgId}
+        title="Transfer this corpus?"
+        body={
+          <>
+            <p>
+              <span className="font-mono">{corpusId}</span> will move into{" "}
+              <span className="font-semibold">{orgName(transferTargetOrgId)}</span>.
+            </p>
+            <p className="mt-2">
+              Org members will be able to see it. You will still see it via
+              your org membership but the org owns it.
+            </p>
+          </>
+        }
+        confirmLabel="Transfer"
+        cancelLabel="Cancel"
+        tone="danger"
+        onConfirm={() => void onTransferConfirm()}
+        onCancel={() => setTransferTargetOrgId(null)}
+      />
     </DialogShell>
   );
 }
