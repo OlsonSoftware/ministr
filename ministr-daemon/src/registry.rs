@@ -613,10 +613,11 @@ impl CorpusRegistry {
                     }
                     Err(e) => {
                         use std::error::Error as _;
+                        use std::fmt::Write as _;
                         let mut chain = format!("{e}");
                         let mut src: Option<&dyn std::error::Error> = e.source();
                         while let Some(s) = src {
-                            chain.push_str(&format!(" — caused by: {s}"));
+                            let _ = write!(chain, " — caused by: {s}");
                             src = s.source();
                         }
                         warn!(

@@ -201,6 +201,19 @@ pub enum Backend {
     Local(Arc<LocalBackend>),
     Daemon(Arc<DaemonBackend>),
     DaemonMulti(Arc<DaemonMultiBackend>),
+    /// F2.x-a — cloud mode. `default_service` answers calls with no
+    /// `project` argument (compatibility with single-corpus tools);
+    /// `registry` resolves a `project = corpus_id` argument through the
+    /// shared daemon registry, including the lazy blob-restore path
+    /// wired by `cmd_serve_http`. Restoring a corpus on demand means
+    /// every `/mcp` tool call observes the same source of truth the
+    /// REST surface does — without this variant the MCP layer routes
+    /// every call through `default_service`, which is bound to an
+    /// empty placeholder corpus on a fresh pod.
+    Registry {
+        default_service: Arc<QueryService>,
+        registry: Arc<ministr_daemon::registry::CorpusRegistry>,
+    },
 }
 
 impl Backend {
@@ -226,12 +239,28 @@ impl Backend {
         Self::DaemonMulti(Arc::new(multi))
     }
 
+    /// Construct a cloud-mode backend that dispatches per-call through
+    /// a shared [`CorpusRegistry`](ministr_daemon::registry::CorpusRegistry).
+    #[must_use]
+    pub fn registry(
+        default_service: Arc<QueryService>,
+        registry: Arc<ministr_daemon::registry::CorpusRegistry>,
+    ) -> Self {
+        Self::Registry {
+            default_service,
+            registry,
+        }
+    }
+
     /// Return the underlying [`QueryService`] if this is a local backend.
     /// Escape hatch for handlers not yet migrated to the trait.
     #[must_use]
     pub fn as_local(&self) -> Option<&Arc<QueryService>> {
         match self {
             Self::Local(b) => Some(b.service()),
+            Self::Registry {
+                default_service, ..
+            } => Some(default_service),
             Self::Daemon(_) | Self::DaemonMulti(_) => None,
         }
     }
@@ -245,7 +274,7 @@ impl Backend {
     #[must_use]
     pub fn daemon_for_project(&self, project: Option<&str>) -> Option<&Arc<DaemonBackend>> {
         match self {
-            Self::Local(_) => None,
+            Self::Local(_) | Self::Registry { .. } => None,
             Self::Daemon(b) => Some(b),
             Self::DaemonMulti(m) => Some(m.for_project(project)),
         }
@@ -257,7 +286,30 @@ impl Backend {
     pub fn linked_labels(&self) -> Vec<String> {
         match self {
             Self::DaemonMulti(m) => m.labels(),
-            Self::Local(_) | Self::Daemon(_) => Vec::new(),
+            Self::Local(_) | Self::Daemon(_) | Self::Registry { .. } => Vec::new(),
+        }
+    }
+
+    /// Resolve `project` (a `corpus_id` in registry mode) to a handle
+    /// whose owned `QueryService` should answer this call. Returns
+    /// `Err(default_service)` when `project` is `None` or the registry
+    /// can't produce a handle (unknown id / blob restore failure) —
+    /// matches `DaemonMultiBackend::for_project`'s typo-tolerance.
+    ///
+    /// The returned `Ok` arm carries the `Arc<CorpusHandle>` so the
+    /// caller keeps the handle alive across its `.await` on
+    /// `handle.service.<method>(…)`.
+    async fn resolve_registry_handle<'a>(
+        default_service: &'a Arc<QueryService>,
+        registry: &Arc<ministr_daemon::registry::CorpusRegistry>,
+        project: Option<&str>,
+    ) -> Result<Arc<ministr_daemon::registry::CorpusHandle>, &'a Arc<QueryService>> {
+        let Some(corpus_id) = project else {
+            return Err(default_service);
+        };
+        match registry.ensure_present(corpus_id).await {
+            Ok(handle) => Ok(handle),
+            Err(_) => Err(default_service),
         }
     }
 }
@@ -287,6 +339,13 @@ impl Backend {
             Self::Local(b) => b.survey(query, top_k).await,
             Self::Daemon(b) => b.survey(query, top_k).await,
             Self::DaemonMulti(m) => m.for_project(project).survey(query, top_k).await,
+            Self::Registry {
+                default_service,
+                registry,
+            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                Ok(handle) => Ok(handle.service.survey(query, top_k).await?),
+                Err(default) => Ok(default.survey(query, top_k).await?),
+            },
         }
     }
 
@@ -305,6 +364,16 @@ impl Backend {
                     .survey_with_exclude(query, top_k, exclude_ids)
                     .await
             }
+            Self::Registry {
+                default_service,
+                registry,
+            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                Ok(handle) => Ok(handle
+                    .service
+                    .survey_excluding(query, top_k, exclude_ids)
+                    .await?),
+                Err(default) => Ok(default.survey_excluding(query, top_k, exclude_ids).await?),
+            },
         }
     }
 
@@ -317,6 +386,13 @@ impl Backend {
             Self::Local(b) => b.read_section(section_id).await,
             Self::Daemon(b) => b.read_section(section_id).await,
             Self::DaemonMulti(m) => m.for_project(project).read_section(section_id).await,
+            Self::Registry {
+                default_service,
+                registry,
+            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                Ok(handle) => Ok(handle.service.read_section(section_id).await?),
+                Err(default) => Ok(default.read_section(section_id).await?),
+            },
         }
     }
 
@@ -334,6 +410,13 @@ impl Backend {
                     .extract_claims(section_id, query)
                     .await
             }
+            Self::Registry {
+                default_service,
+                registry,
+            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                Ok(handle) => Ok(handle.service.extract_claims(section_id, query).await?),
+                Err(default) => Ok(default.extract_claims(section_id, query).await?),
+            },
         }
     }
 
@@ -346,6 +429,13 @@ impl Backend {
             Self::Local(b) => b.search_symbols(filter).await,
             Self::Daemon(b) => b.search_symbols(filter).await,
             Self::DaemonMulti(m) => m.for_project(project).search_symbols(filter).await,
+            Self::Registry {
+                default_service,
+                registry,
+            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                Ok(handle) => Ok(handle.service.search_symbols(&filter).await?),
+                Err(default) => Ok(default.search_symbols(&filter).await?),
+            },
         }
     }
 
@@ -358,6 +448,13 @@ impl Backend {
             Self::Local(b) => b.definition(symbol_id).await,
             Self::Daemon(b) => b.definition(symbol_id).await,
             Self::DaemonMulti(m) => m.for_project(project).definition(symbol_id).await,
+            Self::Registry {
+                default_service,
+                registry,
+            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                Ok(handle) => Ok(handle.service.get_symbol_definition(symbol_id).await?),
+                Err(default) => Ok(default.get_symbol_definition(symbol_id).await?),
+            },
         }
     }
 
@@ -371,6 +468,16 @@ impl Backend {
             Self::Local(b) => b.references(symbol_id, ref_kind).await,
             Self::Daemon(b) => b.references(symbol_id, ref_kind).await,
             Self::DaemonMulti(m) => m.for_project(project).references(symbol_id, ref_kind).await,
+            Self::Registry {
+                default_service,
+                registry,
+            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                Ok(handle) => Ok(handle
+                    .service
+                    .get_symbol_references(symbol_id, ref_kind)
+                    .await?),
+                Err(default) => Ok(default.get_symbol_references(symbol_id, ref_kind).await?),
+            },
         }
     }
 
@@ -384,6 +491,13 @@ impl Backend {
             Self::Local(b) => b.impact(symbol_id, max_depth).await,
             Self::Daemon(b) => b.impact(symbol_id, max_depth).await,
             Self::DaemonMulti(m) => m.for_project(project).impact(symbol_id, max_depth).await,
+            Self::Registry {
+                default_service,
+                registry,
+            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                Ok(handle) => Ok(handle.service.compute_impact(symbol_id, max_depth).await?),
+                Err(default) => Ok(default.compute_impact(symbol_id, max_depth).await?),
+            },
         }
     }
 
@@ -403,6 +517,16 @@ impl Backend {
                     .dead_code(kind, module, min_lines, limit)
                     .await
             }
+            Self::Registry {
+                default_service,
+                registry,
+            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                Ok(handle) => Ok(handle
+                    .service
+                    .find_dead_code(kind, module, min_lines, limit)
+                    .await?),
+                Err(default) => Ok(default.find_dead_code(kind, module, min_lines, limit).await?),
+            },
         }
     }
 
@@ -415,6 +539,13 @@ impl Backend {
             Self::Local(b) => b.solid(params).await,
             Self::Daemon(b) => b.solid(params).await,
             Self::DaemonMulti(m) => m.for_project(project).solid(params).await,
+            Self::Registry {
+                default_service,
+                registry,
+            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                Ok(handle) => Ok(handle.service.detect_solid_violations(params).await?),
+                Err(default) => Ok(default.detect_solid_violations(params).await?),
+            },
         }
     }
 
@@ -432,6 +563,16 @@ impl Backend {
                     .related_claims(claim_id, relation_types)
                     .await
             }
+            Self::Registry {
+                default_service,
+                registry,
+            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                Ok(handle) => Ok(handle
+                    .service
+                    .related_claims(claim_id, relation_types)
+                    .await?),
+                Err(default) => Ok(default.related_claims(claim_id, relation_types).await?),
+            },
         }
     }
 
@@ -444,6 +585,13 @@ impl Backend {
             Self::Local(b) => b.compress(content_ids).await,
             Self::Daemon(b) => b.compress(content_ids).await,
             Self::DaemonMulti(m) => m.for_project(project).compress(content_ids).await,
+            Self::Registry {
+                default_service,
+                registry,
+            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                Ok(handle) => Ok(handle.service.compress_content(content_ids).await?),
+                Err(default) => Ok(default.compress_content(content_ids).await?),
+            },
         }
     }
 
@@ -456,6 +604,13 @@ impl Backend {
             Self::Local(b) => b.toc(document_id).await,
             Self::Daemon(b) => b.toc(document_id).await,
             Self::DaemonMulti(m) => m.for_project(project).toc(document_id).await,
+            Self::Registry {
+                default_service,
+                registry,
+            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                Ok(handle) => Ok(handle.service.toc(document_id).await?),
+                Err(default) => Ok(default.toc(document_id).await?),
+            },
         }
     }
 
@@ -475,6 +630,18 @@ impl Backend {
                     .bridges(query, kind, language, file_path)
                     .await
             }
+            Self::Registry {
+                default_service,
+                registry,
+            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                Ok(handle) => Ok(handle
+                    .service
+                    .query_bridges(query, kind, language, file_path)
+                    .await?),
+                Err(default) => Ok(default
+                    .query_bridges(query, kind, language, file_path)
+                    .await?),
+            },
         }
     }
 }
