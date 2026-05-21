@@ -21,6 +21,7 @@ import {
   LogIn,
   Plus,
   RefreshCw,
+  Share2,
   ShieldAlert,
   Trash2,
   X,
@@ -51,8 +52,10 @@ import { ConfirmDialog } from "../ui/confirm-dialog";
 import { OnboardingWizard } from "../onboarding/OnboardingWizard";
 import {
   cloudClient,
+  type CloudAclEntry,
   type CloudCorpusInfo,
   type CloudHealth,
+  type CloudOrg,
   type CloudProgressEvent,
   type CloudStatus,
   type CloudUsage,
@@ -529,6 +532,7 @@ function CorporaSection({ authenticated }: CorporaSectionProps) {
   const [registerOpen, setRegisterOpen] = useState(false);
   const [deleteCandidate, setDeleteCandidate] = useState<string | null>(null);
   const [progressFor, setProgressFor] = useState<string | null>(null);
+  const [shareFor, setShareFor] = useState<string | null>(null);
   const [busy, setBusy] = useState<null | "list" | "delete" | "reindex">(null);
 
   // F2.7 — onboarding wizard's "Clone first repo" step dispatches a
@@ -658,6 +662,7 @@ function CorporaSection({ authenticated }: CorporaSectionProps) {
           onDeleteRequest={setDeleteCandidate}
           onReindex={(id) => void onReindex(id)}
           onShowProgress={setProgressFor}
+          onShareRequest={setShareFor}
         />
       )}
 
@@ -686,6 +691,12 @@ function CorporaSection({ authenticated }: CorporaSectionProps) {
           onClose={() => setProgressFor(null)}
         />
       )}
+      {shareFor && (
+        <ShareDialog
+          corpusId={shareFor}
+          onClose={() => setShareFor(null)}
+        />
+      )}
 
       <ConfirmDialog
         open={!!deleteCandidate}
@@ -712,6 +723,7 @@ interface CorporaTableProps {
   onDeleteRequest: (corpusId: string) => void;
   onReindex: (corpusId: string) => void;
   onShowProgress: (corpusId: string) => void;
+  onShareRequest: (corpusId: string) => void;
 }
 
 function CorporaTable({
@@ -720,6 +732,7 @@ function CorporaTable({
   onDeleteRequest,
   onReindex,
   onShowProgress,
+  onShareRequest,
 }: CorporaTableProps) {
   return (
     <div className="rounded-md border border-border-soft bg-surface overflow-hidden">
@@ -729,7 +742,7 @@ function CorporaTable({
             <th className="px-3 py-2 font-semibold">Corpus</th>
             <th className="px-3 py-2 font-semibold">Source</th>
             <th className="px-3 py-2 font-semibold w-24">Status</th>
-            <th className="px-3 py-2 font-semibold w-32 text-right">Actions</th>
+            <th className="px-3 py-2 font-semibold w-40 text-right">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -772,6 +785,15 @@ function CorporaTable({
                     title="Reindex"
                   >
                     Reindex
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() => onShareRequest(c.corpus_id)}
+                    title="Share with org"
+                  >
+                    <Share2 className="size-3.5" />
                   </Button>
                   <Button
                     size="sm"
@@ -940,6 +962,190 @@ function RegisterDialog({ onClose, onSuccess }: RegisterDialogProps) {
         >
           {busy ? <Loader2 className="size-3.5 animate-spin" /> : null}
           Register
+        </Button>
+      </div>
+    </DialogShell>
+  );
+}
+
+interface ShareDialogProps {
+  corpusId: string;
+  onClose: () => void;
+}
+
+/**
+ * F3.2-ii — share a corpus with one of the user's orgs. Lists current
+ * shares so the owner can revoke; org dropdown filters to orgs the
+ * caller is a member of (the cloud rejects sharing with a non-member
+ * org with 403, so the dropdown mirrors what the server admits).
+ */
+function ShareDialog({ corpusId, onClose }: ShareDialogProps) {
+  const [orgs, setOrgs] = useState<CloudOrg[]>([]);
+  const [shares, setShares] = useState<CloudAclEntry[]>([]);
+  const [selectedOrgId, setSelectedOrgId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<null | "load" | "share" | "revoke">(null);
+
+  const refresh = useCallback(async () => {
+    setBusy("load");
+    setError(null);
+    try {
+      const [orgList, shareList] = await Promise.all([
+        cloudClient.listOrgs(),
+        cloudClient.listCorpusShares(corpusId),
+      ]);
+      setOrgs(orgList);
+      setShares(shareList);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }, [corpusId]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  // The cloud rejects sharing with an org the caller doesn't belong to
+  // (HTTP 403). Hide already-shared orgs from the picker so the owner
+  // doesn't waste a click on a duplicate POST (the backend is idempotent,
+  // but the UI shouldn't suggest a no-op).
+  const sharedOrgIds = useMemo(
+    () => new Set(shares.map((s) => s.org_id).filter((id): id is string => !!id)),
+    [shares],
+  );
+  const shareableOrgs = useMemo(
+    () => orgs.filter((o) => !sharedOrgIds.has(o.id)),
+    [orgs, sharedOrgIds],
+  );
+
+  const onShare = async () => {
+    if (!selectedOrgId) return;
+    setBusy("share");
+    setError(null);
+    try {
+      await cloudClient.shareCorpus(corpusId, selectedOrgId);
+      setSelectedOrgId("");
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onRevoke = async (orgId: string) => {
+    setBusy("revoke");
+    setError(null);
+    try {
+      await cloudClient.revokeCorpusShare(corpusId, orgId);
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const orgName = (orgId: string | null | undefined) =>
+    (orgId && orgs.find((o) => o.id === orgId)?.name) || orgId || "—";
+
+  return (
+    <DialogShell
+      title={`Share corpus`}
+      onClose={onClose}
+      hint={`Members of the selected org can read ${corpusId}. Revoke at any time.`}
+    >
+      <label className="flex flex-col gap-1.5">
+        <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+          Share with org
+        </span>
+        <select
+          value={selectedOrgId}
+          onChange={(e) => setSelectedOrgId(e.target.value)}
+          disabled={busy === "load" || shareableOrgs.length === 0}
+          className="h-9 px-3 rounded-md border border-border bg-surface font-mono text-sm text-text focus:outline-none focus:border-border-hover"
+        >
+          <option value="">
+            {busy === "load"
+              ? "Loading…"
+              : shareableOrgs.length === 0
+                ? orgs.length === 0
+                  ? "You're not in any orgs yet"
+                  : "Already shared with every org you're in"
+                : "Select an org…"}
+          </option>
+          {shareableOrgs.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.name} ({o.role})
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <div className="flex justify-end">
+        <Button
+          size="sm"
+          onClick={() => void onShare()}
+          disabled={!selectedOrgId || busy === "share"}
+        >
+          {busy === "share" ? <Loader2 className="size-3.5 animate-spin" /> : (
+            <Share2 className="size-3.5" />
+          )}
+          Share
+        </Button>
+      </div>
+
+      <div className="flex flex-col gap-1.5 border-t border-border-soft pt-3">
+        <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+          Current shares
+        </span>
+        {shares.length === 0 ? (
+          <div className="text-xs text-text-muted">
+            {busy === "load" ? "Loading…" : "Not shared with any org yet."}
+          </div>
+        ) : (
+          <ul className="flex flex-col gap-1.5">
+            {shares.map((s) => (
+              <li
+                key={`${s.org_id ?? s.user_id ?? "row"}-${s.created_at}`}
+                className="flex items-center justify-between rounded-md border border-border-soft bg-surface-overlay px-3 py-2"
+              >
+                <div className="flex flex-col">
+                  <span className="font-mono text-xs text-text">
+                    {orgName(s.org_id)}
+                  </span>
+                  <span className="text-xs text-text-muted">
+                    {s.scope} · granted {s.created_at.slice(0, 10)}
+                  </span>
+                </div>
+                {s.org_id && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => void onRevoke(s.org_id!)}
+                    disabled={busy === "revoke"}
+                    title="Revoke share"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {error && (
+        <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs font-mono text-text">
+          {error}
+        </div>
+      )}
+
+      <div className="flex justify-end gap-2 pt-1">
+        <Button size="sm" variant="ghost" onClick={onClose}>
+          Close
         </Button>
       </div>
     </DialogShell>

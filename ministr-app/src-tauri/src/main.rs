@@ -159,6 +159,10 @@ fn main() {
             commands_cloud::cloud_clone_repo,
             commands_cloud::cloud_unregister_corpus,
             commands_cloud::cloud_corpus_progress,
+            commands_cloud::cloud_list_orgs,
+            commands_cloud::cloud_share_corpus,
+            commands_cloud::cloud_list_corpus_shares,
+            commands_cloud::cloud_revoke_corpus_share,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ministr app");

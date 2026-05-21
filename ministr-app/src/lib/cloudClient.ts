@@ -40,6 +40,32 @@ export interface CloudUsage {
   today_partial: Array<{ kind: string; total: number }>;
 }
 
+/**
+ * Mirrors `ministr_cloud::orgs::routes::OrgSummary` (F3.1a). One org
+ * the calling user is a member of, with their role inside it.
+ */
+export interface CloudOrg {
+  id: string;
+  name: string;
+  plan_id: string;
+  /** `"owner" | "admin" | "member"` — the caller's role in the org. */
+  role: string;
+}
+
+/**
+ * Mirrors `ministr_cloud::orgs::corpus_acl::AclEntry` (F3.2-i). One grant on
+ * a corpus. v0 only mints org-side grants — `user_id` is reserved for future.
+ */
+export interface CloudAclEntry {
+  corpus_id: string;
+  org_id: string | null;
+  user_id: string | null;
+  scope: string;
+  granted_by: string;
+  /** ISO-8601 UTC. */
+  created_at: string;
+}
+
 /** Minimal subset of `ministr_api::corpus::CorpusInfo` the panel renders. */
 export interface CloudCorpusInfo {
   corpus_id: string;
@@ -145,6 +171,20 @@ export const cloudClient = {
     }),
   unregisterCorpus: (corpusId: string) =>
     invoke<void>("cloud_unregister_corpus", { corpusId }),
+  /** F3.1a — list orgs the caller is a member of, with their role. */
+  listOrgs: () => invoke<CloudOrg[]>("cloud_list_orgs"),
+  /**
+   * F3.2-ii — grant an org read access to a corpus. Caller must own the
+   * corpus AND be a member of the target org; the cloud enforces both.
+   */
+  shareCorpus: (corpusId: string, orgId: string) =>
+    invoke<CloudAclEntry>("cloud_share_corpus", { corpusId, orgId }),
+  /** F3.2-ii — list current ACL grants on a corpus (owner-only). */
+  listCorpusShares: (corpusId: string) =>
+    invoke<CloudAclEntry[]>("cloud_list_corpus_shares", { corpusId }),
+  /** F3.2-ii — revoke an org's grant. Idempotent on the server side. */
+  revokeCorpusShare: (corpusId: string, orgId: string) =>
+    invoke<void>("cloud_revoke_corpus_share", { corpusId, orgId }),
   /**
    * Open the SSE progress stream for a corpus on the remote server.
    * Returns the Channel; consumers attach `.onmessage` and let the

@@ -1172,6 +1172,149 @@ pub async fn cloud_corpus_progress(
     Ok(())
 }
 
+// ── F3.2-ii — Share corpus with org ─────────────────────────────────────────
+
+/// One org as returned by `GET /api/v1/orgs`. Mirrors
+/// `ministr_cloud::orgs::routes::OrgSummary`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CloudOrg {
+    pub id: String,
+    pub name: String,
+    pub plan_id: String,
+    pub role: String,
+}
+
+/// One ACL grant on a corpus. Mirrors
+/// `ministr_cloud::orgs::corpus_acl::AclEntry`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CloudAclEntry {
+    pub corpus_id: String,
+    pub org_id: Option<String>,
+    pub user_id: Option<String>,
+    pub scope: String,
+    pub granted_by: String,
+    pub created_at: String,
+}
+
+/// GET `/api/v1/orgs` — list orgs the caller is a member of, with their role.
+#[tauri::command]
+pub async fn cloud_list_orgs() -> Result<Vec<CloudOrg>, CommandError> {
+    let (client, endpoint, token) = authed_client(10)?;
+    let url = format!("{endpoint}/api/v1/orgs");
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("get {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("list orgs returned HTTP {}", resp.status()),
+        ));
+    }
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse orgs: {e}")))?;
+    let orgs = body
+        .get("orgs")
+        .cloned()
+        .unwrap_or(serde_json::Value::Array(Vec::new()));
+    serde_json::from_value::<Vec<CloudOrg>>(orgs)
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse orgs payload: {e}")))
+}
+
+/// POST `/api/v1/corpora/{id}/share` — grant an org read access to the corpus.
+///
+/// Caller must own the corpus AND be a member of the target org; the cloud
+/// enforces both. v0 admits `scope = "read"` only — the Tauri panel always
+/// sends "read", matching the backend's `ShareRequest` default.
+#[tauri::command]
+pub async fn cloud_share_corpus(
+    corpus_id: String,
+    org_id: String,
+) -> Result<CloudAclEntry, CommandError> {
+    let (client, endpoint, token) = authed_client(10)?;
+    let url = format!("{endpoint}/api/v1/corpora/{corpus_id}/share");
+    let body = serde_json::json!({ "org_id": org_id, "scope": "read" });
+    let resp = client
+        .post(&url)
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("post {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("share returned HTTP {}", resp.status()),
+        ));
+    }
+    let payload: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse share: {e}")))?;
+    let entry = payload.get("entry").cloned().unwrap_or(payload);
+    serde_json::from_value::<CloudAclEntry>(entry)
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse share entry: {e}")))
+}
+
+/// GET `/api/v1/corpora/{id}/share` — list current ACL grants on the corpus.
+/// Owner-only on the server side; the dialog surfaces this for revocation.
+#[tauri::command]
+pub async fn cloud_list_corpus_shares(
+    corpus_id: String,
+) -> Result<Vec<CloudAclEntry>, CommandError> {
+    let (client, endpoint, token) = authed_client(10)?;
+    let url = format!("{endpoint}/api/v1/corpora/{corpus_id}/share");
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("get {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("list shares returned HTTP {}", resp.status()),
+        ));
+    }
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse shares: {e}")))?;
+    let entries = body
+        .get("entries")
+        .cloned()
+        .unwrap_or(serde_json::Value::Array(Vec::new()));
+    serde_json::from_value::<Vec<CloudAclEntry>>(entries)
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse share entries: {e}")))
+}
+
+/// DELETE `/api/v1/corpora/{id}/share/{org_id}` — revoke an org's grant. Idempotent.
+#[tauri::command]
+pub async fn cloud_revoke_corpus_share(
+    corpus_id: String,
+    org_id: String,
+) -> Result<(), CommandError> {
+    let (client, endpoint, token) = authed_client(10)?;
+    let url = format!("{endpoint}/api/v1/corpora/{corpus_id}/share/{org_id}");
+    let resp = client
+        .delete(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("delete {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("revoke share returned HTTP {}", resp.status()),
+        ));
+    }
+    Ok(())
+}
+
 /// POST `/reindex` on the configured cloud endpoint. Returns the
 /// server-assigned `job_id` that can later be subscribed to via SSE.
 #[tauri::command]
