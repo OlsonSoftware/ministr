@@ -35,6 +35,8 @@ use std::sync::Arc;
 use axum::Json;
 use axum::Router;
 use axum::extract::{Extension, Path, Query, State};
+use axum::http::{HeaderMap, HeaderValue, header};
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use deadpool_postgres::Pool;
 use ministr_mcp::auth::tenant::Tenant;
@@ -99,11 +101,16 @@ pub struct OrgUsageQuery {
     pub days: Option<i32>,
 }
 
-/// Build the org-usage router. Mounted under no prefix; the route
-/// carries its full path verbatim. Owner/admin authz enforced inline.
+/// Build the org-usage router. Mounted under no prefix; the routes
+/// carry their full paths verbatim. Owner/admin authz enforced inline.
+///
+/// F3.3c adds `GET /api/v1/orgs/{id}/usage.csv` returning the same
+/// data as the JSON endpoint but rendered as RFC-4180 CSV for the
+/// finance-export flow.
 pub fn org_usage_routes(state: OrgUsageState) -> Router {
     Router::new()
         .route("/api/v1/orgs/{id}/usage", get(list_handler))
+        .route("/api/v1/orgs/{id}/usage.csv", get(csv_handler))
         .with_state(state)
 }
 
@@ -161,6 +168,116 @@ async fn list_handler(
         .await
         .map_err(OrgUsageApiError::Repo)?;
     Ok(Json(resp))
+}
+
+/// F3.3c — render `OrgUsageResponse` as the CSV finance hands to the
+/// accounts team. RFC-4180 quoting: any field containing `,`, `"`, or
+/// a newline is wrapped in double quotes and embedded quotes are
+/// doubled. Header row is fixed: `member,user_id,day,kind,total`.
+///
+/// Today's partial rows render with `day=today (partial)` so the spreadsheet
+/// preserves the distinction between rolled-up and live counters
+/// without forcing the reader to compare timestamps.
+#[must_use]
+pub fn usage_to_csv(resp: &OrgUsageResponse) -> String {
+    let mut out = String::from("member,user_id,day,kind,total\n");
+    for row in &resp.rollups {
+        push_csv_row(&mut out, &row.email, &row.user_id, &row.day, &row.kind, row.total);
+    }
+    for row in &resp.today_partial {
+        push_csv_row(
+            &mut out,
+            &row.email,
+            &row.user_id,
+            "today (partial)",
+            &row.kind,
+            row.total,
+        );
+    }
+    out
+}
+
+fn push_csv_row(out: &mut String, email: &str, user_id: &str, day: &str, kind: &str, total: i64) {
+    push_csv_field(out, email);
+    out.push(',');
+    push_csv_field(out, user_id);
+    out.push(',');
+    push_csv_field(out, day);
+    out.push(',');
+    push_csv_field(out, kind);
+    out.push(',');
+    out.push_str(&total.to_string());
+    out.push('\n');
+}
+
+fn push_csv_field(out: &mut String, value: &str) {
+    let needs_quote = value
+        .as_bytes()
+        .iter()
+        .any(|&b| matches!(b, b',' | b'"' | b'\n' | b'\r'));
+    if needs_quote {
+        out.push('"');
+        for ch in value.chars() {
+            if ch == '"' {
+                out.push('"');
+            }
+            out.push(ch);
+        }
+        out.push('"');
+    } else {
+        out.push_str(value);
+    }
+}
+
+async fn csv_handler(
+    State(state): State<OrgUsageState>,
+    tenant: Option<Extension<Tenant>>,
+    Path(org_id): Path<String>,
+    Query(q): Query<OrgUsageQuery>,
+) -> Result<Response, OrgUsageApiError> {
+    let Some(Extension(tenant)) = tenant else {
+        return Err(OrgUsageApiError::Unauthenticated);
+    };
+    let role = member_role(&state.pool, &org_id, &tenant.subject)
+        .await
+        .map_err(|e| OrgUsageApiError::Repo(e.to_string()))?;
+    if !matches!(role.as_deref(), Some("owner" | "admin")) {
+        return Err(OrgUsageApiError::Forbidden);
+    }
+    let days = q.days.unwrap_or(DEFAULT_USAGE_DAYS).clamp(1, 366);
+    let resp = fetch_org_usage(&state.pool, &org_id, days)
+        .await
+        .map_err(OrgUsageApiError::Repo)?;
+    let body = usage_to_csv(&resp);
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/csv; charset=utf-8"),
+    );
+    let disposition = format!(
+        "attachment; filename=\"org-{}-usage-{}d.csv\"",
+        sanitize_for_filename(&org_id),
+        days
+    );
+    if let Ok(value) = HeaderValue::from_str(&disposition) {
+        headers.insert(header::CONTENT_DISPOSITION, value);
+    }
+    Ok((headers, body).into_response())
+}
+
+/// Trim an org id to characters safe for a Content-Disposition filename.
+/// UUIDs pass through unchanged; anything weird collapses to `org`.
+fn sanitize_for_filename(org_id: &str) -> String {
+    let cleaned: String = org_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    if cleaned.is_empty() {
+        "org".to_string()
+    } else {
+        cleaned
+    }
 }
 
 /// Direct read used by [`list_handler`]. Exposed `pub` so the
@@ -272,6 +389,80 @@ mod tests {
         let q = OrgUsageQuery { days: Some(0) };
         let days = q.days.unwrap_or(DEFAULT_USAGE_DAYS).clamp(1, 366);
         assert_eq!(days, 1);
+    }
+
+    #[test]
+    fn csv_renders_header_and_two_sections() {
+        let resp = OrgUsageResponse {
+            org_id: "org-uuid".into(),
+            range_days: 30,
+            rollups: vec![OrgRollupRow {
+                user_id: "u1".into(),
+                email: "alice@x".into(),
+                day: "2026-05-21".into(),
+                kind: "query.served".into(),
+                total: 42,
+            }],
+            today_partial: vec![OrgPartialRow {
+                user_id: "u1".into(),
+                email: "alice@x".into(),
+                kind: "query.served".into(),
+                total: 7,
+            }],
+        };
+        let csv = usage_to_csv(&resp);
+        let mut lines = csv.lines();
+        assert_eq!(lines.next(), Some("member,user_id,day,kind,total"));
+        assert_eq!(lines.next(), Some("alice@x,u1,2026-05-21,query.served,42"));
+        // "today (partial)" has no comma/quote/newline so it doesn't need quoting.
+        assert_eq!(
+            lines.next(),
+            Some("alice@x,u1,today (partial),query.served,7")
+        );
+        assert!(lines.next().is_none());
+    }
+
+    #[test]
+    fn csv_quotes_commas_quotes_and_newlines() {
+        let resp = OrgUsageResponse {
+            org_id: "org".into(),
+            range_days: 1,
+            rollups: vec![OrgRollupRow {
+                user_id: "u1".into(),
+                email: "weird,\"name\"@x".into(),
+                day: "2026-05-21".into(),
+                kind: "with\nnewline".into(),
+                total: 1,
+            }],
+            today_partial: vec![],
+        };
+        let csv = usage_to_csv(&resp);
+        // Embedded quotes are doubled per RFC-4180; commas / newlines
+        // force the field into quotes.
+        assert!(csv.contains("\"weird,\"\"name\"\"@x\""));
+        assert!(csv.contains("\"with\nnewline\""));
+    }
+
+    #[test]
+    fn csv_empty_response_emits_header_only() {
+        let resp = OrgUsageResponse {
+            org_id: "org".into(),
+            range_days: 30,
+            rollups: vec![],
+            today_partial: vec![],
+        };
+        let csv = usage_to_csv(&resp);
+        assert_eq!(csv, "member,user_id,day,kind,total\n");
+    }
+
+    #[test]
+    fn filename_sanitizer_passes_uuid_blocks_punctuation() {
+        assert_eq!(
+            sanitize_for_filename("3f8c8e3e-1111-4222-9333-aaaabbbbcccc"),
+            "3f8c8e3e-1111-4222-9333-aaaabbbbcccc"
+        );
+        assert_eq!(sanitize_for_filename("../../etc/passwd"), "etcpasswd");
+        assert_eq!(sanitize_for_filename(""), "org");
     }
 
     #[test]
