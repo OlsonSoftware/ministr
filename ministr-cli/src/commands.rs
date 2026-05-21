@@ -813,6 +813,32 @@ pub(crate) async fn cmd_serve_http(
                 "audit endpoint mounted — GET /api/v1/orgs/{{id}}/audit"
             );
 
+            // F3.5a — outbound webhook subscriptions. Cloud-only;
+            // owner/admin-only authz inside the handlers. The
+            // dispatcher is built once and shared across requests so
+            // multiple deliveries reuse the same TLS pool.
+            match ministr_cloud::WebhookDispatcher::new() {
+                Ok(dispatcher) => {
+                    let webhooks_state = ministr_cloud::WebhooksState::new(
+                        Arc::clone(pool),
+                        Arc::new(dispatcher),
+                    );
+                    let webhooks_router = ministr_cloud::webhooks_routes(webhooks_state);
+                    let webhooks_protected = ministr_mcp::auth::scope_protected_router(
+                        webhooks_router,
+                        store.clone(),
+                        "ministr:read",
+                    );
+                    composed = composed.merge(webhooks_protected);
+                    tracing::info!(
+                        "webhook endpoints mounted — POST /api/v1/orgs/{{id}}/webhooks, GET/DELETE, POST /test"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "webhook dispatcher init failed; webhooks disabled");
+                }
+            }
+
             // F2.6 — Atlas v0 pilot. Manifest + per-slug query stubs.
             // Mounted behind `ministr:read` so any paid-tier token
             // admits; the F2.3 `AtlasAccessRule` runs higher up in the
