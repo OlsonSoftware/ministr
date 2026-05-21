@@ -12,6 +12,7 @@
 
 pub mod activity;
 pub mod api_key;
+pub mod audit;
 pub mod blob_sink;
 pub mod client;
 pub mod coherence;
@@ -31,6 +32,7 @@ pub mod usage;
 pub use api_key::{
     ApiKeyError, ApiKeyResolver, ResolveApiKeyFuture, ResolvedApiKey, TouchLastUsedFuture,
 };
+pub use audit::{AuditEntry, AuditSink};
 pub use blob_sink::BlobSink;
 pub use corpora_repo::{CorporaRepo, CorporaRepoError, CorpusRegistration, RepoFuture};
 pub use corpus_restorer::{CorpusRestoreError, CorpusRestorer, RestoreFuture};

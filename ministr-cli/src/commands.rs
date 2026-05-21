@@ -731,6 +731,16 @@ pub(crate) async fn cmd_serve_http(
                 }
             });
 
+            // F3.7a — build the audit sink once and share it across
+            // every cloud-side state that emits audit_events rows
+            // (orgs + api_keys today; corpus/daemon-write extension is
+            // F3.7b). Single `Arc<dyn AuditSink>` so all sites land
+            // in the same logical pipeline.
+            let audit_sink: Arc<dyn ministr_api::AuditSink> = Arc::new(
+                ministr_cloud::PostgresAuditSink::from_arc(Arc::clone(pool)),
+            );
+            tracing::info!("PostgresAuditSink wired — write actions emit audit_events rows");
+
             let mut orgs_state =
                 ministr_cloud::OrgsState::from_arc(Arc::clone(pool));
             if let Some(base) = cloud_env.cloud_base_url.as_deref() {
@@ -739,6 +749,7 @@ pub(crate) async fn cmd_serve_http(
             if let Some(stripe) = stripe_client.as_ref() {
                 orgs_state = orgs_state.with_stripe(Arc::clone(stripe));
             }
+            orgs_state = orgs_state.with_audit(Arc::clone(&audit_sink));
             let orgs_router = ministr_cloud::orgs_routes(orgs_state);
             let orgs_protected = ministr_mcp::auth::scope_protected_router(
                 orgs_router,
@@ -759,7 +770,8 @@ pub(crate) async fn cmd_serve_http(
             // + rate-limit layers are intentionally bypassed — the
             // same posture as the orgs router.
             let api_keys_router = ministr_cloud::api_keys_routes(
-                ministr_cloud::ApiKeysState { pool: (**pool).clone() },
+                ministr_cloud::ApiKeysState::new((**pool).clone())
+                    .with_audit(Arc::clone(&audit_sink)),
             );
             let api_keys_protected = ministr_mcp::auth::scope_protected_router(
                 api_keys_router,
@@ -769,6 +781,23 @@ pub(crate) async fn cmd_serve_http(
             composed = composed.merge(api_keys_protected);
             tracing::info!(
                 "api_keys endpoints mounted — POST /api/v1/api_keys, GET /api/v1/api_keys, DELETE /api/v1/api_keys/{{id}}"
+            );
+
+            // F3.7a — audit list endpoint. Owner / admin only;
+            // members get 403. Mounted behind `ministr:read` so any
+            // authenticated org member's token can call it; the
+            // role check inside is the actual gate.
+            let audit_router = ministr_cloud::audit_routes(
+                ministr_cloud::AuditState::from_arc(Arc::clone(pool)),
+            );
+            let audit_protected = ministr_mcp::auth::scope_protected_router(
+                audit_router,
+                store.clone(),
+                "ministr:read",
+            );
+            composed = composed.merge(audit_protected);
+            tracing::info!(
+                "audit endpoint mounted — GET /api/v1/orgs/{{id}}/audit"
             );
 
             // F2.6 — Atlas v0 pilot. Manifest + per-slug query stubs.
