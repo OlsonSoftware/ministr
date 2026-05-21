@@ -1327,6 +1327,53 @@ pub struct CloudTransferResponse {
     pub transferred: bool,
 }
 
+/// `POST /api/v1/orgs/{id}/transfer-personal-sub` response body.
+/// Mirrors `ministr_cloud::orgs::routes::TransferPersonalResponse`.
+/// `outcome` is one of `"cancelled"`, `"no_active_subscription"`, or
+/// `"no_personal_customer"`. `subscription_id` is present only on
+/// the `"cancelled"` outcome.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CloudTransferPersonalResponse {
+    pub outcome: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subscription_id: Option<String>,
+}
+
+/// `POST /api/v1/orgs/{id}/transfer-personal-sub` — cancel the
+/// caller's personal Pro subscription in preparation for them
+/// running Checkout for a Team plan on the org's Stripe Customer.
+/// Caller must be owner/admin of the target org. The cloud emits
+/// a `personal_sub.cancelled` audit event (delivered to the org's
+/// F3.5 webhook subscribers automatically) only on the `cancelled`
+/// outcome.
+#[tauri::command]
+pub async fn cloud_transfer_personal_sub(
+    org_id: String,
+) -> Result<CloudTransferPersonalResponse, CommandError> {
+    let (client, endpoint, token) = authed_client(10)?;
+    let url = format!("{endpoint}/api/v1/orgs/{org_id}/transfer-personal-sub");
+    let resp = client
+        .post(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("post {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("transfer-personal-sub returned HTTP {}", resp.status()),
+        ));
+    }
+    resp.json::<CloudTransferPersonalResponse>()
+        .await
+        .map_err(|e| {
+            CommandError::new(
+                ErrorKind::Io,
+                format!("parse transfer-personal-sub: {e}"),
+            )
+        })
+}
+
 /// POST `/api/v1/corpora/{id}/transfer` — flip the corpus's tenant
 /// to a target org. Caller must own the corpus AND be owner/admin of
 /// the target org. The cloud emits a `corpus.transferred` audit event

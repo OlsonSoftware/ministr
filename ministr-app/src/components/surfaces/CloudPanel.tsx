@@ -2263,8 +2263,15 @@ function OrgUsageSection({ authenticated }: OrgUsageSectionProps) {
   const [selectedOrgId, setSelectedOrgId] = useState<string>("");
   const [usage, setUsage] = useState<CloudOrgUsage | null>(null);
   const [listError, setListError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<null | "list-orgs" | "load-usage" | "export-csv">(null);
+  const [busy, setBusy] = useState<
+    null | "list-orgs" | "load-usage" | "export-csv" | "transfer-personal"
+  >(null);
   const [exportNote, setExportNote] = useState<string | null>(null);
+  // F3.1c-iii UI — transfer flow state. `confirmOpen` gates the
+  // ConfirmDialog so an accidental click on the section can't cancel
+  // a Stripe subscription. `note` carries the post-call inline status.
+  const [transferConfirmOpen, setTransferConfirmOpen] = useState(false);
+  const [transferNote, setTransferNote] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authenticated) {
@@ -2387,6 +2394,47 @@ function OrgUsageSection({ authenticated }: OrgUsageSectionProps) {
     }
   }, [authenticated, selectedOrgId]);
 
+  // F3.1c-iii UI — the selected org's role determines whether the
+  // Move-Pro action is offered. Cloud rejects member-only callers with
+  // 403; mirroring that here avoids a 403-feedback round-trip.
+  const selectedOrg = useMemo(
+    () => orgs.find((o) => o.id === selectedOrgId) ?? null,
+    [orgs, selectedOrgId],
+  );
+  const canTransferPersonal =
+    selectedOrg !== null &&
+    (selectedOrg.role === "owner" || selectedOrg.role === "admin");
+
+  const onTransferPersonalConfirm = useCallback(async () => {
+    if (!selectedOrgId) return;
+    setBusy("transfer-personal");
+    setListError(null);
+    setTransferNote(null);
+    try {
+      const resp = await cloudClient.transferPersonalSub(selectedOrgId);
+      const orgLabel = selectedOrg?.name ?? selectedOrgId;
+      if (resp.outcome === "cancelled") {
+        const subLabel = resp.subscription_id ?? "your subscription";
+        setTransferNote(
+          `Cancelled ${subLabel}. Run "Upgrade to Team" on ${orgLabel}'s billing surface to seat yourself.`,
+        );
+      } else if (resp.outcome === "no_active_subscription") {
+        setTransferNote("No active personal subscription to move.");
+      } else if (resp.outcome === "no_personal_customer") {
+        setTransferNote(
+          "No personal Stripe customer detected — sign in via the cloud flow first.",
+        );
+      } else {
+        setTransferNote(`Unexpected outcome: ${resp.outcome}`);
+      }
+      setTransferConfirmOpen(false);
+    } catch (e) {
+      setListError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }, [selectedOrgId, selectedOrg]);
+
   return (
     <section className="flex flex-col gap-3 border-t border-border-soft pt-5">
       <div className="flex items-center justify-between">
@@ -2471,6 +2519,50 @@ function OrgUsageSection({ authenticated }: OrgUsageSectionProps) {
         </label>
       )}
 
+      {/* F3.1c-iii UI — Move personal Pro into the selected org.
+          Restricted to owner/admin role on that org; cloud also enforces
+          this with a 403 so the UI gate mirrors the server gate. The
+          action is irreversible from this UI (Stripe Customer Portal can
+          re-subscribe), so the ConfirmDialog uses tone=danger. */}
+      {authenticated && canTransferPersonal && (
+        <div className="flex flex-col gap-1.5 border border-border-soft bg-surface-overlay rounded-md px-3 py-2">
+          <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+            Personal subscription
+          </span>
+          <p className="text-xs text-text-muted">
+            Cancel your personal Pro subscription so you can switch to{" "}
+            <span className="font-semibold">{selectedOrg?.name ?? "this org"}</span>'s
+            Team plan via Checkout. Stripe will refund the unused portion at the
+            next invoice cycle.
+          </p>
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setTransferNote(null);
+                setTransferConfirmOpen(true);
+              }}
+              disabled={busy === "transfer-personal"}
+              title="Cancel personal Pro to move to this org's Team plan"
+            >
+              {busy === "transfer-personal" ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <ArrowRight className="size-3.5" />
+              )}
+              Move my Pro into this org…
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {transferNote && (
+        <div className="rounded-md border border-border-soft bg-surface-overlay px-3 py-2 text-xs font-mono text-text-muted">
+          {transferNote}
+        </div>
+      )}
+
       {listError && (
         <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-text font-mono">
           {listError}
@@ -2500,6 +2592,31 @@ function OrgUsageSection({ authenticated }: OrgUsageSectionProps) {
           <UsageMembersTable members={members} />
         </>
       )}
+
+      <ConfirmDialog
+        open={transferConfirmOpen}
+        title="Cancel personal Pro?"
+        body={
+          <>
+            <p>
+              Your personal Pro subscription will be cancelled in Stripe so you
+              can run Checkout for{" "}
+              <span className="font-semibold">{selectedOrg?.name ?? "this org"}</span>'s
+              Team plan against the org's billing.
+            </p>
+            <p className="mt-2">
+              Stripe will issue a proration credit for the unused portion of
+              your Pro period; that credit is applied automatically when the
+              next invoice posts.
+            </p>
+          </>
+        }
+        confirmLabel="Cancel personal Pro"
+        cancelLabel="Keep Pro"
+        tone="danger"
+        onConfirm={() => void onTransferPersonalConfirm()}
+        onCancel={() => setTransferConfirmOpen(false)}
+      />
     </section>
   );
 }

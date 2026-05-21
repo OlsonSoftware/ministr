@@ -79,6 +79,18 @@ export interface CloudTransferResponse {
 }
 
 /**
+ * Mirrors `ministr_cloud::orgs::routes::TransferPersonalResponse` (F3.1c-iii).
+ * Discriminator-keyed outcome so the UI can render one of three
+ * messages without inspecting the optional id.
+ */
+export interface CloudTransferPersonalResponse {
+  /** `"cancelled"` | `"no_active_subscription"` | `"no_personal_customer"`. */
+  outcome: string;
+  /** Subscription id that was just cancelled. Present only on `outcome = "cancelled"`. */
+  subscription_id?: string;
+}
+
+/**
  * Mirrors `ministr_cloud::api_keys::ApiKeyRow` (F3.4a). One row in the
  * caller's active-keys list — secret fields (`hash`, raw token) are
  * deliberately absent; only `prefix` (first 8 chars of the random
@@ -299,6 +311,8 @@ export const cloudClient = {
    */
   transferCorpusToOrg: (corpusId: string, orgId: string) =>
     invoke<CloudTransferResponse>("cloud_transfer_corpus_to_org", { corpusId, orgId }),
+  transferPersonalSub: (orgId: string) =>
+    invoke<CloudTransferPersonalResponse>("cloud_transfer_personal_sub", { orgId }),
   /** F3.4b — list the caller's active service-account API keys. */
   listApiKeys: () => invoke<CloudApiKey[]>("cloud_list_api_keys"),
   /**
