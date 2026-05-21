@@ -792,6 +792,15 @@ pub(crate) async fn cmd_serve_http(
                 orgs_state = orgs_state.with_stripe(Arc::clone(stripe));
             }
             orgs_state = orgs_state.with_audit(Arc::clone(&audit_sink));
+            // F3.1b-ii-a — wire the default LogOnlyMailSender. A
+            // concrete provider (Resend / SES) lands in F3.1b-ii-b
+            // and replaces this `Arc` once the operator picks one.
+            let mailer: Arc<dyn ministr_api::MailSender> =
+                Arc::new(ministr_cloud::LogOnlyMailSender::new());
+            orgs_state = orgs_state.with_mailer(Arc::clone(&mailer));
+            tracing::info!(
+                "mail sender wired: LogOnlyMailSender (no provider configured — invite URLs are in the HTTP response body)"
+            );
             let orgs_router = ministr_cloud::orgs_routes(orgs_state);
             let orgs_protected = ministr_mcp::auth::scope_protected_router(
                 orgs_router,
