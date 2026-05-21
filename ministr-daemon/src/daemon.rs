@@ -7,6 +7,7 @@
 use std::convert::Infallible;
 use std::sync::Arc;
 
+use axum::Extension;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::middleware;
@@ -22,7 +23,9 @@ use crate::registry::RegistryError;
 use crate::transport::Listener;
 
 use ministr_api::ApiError;
+use ministr_api::TenantId;
 use ministr_api::activity::ActivityResponse;
+use ministr_api::audit::AuditEntry;
 use ministr_api::coherence::CoherenceEventsResponse;
 use ministr_api::corpus::{
     CloneRepoRequest, CloneRepoResponse, ListCorporaResponse, RegisterCorpusRequest,
@@ -425,12 +428,35 @@ fn split_section_id(section: &str) -> (&str, Option<&str>) {
     }
 }
 
+/// F3.7b — fire-and-forget audit emission helper. Emits an
+/// [`AuditEntry`] when the daemon's `AppState` has a sink wired
+/// (cloud mode); a no-op on self-hosted serve. `actor` comes from the
+/// per-request `TenantId` extension that auth middleware populates;
+/// `None` means the action was taken without authentication
+/// (self-hosted serve) and the audit row's `actor` column lands NULL.
+fn audit_corpus_action(
+    state: &AppState,
+    tenant: Option<&Extension<TenantId>>,
+    action: &str,
+    corpus_id: &str,
+) {
+    let Some(sink) = state.audit_sink.as_ref() else {
+        return;
+    };
+    let mut entry = AuditEntry::new(action, corpus_id);
+    if let Some(Extension(tid)) = tenant {
+        entry = entry.with_actor(&tid.0);
+    }
+    sink.record(entry);
+}
+
 // ---------------------------------------------------------------------------
 // Corpus management
 // ---------------------------------------------------------------------------
 
 async fn register_corpus(
     State(state): State<AppState>,
+    tenant: Option<Extension<TenantId>>,
     Json(req): Json<RegisterCorpusRequest>,
 ) -> impl IntoResponse {
     // PHASE3 chunk 4 — when an IndexJobSink is wired (cloud mode), do
@@ -479,6 +505,8 @@ async fn register_corpus(
             }
             false
         };
+        // F3.7b — audit corpus.created on the cloud-enqueue path.
+        audit_corpus_action(&state, tenant.as_ref(), "corpus.created", &corpus_id);
         return Json(RegisterCorpusResponse {
             corpus_id,
             indexing_started,
@@ -498,6 +526,8 @@ async fn register_corpus(
             {
                 handle.info.write().await.display_name = name;
             }
+            // F3.7b — audit corpus.created on the inline-register path.
+            audit_corpus_action(&state, tenant.as_ref(), "corpus.created", &corpus_id);
             Json(RegisterCorpusResponse {
                 corpus_id,
                 indexing_started,
@@ -527,6 +557,7 @@ async fn register_corpus(
 async fn clone_repo(
     State(state): State<AppState>,
     Path(parent_id): Path<String>,
+    tenant: Option<Extension<TenantId>>,
     Json(req): Json<CloneRepoRequest>,
 ) -> impl IntoResponse {
     // PHASE3 chunk 4 — cloud-mode enqueue path. The serve pod no
@@ -581,6 +612,8 @@ async fn clone_repo(
             return err(StatusCode::INTERNAL_SERVER_ERROR, "enqueue_failed", e)
                 .into_response();
         }
+        // F3.7b — audit corpus.cloned on the cloud-enqueue path.
+        audit_corpus_action(&state, tenant.as_ref(), "corpus.cloned", &corpus_id);
         // Response carries placeholders for the worker-derived fields
         // (clone_dir, commit_sha, branch) — those are unknown until
         // the worker clones. The progress SSE surfaces the transitions.
@@ -726,6 +759,9 @@ async fn clone_repo(
         );
         false
     };
+
+    // F3.7b — audit corpus.cloned on the inline clone path.
+    audit_corpus_action(&state, tenant.as_ref(), "corpus.cloned", &new_corpus_id);
 
     Json(CloneRepoResponse {
         corpus_id: new_corpus_id,
@@ -911,9 +947,16 @@ async fn corpus_status(State(state): State<AppState>, Path(id): Path<String>) ->
 async fn unregister_corpus(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    tenant: Option<Extension<TenantId>>,
 ) -> impl IntoResponse {
     match state.registry.unregister(&id).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => {
+            // F3.7b — audit corpus.deleted only on actual removal. A
+            // re-DELETE that misses falls through to the NotFound arm
+            // below and never pollutes the audit feed.
+            audit_corpus_action(&state, tenant.as_ref(), "corpus.deleted", &id);
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(e) => err(StatusCode::NOT_FOUND, "not_found", e).into_response(),
     }
 }
