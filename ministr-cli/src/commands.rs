@@ -380,9 +380,25 @@ pub(crate) async fn cmd_serve_http(
     // shadows. Mounted unconditionally (self-hosted users can also
     // export sessions for debugging); scope-gated as `ministr:read`
     // below alongside the orgs router.
-    let session_export_router = ministr_mcp::sessions::session_export_routes(
-        ministr_mcp::sessions::SessionExportState::new(Arc::clone(&a2a_registry)),
-    );
+    //
+    // F6.2-b — when `cloud_pool` is_some, attach the
+    // `PostgresDropsLedger` so the bundle's `drops.jsonl` is
+    // populated from the persisted ledger (F6.1-d). Self-hosted serve
+    // leaves the ledger `None` and the bundle ships the F6.2-a shape
+    // (manifest + delivered only).
+    let session_export_state = {
+        let mut state =
+            ministr_mcp::sessions::SessionExportState::new(Arc::clone(&a2a_registry));
+        if let Some(pool) = cloud_pool.as_ref() {
+            let ledger: Arc<dyn ministr_api::DropsLedger> = Arc::new(
+                ministr_cloud::PostgresDropsLedger::from_arc(Arc::clone(pool)),
+            );
+            state = state.with_drops_ledger(ledger);
+        }
+        state
+    };
+    let session_export_router =
+        ministr_mcp::sessions::session_export_routes(session_export_state);
 
     let admin_state = build_admin_state(&cloud_env, corpus_paths.len())?;
     let admin_public = ministr_mcp::admin::admin_public_routes(admin_state.clone());

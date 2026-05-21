@@ -42,6 +42,7 @@ use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
+use ministr_api::DropsLedger;
 use ministr_core::session::{Session, SessionEntry, SessionRegistry, UsageTracker};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -114,11 +115,14 @@ fn pressure_label(level: ministr_core::session::UsageLevel) -> String {
     }
 }
 
-/// Build the tar bytes for a session bundle.
+/// Build the tar bytes for a session bundle (sync, drops-less).
 ///
 /// Two entries: `manifest.json` (single JSON object) and
 /// `delivered.jsonl` (one `DeliveredItem` JSON per line, ordered by
 /// `turn_delivered` ascending for stable replay).
+///
+/// Use [`build_session_bundle_with_drops`] when a drops ledger is
+/// wired and the bundle should also carry `drops.jsonl`.
 ///
 /// # Errors
 ///
@@ -131,20 +135,91 @@ pub fn build_session_bundle(
     session_id: &str,
     entry: &SessionEntry,
 ) -> Result<Vec<u8>, String> {
+    assemble_bundle_tar(session_id, entry, None)
+}
+
+/// F6.2-b — async wrapper that augments the bundle with `drops.jsonl`
+/// when a [`DropsLedger`] backend is wired and a tenant is in scope.
+///
+/// Behaviour matrix:
+/// - `ledger=Some` + `tenant_id=Some` → queries the ledger via
+///   `list_for_session`; on success, appends `drops.jsonl` to the
+///   tar (one [`ministr_api::DropEntry`] JSON per line, ledger's
+///   own oldest-first order). On ledger error, logs at warn and
+///   falls through to the no-drops shape so a Postgres hiccup
+///   doesn't fail the export entirely.
+/// - `ledger=None` or `tenant_id=None` → no `drops.jsonl` entry;
+///   bundle shape matches [`build_session_bundle`].
+///
+/// # Errors
+///
+/// Same shape as [`build_session_bundle`] — only tar/serde failures
+/// surface; ledger storage errors are swallowed (with a warn log).
+pub async fn build_session_bundle_with_drops(
+    session_id: &str,
+    entry: &SessionEntry,
+    ledger: Option<&dyn DropsLedger>,
+    tenant_id: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let drops_bytes = match (ledger, tenant_id) {
+        (Some(l), Some(tid)) => match l.list_for_session(tid, session_id).await {
+            Ok(entries) => Some(serialize_drops_jsonl(&entries)?),
+            Err(e) => {
+                warn!(
+                    error = ?e,
+                    session_id = %session_id,
+                    tenant_id = %tid,
+                    "drops ledger list_for_session failed — exporting bundle without drops",
+                );
+                None
+            }
+        },
+        _ => None,
+    };
+    assemble_bundle_tar(session_id, entry, drops_bytes.as_deref())
+}
+
+/// Internal — assemble the tar from already-serialised pieces. Shared
+/// between the sync and async public APIs so the entry order +
+/// header policy stay identical.
+fn assemble_bundle_tar(
+    session_id: &str,
+    entry: &SessionEntry,
+    drops_jsonl: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
     let manifest = SessionBundleManifest::from_entry(session_id, entry);
     let manifest_json = serde_json::to_vec_pretty(&manifest)
         .map_err(|e| format!("serialize manifest: {e}"))?;
     let delivered_jsonl = build_delivered_jsonl(&entry.session)?;
 
-    let mut buf: Vec<u8> = Vec::with_capacity(manifest_json.len() + delivered_jsonl.len() + 4096);
+    let drops_len = drops_jsonl.map_or(0, <[u8]>::len);
+    let mut buf: Vec<u8> =
+        Vec::with_capacity(manifest_json.len() + delivered_jsonl.len() + drops_len + 4096);
     {
         let cursor = Cursor::new(&mut buf);
         let mut builder = tar::Builder::new(cursor);
         append_tar_entry(&mut builder, "manifest.json", &manifest_json)?;
         append_tar_entry(&mut builder, "delivered.jsonl", &delivered_jsonl)?;
+        if let Some(bytes) = drops_jsonl {
+            append_tar_entry(&mut builder, "drops.jsonl", bytes)?;
+        }
         builder.finish().map_err(|e| format!("tar finish: {e}"))?;
     }
     Ok(buf)
+}
+
+/// Serialise a slice of [`ministr_api::DropEntry`] into `drops.jsonl`
+/// bytes. Preserves the ledger's iteration order (oldest-first per
+/// the trait contract).
+fn serialize_drops_jsonl(entries: &[ministr_api::DropEntry]) -> Result<Vec<u8>, String> {
+    let mut out: Vec<u8> = Vec::new();
+    for entry in entries {
+        let line = serde_json::to_vec(entry)
+            .map_err(|e| format!("serialize drop: {e}"))?;
+        out.extend_from_slice(&line);
+        out.push(b'\n');
+    }
+    Ok(out)
 }
 
 /// Build the `delivered.jsonl` body: one JSON-serialised
@@ -186,17 +261,34 @@ fn append_tar_entry<W: std::io::Write>(
     Ok(())
 }
 
-/// State the export route needs — just the shared session registry.
-/// `cmd_serve_http` already threads the same `Arc<Mutex<SessionRegistry>>`
-/// through `MinistrServer`; the export router clones that Arc.
+/// State the export route needs — the shared session registry and an
+/// optional drops ledger (F6.2-b). `cmd_serve_http` threads the same
+/// `Arc<Mutex<SessionRegistry>>` through `MinistrServer`; the export
+/// router clones that Arc. The ledger is `None` on self-hosted serve
+/// (no Postgres) and the bundle falls back to the F6.2-a shape.
 #[derive(Clone)]
 pub struct SessionExportState {
     pub registry: Arc<Mutex<SessionRegistry>>,
+    pub ledger: Option<Arc<dyn DropsLedger>>,
 }
 
 impl SessionExportState {
+    #[must_use]
     pub fn new(registry: Arc<Mutex<SessionRegistry>>) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            ledger: None,
+        }
+    }
+
+    /// F6.2-b — attach a drops ledger so `handle_export` augments the
+    /// bundle with `drops.jsonl`. Cloud `cmd_serve_http` wires
+    /// `PostgresDropsLedger` here when `cloud_pool` `is_some`; self-
+    /// hosted leaves the field `None`.
+    #[must_use]
+    pub fn with_drops_ledger(mut self, ledger: Arc<dyn DropsLedger>) -> Self {
+        self.ledger = Some(ledger);
+        self
     }
 }
 
@@ -212,17 +304,29 @@ async fn handle_export(
     State(state): State<SessionExportState>,
     Path(session_id): Path<String>,
 ) -> Response {
+    // F6.2-b — read the tenant scope BEFORE locking the registry so
+    // we don't hold the mutex across a `tenant_scope::current` call
+    // (cheap today but keeps the lock window minimal).
+    let tenant_id = crate::tenant_scope::current();
+
     let reg = state.registry.lock().await;
     let Some(entry) = reg.get_session(&session_id) else {
         drop(reg);
         return (StatusCode::NOT_FOUND, "session not found").into_response();
     };
 
-    let bundle = match build_session_bundle(&session_id, entry) {
+    let bundle = match build_session_bundle_with_drops(
+        &session_id,
+        entry,
+        state.ledger.as_deref().map(|l| l as &dyn DropsLedger),
+        tenant_id.as_deref(),
+    )
+    .await
+    {
         Ok(bytes) => bytes,
         Err(e) => {
             drop(reg);
-            warn!(error = %e, session_id = %session_id, "build_session_bundle failed");
+            warn!(error = %e, session_id = %session_id, "build_session_bundle_with_drops failed");
             return (StatusCode::INTERNAL_SERVER_ERROR, "build bundle failed").into_response();
         }
     };
@@ -371,5 +475,184 @@ mod tests {
         let parsed: SessionBundleManifest =
             serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed, manifest);
+    }
+
+    // ── F6.2-b drops integration tests ─────────────────────────────────
+
+    use ministr_api::{
+        AppendDropFuture, DropEntry, DropsLedgerError, ListDropsFuture,
+    };
+    use std::sync::Mutex as StdMutex;
+
+    /// Test-only ledger that returns a fixed slice of drops on
+    /// `list_for_session`. Mirrors the `StubLedger` pattern from
+    /// `registry.rs::tests` but exposes a `push` setter so the
+    /// test can pre-seed the response.
+    #[derive(Debug, Default)]
+    struct StubDropsLedger {
+        rows: StdMutex<Vec<DropEntry>>,
+    }
+
+    impl StubDropsLedger {
+        fn push(&self, entry: DropEntry) {
+            self.rows
+                .lock()
+                .expect("stub drops ledger mutex never poisoned")
+                .push(entry);
+        }
+    }
+
+    impl DropsLedger for StubDropsLedger {
+        fn append<'a>(&'a self, entry: &'a DropEntry) -> AppendDropFuture<'a> {
+            let owned = entry.clone();
+            Box::pin(async move {
+                self.rows
+                    .lock()
+                    .expect("stub drops ledger mutex never poisoned")
+                    .push(owned);
+                Ok::<(), DropsLedgerError>(())
+            })
+        }
+
+        fn list_for_session<'a>(
+            &'a self,
+            tenant_id: &'a str,
+            session_id: &'a str,
+        ) -> ListDropsFuture<'a> {
+            Box::pin(async move {
+                let rows = self
+                    .rows
+                    .lock()
+                    .expect("stub drops ledger mutex never poisoned");
+                Ok(rows
+                    .iter()
+                    .filter(|r| r.tenant_id == tenant_id && r.session_id == session_id)
+                    .cloned()
+                    .collect())
+            })
+        }
+    }
+
+    /// F6.2-b — when both a ledger and a tenant scope are present, the
+    /// bundle gains a `drops.jsonl` with one line per ledger entry.
+    #[tokio::test]
+    async fn bundle_includes_drops_when_ledger_wired_and_tenant_scoped() {
+        let mut reg = fresh_registry();
+        reg.create_session("agent-d", None, AccessMode::ReadWrite);
+        let entry = reg.get_session("agent-d").expect("entry");
+
+        let ledger = Arc::new(StubDropsLedger::default());
+        ledger.push(DropEntry {
+            session_id: "agent-d".into(),
+            tenant_id: "tenant-x".into(),
+            claim_id: "docs/a.md#x".into(),
+            evicted_at: "2026-05-21T00:00:00Z".into(),
+        });
+        ledger.push(DropEntry {
+            session_id: "agent-d".into(),
+            tenant_id: "tenant-x".into(),
+            claim_id: "docs/b.md#y".into(),
+            evicted_at: "2026-05-21T00:01:00Z".into(),
+        });
+
+        let bytes = build_session_bundle_with_drops(
+            "agent-d",
+            entry,
+            Some(ledger.as_ref() as &dyn DropsLedger),
+            Some("tenant-x"),
+        )
+        .await
+        .expect("build with drops");
+        let entries = extract_tar_entries(&bytes);
+        assert!(
+            entries.contains_key("drops.jsonl"),
+            "tar must carry drops.jsonl when ledger+tenant present",
+        );
+        let body = String::from_utf8(entries["drops.jsonl"].clone()).expect("utf8");
+        let lines: Vec<&str> = body.lines().collect();
+        assert_eq!(lines.len(), 2, "exactly two drops");
+        assert!(lines[0].contains("\"claim_id\":\"docs/a.md#x\""));
+        assert!(lines[1].contains("\"claim_id\":\"docs/b.md#y\""));
+    }
+
+    /// F6.2-b — no ledger wired ⇒ bundle matches the F6.2-a shape
+    /// (no `drops.jsonl` entry).
+    #[tokio::test]
+    async fn bundle_omits_drops_when_no_ledger() {
+        let mut reg = fresh_registry();
+        reg.create_session("agent-no-ledger", None, AccessMode::ReadWrite);
+        let entry = reg.get_session("agent-no-ledger").expect("entry");
+
+        let bytes = build_session_bundle_with_drops(
+            "agent-no-ledger",
+            entry,
+            None,
+            Some("tenant-x"),
+        )
+        .await
+        .expect("build");
+        let entries = extract_tar_entries(&bytes);
+        assert!(entries.contains_key("manifest.json"));
+        assert!(entries.contains_key("delivered.jsonl"));
+        assert!(
+            !entries.contains_key("drops.jsonl"),
+            "no ledger ⇒ no drops.jsonl",
+        );
+    }
+
+    /// F6.2-b — ledger wired but no tenant scope ⇒ bundle omits drops
+    /// (can't look up by PK without a tenant id). Self-hosted serve
+    /// lands here.
+    #[tokio::test]
+    async fn bundle_omits_drops_when_no_tenant_scope() {
+        let mut reg = fresh_registry();
+        reg.create_session("agent-no-tenant", None, AccessMode::ReadWrite);
+        let entry = reg.get_session("agent-no-tenant").expect("entry");
+        let ledger = Arc::new(StubDropsLedger::default());
+
+        let bytes = build_session_bundle_with_drops(
+            "agent-no-tenant",
+            entry,
+            Some(ledger.as_ref() as &dyn DropsLedger),
+            None,
+        )
+        .await
+        .expect("build");
+        let entries = extract_tar_entries(&bytes);
+        assert!(
+            !entries.contains_key("drops.jsonl"),
+            "no tenant ⇒ no drops.jsonl",
+        );
+    }
+
+    /// F6.2-b — ledger returns zero entries for the session ⇒ bundle
+    /// still ships a `drops.jsonl` entry (just empty). Matches the
+    /// shape of the `delivered.jsonl` empty case from F6.2-a so the
+    /// inspector can branch on file-present rather than file-content.
+    #[tokio::test]
+    async fn bundle_includes_empty_drops_jsonl_when_ledger_returns_zero() {
+        let mut reg = fresh_registry();
+        reg.create_session("agent-zero", None, AccessMode::ReadWrite);
+        let entry = reg.get_session("agent-zero").expect("entry");
+        let ledger = Arc::new(StubDropsLedger::default());
+        // No `push` — ledger returns Ok(vec![]).
+
+        let bytes = build_session_bundle_with_drops(
+            "agent-zero",
+            entry,
+            Some(ledger.as_ref() as &dyn DropsLedger),
+            Some("tenant-x"),
+        )
+        .await
+        .expect("build");
+        let entries = extract_tar_entries(&bytes);
+        assert!(
+            entries.contains_key("drops.jsonl"),
+            "ledger queried ⇒ drops.jsonl entry always present (even when empty)",
+        );
+        assert!(
+            entries["drops.jsonl"].is_empty(),
+            "no rows ⇒ zero-line drops.jsonl",
+        );
     }
 }
