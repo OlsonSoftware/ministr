@@ -131,6 +131,15 @@ impl SessionRegistry {
         self
     }
 
+    /// F6.1-g — post-construction setter for the storage backend.
+    /// Mirrors [`Self::with_storage`] but takes `&mut self` so callers
+    /// that hold the registry behind an `Arc<Mutex<...>>` (e.g. the
+    /// MCP server's async builder path) can attach a backend at boot
+    /// without re-constructing the registry.
+    pub fn set_storage(&mut self, storage: Arc<dyn SessionStorage>) {
+        self.storage = Some(storage);
+    }
+
     /// F6.1-d-b — wire a durable [`DropsLedger`] backend so the
     /// registry can persist eviction events and hydrate them on
     /// resume. Self-hosted serve leaves this `None` and drops live
@@ -140,6 +149,13 @@ impl SessionRegistry {
     pub fn with_drops_ledger(mut self, ledger: Arc<dyn DropsLedger>) -> Self {
         self.drops_ledger = Some(ledger);
         self
+    }
+
+    /// F6.1-g — post-construction setter for the drops ledger backend.
+    /// Mirrors [`Self::with_drops_ledger`] for the same reason as
+    /// [`Self::set_storage`].
+    pub fn set_drops_ledger(&mut self, ledger: Arc<dyn DropsLedger>) {
+        self.drops_ledger = Some(ledger);
     }
 
     /// F6.1-d-b — fire-and-forget batch append of drop events.
@@ -589,6 +605,18 @@ mod tests {
         );
     }
 
+    #[test]
+    fn set_storage_populates_field_on_existing_registry() {
+        let stub = Arc::new(StubStorage::default());
+        let mut registry = default_registry();
+        assert!(registry.storage.is_none(), "default has no storage");
+        registry.set_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
+        assert!(
+            registry.storage.is_some(),
+            "set_storage should populate the field on &mut self",
+        );
+    }
+
     #[tokio::test]
     async fn try_restore_returns_none_when_session_already_in_memory() {
         let stub = Arc::new(StubStorage::default());
@@ -868,6 +896,21 @@ mod tests {
         assert!(
             registry.drops_ledger.is_some(),
             "with_drops_ledger should populate the field",
+        );
+    }
+
+    #[test]
+    fn set_drops_ledger_populates_field_on_existing_registry() {
+        let stub = Arc::new(StubLedger::default());
+        let mut registry = default_registry();
+        assert!(
+            registry.drops_ledger.is_none(),
+            "default has no drops ledger"
+        );
+        registry.set_drops_ledger(Arc::clone(&stub) as Arc<dyn DropsLedger>);
+        assert!(
+            registry.drops_ledger.is_some(),
+            "set_drops_ledger should populate the field on &mut self",
         );
     }
 

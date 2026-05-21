@@ -284,6 +284,29 @@ pub(crate) async fn cmd_serve_http(
         server.with_corpus_registry(Arc::clone(&corpus_registry))
     };
 
+    // F6.1-g — attach the Postgres-backed agent-session backends so the
+    // helpers landed in F6.1-d-c (drops), F6.1-e (snapshot persist), and
+    // F6.1-f (lazy restore) actually round-trip through durable storage.
+    // Self-hosted serve leaves cloud_pool = None and both backends stay
+    // None on the registry; the F6.1-* helpers each collapse to a no-op
+    // in that branch.
+    let server = if let Some(pool) = cloud_pool.as_ref() {
+        let storage: std::sync::Arc<dyn ministr_api::SessionStorage> = std::sync::Arc::new(
+            ministr_cloud::PostgresSessionStorage::from_arc(Arc::clone(pool)),
+        );
+        let ledger: std::sync::Arc<dyn ministr_api::DropsLedger> = std::sync::Arc::new(
+            ministr_cloud::PostgresDropsLedger::from_arc(Arc::clone(pool)),
+        );
+        let server = server.with_session_storage(storage).await;
+        let server = server.with_session_drops_ledger(ledger).await;
+        tracing::info!(
+            "PostgresSessionStorage + PostgresDropsLedger wired — agent sessions persist + restore across pod recycle"
+        );
+        server
+    } else {
+        server
+    };
+
     let ingestion_progress = server.ingestion_progress_arc();
 
     // Extract Arcs before moving server into the factory closure. The HTTP
