@@ -56,6 +56,7 @@ pub mod quota;
 pub mod ratelimit;
 pub mod tenant_filter;
 pub mod users;
+pub mod webhooks;
 
 pub use api_keys::{
     ApiKeyRow, ApiKeysError, ApiKeysState, CreatedApiKey, DEFAULT_API_KEY_SCOPE,
@@ -101,6 +102,11 @@ pub use orgs::{
 };
 pub use users::{
     set_stripe_customer_id, upsert_github_user, UserError, UserRow, DEFAULT_GITHUB_SIGNIN_PLAN,
+};
+pub use webhooks::{
+    CreatedSubscription, DeliveryOutcome, WebhookDispatcher, WebhookError, WebhookSubscription,
+    WebhooksState, create_subscription, delete_subscription, list_subscriptions, mark_delivered,
+    sign_payload, subscription_secret, webhooks_routes,
 };
 
 /// Re-exported from `ministr-mcp` (MIT) so the auth middleware in the
