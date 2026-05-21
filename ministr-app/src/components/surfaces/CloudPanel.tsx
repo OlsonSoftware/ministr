@@ -15,8 +15,10 @@ import {
   ChevronDown,
   ChevronRight,
   CloudOff,
+  Copy,
   CreditCard,
   GitBranch,
+  Key,
   Loader2,
   LogIn,
   Plus,
@@ -53,7 +55,9 @@ import { OnboardingWizard } from "../onboarding/OnboardingWizard";
 import {
   cloudClient,
   type CloudAclEntry,
+  type CloudApiKey,
   type CloudCorpusInfo,
+  type CloudCreatedApiKey,
   type CloudHealth,
   type CloudOrg,
   type CloudProgressEvent,
@@ -503,6 +507,8 @@ export function CloudPanel() {
       </section>
 
       <CorporaSection authenticated={!!status?.authenticated} />
+
+      <ApiKeysSection authenticated={!!status?.authenticated} />
 
       <section className="flex flex-col gap-2 border-t border-border-soft pt-5">
         <Button
@@ -1146,6 +1152,355 @@ function ShareDialog({ corpusId, onClose }: ShareDialogProps) {
       <div className="flex justify-end gap-2 pt-1">
         <Button size="sm" variant="ghost" onClick={onClose}>
           Close
+        </Button>
+      </div>
+    </DialogShell>
+  );
+}
+
+// ── API keys section (F3.4b) ───────────────────────────────────────────────
+
+interface ApiKeysSectionProps {
+  authenticated: boolean;
+}
+
+/**
+ * F3.4b — service-account API keys management surface. Lists the
+ * caller's active keys (showing only prefix + last_used), lets them
+ * mint a new key (secret shown once), and revoke existing ones.
+ *
+ * SOLID note: state is local to the section — CloudPanel's parent does
+ * not need to know about API keys. Mirrors CorporaSection's shape.
+ */
+function ApiKeysSection({ authenticated }: ApiKeysSectionProps) {
+  const [keys, setKeys] = useState<CloudApiKey[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [revokeCandidate, setRevokeCandidate] = useState<string | null>(null);
+  const [createdKey, setCreatedKey] = useState<CloudCreatedApiKey | null>(null);
+  const [busy, setBusy] = useState<null | "list" | "revoke">(null);
+
+  const refresh = useCallback(async () => {
+    if (!authenticated) {
+      setKeys([]);
+      return;
+    }
+    setBusy("list");
+    setListError(null);
+    try {
+      setKeys(await cloudClient.listApiKeys());
+    } catch (e) {
+      setListError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }, [authenticated]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const onRevoke = async () => {
+    if (!revokeCandidate) return;
+    setBusy("revoke");
+    try {
+      await cloudClient.revokeApiKey(revokeCandidate);
+      setRevokeCandidate(null);
+      await refresh();
+    } catch (e) {
+      setListError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section className="flex flex-col gap-3 border-t border-border-soft pt-5">
+      <div className="flex items-center justify-between">
+        <h3 className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+          API keys
+        </h3>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={refresh}
+            disabled={!authenticated || busy === "list"}
+          >
+            {busy === "list" ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="size-3.5" />
+            )}
+            Refresh
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => setCreateOpen(true)}
+            disabled={!authenticated}
+          >
+            <Plus className="size-3.5" />
+            New key
+          </Button>
+        </div>
+      </div>
+
+      <p className="text-xs text-text-muted">
+        Long-lived service-account tokens (
+        <span className="font-mono">mst_pk_…</span>) authenticate the same
+        way as your session token. Use them for CI / scripts that need
+        to call the cloud without an interactive sign-in.
+      </p>
+
+      {!authenticated && (
+        <div className="rounded-md border border-border-soft bg-surface-overlay px-3 py-2 text-sm text-text-muted">
+          Sign in to manage API keys.
+        </div>
+      )}
+
+      {listError && (
+        <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-text font-mono">
+          {listError}
+        </div>
+      )}
+
+      {authenticated && keys.length === 0 && !listError && (
+        <div className="rounded-md border border-border-soft bg-surface-overlay px-3 py-2 text-sm text-text-muted">
+          No API keys yet. Click <span className="font-mono">New key</span> to
+          mint one.
+        </div>
+      )}
+
+      {keys.length > 0 && (
+        <ApiKeysTable
+          keys={keys}
+          busy={busy === "revoke"}
+          onRevokeRequest={setRevokeCandidate}
+        />
+      )}
+
+      {createOpen && (
+        <CreateApiKeyDialog
+          onClose={() => setCreateOpen(false)}
+          onSuccess={(created) => {
+            setCreateOpen(false);
+            setCreatedKey(created);
+            void refresh();
+          }}
+        />
+      )}
+
+      {createdKey && (
+        <ShowApiKeyDialog
+          created={createdKey}
+          onClose={() => setCreatedKey(null)}
+        />
+      )}
+
+      <ConfirmDialog
+        open={!!revokeCandidate}
+        title="Revoke API key?"
+        body={
+          <>
+            The key will stop authenticating immediately. Any CI jobs or
+            scripts using it will return 401 on their next call. This
+            cannot be undone.
+          </>
+        }
+        confirmLabel="Revoke"
+        cancelLabel="Keep"
+        tone="danger"
+        onConfirm={() => void onRevoke()}
+        onCancel={() => setRevokeCandidate(null)}
+      />
+    </section>
+  );
+}
+
+interface ApiKeysTableProps {
+  keys: CloudApiKey[];
+  busy: boolean;
+  onRevokeRequest: (id: string) => void;
+}
+
+function ApiKeysTable({ keys, busy, onRevokeRequest }: ApiKeysTableProps) {
+  return (
+    <div className="rounded-md border border-border-soft bg-surface overflow-hidden">
+      <table className="w-full text-sm">
+        <thead className="bg-surface-overlay border-b border-border-soft">
+          <tr className="text-left text-xs font-mono uppercase tracking-[0.08em] text-text-muted">
+            <th className="px-3 py-2 font-semibold">Name</th>
+            <th className="px-3 py-2 font-semibold">Prefix</th>
+            <th className="px-3 py-2 font-semibold">Last used</th>
+            <th className="px-3 py-2 font-semibold w-24 text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {keys.map((k) => (
+            <tr key={k.id} className="border-b border-border-soft last:border-b-0">
+              <td className="px-3 py-2 align-top">
+                <div className="text-xs text-text">{k.name}</div>
+                <div className="text-xs text-text-muted">{k.scopes}</div>
+              </td>
+              <td className="px-3 py-2 align-top">
+                <span className="font-mono text-xs text-text-muted">
+                  mst_pk_{k.prefix}…
+                </span>
+              </td>
+              <td className="px-3 py-2 align-top">
+                <span className="text-xs text-text-muted">
+                  {k.last_used_at?.slice(0, 10) ?? "never"}
+                </span>
+              </td>
+              <td className="px-3 py-2 align-top">
+                <div className="flex justify-end">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() => onRevokeRequest(k.id)}
+                    title="Revoke"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+interface CreateApiKeyDialogProps {
+  onClose: () => void;
+  onSuccess: (created: CloudCreatedApiKey) => void;
+}
+
+/**
+ * F3.4b — mint a new API key. The cloud returns the raw token in the
+ * response; we hand it to the parent which opens [`ShowApiKeyDialog`]
+ * to display + copy it once. The token is never stored on this side.
+ */
+function CreateApiKeyDialog({ onClose, onSuccess }: CreateApiKeyDialogProps) {
+  const [name, setName] = useState("");
+  const [scopes, setScopes] = useState("ministr:read ministr:write");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const onSubmit = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const created = await cloudClient.createApiKey(name.trim(), scopes.trim() || undefined);
+      onSuccess(created);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <DialogShell title="New API key" onClose={onClose}>
+      <LabeledInput
+        label="Name"
+        placeholder="ci-prod, deploy-bot, …"
+        value={name}
+        onChange={setName}
+      />
+      <LabeledInput
+        label="Scopes (whitespace separated)"
+        placeholder="ministr:read ministr:write"
+        value={scopes}
+        onChange={setScopes}
+      />
+      <p className="text-xs text-text-muted -mt-1">
+        Available scopes:{" "}
+        <span className="font-mono">ministr:read</span>,{" "}
+        <span className="font-mono">ministr:write</span>,{" "}
+        <span className="font-mono">ministr:bundle:read</span>,{" "}
+        <span className="font-mono">ministr:bundle:write</span>.
+      </p>
+      {error && (
+        <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs font-mono text-text">
+          {error}
+        </div>
+      )}
+      <div className="flex justify-end gap-2 pt-1">
+        <Button size="sm" variant="ghost" onClick={onClose} disabled={busy}>
+          Cancel
+        </Button>
+        <Button size="sm" onClick={() => void onSubmit()} disabled={busy || !name.trim()}>
+          {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Key className="size-3.5" />}
+          Mint key
+        </Button>
+      </div>
+    </DialogShell>
+  );
+}
+
+interface ShowApiKeyDialogProps {
+  created: CloudCreatedApiKey;
+  onClose: () => void;
+}
+
+/**
+ * F3.4b — display the raw token EXACTLY ONCE after creation. The
+ * cloud cannot recover the secret after this response; if the user
+ * dismisses this dialog without copying, they must mint a new key.
+ *
+ * The Copy button writes to the system clipboard via the browser
+ * Clipboard API; Tauri's webview supports `navigator.clipboard.writeText`
+ * out of the box for HTTPS-equivalent origins.
+ */
+function ShowApiKeyDialog({ created, onClose }: ShowApiKeyDialogProps) {
+  const [copied, setCopied] = useState(false);
+
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(created.token);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Best-effort: if the clipboard API is unavailable, the user
+      // can still manually select + copy the text below.
+    }
+  };
+
+  return (
+    <DialogShell
+      title="API key minted"
+      onClose={onClose}
+      hint="Save this token now — the cloud cannot show it again. If you lose it, revoke the key and mint a new one."
+    >
+      <div className="flex flex-col gap-1">
+        <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+          {created.name}
+        </span>
+        <div className="flex items-center gap-2">
+          <code className="flex-1 rounded-md border border-border bg-surface-overlay px-3 py-2 font-mono text-xs text-text break-all">
+            {created.token}
+          </code>
+          <Button size="sm" variant="outline" onClick={() => void onCopy()}>
+            {copied ? (
+              <Check className="size-3.5" />
+            ) : (
+              <Copy className="size-3.5" />
+            )}
+            {copied ? "Copied" : "Copy"}
+          </Button>
+        </div>
+      </div>
+      <p className="text-xs text-text-muted">
+        Use as <span className="font-mono">Authorization: Bearer {created.token.slice(0, 14)}…</span>{" "}
+        — every cloud endpoint that accepts your session token also
+        accepts this key.
+      </p>
+      <div className="flex justify-end gap-2 pt-1">
+        <Button size="sm" onClick={onClose}>
+          I've saved it
         </Button>
       </div>
     </DialogShell>
