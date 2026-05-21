@@ -104,9 +104,10 @@ pub use users::{
     set_stripe_customer_id, upsert_github_user, UserError, UserRow, DEFAULT_GITHUB_SIGNIN_PLAN,
 };
 pub use webhooks::{
-    CreatedSubscription, DeliveryOutcome, WebhookDispatcher, WebhookError, WebhookSubscription,
-    WebhooksState, create_subscription, delete_subscription, list_subscriptions, mark_delivered,
-    sign_payload, subscription_secret, webhooks_routes,
+    ChainedAuditSink, CreatedSubscription, DeliveryOutcome, SubscriptionWithSecret,
+    WebhookDispatcher, WebhookError, WebhookFanoutSink, WebhookSubscription, WebhooksState,
+    create_subscription, delete_subscription, event_matches_filter, list_for_fanout,
+    list_subscriptions, mark_delivered, sign_payload, subscription_secret, webhooks_routes,
 };
 
 /// Re-exported from `ministr-mcp` (MIT) so the auth middleware in the

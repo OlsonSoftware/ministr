@@ -41,6 +41,7 @@ use axum::routing::{delete, post};
 use deadpool_postgres::Pool;
 use getrandom::fill as getrandom_fill;
 use hmac::{Hmac, Mac};
+use ministr_api::{AuditEntry, AuditSink};
 use ministr_mcp::auth::tenant::Tenant;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -264,6 +265,52 @@ pub async fn subscription_secret(
     Ok(row.map(|r| (r.get("url"), r.get("secret"))))
 }
 
+/// One subscription with its delivery secret — only the fan-out path
+/// needs the secret. Distinct from [`WebhookSubscription`] (which
+/// suppresses the secret for the list endpoint).
+#[derive(Debug, Clone)]
+pub struct SubscriptionWithSecret {
+    pub id: String,
+    pub url: String,
+    pub secret: String,
+    pub event_filter: String,
+}
+
+/// List active subscriptions for an org, including each row's signing
+/// secret. Internal — never returned to the HTTP surface; only the
+/// audit fan-out path consumes this.
+///
+/// # Errors
+///
+/// [`WebhookError::GetConn`] / [`WebhookError::Sql`] on DB issues.
+pub async fn list_for_fanout(
+    pool: &Pool,
+    org_id: &str,
+) -> Result<Vec<SubscriptionWithSecret>, WebhookError> {
+    let client = pool
+        .get()
+        .await
+        .map_err(|e| WebhookError::GetConn(format!("list_for_fanout: {e}")))?;
+    let rows = client
+        .query(
+            "SELECT id::text AS id_text, url, secret, event_filter
+             FROM webhook_subscriptions
+             WHERE org_id = $1::uuid",
+            &[&org_id],
+        )
+        .await
+        .map_err(|e| WebhookError::Sql(format!("list_for_fanout query: {e}")))?;
+    Ok(rows
+        .into_iter()
+        .map(|r| SubscriptionWithSecret {
+            id: r.get("id_text"),
+            url: r.get("url"),
+            secret: r.get("secret"),
+            event_filter: r.get("event_filter"),
+        })
+        .collect())
+}
+
 /// Mark a successful delivery — touch `last_delivered_at`.
 ///
 /// # Errors
@@ -397,6 +444,196 @@ pub fn sign_payload(secret: &str, timestamp: u64, payload: &[u8]) -> String {
         let _ = write!(out, "{b:02x}");
     }
     out
+}
+
+/// Does `filter` admit `action`?
+///
+/// Two cases:
+/// - `"*"` → admit every action.
+/// - Comma-separated list of action names → admit when at least one
+///   token matches `action` exactly (whitespace around tokens is
+///   trimmed). Empty tokens are ignored.
+///
+/// Wildcards / prefix patterns (e.g. `"corpus.*"`) are intentionally
+/// NOT supported in v0 — the explicit allowlist is more predictable
+/// for admins and matches the closed-vocabulary shape of
+/// [`crate::audit::AuditEntry::action`].
+#[must_use]
+pub fn event_matches_filter(filter: &str, action: &str) -> bool {
+    let trimmed = filter.trim();
+    if trimmed == "*" {
+        return true;
+    }
+    trimmed
+        .split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .any(|t| t == action)
+}
+
+// ── Audit fan-out ──────────────────────────────────────────────────────────
+
+/// JSON payload posted to webhook receivers. Stable wire shape;
+/// customers who code against this should pin to the `schema`
+/// version field for forward-compat.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WebhookPayload<'a> {
+    /// Schema version — bump when the payload shape changes
+    /// incompatibly. v0 keeps a flat `action` + `resource` + `org_id`
+    /// + `actor` + `ts` shape.
+    schema: u32,
+    /// The audit action name (`api_key.created`, `share.granted`, …).
+    event: &'a str,
+    /// Stable identifier of the affected resource. Shape depends on
+    /// the action — e.g. `share.*` rows encode `corpus_id:org_id`.
+    resource: &'a str,
+    /// Org context, always present at the fan-out layer.
+    org_id: &'a str,
+    /// Subject of the user / api-key that triggered the action.
+    actor: Option<&'a str>,
+    /// Server timestamp (unix seconds) — the same value the HMAC
+    /// header carries, so receivers don't need a clock dependency
+    /// to render the event.
+    ts: u64,
+}
+
+/// [`AuditSink`] impl that fans audit events out to matching
+/// [`webhook_subscriptions`]. Self-hosted serve never wires this;
+/// cloud builds one alongside the [`crate::audit::PostgresAuditSink`]
+/// and composes both via [`ChainedAuditSink`].
+///
+/// Per call: spawns a tokio task that lists the org's subscriptions,
+/// filters by `event_filter`, and dispatches each match in parallel.
+/// The dispatcher's own per-attempt timeout + retry shape applies —
+/// see [`WebhookDispatcher`].
+#[derive(Debug, Clone)]
+pub struct WebhookFanoutSink {
+    pool: Arc<Pool>,
+    dispatcher: Arc<WebhookDispatcher>,
+}
+
+impl WebhookFanoutSink {
+    /// Bind a fan-out to a pool + dispatcher. The dispatcher is
+    /// typically the same `Arc<WebhookDispatcher>` mounted on
+    /// [`WebhooksState`] so multiple call sites share TLS connections.
+    #[must_use]
+    pub fn new(pool: Arc<Pool>, dispatcher: Arc<WebhookDispatcher>) -> Self {
+        Self { pool, dispatcher }
+    }
+
+    /// Wrap as `Arc<dyn AuditSink>` for [`ChainedAuditSink`].
+    #[must_use]
+    pub fn into_dyn(self) -> Arc<dyn AuditSink> {
+        Arc::new(self)
+    }
+}
+
+impl AuditSink for WebhookFanoutSink {
+    fn record(&self, entry: AuditEntry) {
+        // User-level events (org.created, api_key.created on a
+        // personal account) have no org context — no subscriptions
+        // exist to match. Skip silently.
+        let Some(org_id) = entry.org_id.clone() else {
+            return;
+        };
+        let pool = Arc::clone(&self.pool);
+        let dispatcher = Arc::clone(&self.dispatcher);
+        tokio::spawn(async move {
+            let subs = match list_for_fanout(&pool, &org_id).await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(error = %e, org_id, "webhook fan-out: list_for_fanout failed");
+                    return;
+                }
+            };
+            for sub in subs {
+                if !event_matches_filter(&sub.event_filter, &entry.action) {
+                    continue;
+                }
+                let ts = now_unix();
+                let payload = WebhookPayload {
+                    schema: 1,
+                    event: &entry.action,
+                    resource: &entry.resource,
+                    org_id: &org_id,
+                    actor: entry.actor.as_deref(),
+                    ts,
+                };
+                let bytes = match serde_json::to_vec(&payload) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            subscription_id = %sub.id,
+                            "webhook fan-out: serialise payload failed"
+                        );
+                        continue;
+                    }
+                };
+                let outcome = dispatcher.deliver(&sub.url, &sub.secret, &bytes).await;
+                if outcome.succeeded {
+                    if let Err(e) = mark_delivered(&pool, &sub.id).await {
+                        warn!(
+                            error = %e,
+                            subscription_id = %sub.id,
+                            "webhook fan-out: mark_delivered failed"
+                        );
+                    }
+                    debug!(
+                        subscription_id = %sub.id,
+                        action = %entry.action,
+                        attempts = outcome.attempts,
+                        "webhook delivered"
+                    );
+                } else {
+                    warn!(
+                        subscription_id = %sub.id,
+                        action = %entry.action,
+                        attempts = outcome.attempts,
+                        final_status = ?outcome.final_status,
+                        "webhook delivery FAILED after retries"
+                    );
+                }
+            }
+        });
+    }
+}
+
+/// Compose multiple [`AuditSink`]s — calls `record` on each. Used by
+/// `cmd_serve_http` to chain [`crate::audit::PostgresAuditSink`]
+/// (persistent log) with [`WebhookFanoutSink`] (outbound dispatch).
+///
+/// Both sinks are fire-and-forget so the chain itself never blocks.
+/// Ordering matters slightly: the Postgres sink should come first
+/// because operators expect "audit row written" to be authoritative
+/// even if the webhook dispatch is in-flight when they query.
+#[derive(Clone)]
+pub struct ChainedAuditSink {
+    sinks: Vec<Arc<dyn AuditSink>>,
+}
+
+impl std::fmt::Debug for ChainedAuditSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChainedAuditSink")
+            .field("sink_count", &self.sinks.len())
+            .finish()
+    }
+}
+
+impl ChainedAuditSink {
+    /// Build from an ordered list of sinks.
+    #[must_use]
+    pub fn new(sinks: Vec<Arc<dyn AuditSink>>) -> Self {
+        Self { sinks }
+    }
+}
+
+impl AuditSink for ChainedAuditSink {
+    fn record(&self, entry: AuditEntry) {
+        for sink in &self.sinks {
+            sink.record(entry.clone());
+        }
+    }
 }
 
 /// Mint a fresh 32-byte secret as base64url-no-pad.
@@ -692,6 +929,66 @@ mod tests {
         assert!(s
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'));
+    }
+
+    #[test]
+    fn event_filter_star_admits_everything() {
+        assert!(event_matches_filter("*", "anything"));
+        assert!(event_matches_filter("*", "share.granted"));
+        assert!(event_matches_filter(" * ", "with.whitespace"));
+    }
+
+    #[test]
+    fn event_filter_csv_matches_exact_only() {
+        // Exact match in a CSV list — both single-token and multi-token.
+        assert!(event_matches_filter("share.granted", "share.granted"));
+        assert!(event_matches_filter(
+            "share.granted, api_key.created",
+            "api_key.created"
+        ));
+        // Non-match.
+        assert!(!event_matches_filter("share.granted", "share.revoked"));
+        // Prefix patterns are NOT admitted in v0.
+        assert!(!event_matches_filter("corpus.*", "corpus.created"));
+        // Empty filter and empty tokens.
+        assert!(!event_matches_filter("", "anything"));
+        assert!(!event_matches_filter(", ,", "anything"));
+    }
+
+    #[test]
+    fn event_filter_trims_whitespace_around_tokens() {
+        assert!(event_matches_filter(
+            "  share.granted ,  api_key.created  ",
+            "share.granted"
+        ));
+        assert!(event_matches_filter(
+            "  share.granted ,  api_key.created  ",
+            "api_key.created"
+        ));
+    }
+
+    #[derive(Debug, Default)]
+    struct CountingSink {
+        count: std::sync::Mutex<u32>,
+    }
+    impl AuditSink for CountingSink {
+        fn record(&self, _entry: AuditEntry) {
+            *self.count.lock().unwrap() += 1;
+        }
+    }
+
+    #[test]
+    fn chained_audit_sink_fans_to_every_sink() {
+        let a = Arc::new(CountingSink::default());
+        let b = Arc::new(CountingSink::default());
+        let chain = ChainedAuditSink::new(vec![
+            Arc::clone(&a) as Arc<dyn AuditSink>,
+            Arc::clone(&b) as Arc<dyn AuditSink>,
+        ]);
+        chain.record(AuditEntry::new("share.granted", "corpus:org"));
+        chain.record(AuditEntry::new("api_key.created", "key"));
+        assert_eq!(*a.count.lock().unwrap(), 2);
+        assert_eq!(*b.count.lock().unwrap(), 2);
     }
 
     #[test]
