@@ -814,6 +814,7 @@ impl MinistrServer {
         Parameters(params): Parameters<SurveyParams>,
     ) -> Result<CallToolResult, McpError> {
         let top_k = params.top_k.unwrap_or(10);
+        let tenant_subject = crate::tenant_scope::current();
         let span = info_span!("ministr_survey", query_len = params.query.len(), top_k);
 
         async {
@@ -835,6 +836,7 @@ impl MinistrServer {
             let survey_result = self
                 .backend
                 .survey_with_exclude(
+                    tenant_subject.as_deref(),
                     params.project.as_deref(),
                     &params.query,
                     top_k,
@@ -894,6 +896,7 @@ impl MinistrServer {
                                     );
                                     self.backend
                                         .survey_with_exclude(
+                                            tenant_subject.as_deref(),
                                             params.project.as_deref(),
                                             &refinement.refined_query,
                                             top_k,
@@ -1072,6 +1075,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<ReadParams>,
     ) -> Result<CallToolResult, McpError> {
+        let tenant_subject = crate::tenant_scope::current();
         let span = info_span!("ministr_read", section_id = %params.section_id);
 
         async {
@@ -1096,7 +1100,11 @@ impl MinistrServer {
                 Ok(detail)
             } else {
                 self.backend
-                    .read_section(params.project.as_deref(), &params.section_id)
+                    .read_section(
+                        tenant_subject.as_deref(),
+                        params.project.as_deref(),
+                        &params.section_id,
+                    )
                     .await
             };
 
@@ -1181,6 +1189,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<ExtractParams>,
     ) -> Result<CallToolResult, McpError> {
+        let tenant_subject = crate::tenant_scope::current();
         let span = info_span!(
             "ministr_extract",
             section_id = %params.section_id,
@@ -1197,6 +1206,7 @@ impl MinistrServer {
             match self
                 .backend
                 .extract_claims(
+                    tenant_subject.as_deref(),
                     params.project.as_deref(),
                     &params.section_id,
                     params.query.as_deref(),
@@ -1263,6 +1273,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<RelatedParams>,
     ) -> Result<CallToolResult, McpError> {
+        let tenant_subject = crate::tenant_scope::current();
         let span = info_span!("ministr_related", claim_id = %params.claim_id);
 
         async {
@@ -1280,6 +1291,7 @@ impl MinistrServer {
             match self
                 .backend
                 .related_claims(
+                    tenant_subject.as_deref(),
                     params.project.as_deref(),
                     &params.claim_id,
                     relation_types.as_deref(),
@@ -1528,6 +1540,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<CompressParams>,
     ) -> Result<CallToolResult, McpError> {
+        let tenant_subject = crate::tenant_scope::current();
         let span = info_span!("ministr_compress", count = params.content_ids.len());
 
         async {
@@ -1537,7 +1550,11 @@ impl MinistrServer {
             // and doesn't require MCP sampling support from the client.
             let result = self
                 .backend
-                .compress(params.project.as_deref(), &params.content_ids)
+                .compress(
+                    tenant_subject.as_deref(),
+                    params.project.as_deref(),
+                    &params.content_ids,
+                )
                 .await;
 
             match result {
@@ -1593,6 +1610,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<TocParams>,
     ) -> Result<CallToolResult, McpError> {
+        let tenant_subject = crate::tenant_scope::current();
         let span = info_span!("ministr_toc", document_id = ?params.document_id);
 
         async {
@@ -1600,7 +1618,11 @@ impl MinistrServer {
 
             match self
                 .backend
-                .toc(params.project.as_deref(), params.document_id.as_deref())
+                .toc(
+                    tenant_subject.as_deref(),
+                    params.project.as_deref(),
+                    params.document_id.as_deref(),
+                )
                 .await
             {
                 Ok(entries) => {
@@ -1990,6 +2012,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<SymbolsParams>,
     ) -> Result<CallToolResult, McpError> {
+        let tenant_subject = crate::tenant_scope::current();
         let span = info_span!("ministr_symbols", query = ?params.query, kind = ?params.kind);
 
         async {
@@ -2014,7 +2037,7 @@ impl MinistrServer {
 
             match self
                 .backend
-                .search_symbols(params.project.as_deref(), filter)
+                .search_symbols(tenant_subject.as_deref(), params.project.as_deref(), filter)
                 .await
             {
                 Ok(symbols) => {
@@ -2103,6 +2126,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<DefinitionParams>,
     ) -> Result<CallToolResult, McpError> {
+        let tenant_subject = crate::tenant_scope::current();
         let span = info_span!("ministr_definition", symbol_id = %params.symbol_id);
 
         async {
@@ -2110,7 +2134,11 @@ impl MinistrServer {
 
             match self
                 .backend
-                .definition(params.project.as_deref(), &params.symbol_id)
+                .definition(
+                    tenant_subject.as_deref(),
+                    params.project.as_deref(),
+                    &params.symbol_id,
+                )
                 .await
             {
                 Ok(def) => {
@@ -2150,6 +2178,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<ReferencesParams>,
     ) -> Result<CallToolResult, McpError> {
+        let tenant_subject = crate::tenant_scope::current();
         let span = info_span!("ministr_references", symbol_id = %params.symbol_id);
 
         async {
@@ -2162,7 +2191,12 @@ impl MinistrServer {
 
             match self
                 .backend
-                .references(params.project.as_deref(), &params.symbol_id, ref_kind)
+                .references(
+                    tenant_subject.as_deref(),
+                    params.project.as_deref(),
+                    &params.symbol_id,
+                    ref_kind,
+                )
                 .await
             {
                 Ok(refs) => {
@@ -2217,6 +2251,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<ImpactParams>,
     ) -> Result<CallToolResult, McpError> {
+        let tenant_subject = crate::tenant_scope::current();
         let max_depth = params.max_depth.unwrap_or(3).clamp(1, 10);
         let span = info_span!("ministr_impact", symbol_id = %params.symbol_id, max_depth);
 
@@ -2228,7 +2263,12 @@ impl MinistrServer {
             // daemon. Concrete dispatch happens in `Backend::impact`.
             match self
                 .backend
-                .impact(params.project.as_deref(), &params.symbol_id, max_depth)
+                .impact(
+                    tenant_subject.as_deref(),
+                    params.project.as_deref(),
+                    &params.symbol_id,
+                    max_depth,
+                )
                 .await
             {
                 Ok(impact) => {
@@ -2270,6 +2310,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<DeadCodeParams>,
     ) -> Result<CallToolResult, McpError> {
+        let tenant_subject = crate::tenant_scope::current();
         let min_lines = params.min_lines.unwrap_or(1).max(1);
         let limit = params.limit.unwrap_or(50).clamp(1, 500);
         let span = info_span!("ministr_dead", kind = ?params.kind, module = ?params.module, min_lines, limit);
@@ -2290,6 +2331,7 @@ impl MinistrServer {
             match self
                 .backend
                 .dead_code(
+                    tenant_subject.as_deref(),
                     params.project.as_deref(),
                     params.kind.as_deref(),
                     params.module.as_deref(),
@@ -2340,6 +2382,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<SolidParams>,
     ) -> Result<CallToolResult, McpError> {
+        let tenant_subject = crate::tenant_scope::current();
         let core_params = mcp_solid_params_to_service(&params);
         let span = info_span!(
             "ministr_solid",
@@ -2360,7 +2403,11 @@ impl MinistrServer {
 
             match self
                 .backend
-                .solid(params.project.as_deref(), &core_params)
+                .solid(
+                    tenant_subject.as_deref(),
+                    params.project.as_deref(),
+                    &core_params,
+                )
                 .await
             {
                 Ok(findings) => {
@@ -2402,6 +2449,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<BridgeParams>,
     ) -> Result<CallToolResult, McpError> {
+        let tenant_subject = crate::tenant_scope::current();
         let span = info_span!("ministr_bridge", query = ?params.query, kind = ?params.bridge_kind);
 
         async {
@@ -2410,6 +2458,7 @@ impl MinistrServer {
             match self
                 .backend
                 .bridges(
+                    tenant_subject.as_deref(),
                     params.project.as_deref(),
                     params.query.as_deref(),
                     params.bridge_kind.as_deref(),
@@ -2673,7 +2722,11 @@ impl MinistrServer {
 
         // Route through the backend so the same prompt works under both
         // local and daemon modes.
-        let results = self.backend.survey(None, concept, 5).await.map_err(|e| {
+        let results = self
+            .backend
+            .survey(None, None, concept, 5)
+            .await
+            .map_err(|e| {
             McpError::new(
                 rmcp::model::ErrorCode::INTERNAL_ERROR,
                 format!("survey failed: {e}"),
@@ -2695,7 +2748,7 @@ impl MinistrServer {
         for result in results.iter().take(3) {
             let claims = self
                 .backend
-                .extract_claims(None, &result.content_id, Some(concept))
+                .extract_claims(None, None, &result.content_id, Some(concept))
                 .await
                 .unwrap_or_default();
 
@@ -2711,7 +2764,7 @@ impl MinistrServer {
                 // Follow relationships one level deep.
                 let relations = self
                     .backend
-                    .related_claims(None, &claim.claim_id, None)
+                    .related_claims(None, None, &claim.claim_id, None)
                     .await
                     .unwrap_or_default();
 

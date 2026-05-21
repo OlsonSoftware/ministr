@@ -52,6 +52,7 @@ pub mod index_job_sink;
 pub mod orgs;
 pub mod quota;
 pub mod ratelimit;
+pub mod tenant_filter;
 pub mod users;
 
 pub use billing::{
@@ -69,6 +70,7 @@ pub use blob_fs::FilesystemBlobStore;
 pub use blob_sink::{build_manifest_from_corpus_dir, BlobBackendSink, ManifestBuildError};
 pub use corpora_repo::PostgresCorporaRepo;
 pub use corpus_restorer::BlobCorpusRestorer;
+pub use tenant_filter::PostgresTenantCorpusFilter;
 pub use index_job_sink::PostgresIndexJobSink;
 pub use embedding::{OpenAiAuth, OpenAiConfig, OpenAiEmbedder, DEFAULT_DIMENSIONS};
 pub use db::{connect, run_migrations, DbError};

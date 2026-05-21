@@ -34,6 +34,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
+use ministr_api::TenantCorpusFilter;
 use ministr_api::client::{ClientError, DaemonClient};
 use ministr_core::service::{
     ClaimResult, CompressedItem, DeadSymbol, ImpactResult, QueryError, QueryService,
@@ -210,9 +211,17 @@ pub enum Backend {
     /// REST surface does — without this variant the MCP layer routes
     /// every call through `default_service`, which is bound to an
     /// empty placeholder corpus on a fresh pod.
+    ///
+    /// F2.x-b — `tenant_filter`, when wired, gates the `project →
+    /// corpus_id` lookup. When the caller threads a `tenant_subject` and
+    /// the filter denies, the resolver returns `Err(default_service)`
+    /// (same shape as a typo) so the cross-tenant probe does not leak
+    /// corpus existence. `None` filter ⇒ legacy permissive behaviour
+    /// (self-hosted / single-tenant serve).
     Registry {
         default_service: Arc<QueryService>,
         registry: Arc<ministr_daemon::registry::CorpusRegistry>,
+        tenant_filter: Option<Arc<dyn TenantCorpusFilter>>,
     },
 }
 
@@ -249,6 +258,24 @@ impl Backend {
         Self::Registry {
             default_service,
             registry,
+            tenant_filter: None,
+        }
+    }
+
+    /// Construct a cloud-mode backend with a tenant-isolation filter
+    /// (F2.x-b). Dispatch calls that pass a `tenant_subject` will be
+    /// rejected via the typo-tolerance fallback when the filter denies
+    /// access.
+    #[must_use]
+    pub fn registry_with_filter(
+        default_service: Arc<QueryService>,
+        registry: Arc<ministr_daemon::registry::CorpusRegistry>,
+        tenant_filter: Arc<dyn TenantCorpusFilter>,
+    ) -> Self {
+        Self::Registry {
+            default_service,
+            registry,
+            tenant_filter: Some(tenant_filter),
         }
     }
 
@@ -292,9 +319,11 @@ impl Backend {
 
     /// Resolve `project` (a `corpus_id` in registry mode) to a handle
     /// whose owned `QueryService` should answer this call. Returns
-    /// `Err(default_service)` when `project` is `None` or the registry
-    /// can't produce a handle (unknown id / blob restore failure) —
-    /// matches `DaemonMultiBackend::for_project`'s typo-tolerance.
+    /// `Err(default_service)` when `project` is `None`, the registry
+    /// can't produce a handle (unknown id / blob restore failure), or
+    /// the tenant filter denies access — all collapse to the same
+    /// typo-tolerance shape so a cross-tenant probe leaks no more
+    /// information than a typo would.
     ///
     /// The returned `Ok` arm carries the `Arc<CorpusHandle>` so the
     /// caller keeps the handle alive across its `.await` on
@@ -302,11 +331,48 @@ impl Backend {
     async fn resolve_registry_handle<'a>(
         default_service: &'a Arc<QueryService>,
         registry: &Arc<ministr_daemon::registry::CorpusRegistry>,
+        tenant_filter: Option<&Arc<dyn TenantCorpusFilter>>,
+        tenant_subject: Option<&str>,
         project: Option<&str>,
     ) -> Result<Arc<ministr_daemon::registry::CorpusHandle>, &'a Arc<QueryService>> {
         let Some(corpus_id) = project else {
             return Err(default_service);
         };
+        // F2.x-b — gate the lookup behind the tenant filter when one is
+        // wired AND the caller threaded its tenant identity. A missing
+        // tenant_subject in cloud mode is itself a deny: handlers that
+        // accept a `project` argument MUST extract the Tenant from
+        // RequestContext and pass its subject. A `None` arrives only on
+        // self-hosted serve (where tenant_filter is None too).
+        if let Some(filter) = tenant_filter {
+            let Some(subject) = tenant_subject else {
+                tracing::warn!(
+                    corpus_id,
+                    "tenant filter wired but caller passed no tenant_subject — denying"
+                );
+                return Err(default_service);
+            };
+            match filter.allowed(subject, corpus_id).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    tracing::debug!(
+                        subject,
+                        corpus_id,
+                        "tenant filter denied — falling back to default service"
+                    );
+                    return Err(default_service);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        subject,
+                        corpus_id,
+                        "tenant filter storage error — denying (fail closed)"
+                    );
+                    return Err(default_service);
+                }
+            }
+        }
         match registry.ensure_present(corpus_id).await {
             Ok(handle) => Ok(handle),
             Err(_) => Err(default_service),
@@ -331,6 +397,7 @@ impl Backend {
 impl Backend {
     pub async fn survey(
         &self,
+        tenant_subject: Option<&str>,
         project: Option<&str>,
         query: &str,
         top_k: usize,
@@ -342,7 +409,16 @@ impl Backend {
             Self::Registry {
                 default_service,
                 registry,
-            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                tenant_filter,
+            } => match Self::resolve_registry_handle(
+                default_service,
+                registry,
+                tenant_filter.as_ref(),
+                tenant_subject,
+                project,
+            )
+            .await
+            {
                 Ok(handle) => Ok(handle.service.survey(query, top_k).await?),
                 Err(default) => Ok(default.survey(query, top_k).await?),
             },
@@ -351,6 +427,7 @@ impl Backend {
 
     pub async fn survey_with_exclude(
         &self,
+        tenant_subject: Option<&str>,
         project: Option<&str>,
         query: &str,
         top_k: usize,
@@ -367,7 +444,16 @@ impl Backend {
             Self::Registry {
                 default_service,
                 registry,
-            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                tenant_filter,
+            } => match Self::resolve_registry_handle(
+                default_service,
+                registry,
+                tenant_filter.as_ref(),
+                tenant_subject,
+                project,
+            )
+            .await
+            {
                 Ok(handle) => Ok(handle
                     .service
                     .survey_excluding(query, top_k, exclude_ids)
@@ -379,6 +465,7 @@ impl Backend {
 
     pub async fn read_section(
         &self,
+        tenant_subject: Option<&str>,
         project: Option<&str>,
         section_id: &str,
     ) -> Result<SectionDetail, BackendError> {
@@ -389,7 +476,16 @@ impl Backend {
             Self::Registry {
                 default_service,
                 registry,
-            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                tenant_filter,
+            } => match Self::resolve_registry_handle(
+                default_service,
+                registry,
+                tenant_filter.as_ref(),
+                tenant_subject,
+                project,
+            )
+            .await
+            {
                 Ok(handle) => Ok(handle.service.read_section(section_id).await?),
                 Err(default) => Ok(default.read_section(section_id).await?),
             },
@@ -398,6 +494,7 @@ impl Backend {
 
     pub async fn extract_claims(
         &self,
+        tenant_subject: Option<&str>,
         project: Option<&str>,
         section_id: &str,
         query: Option<&str>,
@@ -413,7 +510,16 @@ impl Backend {
             Self::Registry {
                 default_service,
                 registry,
-            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                tenant_filter,
+            } => match Self::resolve_registry_handle(
+                default_service,
+                registry,
+                tenant_filter.as_ref(),
+                tenant_subject,
+                project,
+            )
+            .await
+            {
                 Ok(handle) => Ok(handle.service.extract_claims(section_id, query).await?),
                 Err(default) => Ok(default.extract_claims(section_id, query).await?),
             },
@@ -422,6 +528,7 @@ impl Backend {
 
     pub async fn search_symbols(
         &self,
+        tenant_subject: Option<&str>,
         project: Option<&str>,
         filter: SymbolFilter,
     ) -> Result<Vec<SymbolRecord>, BackendError> {
@@ -432,7 +539,16 @@ impl Backend {
             Self::Registry {
                 default_service,
                 registry,
-            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                tenant_filter,
+            } => match Self::resolve_registry_handle(
+                default_service,
+                registry,
+                tenant_filter.as_ref(),
+                tenant_subject,
+                project,
+            )
+            .await
+            {
                 Ok(handle) => Ok(handle.service.search_symbols(&filter).await?),
                 Err(default) => Ok(default.search_symbols(&filter).await?),
             },
@@ -441,6 +557,7 @@ impl Backend {
 
     pub async fn definition(
         &self,
+        tenant_subject: Option<&str>,
         project: Option<&str>,
         symbol_id: &str,
     ) -> Result<SymbolDefinition, BackendError> {
@@ -451,7 +568,16 @@ impl Backend {
             Self::Registry {
                 default_service,
                 registry,
-            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                tenant_filter,
+            } => match Self::resolve_registry_handle(
+                default_service,
+                registry,
+                tenant_filter.as_ref(),
+                tenant_subject,
+                project,
+            )
+            .await
+            {
                 Ok(handle) => Ok(handle.service.get_symbol_definition(symbol_id).await?),
                 Err(default) => Ok(default.get_symbol_definition(symbol_id).await?),
             },
@@ -460,6 +586,7 @@ impl Backend {
 
     pub async fn references(
         &self,
+        tenant_subject: Option<&str>,
         project: Option<&str>,
         symbol_id: &str,
         ref_kind: Option<RefKind>,
@@ -471,7 +598,16 @@ impl Backend {
             Self::Registry {
                 default_service,
                 registry,
-            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                tenant_filter,
+            } => match Self::resolve_registry_handle(
+                default_service,
+                registry,
+                tenant_filter.as_ref(),
+                tenant_subject,
+                project,
+            )
+            .await
+            {
                 Ok(handle) => Ok(handle
                     .service
                     .get_symbol_references(symbol_id, ref_kind)
@@ -483,6 +619,7 @@ impl Backend {
 
     pub async fn impact(
         &self,
+        tenant_subject: Option<&str>,
         project: Option<&str>,
         symbol_id: &str,
         max_depth: u32,
@@ -494,7 +631,16 @@ impl Backend {
             Self::Registry {
                 default_service,
                 registry,
-            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                tenant_filter,
+            } => match Self::resolve_registry_handle(
+                default_service,
+                registry,
+                tenant_filter.as_ref(),
+                tenant_subject,
+                project,
+            )
+            .await
+            {
                 Ok(handle) => Ok(handle.service.compute_impact(symbol_id, max_depth).await?),
                 Err(default) => Ok(default.compute_impact(symbol_id, max_depth).await?),
             },
@@ -503,6 +649,7 @@ impl Backend {
 
     pub async fn dead_code(
         &self,
+        tenant_subject: Option<&str>,
         project: Option<&str>,
         kind: Option<&str>,
         module: Option<&str>,
@@ -520,7 +667,16 @@ impl Backend {
             Self::Registry {
                 default_service,
                 registry,
-            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                tenant_filter,
+            } => match Self::resolve_registry_handle(
+                default_service,
+                registry,
+                tenant_filter.as_ref(),
+                tenant_subject,
+                project,
+            )
+            .await
+            {
                 Ok(handle) => Ok(handle
                     .service
                     .find_dead_code(kind, module, min_lines, limit)
@@ -532,6 +688,7 @@ impl Backend {
 
     pub async fn solid(
         &self,
+        tenant_subject: Option<&str>,
         project: Option<&str>,
         params: &SolidParams,
     ) -> Result<Vec<SolidFinding>, BackendError> {
@@ -542,7 +699,16 @@ impl Backend {
             Self::Registry {
                 default_service,
                 registry,
-            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                tenant_filter,
+            } => match Self::resolve_registry_handle(
+                default_service,
+                registry,
+                tenant_filter.as_ref(),
+                tenant_subject,
+                project,
+            )
+            .await
+            {
                 Ok(handle) => Ok(handle.service.detect_solid_violations(params).await?),
                 Err(default) => Ok(default.detect_solid_violations(params).await?),
             },
@@ -551,6 +717,7 @@ impl Backend {
 
     pub async fn related_claims(
         &self,
+        tenant_subject: Option<&str>,
         project: Option<&str>,
         claim_id: &str,
         relation_types: Option<&[RelationType]>,
@@ -566,7 +733,16 @@ impl Backend {
             Self::Registry {
                 default_service,
                 registry,
-            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                tenant_filter,
+            } => match Self::resolve_registry_handle(
+                default_service,
+                registry,
+                tenant_filter.as_ref(),
+                tenant_subject,
+                project,
+            )
+            .await
+            {
                 Ok(handle) => Ok(handle
                     .service
                     .related_claims(claim_id, relation_types)
@@ -578,6 +754,7 @@ impl Backend {
 
     pub async fn compress(
         &self,
+        tenant_subject: Option<&str>,
         project: Option<&str>,
         content_ids: &[String],
     ) -> Result<Vec<CompressedItem>, BackendError> {
@@ -588,7 +765,16 @@ impl Backend {
             Self::Registry {
                 default_service,
                 registry,
-            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                tenant_filter,
+            } => match Self::resolve_registry_handle(
+                default_service,
+                registry,
+                tenant_filter.as_ref(),
+                tenant_subject,
+                project,
+            )
+            .await
+            {
                 Ok(handle) => Ok(handle.service.compress_content(content_ids).await?),
                 Err(default) => Ok(default.compress_content(content_ids).await?),
             },
@@ -597,6 +783,7 @@ impl Backend {
 
     pub async fn toc(
         &self,
+        tenant_subject: Option<&str>,
         project: Option<&str>,
         document_id: Option<&str>,
     ) -> Result<Vec<TocEntry>, BackendError> {
@@ -607,7 +794,16 @@ impl Backend {
             Self::Registry {
                 default_service,
                 registry,
-            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                tenant_filter,
+            } => match Self::resolve_registry_handle(
+                default_service,
+                registry,
+                tenant_filter.as_ref(),
+                tenant_subject,
+                project,
+            )
+            .await
+            {
                 Ok(handle) => Ok(handle.service.toc(document_id).await?),
                 Err(default) => Ok(default.toc(document_id).await?),
             },
@@ -616,6 +812,7 @@ impl Backend {
 
     pub async fn bridges(
         &self,
+        tenant_subject: Option<&str>,
         project: Option<&str>,
         query: Option<&str>,
         kind: Option<&str>,
@@ -633,7 +830,16 @@ impl Backend {
             Self::Registry {
                 default_service,
                 registry,
-            } => match Self::resolve_registry_handle(default_service, registry, project).await {
+                tenant_filter,
+            } => match Self::resolve_registry_handle(
+                default_service,
+                registry,
+                tenant_filter.as_ref(),
+                tenant_subject,
+                project,
+            )
+            .await
+            {
                 Ok(handle) => Ok(handle
                     .service
                     .query_bridges(query, kind, language, file_path)
@@ -643,5 +849,211 @@ impl Backend {
                     .await?),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! F2.x-b — tenant-filter behaviour tests for `Backend::Registry`.
+    //!
+    //! These exercise `resolve_registry_handle` in isolation so they don't
+    //! need a live `CorpusRegistry` fixture (that's covered by the
+    //! daemon's `tests/common`). The tests focus on what the resolver
+    //! decides given the filter alone:
+    //! - `project = None` always falls back to default (no filter call).
+    //! - `tenant_filter = Some` + `tenant_subject = None` denies.
+    //! - `tenant_filter = Some` + filter returns `Ok(false)` denies.
+    //! - `tenant_filter = Some` + filter returns `Err` denies (fail closed).
+
+    use super::*;
+    use ministr_api::tenant_filter::{TenantCorpusFilter, TenantFilterError, TenantFilterFuture};
+    use std::sync::Mutex;
+
+    #[derive(Debug)]
+    struct MockFilter {
+        decision: Mutex<Result<bool, &'static str>>,
+        calls: Mutex<Vec<(String, String)>>,
+    }
+
+    impl MockFilter {
+        fn allow() -> Self {
+            Self {
+                decision: Mutex::new(Ok(true)),
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+        fn deny() -> Self {
+            Self {
+                decision: Mutex::new(Ok(false)),
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+        fn err() -> Self {
+            Self {
+                decision: Mutex::new(Err("simulated storage failure")),
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+        fn calls(&self) -> Vec<(String, String)> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl TenantCorpusFilter for MockFilter {
+        fn allowed<'a>(
+            &'a self,
+            tenant_subject: &'a str,
+            corpus_id: &'a str,
+        ) -> TenantFilterFuture<'a> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((tenant_subject.to_string(), corpus_id.to_string()));
+            let decision = *self.decision.lock().unwrap();
+            Box::pin(async move {
+                decision.map_err(|m| TenantFilterError::Storage(m.into()))
+            })
+        }
+    }
+
+    /// `project = None` short-circuits without ever calling the filter.
+    #[tokio::test]
+    async fn project_none_skips_filter() {
+        // Hold both the concrete Arc (for assertions) and a trait-
+        // object Arc (for the resolver). Both point at the same
+        // MockFilter so `.calls()` on the concrete Arc observes any
+        // filter invocations the resolver makes.
+        let concrete: Arc<MockFilter> = Arc::new(MockFilter::deny());
+        let filter: Arc<dyn TenantCorpusFilter> = concrete.clone();
+        let default = dummy_default_service();
+        let registry = dummy_registry();
+        let outcome = Backend::resolve_registry_handle(
+            &default,
+            &registry,
+            Some(&filter),
+            Some("alice"),
+            None, // project
+        )
+        .await;
+        assert!(outcome.is_err(), "None project always falls back");
+        assert!(
+            concrete.calls().is_empty(),
+            "filter must not be consulted when project=None"
+        );
+    }
+
+    /// Filter wired + `tenant_subject` = None → deny (fail closed).
+    #[tokio::test]
+    async fn no_tenant_subject_denies_when_filter_is_wired() {
+        let filter: Arc<dyn TenantCorpusFilter> = Arc::new(MockFilter::allow());
+        let default = dummy_default_service();
+        let registry = dummy_registry();
+        let outcome = Backend::resolve_registry_handle(
+            &default,
+            &registry,
+            Some(&filter),
+            None,
+            Some("any-corpus"),
+        )
+        .await;
+        assert!(outcome.is_err(), "missing tenant_subject must deny");
+    }
+
+    /// Filter returns Ok(false) → deny.
+    #[tokio::test]
+    async fn filter_deny_returns_default_service_fallback() {
+        let filter: Arc<dyn TenantCorpusFilter> = Arc::new(MockFilter::deny());
+        let default = dummy_default_service();
+        let registry = dummy_registry();
+        let outcome = Backend::resolve_registry_handle(
+            &default,
+            &registry,
+            Some(&filter),
+            Some("alice"),
+            Some("bob-corpus"),
+        )
+        .await;
+        assert!(outcome.is_err(), "explicit deny falls back to default");
+    }
+
+    /// Filter returns Err → deny (fail closed).
+    #[tokio::test]
+    async fn filter_storage_error_fails_closed() {
+        let filter: Arc<dyn TenantCorpusFilter> = Arc::new(MockFilter::err());
+        let default = dummy_default_service();
+        let registry = dummy_registry();
+        let outcome = Backend::resolve_registry_handle(
+            &default,
+            &registry,
+            Some(&filter),
+            Some("alice"),
+            Some("any-corpus"),
+        )
+        .await;
+        assert!(
+            outcome.is_err(),
+            "storage error must fail closed, not bypass"
+        );
+    }
+
+    /// Helpers that build the bare minimum of the cross-crate types so
+    /// the resolver can be exercised in isolation. `default_service`
+    /// and `registry` are never dereferenced by the resolver on the
+    /// paths these tests cover (project=None / filter-deny / filter-
+    /// error all return before `ensure_present` runs), so we ship them
+    /// as `Arc::new(unsafe_uninit)` style placeholders.
+    fn dummy_default_service() -> Arc<QueryService> {
+        // Cheap construction: in-memory SQLite + zero-dim mock embedder
+        // + bare HnswIndex. Resolver paths under test never call any
+        // method on this Arc; it just needs to type-check.
+        use ministr_core::embedding::Embedder;
+        use ministr_core::error::IndexError;
+        use ministr_core::index::{HnswIndex, VectorIndex};
+        use ministr_core::storage::SqliteStorage;
+
+        struct ZeroEmbedder;
+        impl Embedder for ZeroEmbedder {
+            fn embed(&self, _: &[&str]) -> Result<Vec<Vec<f32>>, IndexError> {
+                Ok(vec![vec![0.0; 4]])
+            }
+            fn dimension(&self) -> usize {
+                4
+            }
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let storage = SqliteStorage::open(tmp.path().join("test.db")).unwrap();
+        let embedder: Arc<dyn Embedder> = Arc::new(ZeroEmbedder);
+        let index: Arc<dyn VectorIndex> = Arc::new(HnswIndex::new(4, 16).unwrap());
+        // Leak the tempdir to keep the SQLite file alive for the test;
+        // the test process exits anyway.
+        std::mem::forget(tmp);
+        Arc::new(QueryService::new(storage, embedder, index))
+    }
+
+    fn dummy_registry() -> Arc<ministr_daemon::registry::CorpusRegistry> {
+        use ministr_core::embedding::Embedder;
+        use ministr_core::error::IndexError;
+
+        struct ZeroEmbedder;
+        impl Embedder for ZeroEmbedder {
+            fn embed(&self, _: &[&str]) -> Result<Vec<Vec<f32>>, IndexError> {
+                Ok(vec![vec![0.0; 4]])
+            }
+            fn dimension(&self) -> usize {
+                4
+            }
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let config = ministr_core::config::MinistrConfig {
+            data_dir: tmp.path().to_path_buf(),
+            ..ministr_core::config::MinistrConfig::default()
+        };
+        std::mem::forget(tmp);
+        let embedder: Arc<dyn Embedder> = Arc::new(ZeroEmbedder);
+        Arc::new(ministr_daemon::registry::CorpusRegistry::new(
+            embedder, config,
+        ))
     }
 }
