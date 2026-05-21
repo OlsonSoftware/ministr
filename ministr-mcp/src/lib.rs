@@ -17,5 +17,6 @@ pub mod elicitation;
 pub mod error;
 pub mod sampling;
 pub mod server;
+pub mod sessions;
 pub mod task;
 pub mod tenant_scope;

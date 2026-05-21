@@ -361,7 +361,7 @@ pub(crate) async fn cmd_serve_http(
     // A2A protocol endpoints (agent card + task submission)
     let a2a_state = ministr_mcp::a2a::A2aState {
         service: a2a_service,
-        registry: a2a_registry,
+        registry: Arc::clone(&a2a_registry),
         tasks: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
     };
     let a2a_router = ministr_mcp::a2a::a2a_routes(a2a_state);
@@ -373,6 +373,16 @@ pub(crate) async fn cmd_serve_http(
         storage: Arc::clone(&ctx.storage),
     };
     let bundle_router = ministr_mcp::bundle_routes::bundle_routes(bundle_state);
+
+    // F6.2-a — session bundle export. Shares the same
+    // `Arc<Mutex<SessionRegistry>>` already cloned for the A2A wiring
+    // (line above this block), so all surfaces see the same live session
+    // shadows. Mounted unconditionally (self-hosted users can also
+    // export sessions for debugging); scope-gated as `ministr:read`
+    // below alongside the orgs router.
+    let session_export_router = ministr_mcp::sessions::session_export_routes(
+        ministr_mcp::sessions::SessionExportState::new(Arc::clone(&a2a_registry)),
+    );
 
     let admin_state = build_admin_state(&cloud_env, corpus_paths.len())?;
     let admin_public = ministr_mcp::admin::admin_public_routes(admin_state.clone());
@@ -710,6 +720,15 @@ pub(crate) async fn cmd_serve_http(
         // a cloud Postgres pool exists; otherwise the route is absent
         // and clients see 404, matching the absence of any billable
         // surface on self-hosted serve.
+        // F6.2-a — session bundle export route, scope-gated as
+        // `ministr:read`. Mounted unconditionally so self-hosted users
+        // can export sessions too; the cloud's scope guard is the
+        // standard `validate_token_middleware` path.
+        let session_export_p = ministr_mcp::auth::scope_protected_router(
+            session_export_router,
+            store.clone(),
+            "ministr:read",
+        );
         let mut composed = a2a_router
             .merge(protected)
             .merge(protected_bundles)
@@ -718,7 +737,8 @@ pub(crate) async fn cmd_serve_http(
             .merge(daemon_read_p)
             .merge(daemon_write_p)
             .merge(daemon_bundle_p)
-            .merge(daemon_obs_p);
+            .merge(daemon_obs_p)
+            .merge(session_export_p);
         if let Some(pool) = cloud_pool.as_ref() {
             let billing_router = ministr_cloud::billing_routes(
                 ministr_cloud::BillingState::from_arc(Arc::clone(pool)),
@@ -1043,6 +1063,7 @@ pub(crate) async fn cmd_serve_http(
             .merge(daemon_write_router)
             .merge(daemon_bundle_router)
             .merge(daemon_obs_router)
+            .merge(session_export_router)
     };
 
     let bind_addr = format!("{host}:{port}");
