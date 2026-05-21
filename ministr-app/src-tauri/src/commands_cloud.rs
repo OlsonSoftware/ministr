@@ -1899,6 +1899,45 @@ pub struct CloudSessionBundle {
     pub drops: Option<Vec<CloudSessionDrop>>,
 }
 
+/// F6.2-e — one in-memory session summary returned by
+/// `GET /api/v1/sessions`. Mirrors
+/// `ministr_mcp::sessions::export::SessionSummary`. v0 is live
+/// in-memory state only (one pod); cross-pod listing via
+/// `agent_sessions` Postgres lands in a future chunk.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CloudSessionSummary {
+    pub session_id: String,
+    pub opened_at: String,
+    pub budget_used: usize,
+    pub delivered_count: usize,
+    pub total_delivered_tokens: usize,
+    pub pressure_level: String,
+}
+
+/// GET `/api/v1/sessions` — list session summaries from the live
+/// in-memory registry. Used by the F6.2-d inspector dropdown so users
+/// don't have to copy-paste `session_ids` from elsewhere.
+#[tauri::command]
+pub async fn cloud_list_sessions() -> Result<Vec<CloudSessionSummary>, CommandError> {
+    let (client, endpoint, token) = authed_client(10)?;
+    let url = format!("{endpoint}/api/v1/sessions");
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("get {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("list sessions returned HTTP {}", resp.status()),
+        ));
+    }
+    resp.json::<Vec<CloudSessionSummary>>()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse sessions list: {e}")))
+}
+
 /// POST `/api/v1/sessions/{id}/export` — fetch the tar bundle, parse
 /// it locally, return a structured payload the React inspector can
 /// render without re-parsing the tar in JS.

@@ -145,6 +145,22 @@ export interface CloudSessionBundle {
 }
 
 /**
+ * F6.2-e — one in-memory session summary returned by
+ * `GET /api/v1/sessions`. Mirrors
+ * `ministr_mcp::sessions::export::SessionSummary`. v0 lists live
+ * in-memory sessions on the contacted pod only; cross-pod listing
+ * via the `agent_sessions` Postgres table lands in a future chunk.
+ */
+export interface CloudSessionSummary {
+  session_id: string;
+  opened_at: string;
+  budget_used: number;
+  delivered_count: number;
+  total_delivered_tokens: number;
+  pressure_level: string;
+}
+
+/**
  * Mirrors `ministr_cloud::api_keys::ApiKeyRow` (F3.4a). One row in the
  * caller's active-keys list — secret fields (`hash`, raw token) are
  * deliberately absent; only `prefix` (first 8 chars of the random
@@ -375,6 +391,11 @@ export const cloudClient = {
    */
   fetchSessionBundle: (sessionId: string) =>
     invoke<CloudSessionBundle>("cloud_fetch_session_bundle", { sessionId }),
+  /**
+   * F6.2-e — list in-memory session summaries from the contacted
+   * pod's registry. Powers the inspector's session-picker dropdown.
+   */
+  listSessions: () => invoke<CloudSessionSummary[]>("cloud_list_sessions"),
   /** F3.4b — list the caller's active service-account API keys. */
   listApiKeys: () => invoke<CloudApiKey[]>("cloud_list_api_keys"),
   /**
