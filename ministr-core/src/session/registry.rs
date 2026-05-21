@@ -108,6 +108,69 @@ impl SessionRegistry {
         self
     }
 
+    /// F6.1-c — consult the durable backend for a previously-snapshotted
+    /// session, and if found, materialise an in-memory `SessionEntry`
+    /// shell for it. Returns the loaded [`SessionSnapshot`] so the
+    /// caller can apply restoration logic that the registry doesn't
+    /// own (e.g. the MCP server stamps `parent_session_id` /
+    /// `client_name`; a future iteration may seed the budget tracker
+    /// once `UsageTracker` grows a `with_consumed` constructor).
+    ///
+    /// Semantics:
+    /// - If `id` already exists in-memory, returns `None` (no-op —
+    ///   the in-memory entry is canonical).
+    /// - If no storage backend is wired, returns `None`.
+    /// - If storage misses (no snapshot for the `(tenant_id, id)` PK),
+    ///   returns `None`. Caller should fall through to its own
+    ///   create-fresh path.
+    /// - If storage hits, materialises a fresh `SessionEntry` via the
+    ///   same path as [`Self::create_session`] (no in-memory budget /
+    ///   coherence carry-over yet — see scope note below) and returns
+    ///   `Some(snapshot)`.
+    /// - On storage error, logs at warn level and returns `None`
+    ///   (fail-graceful — the caller falls through to fresh creation
+    ///   rather than the request hard-failing).
+    ///
+    /// **Scope note (F6.1-c v0):** the returned `SessionSnapshot`
+    /// carries the persisted `budget_used` and `coherence_score`, but
+    /// the freshly-created `SessionEntry` does NOT yet have those
+    /// values seeded — `UsageTracker` doesn't expose a pre-seed
+    /// constructor today. A follow-up iteration adds the constructor
+    /// and stitches the budget through; until then, this method's
+    /// value is "the session shell exists on this pod" rather than
+    /// "full state restored". The audit-feed / activity counters that
+    /// depend on session continuity already work via the shell.
+    pub async fn try_restore(
+        &mut self,
+        id: &str,
+        tenant_id: &str,
+        budget_config: Option<UsageConfig>,
+        access_mode: AccessMode,
+    ) -> Option<SessionSnapshot> {
+        if self.sessions.contains_key(id) {
+            return None;
+        }
+        let storage = self.storage.as_ref()?;
+        let snapshot = match storage.load(tenant_id, id).await {
+            Ok(Some(snap)) => snap,
+            Ok(None) => return None,
+            Err(e) => {
+                warn!(
+                    error = ?e,
+                    session_id = %id,
+                    tenant_id = %tenant_id,
+                    "session restore: storage load failed (falling through to fresh create)",
+                );
+                return None;
+            }
+        };
+        // Materialise a fresh in-memory shell. Same shape as
+        // create_session — the caller-visible side effect is "the
+        // session id now resolves on this pod".
+        self.create_session(id, budget_config, access_mode);
+        Some(snapshot)
+    }
+
     /// F6.1-b — fire-and-forget snapshot save. The caller builds the
     /// [`SessionSnapshot`] (it has the tenant + corpus context the
     /// registry doesn't carry today) and hands it off; this method
@@ -300,10 +363,18 @@ mod tests {
         }
         fn load<'a>(
             &'a self,
-            _tenant_id: &'a str,
-            _session_id: &'a str,
+            tenant_id: &'a str,
+            session_id: &'a str,
         ) -> LoadSessionFuture<'a> {
-            Box::pin(async { Ok(None) })
+            // For round-trip tests: return the most-recently saved
+            // snapshot matching the (tenant_id, session_id) PK.
+            Box::pin(async move {
+                let saves = self.saves.lock().unwrap();
+                Ok(saves
+                    .iter()
+                    .rfind(|s| s.tenant_id == tenant_id && s.session_id == session_id)
+                    .cloned())
+            })
         }
         fn touch<'a>(
             &'a self,
@@ -350,6 +421,116 @@ mod tests {
             registry.storage.is_some(),
             "with_storage should populate the field",
         );
+    }
+
+    #[tokio::test]
+    async fn try_restore_returns_none_when_session_already_in_memory() {
+        let stub = Arc::new(StubStorage::default());
+        let mut registry =
+            default_registry().with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
+        // Pre-populate in-memory; the storage's stored snapshot
+        // should NOT shadow the live entry.
+        registry.create_session("agent-1", None, AccessMode::ReadWrite);
+        stub.saves.lock().unwrap().push(fixture_snapshot());
+        let out = registry
+            .try_restore("agent-1", "tenant-uuid", None, AccessMode::ReadWrite)
+            .await;
+        assert!(
+            out.is_none(),
+            "in-memory entry must shadow the storage snapshot",
+        );
+    }
+
+    #[tokio::test]
+    async fn try_restore_returns_none_when_no_storage() {
+        let mut registry = default_registry();
+        let out = registry
+            .try_restore("agent-1", "tenant-uuid", None, AccessMode::ReadWrite)
+            .await;
+        assert!(out.is_none(), "no storage wired → no restore path");
+        assert!(
+            !registry.contains("agent-1"),
+            "no shell should be materialised without storage",
+        );
+    }
+
+    #[tokio::test]
+    async fn try_restore_returns_none_when_storage_misses() {
+        let stub = Arc::new(StubStorage::default());
+        let mut registry =
+            default_registry().with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
+        let out = registry
+            .try_restore("agent-1", "tenant-uuid", None, AccessMode::ReadWrite)
+            .await;
+        assert!(out.is_none(), "storage miss → caller falls through to create");
+        assert!(
+            !registry.contains("agent-1"),
+            "no shell should be materialised on storage miss",
+        );
+    }
+
+    #[tokio::test]
+    async fn try_restore_hydrates_shell_when_storage_hits() {
+        let stub = Arc::new(StubStorage::default());
+        // Pre-seed the storage with a snapshot the registry can
+        // restore from.
+        stub.saves.lock().unwrap().push(fixture_snapshot());
+        let mut registry =
+            default_registry().with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
+        let restored = registry
+            .try_restore(
+                &fixture_snapshot().session_id,
+                &fixture_snapshot().tenant_id,
+                None,
+                AccessMode::ReadWrite,
+            )
+            .await;
+        assert_eq!(
+            restored,
+            Some(fixture_snapshot()),
+            "round-trip the persisted snapshot back to the caller",
+        );
+        assert!(
+            registry.contains(&fixture_snapshot().session_id),
+            "storage hit must materialise an in-memory shell",
+        );
+    }
+
+    #[tokio::test]
+    async fn persist_then_restore_round_trips_through_storage() {
+        let stub = Arc::new(StubStorage::default());
+        let mut registry =
+            default_registry().with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
+        // Imitate a pod-1 lifecycle: create + persist.
+        registry.create_session("agent-1", None, AccessMode::ReadWrite);
+        let snap = SessionSnapshot {
+            session_id: "agent-1".into(),
+            tenant_id: "tenant-uuid".into(),
+            corpus_id: Some("corpus-a".into()),
+            opened_at: "2026-05-21T00:00:00Z".into(),
+            last_seen_at: "2026-05-21T01:00:00Z".into(),
+            budget_used: 1234,
+            coherence_score: 0.81,
+        };
+        registry.persist_snapshot(snap.clone());
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+            if !stub.saves.lock().unwrap().is_empty() {
+                break;
+            }
+        }
+        // Imitate pod-2 cold start: fresh registry, same storage.
+        let mut pod2 =
+            default_registry().with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
+        let restored = pod2
+            .try_restore("agent-1", "tenant-uuid", None, AccessMode::ReadWrite)
+            .await;
+        assert_eq!(
+            restored,
+            Some(snap),
+            "fresh pod hydrates the same snapshot pod-1 persisted",
+        );
+        assert!(pod2.contains("agent-1"));
     }
 
     #[tokio::test]
