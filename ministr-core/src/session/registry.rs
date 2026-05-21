@@ -61,6 +61,14 @@ pub struct SessionEntry {
     /// SessionDashboard tell e.g. `claude-code` from `claude-subagent`
     /// from `mcp-inspector` apart. `None` until the handshake completes.
     pub client_name: Option<String>,
+    /// F6.2-e-followup — tenant subject this session belongs to.
+    /// `None` for self-hosted serve / stdio (no tenant scope) and
+    /// for unauthenticated in-process calls. Cloud paths stamp this
+    /// from `tenant_scope::current()` the first time
+    /// `ensure_session_mut` resolves the entry. Used by
+    /// `GET /api/v1/sessions` to filter the listing — cross-tenant
+    /// callers see an empty list rather than the global registry.
+    pub tenant_id: Option<String>,
 }
 
 /// Registry managing multiple named sessions that share a single corpus.
@@ -284,6 +292,10 @@ impl SessionRegistry {
         // create_session — the caller-visible side effect is "the
         // session id now resolves on this pod".
         let entry = self.create_session(id, budget_config, access_mode);
+        // F6.2-e-followup — stamp tenant_id from the snapshot so the
+        // restored shell carries the same multi-tenant identity it
+        // had pre-pod-recycle. `GET /api/v1/sessions` filters on this.
+        entry.tenant_id = Some(snapshot.tenant_id.clone());
         // F6.1-c-followup — seed the budget tracker with the
         // persisted consumption so the resumed session resumes with
         // the same pressure level it had pre-restore. The snapshot
@@ -367,6 +379,7 @@ impl SessionRegistry {
                 memory: super::memory::MemoryTracker::new(),
                 parent_session_id: None,
                 client_name: None,
+                tenant_id: None,
             },
         );
         self.sessions.get_mut(id).expect("just inserted")

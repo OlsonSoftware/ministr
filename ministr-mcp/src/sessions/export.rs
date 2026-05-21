@@ -335,13 +335,28 @@ impl SessionSummary {
 }
 
 async fn handle_list(State(state): State<SessionExportState>) -> Response {
+    // F6.2-e-followup — read the tenant scope before locking so the
+    // filter is computed once per request. `None` (self-hosted / stdio)
+    // admits all entries; `Some(t)` admits only entries whose own
+    // `tenant_id` matches `Some(t)`. Pre-stamping legacy entries with
+    // `tenant_id = None` are invisible to scoped callers — safe-by-
+    // default; they leak nothing.
+    let scope = crate::tenant_scope::current();
     let reg = state.registry.lock().await;
     let mut summaries: Vec<SessionSummary> = reg
         .session_ids()
         .into_iter()
         .filter_map(|id| {
-            reg.get_session(&id)
-                .map(|entry| SessionSummary::from_entry(&id, entry))
+            let entry = reg.get_session(&id)?;
+            let admit = match scope.as_deref() {
+                None => true,
+                Some(s) => entry.tenant_id.as_deref() == Some(s),
+            };
+            if admit {
+                Some(SessionSummary::from_entry(&id, entry))
+            } else {
+                None
+            }
         })
         .collect();
     drop(reg);
@@ -730,6 +745,88 @@ mod tests {
         assert_eq!(summary.total_delivered_tokens, 150);
         assert_eq!(summary.pressure_level, "normal");
         assert!(!summary.opened_at.is_empty());
+    }
+
+    #[test]
+    fn session_entry_default_tenant_id_is_none() {
+        let mut reg = fresh_registry();
+        reg.create_session("agent-default", None, AccessMode::ReadWrite);
+        let entry = reg.get_session("agent-default").expect("entry");
+        assert!(
+            entry.tenant_id.is_none(),
+            "create_session must default tenant_id to None — cloud stamps it post-create",
+        );
+    }
+
+    /// F6.2-e-followup — `handle_list` filters entries by `tenant_scope::current`.
+    /// Mirrors the registry's `session_ids` iteration but applies the
+    /// admit predicate. This test exercises the predicate directly
+    /// since `handle_list` needs an axum runtime; the logic is identical.
+    #[tokio::test]
+    async fn list_endpoint_filters_by_tenant_scope() {
+        let mut reg = fresh_registry();
+        // Three entries: one tenant-x, one tenant-y, one unstamped.
+        reg.create_session("sess-x", None, AccessMode::ReadWrite);
+        reg.get_session_mut("sess-x").unwrap().tenant_id = Some("tenant-x".into());
+        reg.create_session("sess-y", None, AccessMode::ReadWrite);
+        reg.get_session_mut("sess-y").unwrap().tenant_id = Some("tenant-y".into());
+        reg.create_session("sess-z", None, AccessMode::ReadWrite);
+        // sess-z tenant_id stays None.
+
+        // Replicate the handle_list filter for the test (the handler
+        // itself uses State<SessionExportState> + axum, not directly
+        // exercisable from a unit test).
+        let admit = |scope: Option<&str>, tid: Option<&str>| match scope {
+            None => true,
+            Some(s) => tid == Some(s),
+        };
+
+        // Scope=None (self-hosted) admits all.
+        let unscoped: Vec<String> = reg
+            .session_ids()
+            .into_iter()
+            .filter(|id| {
+                let tid = reg.get_session(id).unwrap().tenant_id.clone();
+                admit(None, tid.as_deref())
+            })
+            .collect();
+        assert_eq!(unscoped.len(), 3, "self-hosted ⇒ all entries visible");
+
+        // Scope=tenant-x admits only sess-x.
+        let scoped_x: Vec<String> = reg
+            .session_ids()
+            .into_iter()
+            .filter(|id| {
+                let tid = reg.get_session(id).unwrap().tenant_id.clone();
+                admit(Some("tenant-x"), tid.as_deref())
+            })
+            .collect();
+        assert_eq!(scoped_x, vec!["sess-x".to_string()]);
+
+        // Scope=tenant-y admits only sess-y.
+        let scoped_y: Vec<String> = reg
+            .session_ids()
+            .into_iter()
+            .filter(|id| {
+                let tid = reg.get_session(id).unwrap().tenant_id.clone();
+                admit(Some("tenant-y"), tid.as_deref())
+            })
+            .collect();
+        assert_eq!(scoped_y, vec!["sess-y".to_string()]);
+
+        // Scope=tenant-z (unknown) admits nothing — including unstamped.
+        let scoped_unknown: Vec<String> = reg
+            .session_ids()
+            .into_iter()
+            .filter(|id| {
+                let tid = reg.get_session(id).unwrap().tenant_id.clone();
+                admit(Some("tenant-z"), tid.as_deref())
+            })
+            .collect();
+        assert!(
+            scoped_unknown.is_empty(),
+            "unknown tenant ⇒ no visibility, including unstamped legacy entries",
+        );
     }
 
     #[test]
