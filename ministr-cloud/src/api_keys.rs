@@ -49,6 +49,19 @@ use tracing::warn;
 /// scans cleanly across `GitGuardian` / `TruffleHog`).
 pub const TOKEN_PREFIX: &str = "mst_pk_";
 
+/// F3.4c-i — the four-scope vocabulary accepted on `POST /api/v1/api_keys`.
+/// Mirrors `ministr_mcp::auth::OAuthConfig::default().scopes_supported`
+/// — kept inline rather than importing the OAuth config so `api_keys.rs`
+/// stays decoupled from the auth-server's runtime configuration. If the
+/// allowed set ever expands at runtime, this constant becomes the seam
+/// to thread an injected list.
+pub const ALLOWED_API_KEY_SCOPES: &[&str] = &[
+    "ministr:read",
+    "ministr:write",
+    "ministr:bundle:read",
+    "ministr:bundle:write",
+];
+
 /// Random-bytes-per-token. 32 bytes → 256-bit entropy, same as F3.1b-i
 /// invite tokens. Base64url encodes to ~43 chars.
 const TOKEN_ENTROPY_BYTES: usize = 32;
@@ -108,6 +121,33 @@ pub struct ApiKeyRow {
 pub struct CreatedApiKey {
     pub row: ApiKeyRow,
     pub raw_token: String,
+}
+
+/// F3.4c-i — validate a whitespace-separated scopes string against
+/// [`ALLOWED_API_KEY_SCOPES`]. Returns the canonical re-joined string
+/// (single-space-separated, original order preserved) on success.
+///
+/// # Errors
+///
+/// Returns `Err(unknown_token)` listing the first unknown scope so the
+/// API can return an actionable 400.
+pub fn validate_scopes(raw: &str) -> Result<String, String> {
+    let mut canonical = String::with_capacity(raw.len());
+    let mut first = true;
+    for token in raw.split_whitespace() {
+        if !ALLOWED_API_KEY_SCOPES.contains(&token) {
+            return Err(token.to_string());
+        }
+        if !first {
+            canonical.push(' ');
+        }
+        canonical.push_str(token);
+        first = false;
+    }
+    if canonical.is_empty() {
+        return Err(String::new());
+    }
+    Ok(canonical)
 }
 
 /// Mint a new user-owned API key.
@@ -436,6 +476,9 @@ struct ListResponse {
 enum ApiKeysApiError {
     Unauthenticated,
     InvalidInput(&'static str),
+    /// F3.4c-i — request specified a scope outside [`ALLOWED_API_KEY_SCOPES`].
+    /// Carries the offending token so the response body is actionable.
+    UnknownScope(String),
     NotFound,
     Repo(ApiKeysError),
 }
@@ -446,6 +489,11 @@ impl axum::response::IntoResponse for ApiKeysApiError {
         match self {
             Self::Unauthenticated => (S::UNAUTHORIZED, "unauthenticated").into_response(),
             Self::InvalidInput(msg) => (S::BAD_REQUEST, msg).into_response(),
+            Self::UnknownScope(token) => (
+                S::BAD_REQUEST,
+                format!("unknown_scope: {token}"),
+            )
+                .into_response(),
             Self::NotFound => (S::NOT_FOUND, "not_found").into_response(),
             Self::Repo(e) => {
                 warn!(error = %e, "api_keys repo error");
@@ -470,13 +518,21 @@ async fn create_handler(
     if name.is_empty() {
         return Err(ApiKeysApiError::InvalidInput("name must not be empty"));
     }
-    let scopes = body
+    let scopes_input = body
         .scopes
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .unwrap_or("ministr:read ministr:write")
-        .to_owned();
+        .unwrap_or("ministr:read ministr:write");
+    // F3.4c-i — reject unknown tokens before mint so the table never
+    // accumulates rows pointing at scopes the resolver can't honour.
+    let scopes = match validate_scopes(scopes_input) {
+        Ok(canonical) => canonical,
+        Err(bad) if bad.is_empty() => {
+            return Err(ApiKeysApiError::InvalidInput("scopes must not be empty"));
+        }
+        Err(bad) => return Err(ApiKeysApiError::UnknownScope(bad)),
+    };
     let created = create_user_api_key(&state.pool, &user_id, name, &scopes)
         .await
         .map_err(ApiKeysApiError::Repo)?;
@@ -609,6 +665,52 @@ impl PostgresApiKeyResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_scopes_accepts_full_vocabulary() {
+        let raw = "ministr:read ministr:write ministr:bundle:read ministr:bundle:write";
+        let canonical = validate_scopes(raw).expect("vocabulary is valid");
+        assert_eq!(canonical, raw);
+    }
+
+    #[test]
+    fn validate_scopes_accepts_subset_and_preserves_order() {
+        let canonical = validate_scopes("ministr:write ministr:read").expect("valid subset");
+        assert_eq!(canonical, "ministr:write ministr:read");
+    }
+
+    #[test]
+    fn validate_scopes_collapses_whitespace_in_canonical_form() {
+        // Tabs and double spaces collapse to single-space delimiters.
+        let canonical = validate_scopes("ministr:read\tministr:write").expect("valid");
+        assert_eq!(canonical, "ministr:read ministr:write");
+    }
+
+    #[test]
+    fn validate_scopes_rejects_unknown_token() {
+        let err = validate_scopes("ministr:read ministr:admin").expect_err("admin not allowed");
+        assert_eq!(err, "ministr:admin");
+    }
+
+    #[test]
+    fn validate_scopes_rejects_empty_after_trim() {
+        let err = validate_scopes("   ").expect_err("whitespace-only is empty");
+        assert!(err.is_empty());
+    }
+
+    #[test]
+    fn allowed_scopes_matches_default_signin_scope_set() {
+        // F3.4c-i invariant: the four-scope vocabulary stays in lockstep
+        // with the GitHub-IdP-minted bearer's default scope set, otherwise
+        // an API key minted with the same scope string as the user's own
+        // session would resolve differently.
+        for scope in ALLOWED_API_KEY_SCOPES {
+            assert!(
+                crate::auth::github_signin::DEFAULT_SIGNIN_SCOPE.contains(scope),
+                "{scope} missing from DEFAULT_SIGNIN_SCOPE"
+            );
+        }
+    }
 
     #[test]
     fn minted_token_carries_prefix_and_random_suffix() {
