@@ -47,6 +47,9 @@ hmac.workspace = true
 subtle.workspace = true
 # Used for SSE: `tokio_stream::wrappers::ReceiverStream` + `StreamExt::map`.
 tokio-stream = "0.1"
+# F6.2-a — session-bundle export uses tar (matches the existing
+# `.ministr-index` archive convention; no new compression dep).
+tar.workspace = true
 
 [dev-dependencies]
 rmcp = { workspace = true, features = ["client"] }

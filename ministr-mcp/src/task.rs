@@ -261,6 +261,14 @@ pub(crate) fn iso8601_now() -> String {
     format_timestamp(secs)
 }
 
+/// F6.2-a — render an arbitrary Unix-epoch seconds value as an
+/// ISO-8601 UTC string. Used by the session export to derive the
+/// session's `opened_at` from `Session::elapsed()` since
+/// `Session::created_at` is a monotonic `Instant`.
+pub(crate) fn iso8601_from_secs(secs: u64) -> String {
+    format_timestamp(secs)
+}
+
 /// Format a Unix timestamp as ISO-8601 UTC string.
 fn format_timestamp(secs: u64) -> String {
     const SECONDS_PER_DAY: u64 = 86400;
