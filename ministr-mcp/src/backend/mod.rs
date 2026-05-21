@@ -319,11 +319,19 @@ impl Backend {
 
     /// Resolve `project` (a `corpus_id` in registry mode) to a handle
     /// whose owned `QueryService` should answer this call. Returns
-    /// `Err(default_service)` when `project` is `None`, the registry
-    /// can't produce a handle (unknown id / blob restore failure), or
-    /// the tenant filter denies access — all collapse to the same
-    /// typo-tolerance shape so a cross-tenant probe leaks no more
-    /// information than a typo would.
+    /// `Err(default_service)` when `project` is `None` (and no tenant
+    /// default is available), the registry can't produce a handle
+    /// (unknown id / blob restore failure), or the tenant filter
+    /// denies access — all collapse to the same typo-tolerance shape
+    /// so a cross-tenant probe leaks no more information than a typo
+    /// would.
+    ///
+    /// F2.x-c — when `project = None` AND the caller threaded a
+    /// `tenant_subject` AND a `tenant_filter` is wired, ask the filter
+    /// for the tenant's default corpus (currently: most-recently-created).
+    /// If found, `ensure_present` that `corpus_id` and dispatch through
+    /// its `QueryService`. If the filter returns `None` (or the lookup
+    /// errors), continue the existing fallback to `default_service`.
     ///
     /// The returned `Ok` arm carries the `Arc<CorpusHandle>` so the
     /// caller keeps the handle alive across its `.await` on
@@ -335,15 +343,51 @@ impl Backend {
         tenant_subject: Option<&str>,
         project: Option<&str>,
     ) -> Result<Arc<ministr_daemon::registry::CorpusHandle>, &'a Arc<QueryService>> {
-        let Some(corpus_id) = project else {
-            return Err(default_service);
+        // F2.x-c — None project, tenant in scope: ask the filter for
+        // the tenant's default corpus. Allocate a String so the rest of
+        // the resolver works against a borrowed `&str` uniformly,
+        // without forcing the trait method to hand out a borrowed Cow.
+        let resolved_owned: Option<String>;
+        let corpus_id: &str = if let Some(id) = project {
+            id
+        } else {
+            let Some(filter) = tenant_filter else {
+                return Err(default_service);
+            };
+            let Some(subject) = tenant_subject else {
+                return Err(default_service);
+            };
+            match filter.default_corpus_for_tenant(subject).await {
+                Ok(Some(id)) => {
+                    tracing::debug!(
+                        subject,
+                        corpus_id = %id,
+                        "tenant default corpus resolved"
+                    );
+                    resolved_owned = Some(id);
+                    resolved_owned.as_deref().unwrap()
+                }
+                Ok(None) => return Err(default_service),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        subject,
+                        "tenant default-corpus lookup failed — falling back"
+                    );
+                    return Err(default_service);
+                }
+            }
         };
         // F2.x-b — gate the lookup behind the tenant filter when one is
         // wired AND the caller threaded its tenant identity. A missing
         // tenant_subject in cloud mode is itself a deny: handlers that
         // accept a `project` argument MUST extract the Tenant from
         // RequestContext and pass its subject. A `None` arrives only on
-        // self-hosted serve (where tenant_filter is None too).
+        // self-hosted serve (where tenant_filter is None too). The
+        // F2.x-c default-resolution branch above already used the
+        // filter to pick the corpus_id, but we re-check `allowed` here
+        // for uniform treatment — the same filter implementation
+        // will obviously approve its own choice.
         if let Some(filter) = tenant_filter {
             let Some(subject) = tenant_subject else {
                 tracing::warn!(
@@ -854,48 +898,70 @@ impl Backend {
 
 #[cfg(test)]
 mod tests {
-    //! F2.x-b — tenant-filter behaviour tests for `Backend::Registry`.
+    //! F2.x-b/c — tenant-filter behaviour tests for `Backend::Registry`.
     //!
     //! These exercise `resolve_registry_handle` in isolation so they don't
     //! need a live `CorpusRegistry` fixture (that's covered by the
     //! daemon's `tests/common`). The tests focus on what the resolver
     //! decides given the filter alone:
-    //! - `project = None` always falls back to default (no filter call).
-    //! - `tenant_filter = Some` + `tenant_subject = None` denies.
-    //! - `tenant_filter = Some` + filter returns `Ok(false)` denies.
-    //! - `tenant_filter = Some` + filter returns `Err` denies (fail closed).
+    //! - F2.x-b: `tenant_filter = Some` + `tenant_subject = None` denies.
+    //! - F2.x-b: `tenant_filter = Some` + filter returns `Ok(false)` denies.
+    //! - F2.x-b: `tenant_filter = Some` + filter returns `Err` denies (fail closed).
+    //! - F2.x-c: `project = None` consults `default_corpus_for_tenant`; falls
+    //!   back to `default_service` when that returns `None` or `Err`.
 
     use super::*;
-    use ministr_api::tenant_filter::{TenantCorpusFilter, TenantFilterError, TenantFilterFuture};
+    use ministr_api::tenant_filter::{
+        DefaultCorpusFuture, TenantCorpusFilter, TenantFilterError, TenantFilterFuture,
+    };
     use std::sync::Mutex;
 
     #[derive(Debug)]
     struct MockFilter {
         decision: Mutex<Result<bool, &'static str>>,
+        /// F2.x-c — configurable response for `default_corpus_for_tenant`.
+        /// `None` (the default) preserves the trait's default impl
+        /// behaviour. `Some(Ok(...))` returns a `corpus_id`, `Some(Err(_))`
+        /// simulates a storage failure.
+        default_corpus: Mutex<Option<Result<Option<String>, &'static str>>>,
         calls: Mutex<Vec<(String, String)>>,
+        default_calls: Mutex<Vec<String>>,
     }
 
     impl MockFilter {
         fn allow() -> Self {
             Self {
                 decision: Mutex::new(Ok(true)),
+                default_corpus: Mutex::new(None),
                 calls: Mutex::new(Vec::new()),
+                default_calls: Mutex::new(Vec::new()),
             }
         }
         fn deny() -> Self {
             Self {
                 decision: Mutex::new(Ok(false)),
+                default_corpus: Mutex::new(None),
                 calls: Mutex::new(Vec::new()),
+                default_calls: Mutex::new(Vec::new()),
             }
         }
         fn err() -> Self {
             Self {
                 decision: Mutex::new(Err("simulated storage failure")),
+                default_corpus: Mutex::new(None),
                 calls: Mutex::new(Vec::new()),
+                default_calls: Mutex::new(Vec::new()),
             }
+        }
+        fn with_default_corpus(self, value: Result<Option<String>, &'static str>) -> Self {
+            *self.default_corpus.lock().unwrap() = Some(value);
+            self
         }
         fn calls(&self) -> Vec<(String, String)> {
             self.calls.lock().unwrap().clone()
+        }
+        fn default_calls(&self) -> Vec<String> {
+            self.default_calls.lock().unwrap().clone()
         }
     }
 
@@ -914,15 +980,32 @@ mod tests {
                 decision.map_err(|m| TenantFilterError::Storage(m.into()))
             })
         }
+
+        fn default_corpus_for_tenant<'a>(
+            &'a self,
+            tenant_subject: &'a str,
+        ) -> DefaultCorpusFuture<'a> {
+            self.default_calls
+                .lock()
+                .unwrap()
+                .push(tenant_subject.to_string());
+            let configured = self.default_corpus.lock().unwrap().clone();
+            Box::pin(async move {
+                match configured {
+                    None => Ok(None),
+                    Some(Ok(id)) => Ok(id),
+                    Some(Err(m)) => Err(TenantFilterError::Storage(m.into())),
+                }
+            })
+        }
     }
 
-    /// `project = None` short-circuits without ever calling the filter.
+    /// F2.x-c: `project = None` consults `default_corpus_for_tenant`. With
+    /// no override set, the trait's default impl returns `None`, so the
+    /// resolver falls back to `default_service`. `allowed` is never
+    /// called because there's no `corpus_id` to gate against.
     #[tokio::test]
-    async fn project_none_skips_filter() {
-        // Hold both the concrete Arc (for assertions) and a trait-
-        // object Arc (for the resolver). Both point at the same
-        // MockFilter so `.calls()` on the concrete Arc observes any
-        // filter invocations the resolver makes.
+    async fn project_none_consults_default_corpus_then_falls_back() {
         let concrete: Arc<MockFilter> = Arc::new(MockFilter::deny());
         let filter: Arc<dyn TenantCorpusFilter> = concrete.clone();
         let default = dummy_default_service();
@@ -932,14 +1015,110 @@ mod tests {
             &registry,
             Some(&filter),
             Some("alice"),
-            None, // project
+            None,
         )
         .await;
-        assert!(outcome.is_err(), "None project always falls back");
+        assert!(outcome.is_err(), "None project + None default falls back");
+        assert_eq!(
+            concrete.default_calls(),
+            vec!["alice".to_string()],
+            "default_corpus_for_tenant must be consulted"
+        );
         assert!(
             concrete.calls().is_empty(),
-            "filter must not be consulted when project=None"
+            "allowed must not be called when default returns None"
         );
+    }
+
+    /// F2.x-c: `project = None` + no `tenant_subject` → fall back without
+    /// calling either filter method.
+    #[tokio::test]
+    async fn project_none_no_tenant_skips_filter_entirely() {
+        let concrete: Arc<MockFilter> = Arc::new(MockFilter::allow());
+        let filter: Arc<dyn TenantCorpusFilter> = concrete.clone();
+        let default = dummy_default_service();
+        let registry = dummy_registry();
+        let outcome = Backend::resolve_registry_handle(
+            &default,
+            &registry,
+            Some(&filter),
+            None,
+            None,
+        )
+        .await;
+        assert!(outcome.is_err());
+        assert!(concrete.default_calls().is_empty());
+        assert!(concrete.calls().is_empty());
+    }
+
+    /// F2.x-c: `project = None` + no filter → fall back without any
+    /// filter call (preserves self-hosted / single-tenant behaviour).
+    #[tokio::test]
+    async fn project_none_no_filter_falls_back() {
+        let default = dummy_default_service();
+        let registry = dummy_registry();
+        let outcome = Backend::resolve_registry_handle(
+            &default,
+            &registry,
+            None,
+            Some("alice"),
+            None,
+        )
+        .await;
+        assert!(outcome.is_err());
+    }
+
+    /// F2.x-c: when `default_corpus_for_tenant` returns `Some(id)`,
+    /// the resolver re-checks `allowed` for the chosen corpus, then
+    /// proceeds to `ensure_present`. In tests `ensure_present` errors
+    /// (empty registry), so the outcome is Err — but BOTH filter
+    /// methods were exercised.
+    #[tokio::test]
+    async fn project_none_default_corpus_drives_lookup() {
+        let concrete: Arc<MockFilter> = Arc::new(
+            MockFilter::allow().with_default_corpus(Ok(Some("alice-corpus-1".into()))),
+        );
+        let filter: Arc<dyn TenantCorpusFilter> = concrete.clone();
+        let default = dummy_default_service();
+        let registry = dummy_registry();
+        let outcome = Backend::resolve_registry_handle(
+            &default,
+            &registry,
+            Some(&filter),
+            Some("alice"),
+            None,
+        )
+        .await;
+        assert!(outcome.is_err(), "registry lookup misses in this fixture");
+        assert_eq!(concrete.default_calls(), vec!["alice".to_string()]);
+        assert_eq!(
+            concrete.calls(),
+            vec![("alice".to_string(), "alice-corpus-1".to_string())],
+            "allowed must re-check the chosen corpus_id"
+        );
+    }
+
+    /// F2.x-c: storage error on `default_corpus_for_tenant` → fall
+    /// back to `default_service` (don't crash, don't leak the error).
+    #[tokio::test]
+    async fn project_none_default_corpus_error_falls_back() {
+        let concrete: Arc<MockFilter> = Arc::new(
+            MockFilter::allow().with_default_corpus(Err("simulated default-lookup failure")),
+        );
+        let filter: Arc<dyn TenantCorpusFilter> = concrete.clone();
+        let default = dummy_default_service();
+        let registry = dummy_registry();
+        let outcome = Backend::resolve_registry_handle(
+            &default,
+            &registry,
+            Some(&filter),
+            Some("alice"),
+            None,
+        )
+        .await;
+        assert!(outcome.is_err());
+        assert_eq!(concrete.default_calls(), vec!["alice".to_string()]);
+        assert!(concrete.calls().is_empty(), "allowed not reached on error");
     }
 
     /// Filter wired + `tenant_subject` = None → deny (fail closed).

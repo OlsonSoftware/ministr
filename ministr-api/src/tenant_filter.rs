@@ -39,6 +39,13 @@ pub enum TenantFilterError {
 pub type TenantFilterFuture<'a> =
     Pin<Box<dyn Future<Output = Result<bool, TenantFilterError>> + Send + 'a>>;
 
+/// Future shape returned by [`TenantCorpusFilter::default_corpus_for_tenant`].
+/// Same `Send + 'a` bounds as [`TenantFilterFuture`], but yielding an
+/// `Option<String>` instead of a `bool`.
+pub type DefaultCorpusFuture<'a> = Pin<
+    Box<dyn Future<Output = Result<Option<String>, TenantFilterError>> + Send + 'a>,
+>;
+
 /// Decides whether a tenant may dispatch tool calls against a corpus.
 ///
 /// Implementations must be `Send + Sync` so they can be stored as
@@ -54,6 +61,22 @@ pub trait TenantCorpusFilter: Send + Sync + std::fmt::Debug {
         tenant_subject: &'a str,
         corpus_id: &'a str,
     ) -> TenantFilterFuture<'a>;
+
+    /// F2.x-c — return the `corpus_id` the resolver should answer with
+    /// when a tool call comes in with no `project` argument and the
+    /// caller's `tenant_subject` is known. Default impl returns
+    /// `Ok(None)` so the caller falls back to its existing
+    /// `default_service` (the startup-bound placeholder). The Postgres
+    /// impl overrides this to return the tenant's most-recently-created
+    /// corpus, so authenticated cloud calls without a `project`
+    /// argument land on a real corpus instead of the empty default.
+    fn default_corpus_for_tenant<'a>(
+        &'a self,
+        tenant_subject: &'a str,
+    ) -> DefaultCorpusFuture<'a> {
+        let _ = tenant_subject;
+        Box::pin(async { Ok(None) })
+    }
 }
 
 #[cfg(test)]
