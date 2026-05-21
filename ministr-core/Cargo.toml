@@ -16,6 +16,11 @@ keywords = ["mcp", "code-intelligence", "embeddings", "llm", "rag"]
 workspace = true
 
 [dependencies]
+# F6.1-b — SessionRegistry holds an Option<Arc<dyn SessionStorage>> from
+# ministr-api so the cloud can wire PostgresSessionStorage. ministr-api
+# is the MIT type/trait seam — no heavy deps; this is the same layering
+# convention ministr-mcp and ministr-daemon already follow.
+ministr-api.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
