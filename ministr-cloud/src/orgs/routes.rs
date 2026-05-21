@@ -43,7 +43,9 @@ use tracing::warn;
 use super::invites::{DEFAULT_INVITE_TTL, create_invite};
 use super::repo::{
     OrgError, OrgRow, OrgWithRole, create_org, list_org_members, list_orgs_for_user, member_role,
+    set_org_stripe_customer_id, user_email,
 };
+use crate::billing::StripeClient;
 
 /// Handler state — the cloud Postgres pool. Shared `Arc` with the rest
 /// of `cmd_serve_http` so the orgs router does not own a second pool.
@@ -55,6 +57,12 @@ pub struct OrgsState {
     /// prefix client-side; production deployments should always set
     /// this via [`Self::with_cloud_base_url`].
     cloud_base_url: Option<String>,
+    /// F3.1c-i — optional Stripe client. `Some` triggers org-Customer
+    /// creation on org insert (best-effort, mirrors the user-side
+    /// pattern in `auth::github_signin`). `None` leaves
+    /// `orgs.stripe_customer_id` NULL — populated later by a sync
+    /// job or the F3.1c-iii personal-to-org transfer.
+    stripe: Option<Arc<StripeClient>>,
 }
 
 fn trim_trailing_slashes(mut s: String) -> String {
@@ -72,6 +80,7 @@ impl OrgsState {
         Self {
             pool: Arc::new(pool),
             cloud_base_url: None,
+            stripe: None,
         }
     }
 
@@ -84,6 +93,7 @@ impl OrgsState {
         Self {
             pool,
             cloud_base_url: None,
+            stripe: None,
         }
     }
 
@@ -95,6 +105,17 @@ impl OrgsState {
     pub fn with_cloud_base_url(mut self, base: impl Into<String>) -> Self {
         let raw = base.into();
         self.cloud_base_url = Some(trim_trailing_slashes(raw));
+        self
+    }
+
+    /// F3.1c-i — wire a [`StripeClient`] so the `POST /api/v1/orgs`
+    /// handler mints an org-owned Stripe Customer alongside the org
+    /// insert. Best-effort: a Stripe outage doesn't block org
+    /// creation (mirrors the user-side pattern in
+    /// `auth::github_signin::handle_github_callback`).
+    #[must_use]
+    pub fn with_stripe(mut self, stripe: Arc<StripeClient>) -> Self {
+        self.stripe = Some(stripe);
         self
     }
 }
@@ -183,6 +204,68 @@ async fn create_handler(
     let org = create_org(&state.pool, &user_id, &body.name)
         .await
         .map_err(OrgsApiError::Repo)?;
+
+    // F3.1c-i — best-effort Stripe Customer creation. A Stripe outage
+    // must not block tenant onboarding; failures log + continue and a
+    // follow-up sync job (future F3.1c-iv) can fill rows that race
+    // past this hook with `orgs.stripe_customer_id IS NULL`. Mirrors
+    // the user-side post-sign-in pattern in
+    // `auth::github_signin::handle_github_callback`.
+    if let Some(stripe) = state.stripe.as_ref() {
+        // Derive the billing email from the owner's `users.email`
+        // rather than asking the create-org form for it — F3.1a's
+        // form doesn't carry the field and the owner is the obvious
+        // first invoice recipient. F3.1c-ii (or a settings UI) will
+        // add an explicit override later.
+        match user_email(&state.pool, &user_id).await {
+            Ok(Some(email)) => {
+                match stripe
+                    .create_org_customer(&org.id, &org.name, &email)
+                    .await
+                {
+                    Ok(customer_id) => {
+                        if let Err(e) =
+                            set_org_stripe_customer_id(&state.pool, &org.id, &customer_id).await
+                        {
+                            warn!(
+                                error = %e,
+                                org_id = %org.id,
+                                "persist orgs.stripe_customer_id failed",
+                            );
+                        } else {
+                            tracing::info!(
+                                org_id = %org.id,
+                                stripe_customer_id = %customer_id,
+                                "stripe customer created for new org",
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            org_id = %org.id,
+                            "stripe org customer creation failed — org creation proceeds, follow-up sync will retry",
+                        );
+                    }
+                }
+            }
+            Ok(None) => {
+                warn!(
+                    user_id = %user_id,
+                    org_id = %org.id,
+                    "owner user row missing — skipping stripe customer creation",
+                );
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    user_id = %user_id,
+                    "lookup owner email failed — skipping stripe customer creation",
+                );
+            }
+        }
+    }
+
     Ok((StatusCode::CREATED, Json(OrgSummary::for_creator(&org))))
 }
 

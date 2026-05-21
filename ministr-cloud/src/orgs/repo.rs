@@ -238,6 +238,61 @@ pub async fn member_role(
     Ok(row.map(|r| r.get("role")))
 }
 
+/// F3.1c-i — persist the Stripe customer id on the `orgs` row.
+/// Mirrors [`crate::users::set_stripe_customer_id`]; the `cus_…`
+/// comes from
+/// [`crate::billing::StripeClient::create_org_customer`]. Best-
+/// effort — the create-org handler logs + continues on failure so a
+/// Stripe outage doesn't block tenant onboarding.
+///
+/// # Errors
+///
+/// [`OrgError::GetConn`] / [`OrgError::Sql`] on connection or query
+/// failure.
+pub async fn set_org_stripe_customer_id(
+    pool: &Pool,
+    org_id: &str,
+    stripe_customer_id: &str,
+) -> Result<(), OrgError> {
+    let conn = pool
+        .get()
+        .await
+        .map_err(|e| OrgError::GetConn(format!("set_org_stripe_customer_id: {e}")))?;
+    conn.execute(
+        "UPDATE orgs SET stripe_customer_id = $1 WHERE id = $2::uuid",
+        &[&stripe_customer_id, &org_id],
+    )
+    .await
+    .map_err(|e| OrgError::Sql(format!("set_org_stripe_customer_id: {e}")))?;
+    Ok(())
+}
+
+/// F3.1c-i — read an owner's email so the org-creation flow can
+/// derive `billing_email` for the Stripe Customer without forcing
+/// the user to retype it. Looks up `users.email` by UUID.
+///
+/// Returns `None` when no row matches (shouldn't happen in
+/// production — the `create_org` call established the row).
+///
+/// # Errors
+///
+/// [`OrgError::GetConn`] / [`OrgError::Sql`] on connection or query
+/// failure.
+pub async fn user_email(pool: &Pool, user_id: &str) -> Result<Option<String>, OrgError> {
+    let conn = pool
+        .get()
+        .await
+        .map_err(|e| OrgError::GetConn(format!("user_email: {e}")))?;
+    let row = conn
+        .query_opt(
+            "SELECT email FROM users WHERE id = $1::uuid",
+            &[&user_id],
+        )
+        .await
+        .map_err(|e| OrgError::Sql(format!("user_email: {e}")))?;
+    Ok(row.map(|r| r.get("email")))
+}
+
 /// List every member of `org_id` with their email and role. Sorted so
 /// owners surface first, then admins, then members (alphabetical within
 /// each role) — stable rendering for the UI.

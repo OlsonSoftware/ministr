@@ -31,6 +31,6 @@ pub use invites::{
 };
 pub use repo::{
     DEFAULT_ORG_PLAN, MemberRow, OrgError, OrgRow, OrgWithRole, create_org, list_org_members,
-    list_orgs_for_user, member_role,
+    list_orgs_for_user, member_role, set_org_stripe_customer_id, user_email,
 };
 pub use routes::{OrgsState, orgs_routes};

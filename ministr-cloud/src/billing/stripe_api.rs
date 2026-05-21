@@ -190,6 +190,69 @@ impl StripeClient {
         Ok(parsed.id)
     }
 
+    /// F3.1c-i — create a Stripe Customer for a brand-new org.
+    ///
+    /// Mirrors [`Self::create_customer`] but uses org-shaped metadata:
+    /// `name` becomes the customer's display name (orgs have rich
+    /// names like "Acme Robotics"; users only carry an email), and
+    /// the `metadata[ministr_org_id]` ties the cus_… back to the
+    /// `orgs.id` UUID. Idempotency key is `cust-create-org-{org_id}`
+    /// so a retried org-creation post-Stripe-outage returns the same
+    /// Customer rather than minting duplicates.
+    ///
+    /// `billing_email` is the address Stripe sends invoices to. F3.1a
+    /// has the org create endpoint accept no `billing_email` field, so
+    /// `cmd_serve_http` derives it from the owner's `users.email` —
+    /// matches the desktop UX where the owner sees their own
+    /// invoices first.
+    ///
+    /// Returns the Stripe customer id (`cus_…`).
+    ///
+    /// # Errors
+    ///
+    /// - [`StripeApiError::Transport`] for network failures.
+    /// - [`StripeApiError::Protocol`] for non-2xx responses, missing
+    ///   `id` field, or malformed JSON.
+    pub async fn create_org_customer(
+        &self,
+        org_id: &str,
+        name: &str,
+        billing_email: &str,
+    ) -> Result<String, StripeApiError> {
+        let form = org_customer_form_body(org_id, name, billing_email);
+        let idempotency_key = format!("cust-create-org-{org_id}");
+        let url = format!("{}/v1/customers", self.base_url);
+
+        let resp = self
+            .http
+            .post(&url)
+            .basic_auth(&self.api_key, Some(""))
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header("Stripe-Version", STRIPE_API_VERSION)
+            .header("Idempotency-Key", &idempotency_key)
+            .body(form)
+            .send()
+            .await
+            .map_err(|e| StripeApiError::Transport(format!("create_org_customer: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(StripeApiError::Protocol(format!(
+                "create_org_customer status {status}: {body}"
+            )));
+        }
+        let parsed: CustomerResponse = resp.json().await.map_err(|e| {
+            StripeApiError::Protocol(format!("create_org_customer parse: {e}"))
+        })?;
+        debug!(
+            customer_id = %parsed.id,
+            org_id,
+            "stripe customer created for org"
+        );
+        Ok(parsed.id)
+    }
+
     /// Report a meter event for usage-based billing.
     ///
     /// `event_name` is the meter's name configured in the Stripe
@@ -361,6 +424,22 @@ fn customer_form_body(email: &str, github_id: i64) -> String {
     body
 }
 
+/// F3.1c-i — build the form-encoded body for `POST /v1/customers`
+/// against an org. Same SOLID shape as [`customer_form_body`] —
+/// extracted so the encoding can be exercised in unit tests without
+/// an HTTP round-trip.
+fn org_customer_form_body(org_id: &str, name: &str, billing_email: &str) -> String {
+    let mut body = String::new();
+    body.push_str("name=");
+    body.push_str(&form_encode(name));
+    body.push_str("&email=");
+    body.push_str(&form_encode(billing_email));
+    body.push_str("&metadata[ministr_org_id]=");
+    body.push_str(&form_encode(org_id));
+    body.push_str("&metadata[source]=ministr-cloud-org-create");
+    body
+}
+
 /// Build the form-encoded body for `POST /v1/checkout/sessions`.
 /// Stripe's subscription Checkout mode requires `mode=subscription`,
 /// at least one `line_items[0][price]` line, and the customer / return
@@ -483,6 +562,38 @@ mod tests {
         assert!(body.contains("email=user%2Bplus%40example.com"), "got {body}");
         assert!(body.contains("metadata[github_id]=42"), "got {body}");
         assert!(body.contains("metadata[source]=ministr-cloud-signin"));
+    }
+
+    #[test]
+    fn org_customer_form_body_carries_org_metadata() {
+        // F3.1c-i — org Customers ship a display `name`, an `email`
+        // for invoice delivery, and an `ministr_org_id` metadata
+        // entry that lets a future webhook handler resolve cus_… back
+        // to an `orgs.id` without a DB round-trip.
+        let body = org_customer_form_body(
+            "0190f000-0000-7000-8000-000000000001",
+            "Acme Robotics",
+            "billing+admin@acme.example",
+        );
+        // Stripe-style form encoding uses `+` for the space (the
+        // shared `form_encode` helper matches application/x-www-form-
+        // urlencoded). %20 would also be a valid encoding but is not
+        // what we emit.
+        assert!(body.contains("name=Acme+Robotics"), "got {body}");
+        assert!(
+            body.contains("email=billing%2Badmin%40acme.example"),
+            "got {body}"
+        );
+        assert!(
+            body.contains("metadata[ministr_org_id]=0190f000-0000-7000-8000-000000000001"),
+            "got {body}"
+        );
+        assert!(body.contains("metadata[source]=ministr-cloud-org-create"));
+        // The user-create source string MUST NOT appear in an org's
+        // form body — they're distinct surfaces and a Stripe-side
+        // report grouping by `metadata[source]` should keep them
+        // disjoint.
+        assert!(!body.contains("metadata[source]=ministr-cloud-signin"));
     }
 
     #[test]
