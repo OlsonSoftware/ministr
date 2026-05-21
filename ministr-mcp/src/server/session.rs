@@ -15,6 +15,20 @@ use ministr_core::types::{ContentId, Resolution};
 use super::MinistrServer;
 use super::types::{NextAction, ToolResponse};
 
+/// F6.1-d-c — emit a drops-ledger entry per evicted claim id.
+///
+/// Skipped when no tenant is scoped (stdio / in-process / self-hosted serve);
+/// the ledger backend is also typically `None` in those modes, so
+/// [`SessionRegistry::record_drops`] would collapse to a no-op anyway, but
+/// gating on the tenant lets the call site stay unconditional.
+fn emit_section_drops(reg: &SessionRegistry, session_id: &str, evicted_ids: &[String]) {
+    if !evicted_ids.is_empty()
+        && let Some(tenant_id) = crate::tenant_scope::current()
+    {
+        reg.record_drops(&tenant_id, session_id, evicted_ids);
+    }
+}
+
 impl MinistrServer {
     /// Resolve the active session entry, bootstrapping it lazily if missing.
     ///
@@ -81,6 +95,11 @@ impl MinistrServer {
         let evicted_ids = entry.budget.record_tokens(section_id, token_count);
 
         let status = entry.budget.usage_status();
+
+        // F6.1-d-c — persist eviction events to the drops ledger before
+        // releasing the registry lock.
+        emit_section_drops(&reg, &self.active_session_id, &evicted_ids);
+
         drop(reg);
 
         // Phase 1: bookmark compression for evicted entries.
@@ -236,7 +255,114 @@ fn build_next_actions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ministr_core::session::CoherenceAlert;
+    use ministr_api::{AppendDropFuture, DropEntry, DropsLedger, DropsLedgerError, ListDropsFuture};
+    use ministr_core::session::{CoherenceAlert, UsageConfig};
+    use std::sync::{Arc, Mutex as StdMutex};
+
+    /// F6.1-d-c — test-only ledger that records every entry it receives.
+    #[derive(Debug, Default)]
+    struct StubLedger {
+        entries: StdMutex<Vec<DropEntry>>,
+    }
+
+    impl DropsLedger for StubLedger {
+        fn append<'a>(&'a self, entry: &'a DropEntry) -> AppendDropFuture<'a> {
+            let owned = entry.clone();
+            Box::pin(async move {
+                self.entries
+                    .lock()
+                    .expect("stub ledger mutex never poisoned")
+                    .push(owned);
+                Ok::<(), DropsLedgerError>(())
+            })
+        }
+
+        fn list_for_session<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _session_id: &'a str,
+        ) -> ListDropsFuture<'a> {
+            Box::pin(async move { Ok(Vec::new()) })
+        }
+    }
+
+    /// F6.1-d-c — when a tenant is scoped and evictions are non-empty,
+    /// the wiring helper fires one ledger entry per evicted claim id.
+    #[tokio::test]
+    async fn emit_section_drops_fires_when_tenant_scoped() {
+        let stub = Arc::new(StubLedger::default());
+        let registry = SessionRegistry::new(UsageConfig::default())
+            .with_drops_ledger(Arc::clone(&stub) as Arc<dyn DropsLedger>);
+        let evicted: Vec<String> = vec!["docs/a.md#x".into(), "docs/b.md#y".into()];
+
+        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), async {
+            emit_section_drops(&registry, "agent-session-1", &evicted);
+        })
+        .await;
+
+        // record_drops spawns one task per id; let them run.
+        for _ in 0..16 {
+            if stub
+                .entries
+                .lock()
+                .expect("stub ledger mutex never poisoned")
+                .len()
+                >= 2
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let entries = stub.entries.lock().unwrap();
+        assert_eq!(entries.len(), 2, "one ledger entry per evicted claim id");
+        assert!(
+            entries
+                .iter()
+                .all(|e| e.tenant_id == "tenant-x" && e.session_id == "agent-session-1"),
+        );
+        let claim_ids: Vec<&str> = entries.iter().map(|e| e.claim_id.as_str()).collect();
+        assert!(claim_ids.contains(&"docs/a.md#x"));
+        assert!(claim_ids.contains(&"docs/b.md#y"));
+    }
+
+    /// F6.1-d-c — without a tenant scope (stdio / self-hosted), the wiring
+    /// skips the ledger call. Mirrors the production no-op for those modes.
+    #[tokio::test]
+    async fn emit_section_drops_skips_when_no_tenant_scope() {
+        let stub = Arc::new(StubLedger::default());
+        let registry = SessionRegistry::new(UsageConfig::default())
+            .with_drops_ledger(Arc::clone(&stub) as Arc<dyn DropsLedger>);
+        let evicted: Vec<String> = vec!["docs/a.md#x".into()];
+
+        // No `scope_for_test` wrapper — current() returns None.
+        emit_section_drops(&registry, "agent-session-1", &evicted);
+
+        for _ in 0..4 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            stub.entries.lock().unwrap().is_empty(),
+            "no entries should be appended outside a tenant scope",
+        );
+    }
+
+    /// F6.1-d-c — empty eviction list is a no-op even when scoped.
+    #[tokio::test]
+    async fn emit_section_drops_skips_when_no_evictions() {
+        let stub = Arc::new(StubLedger::default());
+        let registry = SessionRegistry::new(UsageConfig::default())
+            .with_drops_ledger(Arc::clone(&stub) as Arc<dyn DropsLedger>);
+
+        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), async {
+            emit_section_drops(&registry, "agent-session-1", &[]);
+        })
+        .await;
+
+        for _ in 0..4 {
+            tokio::task::yield_now().await;
+        }
+        assert!(stub.entries.lock().unwrap().is_empty());
+    }
 
     #[test]
     fn no_actions_with_no_alerts_or_extras() {

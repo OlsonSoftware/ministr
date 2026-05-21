@@ -50,6 +50,19 @@ pub async fn scope_tenant(req: Request, next: Next) -> Response {
     TENANT_SUBJECT.scope(subject, next.run(req)).await
 }
 
+/// Test helper: run `fut` with [`TENANT_SUBJECT`] bound to `subject`.
+///
+/// Mirrors what [`scope_tenant`] does for live requests so unit tests can
+/// exercise code paths that read [`current`] without standing up an axum
+/// middleware stack.
+#[cfg(test)]
+pub(crate) async fn scope_for_test<F, T>(subject: Option<String>, fut: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    TENANT_SUBJECT.scope(subject, fut).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
