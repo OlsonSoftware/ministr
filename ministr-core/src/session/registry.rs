@@ -167,7 +167,28 @@ impl SessionRegistry {
         // Materialise a fresh in-memory shell. Same shape as
         // create_session — the caller-visible side effect is "the
         // session id now resolves on this pod".
-        self.create_session(id, budget_config, access_mode);
+        let entry = self.create_session(id, budget_config, access_mode);
+        // F6.1-c-followup — seed the budget tracker with the
+        // persisted consumption so the resumed session resumes with
+        // the same pressure level it had pre-restore. The snapshot
+        // stores `budget_used` as i64 (Postgres BIGINT); the tracker
+        // takes usize. Lossy conversion is guarded by `try_from` and
+        // collapsed to 0 on failure rather than silently truncating —
+        // a negative value indicates a corrupted row.
+        //
+        // Overlarge values (`> capacity - 1`) get clamped to
+        // `capacity - 1` so the synthetic prior entry stays in the
+        // window rather than being evicted on insert (which would
+        // silently zero the budget). This trades exact fidelity for
+        // a defensible "tracker is saturated" state on a corrupted row.
+        if snapshot.budget_used > 0 {
+            let tokens = usize::try_from(snapshot.budget_used).unwrap_or(0);
+            let capacity = entry.budget.config().max_context_tokens;
+            let clamped = tokens.min(capacity.saturating_sub(1));
+            if clamped > 0 {
+                let _ = entry.budget.seed_prior_consumption(clamped);
+            }
+        }
         Some(snapshot)
     }
 
@@ -493,6 +514,94 @@ mod tests {
         assert!(
             registry.contains(&fixture_snapshot().session_id),
             "storage hit must materialise an in-memory shell",
+        );
+    }
+
+    #[tokio::test]
+    async fn try_restore_seeds_budget_used_into_in_memory_tracker() {
+        let stub = Arc::new(StubStorage::default());
+        let mut snap = fixture_snapshot();
+        snap.budget_used = 500;
+        stub.saves.lock().unwrap().push(snap.clone());
+        let mut registry =
+            small_registry().with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
+        let restored = registry
+            .try_restore(
+                &snap.session_id,
+                &snap.tenant_id,
+                None,
+                AccessMode::ReadWrite,
+            )
+            .await;
+        assert_eq!(restored, Some(snap.clone()));
+        // The in-memory tracker should reflect the persisted
+        // consumption — F6.1's "budget preserved across pods" criterion.
+        let entry = registry.get_session(&snap.session_id).expect("shell exists");
+        let status = entry.budget.usage_status();
+        assert_eq!(
+            status.tokens_used, 500,
+            "restored tracker should report the persisted consumption",
+        );
+    }
+
+    #[tokio::test]
+    async fn try_restore_clamps_overlarge_budget_to_capacity() {
+        // Edge case: a corrupted snapshot row claims more
+        // budget_used than the configured max_context_tokens. The
+        // WindowEstimator's eviction policy would otherwise drop the
+        // synthetic prior entry on the next record_tokens call (or
+        // immediately, depending on policy). Capping the seed at
+        // capacity-1 (so room remains for future record calls) keeps
+        // the tracker in a defensible state without crashing.
+        let stub = Arc::new(StubStorage::default());
+        let mut snap = fixture_snapshot();
+        snap.budget_used = 9_999_999; // way over small_registry's 1000-cap
+        stub.saves.lock().unwrap().push(snap.clone());
+        let mut registry =
+            small_registry().with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
+        registry
+            .try_restore(
+                &snap.session_id,
+                &snap.tenant_id,
+                None,
+                AccessMode::ReadWrite,
+            )
+            .await;
+        let entry = registry.get_session(&snap.session_id).expect("shell exists");
+        let used = entry.budget.usage_status().tokens_used;
+        // The seed got clamped to capacity-1; the prior entry remains
+        // in the window rather than being evicted on insert.
+        assert!(
+            (1..1000).contains(&used),
+            "overlarge seed should clamp into the window, got tokens_used = {used}",
+        );
+    }
+
+    #[tokio::test]
+    async fn try_restore_zero_budget_does_not_seed_tracker() {
+        // Edge case: a freshly-created session that's never delivered
+        // tokens has budget_used = 0. Seeding 0 should be a no-op —
+        // no synthetic sentinel entry should appear, otherwise eviction
+        // logic could later evict a phantom zero-cost row.
+        let stub = Arc::new(StubStorage::default());
+        let mut snap = fixture_snapshot();
+        snap.budget_used = 0;
+        stub.saves.lock().unwrap().push(snap.clone());
+        let mut registry =
+            default_registry().with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
+        registry
+            .try_restore(
+                &snap.session_id,
+                &snap.tenant_id,
+                None,
+                AccessMode::ReadWrite,
+            )
+            .await;
+        let entry = registry.get_session(&snap.session_id).expect("shell exists");
+        assert_eq!(
+            entry.budget.usage_status().tokens_used,
+            0,
+            "zero-budget restore should leave the tracker pristine",
         );
     }
 
