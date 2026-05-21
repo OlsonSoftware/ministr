@@ -17,7 +17,9 @@
 use std::sync::Arc;
 
 use deadpool_postgres::Pool;
-use ministr_api::tenant_filter::{TenantCorpusFilter, TenantFilterError, TenantFilterFuture};
+use ministr_api::tenant_filter::{
+    DefaultCorpusFuture, TenantCorpusFilter, TenantFilterError, TenantFilterFuture,
+};
 
 /// Postgres-backed tenant-corpus access decision.
 ///
@@ -70,6 +72,34 @@ impl TenantCorpusFilter for PostgresTenantCorpusFilter {
                 None => Ok(true), // legacy / pre-multi-tenant — permissive
                 Some(t) => Ok(t == tenant_subject),
             }
+        })
+    }
+
+    fn default_corpus_for_tenant<'a>(
+        &'a self,
+        tenant_subject: &'a str,
+    ) -> DefaultCorpusFuture<'a> {
+        Box::pin(async move {
+            let client = self
+                .pool
+                .get()
+                .await
+                .map_err(map_err("default corpus: get conn"))?;
+            // Pick the tenant's most-recently-created corpus. Index
+            // `idx_cloud_corpora_tenant` (migration 0003) covers this
+            // exactly: `(tenant_id, created_at DESC) WHERE tenant_id IS
+            // NOT NULL`, so the lookup is a single index probe + read.
+            let row = client
+                .query_opt(
+                    "SELECT corpus_id FROM cloud_corpora \
+                     WHERE tenant_id = $1 \
+                     ORDER BY created_at DESC \
+                     LIMIT 1",
+                    &[&tenant_subject],
+                )
+                .await
+                .map_err(map_err("default corpus: query"))?;
+            Ok(row.map(|r| r.get::<_, String>("corpus_id")))
         })
     }
 }

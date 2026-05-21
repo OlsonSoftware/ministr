@@ -35,7 +35,9 @@ pub use index_job_sink::{
     IndexJobError, IndexJobFuture, IndexJobSink, IndexJobSnapshot, IndexJobStatus,
 };
 pub use tenant::TenantId;
-pub use tenant_filter::{TenantCorpusFilter, TenantFilterError, TenantFilterFuture};
+pub use tenant_filter::{
+    DefaultCorpusFuture, TenantCorpusFilter, TenantFilterError, TenantFilterFuture,
+};
 pub use usage::UsageSink;
 
 /// Canonical data directory for the ministr daemon (`~/.ministr` on Unix,
