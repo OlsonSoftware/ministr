@@ -6,6 +6,7 @@
 
 use serde::Serialize;
 
+use ministr_api::SessionSnapshot;
 use ministr_core::session::{
     AccessMode, CompressionTier, SessionEntry, SessionId, SessionRegistry, UsageStatus,
 };
@@ -14,6 +15,7 @@ use ministr_core::types::{ContentId, Resolution};
 
 use super::MinistrServer;
 use super::types::{NextAction, ToolResponse};
+use crate::task::iso8601_now;
 
 /// F6.1-d-c — emit a drops-ledger entry per evicted claim id.
 ///
@@ -27,6 +29,41 @@ fn emit_section_drops(reg: &SessionRegistry, session_id: &str, evicted_ids: &[St
     {
         reg.record_drops(&tenant_id, session_id, evicted_ids);
     }
+}
+
+/// F6.1-e — emit a `SessionSnapshot` so the cloud's [`PostgresSessionStorage`]
+/// holds enough state to restore the session on the next pod.
+///
+/// Skipped when no tenant is scoped (stdio / in-process / self-hosted serve);
+/// the storage backend is also typically `None` in those modes, so
+/// [`SessionRegistry::persist_snapshot`] would collapse to a no-op anyway.
+///
+/// `opened_at` and `last_seen_at` both carry the current wall-clock. The
+/// Postgres UPSERT preserves `opened_at` across re-saves (per F6.1-a's
+/// `save` contract) so the FIRST insert captures the actual opening time
+/// and later calls only advance `last_seen_at`. `corpus_id` is intentionally
+/// `None` for v0 — `record_section_delivery` doesn't carry the bound corpus;
+/// threading it through is a follow-up. `coherence_score` is 0.0 as a
+/// placeholder per F6.1-c-followup's "coherence-score restore deferred"
+/// note; the field is non-optional in the snapshot schema but no consumer
+/// reads it yet.
+///
+/// [`PostgresSessionStorage`]: ministr_cloud::session_storage::PostgresSessionStorage
+fn emit_session_snapshot(reg: &SessionRegistry, session_id: &str, status: &UsageStatus) {
+    let Some(tenant_id) = crate::tenant_scope::current() else {
+        return;
+    };
+    let now = iso8601_now();
+    let snapshot = SessionSnapshot {
+        session_id: session_id.to_owned(),
+        tenant_id,
+        corpus_id: None,
+        opened_at: now.clone(),
+        last_seen_at: now,
+        budget_used: i64::try_from(status.tokens_used).unwrap_or(i64::MAX),
+        coherence_score: 0.0,
+    };
+    reg.persist_snapshot(snapshot);
 }
 
 impl MinistrServer {
@@ -99,6 +136,10 @@ impl MinistrServer {
         // F6.1-d-c — persist eviction events to the drops ledger before
         // releasing the registry lock.
         emit_section_drops(&reg, &self.active_session_id, &evicted_ids);
+
+        // F6.1-e — checkpoint the session snapshot (budget_used + timestamps)
+        // so a fresh pod can lazy-restore it via SessionRegistry::try_restore.
+        emit_session_snapshot(&reg, &self.active_session_id, &status);
 
         drop(reg);
 
@@ -255,8 +296,11 @@ fn build_next_actions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ministr_api::{AppendDropFuture, DropEntry, DropsLedger, DropsLedgerError, ListDropsFuture};
-    use ministr_core::session::{CoherenceAlert, UsageConfig};
+    use ministr_api::{
+        AppendDropFuture, DropEntry, DropsLedger, DropsLedgerError, ListDropsFuture,
+        LoadSessionFuture, SaveSessionFuture, SessionMutFuture, SessionStorage, SessionStorageError,
+    };
+    use ministr_core::session::{CoherenceAlert, UsageConfig, UsageLevel};
     use std::sync::{Arc, Mutex as StdMutex};
 
     /// F6.1-d-c — test-only ledger that records every entry it receives.
@@ -344,6 +388,130 @@ mod tests {
             stub.entries.lock().unwrap().is_empty(),
             "no entries should be appended outside a tenant scope",
         );
+    }
+
+    /// F6.1-e — test-only `SessionStorage` that captures every save.
+    #[derive(Debug, Default)]
+    struct StubStorage {
+        saves: StdMutex<Vec<SessionSnapshot>>,
+    }
+
+    impl SessionStorage for StubStorage {
+        fn save<'a>(&'a self, snapshot: &'a SessionSnapshot) -> SaveSessionFuture<'a> {
+            let owned = snapshot.clone();
+            Box::pin(async move {
+                self.saves
+                    .lock()
+                    .expect("stub storage mutex never poisoned")
+                    .push(owned);
+                Ok::<(), SessionStorageError>(())
+            })
+        }
+
+        fn load<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _session_id: &'a str,
+        ) -> LoadSessionFuture<'a> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn touch<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _session_id: &'a str,
+        ) -> SessionMutFuture<'a> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete<'a>(
+            &'a self,
+            _tenant_id: &'a str,
+            _session_id: &'a str,
+        ) -> SessionMutFuture<'a> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    fn fixture_status(tokens_used: usize) -> UsageStatus {
+        let max = 200_000usize;
+        UsageStatus {
+            tokens_used,
+            tokens_remaining: max.saturating_sub(tokens_used),
+            level: UsageLevel::Normal,
+            // Not load-bearing for these tests; the assertions read
+            // `tokens_used` instead.
+            utilization: 0.0,
+        }
+    }
+
+    /// F6.1-e — when a tenant is scoped and storage is wired, the snapshot
+    /// helper fires one save carrying the live `tokens_used`.
+    #[tokio::test]
+    async fn emit_session_snapshot_fires_when_tenant_scoped() {
+        let stub = Arc::new(StubStorage::default());
+        let registry = SessionRegistry::new(UsageConfig::default())
+            .with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
+        let status = fixture_status(5_000);
+
+        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), async {
+            emit_session_snapshot(&registry, "agent-session-1", &status);
+        })
+        .await;
+
+        // persist_snapshot spawns a single task; let it run.
+        for _ in 0..16 {
+            if !stub
+                .saves
+                .lock()
+                .expect("stub storage mutex never poisoned")
+                .is_empty()
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let snapshots = stub.saves.lock().unwrap();
+        assert_eq!(snapshots.len(), 1, "one snapshot per persist call");
+        let snap = &snapshots[0];
+        assert_eq!(snap.session_id, "agent-session-1");
+        assert_eq!(snap.tenant_id, "tenant-x");
+        assert_eq!(snap.corpus_id, None);
+        assert_eq!(snap.budget_used, 5_000);
+        assert!(!snap.opened_at.is_empty());
+        assert_eq!(snap.opened_at, snap.last_seen_at);
+    }
+
+    /// F6.1-e — without a tenant scope, the snapshot helper short-circuits
+    /// before building a snapshot or touching storage.
+    #[tokio::test]
+    async fn emit_session_snapshot_skips_when_no_tenant_scope() {
+        let stub = Arc::new(StubStorage::default());
+        let registry = SessionRegistry::new(UsageConfig::default())
+            .with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
+
+        emit_session_snapshot(&registry, "agent-session-1", &fixture_status(5_000));
+
+        for _ in 0..4 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            stub.saves.lock().unwrap().is_empty(),
+            "no saves should be issued outside a tenant scope",
+        );
+    }
+
+    /// F6.1-e — when no storage backend is wired, the registry's
+    /// `persist_snapshot` collapses to a no-op even with a scoped tenant.
+    #[tokio::test]
+    async fn emit_session_snapshot_is_noop_without_storage() {
+        let registry = SessionRegistry::new(UsageConfig::default());
+        // No `with_storage` call — registry.storage stays `None`.
+        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), async {
+            emit_session_snapshot(&registry, "agent-session-1", &fixture_status(123));
+        })
+        .await;
+        // No assertion target — the point is the call doesn't panic.
     }
 
     /// F6.1-d-c — empty eviction list is a no-op even when scoped.
