@@ -63,8 +63,8 @@ pub use api_keys::{
     list_user_api_keys, revoke_user_api_key,
 };
 pub use audit::{
-    AuditError, AuditListQuery, AuditRow, AuditState, PostgresAuditSink, audit_routes,
-    list_org_audit,
+    AuditError, AuditListQuery, AuditRow, AuditState, DEFAULT_AUDIT_RETENTION_DAYS,
+    PostgresAuditSink, PruneOutcome, audit_routes, list_org_audit, prune_audit_events,
 };
 pub use billing::{
     billing_routes, checkout_routes, record_usage, rollup_day, stripe_webhook_routes,
