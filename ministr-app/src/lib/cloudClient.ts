@@ -67,6 +67,18 @@ export interface CloudAclEntry {
 }
 
 /**
+ * Mirrors `ministr_cloud::orgs::routes::TransferResponse` (F3.2-iv-a).
+ * `transferred = true` on a fresh transfer (HTTP 201); `false` on an
+ * idempotent re-call against an already-on-target corpus (HTTP 200).
+ */
+export interface CloudTransferResponse {
+  corpus_id: string;
+  previous_tenant_id: string;
+  new_tenant_id: string;
+  transferred: boolean;
+}
+
+/**
  * Mirrors `ministr_cloud::api_keys::ApiKeyRow` (F3.4a). One row in the
  * caller's active-keys list — secret fields (`hash`, raw token) are
  * deliberately absent; only `prefix` (first 8 chars of the random
@@ -279,6 +291,14 @@ export const cloudClient = {
   /** F3.2-ii — revoke an org's grant. Idempotent on the server side. */
   revokeCorpusShare: (corpusId: string, orgId: string) =>
     invoke<void>("cloud_revoke_corpus_share", { corpusId, orgId }),
+  /**
+   * F3.2-iv-b — transfer the corpus's tenant from the caller's
+   * personal account to the target org. Caller must own the corpus
+   * AND be owner/admin of the target org. Idempotent against an
+   * already-on-target corpus (returns `transferred: false`).
+   */
+  transferCorpusToOrg: (corpusId: string, orgId: string) =>
+    invoke<CloudTransferResponse>("cloud_transfer_corpus_to_org", { corpusId, orgId }),
   /** F3.4b — list the caller's active service-account API keys. */
   listApiKeys: () => invoke<CloudApiKey[]>("cloud_list_api_keys"),
   /**

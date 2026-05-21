@@ -1315,6 +1315,48 @@ pub async fn cloud_revoke_corpus_share(
     Ok(())
 }
 
+/// `POST /api/v1/corpora/{id}/transfer` response body. Mirrors
+/// `ministr_cloud::orgs::routes::TransferResponse`. `transferred` is
+/// false when the corpus was already on the target org (idempotent
+/// re-call returned 200); true on first transfer (201).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CloudTransferResponse {
+    pub corpus_id: String,
+    pub previous_tenant_id: String,
+    pub new_tenant_id: String,
+    pub transferred: bool,
+}
+
+/// POST `/api/v1/corpora/{id}/transfer` — flip the corpus's tenant
+/// to a target org. Caller must own the corpus AND be owner/admin of
+/// the target org. The cloud emits a `corpus.transferred` audit event
+/// (delivered to the org's F3.5 webhook subscribers automatically).
+#[tauri::command]
+pub async fn cloud_transfer_corpus_to_org(
+    corpus_id: String,
+    org_id: String,
+) -> Result<CloudTransferResponse, CommandError> {
+    let (client, endpoint, token) = authed_client(10)?;
+    let url = format!("{endpoint}/api/v1/corpora/{corpus_id}/transfer");
+    let body = serde_json::json!({ "org_id": org_id });
+    let resp = client
+        .post(&url)
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("post {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("transfer returned HTTP {}", resp.status()),
+        ));
+    }
+    resp.json::<CloudTransferResponse>()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse transfer: {e}")))
+}
+
 // ── F3.4b — Service-account API keys ────────────────────────────────────────
 
 /// One API key as returned by GET `/api/v1/api_keys`. Mirrors
