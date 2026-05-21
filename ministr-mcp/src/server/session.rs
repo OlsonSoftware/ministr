@@ -120,6 +120,18 @@ impl MinistrServer {
         {
             entry.client_name = Some(name);
         }
+        // F6.2-e-followup — stamp tenant_id from the request's
+        // tenant_scope task-local. `None` on self-hosted / stdio /
+        // in-process tests (no scope mounted); `Some(subject)` on
+        // every cloud request after `validate_token_middleware` and
+        // `scope_tenant`. Mirrors the parent / client_name stamping
+        // shape so the hint is captured on every resolution rather
+        // than only on first-create.
+        if entry.tenant_id.is_none()
+            && let Some(subject) = crate::tenant_scope::current()
+        {
+            entry.tenant_id = Some(subject);
+        }
         entry
     }
 
