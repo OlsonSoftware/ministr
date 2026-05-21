@@ -199,6 +199,7 @@ pub struct IngestionRunner {
 }
 
 impl IngestionRunner {
+    #[allow(clippy::too_many_lines)]
     async fn execute(&self, job: &Job) -> Result<(), String> {
         let sources = match resolve_sources(&job.trigger) {
             Ok(s) => s,
@@ -309,10 +310,11 @@ impl IngestionRunner {
                     // worker's terminal `error` column and is visible
                     // both in `az containerapp logs` and the demo SSE.
                     use std::error::Error as _;
+                    use std::fmt::Write as _;
                     let mut msg = format!("blob upload failed: {e}");
                     let mut src: Option<&dyn std::error::Error> = e.source();
                     while let Some(s) = src {
-                        msg.push_str(&format!(" — caused by: {s}"));
+                        let _ = write!(msg, " — caused by: {s}");
                         src = s.source();
                     }
                     msg

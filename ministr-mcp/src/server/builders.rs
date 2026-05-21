@@ -306,12 +306,27 @@ impl MinistrServer {
     /// prerequisite for the multi-tenant scoping work in F1.2 and the
     /// quota middleware in F2.3.
     ///
+    /// F2.x-a — when the server was constructed in `Backend::Local`
+    /// mode (the cloud HTTP path), this also swaps the backend to
+    /// [`crate::backend::Backend::Registry`] so per-call dispatch
+    /// resolves the `project = corpus_id` argument through the shared
+    /// registry instead of always answering against the startup-bound
+    /// placeholder corpus. Without this swap, `ministr_survey`/`toc`/
+    /// `read` against the cloud return empty even when the worker has
+    /// indexed the corpus and `/api/v1/corpora` reports it present.
+    ///
     /// Returns `self` so it composes with the other `with_*` builders.
     #[must_use]
     pub fn with_corpus_registry(
         mut self,
         registry: Arc<ministr_daemon::registry::CorpusRegistry>,
     ) -> Self {
+        if let crate::backend::Backend::Local(local) = &self.backend {
+            self.backend = crate::backend::Backend::registry(
+                Arc::clone(local.service()),
+                Arc::clone(&registry),
+            );
+        }
         self.corpus_registry = Some(registry);
         self
     }
