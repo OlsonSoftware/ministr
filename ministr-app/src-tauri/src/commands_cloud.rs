@@ -1430,6 +1430,159 @@ pub async fn cloud_revoke_api_key(key_id: String) -> Result<(), CommandError> {
     Ok(())
 }
 
+// ── F3.5b-ii — Outbound webhook subscriptions ──────────────────────────────
+
+/// One subscription row as returned by GET /api/v1/orgs/{id}/webhooks.
+/// Mirrors `ministr_cloud::webhooks::WebhookSubscription`. The signing
+/// `secret` is intentionally absent — the list endpoint never returns
+/// it; only the one-time create response (see [`CloudCreatedWebhookSub`])
+/// carries it.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CloudWebhookSub {
+    pub id: String,
+    pub org_id: String,
+    pub url: String,
+    pub event_filter: String,
+    pub created_by: String,
+    pub created_at: String,
+    pub last_delivered_at: Option<String>,
+}
+
+/// POST /api/v1/orgs/{id}/webhooks response — carries the raw HMAC
+/// signing secret EXACTLY ONCE. After this response the cloud holds
+/// the only copy; rotation = delete + re-create.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CloudCreatedWebhookSub {
+    #[serde(flatten)]
+    pub subscription: CloudWebhookSub,
+    pub secret: String,
+}
+
+/// POST /api/v1/orgs/{id}/webhooks/{wid}/test response.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CloudWebhookTestResult {
+    pub final_status: Option<u16>,
+    pub attempts: usize,
+    pub succeeded: bool,
+}
+
+/// GET /api/v1/orgs/{id}/webhooks — list active subscriptions for an
+/// org. Owner/admin only on the server.
+#[tauri::command]
+pub async fn cloud_list_webhook_subs(
+    org_id: String,
+) -> Result<Vec<CloudWebhookSub>, CommandError> {
+    let (client, endpoint, token) = authed_client(10)?;
+    let url = format!("{endpoint}/api/v1/orgs/{org_id}/webhooks");
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("get {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("list webhooks returned HTTP {}", resp.status()),
+        ));
+    }
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse webhooks: {e}")))?;
+    let subs = body
+        .get("subscriptions")
+        .cloned()
+        .unwrap_or(serde_json::Value::Array(Vec::new()));
+    serde_json::from_value::<Vec<CloudWebhookSub>>(subs)
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse webhook subs: {e}")))
+}
+
+/// POST /api/v1/orgs/{id}/webhooks — mint a new subscription. The
+/// response includes the one-time HMAC signing secret; the caller
+/// MUST surface it immediately and never log it.
+#[tauri::command]
+pub async fn cloud_create_webhook_sub(
+    org_id: String,
+    webhook_url: String,
+    event_filter: Option<String>,
+) -> Result<CloudCreatedWebhookSub, CommandError> {
+    let (client, endpoint, token) = authed_client(10)?;
+    let url = format!("{endpoint}/api/v1/orgs/{org_id}/webhooks");
+    let mut body = serde_json::json!({ "url": webhook_url });
+    if let Some(f) = event_filter.as_deref()
+        && !f.trim().is_empty()
+    {
+        body["event_filter"] = serde_json::Value::String(f.to_owned());
+    }
+    let resp = client
+        .post(&url)
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("post {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("create webhook returned HTTP {}", resp.status()),
+        ));
+    }
+    resp.json::<CloudCreatedWebhookSub>()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse webhook create: {e}")))
+}
+
+/// DELETE /api/v1/orgs/{id}/webhooks/{wid} — remove a subscription.
+#[tauri::command]
+pub async fn cloud_delete_webhook_sub(
+    org_id: String,
+    subscription_id: String,
+) -> Result<(), CommandError> {
+    let (client, endpoint, token) = authed_client(10)?;
+    let url = format!("{endpoint}/api/v1/orgs/{org_id}/webhooks/{subscription_id}");
+    let resp = client
+        .delete(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("delete {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("delete webhook returned HTTP {}", resp.status()),
+        ));
+    }
+    Ok(())
+}
+
+/// POST /api/v1/orgs/{id}/webhooks/{wid}/test — fire a synthetic
+/// `ministr.test` payload at the receiver. Returns the delivery
+/// outcome so the UI can render ✓/✗.
+#[tauri::command]
+pub async fn cloud_test_webhook_sub(
+    org_id: String,
+    subscription_id: String,
+) -> Result<CloudWebhookTestResult, CommandError> {
+    let (client, endpoint, token) = authed_client(60)?; // up to 30s of backoff + slack network
+    let url = format!("{endpoint}/api/v1/orgs/{org_id}/webhooks/{subscription_id}/test");
+    let resp = client
+        .post(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("post {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("test webhook returned HTTP {}", resp.status()),
+        ));
+    }
+    resp.json::<CloudWebhookTestResult>()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse test result: {e}")))
+}
+
 /// POST `/reindex` on the configured cloud endpoint. Returns the
 /// server-assigned `job_id` that can later be subscribed to via SSE.
 #[tauri::command]

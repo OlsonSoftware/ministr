@@ -166,6 +166,10 @@ fn main() {
             commands_cloud::cloud_list_api_keys,
             commands_cloud::cloud_create_api_key,
             commands_cloud::cloud_revoke_api_key,
+            commands_cloud::cloud_list_webhook_subs,
+            commands_cloud::cloud_create_webhook_sub,
+            commands_cloud::cloud_delete_webhook_sub,
+            commands_cloud::cloud_test_webhook_sub,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ministr app");
