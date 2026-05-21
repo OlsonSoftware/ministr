@@ -293,6 +293,31 @@ pub async fn user_email(pool: &Pool, user_id: &str) -> Result<Option<String>, Or
     Ok(row.map(|r| r.get("email")))
 }
 
+/// F3.1b-ii-a — look up an org's display name by id. Used by the
+/// invite-send pipeline so the transactional-email template can show
+/// the recipient *which* org they're being invited to.
+///
+/// Returns `None` when the org row doesn't exist.
+///
+/// # Errors
+///
+/// [`OrgError::GetConn`] / [`OrgError::Sql`] on connection or query
+/// failure.
+pub async fn org_name(pool: &Pool, org_id: &str) -> Result<Option<String>, OrgError> {
+    let conn = pool
+        .get()
+        .await
+        .map_err(|e| OrgError::GetConn(format!("org_name: {e}")))?;
+    let row = conn
+        .query_opt(
+            "SELECT name FROM orgs WHERE id = $1::uuid",
+            &[&org_id],
+        )
+        .await
+        .map_err(|e| OrgError::Sql(format!("org_name: {e}")))?;
+    Ok(row.map(|r| r.get("name")))
+}
+
 /// List every member of `org_id` with their email and role. Sorted so
 /// owners surface first, then admins, then members (alphabetical within
 /// each role) — stable rendering for the UI.
