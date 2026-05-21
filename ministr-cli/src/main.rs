@@ -197,6 +197,15 @@ enum Command {
         action: AuditAction,
     },
 
+    /// API-keys operator commands (F3.4c-ii+). Invoked by the weekly
+    /// stale-keys cron in cloud deployments; runnable locally for
+    /// ad-hoc reviews.
+    #[command(name = "api-keys")]
+    ApiKeys {
+        #[command(subcommand)]
+        action: ApiKeysAction,
+    },
+
     /// Cloud operator commands. `check` smoke-tests every wired
     /// integration (Postgres, Stripe, GitHub OAuth, GitHub App, blob
     /// backend) and exits with the number of failed probes — drop
@@ -204,6 +213,27 @@ enum Command {
     Cloud {
         #[command(subcommand)]
         action: CloudAction,
+    },
+}
+
+/// Subcommands for `ministr api-keys` — service-account-key operator
+/// commands. Invoked by the Azure Container Apps Job on the weekly
+/// cron schedule (F3.4c-ii); also runnable locally during development.
+#[derive(Debug, Subcommand)]
+enum ApiKeysAction {
+    /// Flag service-account API keys whose `last_used_at` (or
+    /// `created_at` for never-used keys) is older than
+    /// `--threshold-days`. Each flagged key emits an
+    /// `api_key.stale` audit event. Idempotent across runs (the
+    /// query is deterministic; repeat runs against an unchanged table
+    /// emit the same set of events).
+    FlagStale {
+        /// Staleness threshold in days. Defaults to
+        /// `ministr_cloud::DEFAULT_STALE_API_KEY_DAYS` (90), matching
+        /// the ROADMAP §F3.4c language. Operators can pass a smaller
+        /// value to dry-run the cron against more rows.
+        #[arg(long, default_value_t = ministr_cloud::DEFAULT_STALE_API_KEY_DAYS)]
+        threshold_days: u32,
     },
 }
 
@@ -631,6 +661,11 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
         Command::Audit { action } => match action {
             AuditAction::Prune { retention_days } => {
                 commands::cmd_audit_prune(retention_days).await
+            }
+        },
+        Command::ApiKeys { action } => match action {
+            ApiKeysAction::FlagStale { threshold_days } => {
+                commands::cmd_api_keys_flag_stale(threshold_days).await
             }
         },
         Command::Cloud { action } => match action {

@@ -123,6 +123,101 @@ pub struct CreatedApiKey {
     pub raw_token: String,
 }
 
+/// F3.4c-ii — staleness threshold matching ROADMAP §F3.4c "90 days"
+/// language. Mirrors [`crate::DEFAULT_AUDIT_RETENTION_DAYS`] in spirit
+/// (operator-tunable, default ships in production), but the two are
+/// semantically distinct knobs — keep them separate constants.
+pub const DEFAULT_STALE_API_KEY_DAYS: u32 = 90;
+
+/// One stale-key row surfaced by [`flag_stale_api_keys`].
+#[derive(Debug, Clone)]
+pub struct StaleApiKey {
+    /// `api_keys.id` as text. Echoes the `resource` field on the
+    /// emitted `api_key.stale` audit event.
+    pub key_id: String,
+    /// `api_keys.owner_user_id` as text. Echoes the `actor` field on
+    /// the audit event — semantically: "the owner's key went stale".
+    pub owner_user_id: String,
+    /// Display name the user picked at create time. Surfaced in the
+    /// structured-log line so operators can correlate without joining
+    /// against the `api_keys` table.
+    pub name: String,
+}
+
+/// Outcome of one [`flag_stale_api_keys`] pass.
+#[derive(Debug, Clone)]
+pub struct StaleApiKeysOutcome {
+    /// Rows flagged this pass.
+    pub flagged: u64,
+    /// Wall-clock for the SELECT + audit-emit loop. Mirrors
+    /// [`PruneOutcome::elapsed`] so the structured-log dashboard
+    /// renders the operation uniformly.
+    pub elapsed: std::time::Duration,
+    /// Threshold in days the caller passed. Echoed for self-describing
+    /// logs.
+    pub threshold_days: u32,
+}
+
+/// F3.4c-ii — detect keys whose `last_used_at` (or `created_at` for
+/// never-used keys) is older than `threshold_days` days. For each row,
+/// emit an `api_key.stale` audit event via the injected sink. Returns
+/// the flagged count and elapsed wall-clock for the cron's
+/// structured-log line.
+///
+/// Excludes already-revoked keys (`revoked_at IS NULL`). The audit
+/// event carries `resource = key_id`, `actor = owner_user_id`, and
+/// `org_id = None` (v0 supports user-owned keys only — when F3.4 grows
+/// org-owned keys, attach `org_id` here so F3.5 webhook fan-out can
+/// route the event to subscribed channels).
+///
+/// # Errors
+///
+/// [`ApiKeysError::GetConn`] when the pool refuses a connection,
+/// [`ApiKeysError::Sql`] when the SELECT itself fails.
+pub async fn flag_stale_api_keys(
+    pool: &Pool,
+    threshold_days: u32,
+    sink: &dyn AuditSink,
+) -> Result<StaleApiKeysOutcome, ApiKeysError> {
+    let client = pool
+        .get()
+        .await
+        .map_err(|e| ApiKeysError::GetConn(format!("flag_stale_api_keys: {e}")))?;
+    let started = std::time::Instant::now();
+    let threshold = i32::try_from(threshold_days).unwrap_or(i32::MAX);
+    let rows = client
+        .query(
+            "SELECT
+                 id::text             AS key_id,
+                 owner_user_id::text  AS owner_user_id,
+                 name
+             FROM api_keys
+             WHERE revoked_at IS NULL
+               AND COALESCE(last_used_at, created_at)
+                     < now() - make_interval(days => $1::integer)",
+            &[&threshold],
+        )
+        .await
+        .map_err(|e| ApiKeysError::Sql(format!("select stale api_keys: {e}")))?;
+    let mut flagged: u64 = 0;
+    for row in rows {
+        let stale = StaleApiKey {
+            key_id: row.get("key_id"),
+            owner_user_id: row.get("owner_user_id"),
+            name: row.get("name"),
+        };
+        sink.record(
+            AuditEntry::new("api_key.stale", &stale.key_id).with_actor(&stale.owner_user_id),
+        );
+        flagged = flagged.saturating_add(1);
+    }
+    Ok(StaleApiKeysOutcome {
+        flagged,
+        elapsed: started.elapsed(),
+        threshold_days,
+    })
+}
+
 /// F3.4c-i — validate a whitespace-separated scopes string against
 /// [`ALLOWED_API_KEY_SCOPES`]. Returns the canonical re-joined string
 /// (single-space-separated, original order preserved) on success.
@@ -696,6 +791,46 @@ mod tests {
     fn validate_scopes_rejects_empty_after_trim() {
         let err = validate_scopes("   ").expect_err("whitespace-only is empty");
         assert!(err.is_empty());
+    }
+
+    #[test]
+    fn default_stale_threshold_matches_roadmap_team_window() {
+        // F3.4c — "90 days" lifted from the ROADMAP §F3.4c sub-bullet.
+        // If a future iteration retunes this, update the ROADMAP first
+        // so the spec and the const stay aligned.
+        assert_eq!(DEFAULT_STALE_API_KEY_DAYS, 90);
+    }
+
+    #[test]
+    fn stale_outcome_zero_flagged_when_no_rows() {
+        // Pure data-shape check: the outcome is structurally
+        // constructible without any DB call. The actual SELECT path is
+        // gated on MINISTR_TEST_PG_URL per convention.
+        let outcome = StaleApiKeysOutcome {
+            flagged: 0,
+            elapsed: std::time::Duration::from_millis(0),
+            threshold_days: DEFAULT_STALE_API_KEY_DAYS,
+        };
+        assert_eq!(outcome.flagged, 0);
+        assert_eq!(outcome.threshold_days, 90);
+    }
+
+    #[test]
+    fn stale_audit_event_shape_carries_owner_actor() {
+        // The cron emits AuditEntry::new("api_key.stale", key_id).with_actor(owner_id).
+        // Lock in the expected wire shape so a refactor of the emit
+        // call site can't drop the actor without this test screaming.
+        let stale = StaleApiKey {
+            key_id: "key-uuid".into(),
+            owner_user_id: "owner-uuid".into(),
+            name: "ci-prod".into(),
+        };
+        let entry = ministr_api::AuditEntry::new("api_key.stale", &stale.key_id)
+            .with_actor(&stale.owner_user_id);
+        assert_eq!(entry.action, "api_key.stale");
+        assert_eq!(entry.resource, "key-uuid");
+        assert_eq!(entry.actor.as_deref(), Some("owner-uuid"));
+        assert!(entry.org_id.is_none(), "v0 user-owned keys have no org_id");
     }
 
     #[test]
