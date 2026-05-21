@@ -497,14 +497,28 @@ pub(crate) async fn cmd_serve_http(
         daemon_state.clone(),
         ministr_daemon::activity::record,
     );
+    // F2.x-d — mount scope_tenant on the daemon routers too. The
+    // validate_scope_middleware wrapper added below by
+    // scope_protected_router populates `Tenant` in the request
+    // extensions; scope_tenant (one layer in from there) lifts that
+    // into the `tenant_scope::current()` task-local for the duration
+    // of the handler. The cloud-side upserts in `PostgresCorporaRepo`
+    // and `PostgresIndexJobSink` consult that task-local to stamp
+    // `cloud_corpora.tenant_id` — closing the F2.x-b permissive arm.
+    let scope_tenant_layer =
+        axum::middleware::from_fn(ministr_mcp::tenant_scope::scope_tenant);
     let daemon_read_router = ministr_daemon::daemon::corpora_read_router(daemon_state.clone())
-        .layer(activity_layer.clone());
+        .layer(activity_layer.clone())
+        .layer(scope_tenant_layer.clone());
     let daemon_write_router = ministr_daemon::daemon::corpora_write_router(daemon_state.clone())
-        .layer(activity_layer.clone());
+        .layer(activity_layer.clone())
+        .layer(scope_tenant_layer.clone());
     let daemon_bundle_router = ministr_daemon::daemon::corpora_bundle_router(daemon_state.clone())
-        .layer(activity_layer.clone());
-    let daemon_obs_router =
-        ministr_daemon::daemon::observability_router(daemon_state).layer(activity_layer);
+        .layer(activity_layer.clone())
+        .layer(scope_tenant_layer.clone());
+    let daemon_obs_router = ministr_daemon::daemon::observability_router(daemon_state)
+        .layer(activity_layer)
+        .layer(scope_tenant_layer);
     // Note: `corpora_ask_router` is intentionally NOT mounted on cloud.
     // The container has no `claude` CLI; clients hitting /ask get 404.
 
