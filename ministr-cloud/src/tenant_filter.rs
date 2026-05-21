@@ -18,7 +18,8 @@ use std::sync::Arc;
 
 use deadpool_postgres::Pool;
 use ministr_api::tenant_filter::{
-    DefaultCorpusFuture, TenantCorpusFilter, TenantFilterError, TenantFilterFuture,
+    DefaultCorpusFuture, TenantCorpusFilter, TenantCorpusVisibility, TenantFilterError,
+    TenantFilterFuture, VisibleCorpusFuture,
 };
 
 /// Postgres-backed tenant-corpus access decision.
@@ -126,6 +127,56 @@ impl TenantCorpusFilter for PostgresTenantCorpusFilter {
     }
 }
 
+/// F3.2-iii — Postgres-backed `TenantCorpusVisibility`.
+///
+/// Returns the set of `corpus_id`s a tenant is allowed to see when
+/// enumerating corpora (used by the daemon's `GET /api/v1/corpora`
+/// handler). Two-arm UNION:
+///
+/// 1. Direct ownership: `cloud_corpora.tenant_id = $tenant_subject`.
+/// 2. ACL grant: `cloud_corpus_acl` JOIN `org_members` where the
+///    tenant is a member of an org granted access.
+///
+/// Returning a deterministic set lets the handler intersect with the
+/// in-memory registry's list. Self-hosted serve does not mount this
+/// (no cloud pool), and the daemon's `list_corpora` handler falls
+/// back to "return everything" in that case.
+impl TenantCorpusVisibility for PostgresTenantCorpusFilter {
+    fn visible_corpus_ids<'a>(
+        &'a self,
+        tenant_subject: &'a str,
+    ) -> VisibleCorpusFuture<'a> {
+        Box::pin(async move {
+            let client = self
+                .pool
+                .get()
+                .await
+                .map_err(map_err("visible_corpus_ids: get conn"))?;
+            // Hot path: direct ownership rows + ACL grants resolved
+            // through org_members. Each side of the UNION is index-
+            // friendly (cloud_corpora is PK-keyed; idx_cloud_corpus_acl_org
+            // covers the ACL side; idx_org_members_user covers the
+            // membership side).
+            let rows = client
+                .query(
+                    "SELECT corpus_id
+                     FROM cloud_corpora
+                     WHERE tenant_id = $1
+                     UNION
+                     SELECT a.corpus_id
+                     FROM cloud_corpus_acl a
+                     JOIN org_members m ON m.org_id = a.org_id
+                     WHERE a.org_id IS NOT NULL
+                       AND m.user_id = $1::uuid",
+                    &[&tenant_subject],
+                )
+                .await
+                .map_err(map_err("visible_corpus_ids: query"))?;
+            Ok(Some(rows.into_iter().map(|r| r.get::<_, String>("corpus_id")).collect()))
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,6 +184,14 @@ mod tests {
     #[test]
     fn impl_is_dyn_compatible() {
         fn assert_dyn(_: &dyn TenantCorpusFilter) {}
+        let pool = build_dummy_pool();
+        let filter = PostgresTenantCorpusFilter::new(Arc::new(pool));
+        assert_dyn(&filter);
+    }
+
+    #[test]
+    fn visibility_impl_is_dyn_compatible() {
+        fn assert_dyn(_: &dyn TenantCorpusVisibility) {}
         let pool = build_dummy_pool();
         let filter = PostgresTenantCorpusFilter::new(Arc::new(pool));
         assert_dyn(&filter);
