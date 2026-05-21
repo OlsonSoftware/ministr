@@ -16,5 +16,6 @@
 pub mod export;
 
 pub use export::{
-    SessionBundleManifest, build_session_bundle, session_export_routes, SessionExportState,
+    SessionBundleManifest, SessionExportState, SessionSummary, build_session_bundle,
+    session_export_routes,
 };

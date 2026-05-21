@@ -292,12 +292,63 @@ impl SessionExportState {
     }
 }
 
-/// Mount the F6.2-a route. Path mirrors the roadmap spec:
-/// `POST /api/v1/sessions/{id}/export`.
+/// Mount the F6.2-a + F6.2-e routes. Paths mirror the roadmap spec:
+/// - `POST /api/v1/sessions/{id}/export` (F6.2-a): tar bundle.
+/// - `GET /api/v1/sessions` (F6.2-e): list in-memory session summaries.
 pub fn session_export_routes(state: SessionExportState) -> Router {
     Router::new()
         .route("/api/v1/sessions/{id}/export", post(handle_export))
+        .route("/api/v1/sessions", axum::routing::get(handle_list))
         .with_state(state)
+}
+
+/// F6.2-e — one in-memory session summary returned by `GET /api/v1/sessions`.
+/// Subset of [`SessionBundleManifest`] minus the export-time fields
+/// (`exported_at`, `schema_version`) since this is a live snapshot, not
+/// a packaged artefact. Future cross-pod listing will merge against
+/// the `agent_sessions` Postgres table.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionSummary {
+    pub session_id: String,
+    pub opened_at: String,
+    pub budget_used: usize,
+    pub delivered_count: usize,
+    pub total_delivered_tokens: usize,
+    pub pressure_level: String,
+}
+
+impl SessionSummary {
+    /// Build a summary from a live entry. Mirrors [`SessionBundleManifest::from_entry`]
+    /// but drops the export-time / schema-version fields.
+    #[must_use]
+    pub fn from_entry(session_id: &str, entry: &SessionEntry) -> Self {
+        let status = entry.budget.usage_status();
+        Self {
+            session_id: session_id.to_owned(),
+            opened_at: iso8601_from_session(&entry.session),
+            budget_used: status.tokens_used,
+            delivered_count: entry.session.delivered_count(),
+            total_delivered_tokens: entry.session.total_delivered_tokens(),
+            pressure_level: pressure_label(status.level),
+        }
+    }
+}
+
+async fn handle_list(State(state): State<SessionExportState>) -> Response {
+    let reg = state.registry.lock().await;
+    let mut summaries: Vec<SessionSummary> = reg
+        .session_ids()
+        .into_iter()
+        .filter_map(|id| {
+            reg.get_session(&id)
+                .map(|entry| SessionSummary::from_entry(&id, entry))
+        })
+        .collect();
+    drop(reg);
+    // Stable order: most-recently-opened first. opened_at strings are
+    // ISO-8601 UTC so lexical sort matches chronological order.
+    summaries.sort_by(|a, b| b.opened_at.cmp(&a.opened_at).then(a.session_id.cmp(&b.session_id)));
+    axum::Json(summaries).into_response()
 }
 
 async fn handle_export(
@@ -654,5 +705,47 @@ mod tests {
             entries["drops.jsonl"].is_empty(),
             "no rows ⇒ zero-line drops.jsonl",
         );
+    }
+
+    // ── F6.2-e session-list tests ───────────────────────────────────────
+
+    #[test]
+    fn session_summary_from_entry_carries_live_fields() {
+        let mut reg = fresh_registry();
+        let entry = reg.create_session("agent-s", None, AccessMode::ReadWrite);
+        entry.session.record_delivery(
+            &ContentId("docs/a.md#x".to_string()),
+            Resolution::Section,
+            150,
+            1,
+            "hash".to_string(),
+        );
+        let _ = entry.budget.record_tokens("docs/a.md#x", 150);
+
+        let entry_ref = reg.get_session("agent-s").expect("entry");
+        let summary = SessionSummary::from_entry("agent-s", entry_ref);
+        assert_eq!(summary.session_id, "agent-s");
+        assert_eq!(summary.budget_used, 150);
+        assert_eq!(summary.delivered_count, 1);
+        assert_eq!(summary.total_delivered_tokens, 150);
+        assert_eq!(summary.pressure_level, "normal");
+        assert!(!summary.opened_at.is_empty());
+    }
+
+    #[test]
+    fn session_summary_serde_round_trip() {
+        // Wire-shape guard: the React inspector keys on these field
+        // names. Renames must update the TS mirror in cloudClient.ts.
+        let s = SessionSummary {
+            session_id: "agent-1".into(),
+            opened_at: "2026-05-21T00:00:00Z".into(),
+            budget_used: 42,
+            delivered_count: 3,
+            total_delivered_tokens: 99,
+            pressure_level: "normal".into(),
+        };
+        let json = serde_json::to_string(&s).expect("serialize");
+        let parsed: SessionSummary = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(s, parsed);
     }
 }
