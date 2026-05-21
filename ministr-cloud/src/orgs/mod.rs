@@ -22,9 +22,13 @@
 //! routes (`cmd_serve_http` only merges `orgs_routes` when
 //! `cloud_pool.is_some()`).
 
+pub mod invites;
 pub mod repo;
 pub mod routes;
 
+pub use invites::{
+    CreatedInvite, ConsumeOutcome, DEFAULT_INVITE_TTL, InviteRow, consume_invite, create_invite,
+};
 pub use repo::{
     DEFAULT_ORG_PLAN, MemberRow, OrgError, OrgRow, OrgWithRole, create_org, list_org_members,
     list_orgs_for_user, member_role,
