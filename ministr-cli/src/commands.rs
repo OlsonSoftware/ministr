@@ -257,7 +257,22 @@ pub(crate) async fn cmd_serve_http(
     }
 
     corpus_registry.restore().await;
-    let server = server.with_corpus_registry(Arc::clone(&corpus_registry));
+
+    // F2.x-b — wire the tenant-corpus filter so the new `Backend::Registry`
+    // dispatch path gates `corpus_id` lookups by tenant. Self-hosted serve
+    // (no cloud Postgres pool) keeps the unfiltered constructor; cross-
+    // tenant access there is meaningless because there's only one user.
+    let server = if let Some(pool) = cloud_pool.as_ref() {
+        let filter: std::sync::Arc<dyn ministr_api::TenantCorpusFilter> = std::sync::Arc::new(
+            ministr_cloud::PostgresTenantCorpusFilter::new(Arc::clone(pool)),
+        );
+        tracing::info!(
+            "PostgresTenantCorpusFilter wired — /mcp tool calls gated by cloud_corpora.tenant_id"
+        );
+        server.with_corpus_registry_and_filter(Arc::clone(&corpus_registry), filter)
+    } else {
+        server.with_corpus_registry(Arc::clone(&corpus_registry))
+    };
 
     let ingestion_progress = server.ingestion_progress_arc();
 
@@ -294,7 +309,21 @@ pub(crate) async fn cmd_serve_http(
     }
     let http_service = StreamableHttpService::new(server_factory, session_manager, sh_config);
 
-    let mcp_router = axum::Router::new().nest_service("/mcp", http_service);
+    // F2.x-b — mount the tenant-scope middleware so tool handlers can
+    // recover the resolved Tenant (set by validate_token_middleware
+    // upstream) via the `tenant_scope::current` task-local. The layer
+    // is added as the INNER layer here so when `protected_router`
+    // wraps with `validate_token_middleware` below, the order becomes:
+    //   validate_token_middleware → scope_tenant → StreamableHttpService
+    // i.e. the tenant is populated into the extension BEFORE the
+    // task-local scope is entered. Self-hosted serve still gets the
+    // layer mounted (sees no Tenant, scopes None), so the same code
+    // path runs in both modes.
+    let mcp_router = axum::Router::new()
+        .nest_service("/mcp", http_service)
+        .layer(axum::middleware::from_fn(
+            ministr_mcp::tenant_scope::scope_tenant,
+        ));
 
     // A2A protocol endpoints (agent card + task submission)
     let a2a_state = ministr_mcp::a2a::A2aState {

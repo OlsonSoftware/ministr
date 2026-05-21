@@ -331,6 +331,31 @@ impl MinistrServer {
         self
     }
 
+    /// F2.x-b — like [`Self::with_corpus_registry`], but also wires a
+    /// tenant-isolation filter. Cross-tenant `corpus_id` probes return
+    /// the same typo-tolerance shape (empty results, not 403) so an
+    /// attacker cannot enumerate other tenants' corpus IDs.
+    ///
+    /// `cmd_serve_http` calls this only when cloud Postgres is wired;
+    /// self-hosted serve continues to use [`Self::with_corpus_registry`]
+    /// and skips the filter entirely.
+    #[must_use]
+    pub fn with_corpus_registry_and_filter(
+        mut self,
+        registry: Arc<ministr_daemon::registry::CorpusRegistry>,
+        tenant_filter: Arc<dyn ministr_api::TenantCorpusFilter>,
+    ) -> Self {
+        if let crate::backend::Backend::Local(local) = &self.backend {
+            self.backend = crate::backend::Backend::registry_with_filter(
+                Arc::clone(local.service()),
+                Arc::clone(&registry),
+                tenant_filter,
+            );
+        }
+        self.corpus_registry = Some(registry);
+        self
+    }
+
     /// Remove tools that are irrelevant for the current corpus configuration.
     ///
     /// Inspects the server's capabilities (web fetcher, git fetcher) and scans
