@@ -300,7 +300,23 @@ impl IngestionRunner {
             let version = backend
                 .upload_corpus(&job.corpus_id, &ctx.corpus_dir, &manifest)
                 .await
-                .map_err(|e| format!("blob upload failed: {e}"))?;
+                .map_err(|e| {
+                    // The Azure SDK's top-level Display is famously
+                    // opaque ("non-transport error occurred which will
+                    // not be retried"). Walk the std::error::Error
+                    // source chain so the real cause (HTTP status,
+                    // serialisation error, IO error) lands in the
+                    // worker's terminal `error` column and is visible
+                    // both in `az containerapp logs` and the demo SSE.
+                    use std::error::Error as _;
+                    let mut msg = format!("blob upload failed: {e}");
+                    let mut src: Option<&dyn std::error::Error> = e.source();
+                    while let Some(s) = src {
+                        msg.push_str(&format!(" — caused by: {s}"));
+                        src = s.source();
+                    }
+                    msg
+                })?;
             info!(
                 corpus_id = %job.corpus_id,
                 version,

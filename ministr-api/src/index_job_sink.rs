@@ -97,6 +97,19 @@ pub trait IndexJobSink: Send + Sync + std::fmt::Debug {
         clone_url: Option<&'a str>,
     ) -> IndexJobFuture<'a, String>;
 
+    /// Upsert the corpus row WITHOUT enqueueing an indexer job. Used by
+    /// `POST /api/v1/corpora` in cloud mode when the paths are local
+    /// (the serve pod has no source files, so dispatching an indexer
+    /// job would just discover 0 files and pollute the queue). The
+    /// corpus appears in `list_corpora` as a logical container that
+    /// later `POST .../clone` calls can attach indexed content to.
+    fn register_corpus_only<'a>(
+        &'a self,
+        corpus_id: &'a str,
+        paths: &'a [String],
+        display_name: Option<&'a str>,
+    ) -> IndexJobFuture<'a, ()>;
+
     /// Look up the most-recent job for a corpus. The daemon's progress
     /// SSE polls this every ~500ms and yields the snapshot. Returns
     /// `None` when the corpus exists but has never been queued.
@@ -142,6 +155,15 @@ mod tests {
                 });
                 Ok(job_id)
             })
+        }
+
+        fn register_corpus_only<'a>(
+            &'a self,
+            _corpus_id: &'a str,
+            _paths: &'a [String],
+            _display_name: Option<&'a str>,
+        ) -> IndexJobFuture<'a, ()> {
+            Box::pin(async move { Ok(()) })
         }
 
         fn latest_for_corpus<'a>(

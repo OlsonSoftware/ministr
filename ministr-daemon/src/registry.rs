@@ -417,6 +417,25 @@ impl CorpusRegistry {
         }
         let display = display_name.unwrap_or_else(|| display_name_from_paths(paths));
         let handle = self.create_handle(corpus_id, paths, display)?;
+
+        // Seed CorpusInfo.files_indexed from the restored content.db so
+        // /api/v1/corpora reports the bundle's true count instead of the
+        // create_handle placeholder zero. Without this, every lazy-restore
+        // would report 0 files until the next `update_stats` call (which
+        // only fires after a fresh ingest on this pod — and the serve pod
+        // never re-indexes a cloud corpus). sections_count is best-effort:
+        // failure to count is logged but doesn't fail the restore.
+        match handle.storage.list_file_hashes().await {
+            Ok(hashes) => {
+                handle.info.write().await.files_indexed = hashes.len();
+            }
+            Err(e) => warn!(
+                corpus_id,
+                error = %e,
+                "list_file_hashes failed after restore — files_indexed left at 0",
+            ),
+        }
+
         let handle = Arc::new(handle);
         {
             let mut map = self.corpora.write().await;
@@ -570,8 +589,44 @@ impl CorpusRegistry {
             }
         }
 
+        // Cloud-serve mode (both a corpora_repo AND a corpus_restorer are
+        // wired): the serve pod has no source files mounted, so calling
+        // `register()` would invoke `indexer::run` on git-URL paths,
+        // discover 0 files, fail the HNSW dump on an empty index, and
+        // stamp `files_indexed=0` on the in-memory `CorpusInfo` —
+        // permanently masking the bundle the worker uploaded to blob.
+        // Use the lazy restorer instead: it downloads the bundle and
+        // routes through `register_restored`, which never touches the
+        // local indexer. Bundles that don't exist yet (worker hasn't
+        // completed the first index) are logged and skipped — they'll
+        // restore on demand via `ensure_present` on first query.
+        let cloud_mode = self.corpus_restorer.get().is_some() && self.corpora_repo.get().is_some();
         for entry in &live {
-            if let Err(e) = self.register(&entry.paths).await {
+            if cloud_mode {
+                match self.ensure_present(&entry.id).await {
+                    Ok(_) => {}
+                    Err(RegistryError::NotFound { .. }) => {
+                        info!(
+                            corpus_id = %entry.id,
+                            "no bundle in blob yet — will lazy-restore on first query",
+                        );
+                    }
+                    Err(e) => {
+                        use std::error::Error as _;
+                        let mut chain = format!("{e}");
+                        let mut src: Option<&dyn std::error::Error> = e.source();
+                        while let Some(s) = src {
+                            chain.push_str(&format!(" — caused by: {s}"));
+                            src = s.source();
+                        }
+                        warn!(
+                            corpus_id = %entry.id,
+                            error = %chain,
+                            "failed to restore corpus from blob",
+                        );
+                    }
+                }
+            } else if let Err(e) = self.register(&entry.paths).await {
                 warn!(corpus_id = %entry.id, error = %e, "failed to restore corpus");
             }
         }

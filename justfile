@@ -506,6 +506,28 @@ azure-psql *args:
     echo "▶ [4/5] running psql"
     docker run --rm -i postgres:16 psql "$PGURL" {{args}}
 
+# Dump the most recent indexer_jobs rows to /tmp/ministr-debug-jobs.out
+# so Claude can read the result file directly without dealing with terminal
+# copy/paste. Same firewall+credential dance as `azure-psql`; output goes
+# to a stable path, exit code is preserved. SQL is piped via stdin instead
+# of `-c` to avoid `just` arg-splitting mangling the spaces.
+azure-debug-jobs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    OUT=/tmp/ministr-debug-jobs.out
+    just azure-psql <<'EOF' > "$OUT" 2>&1
+    \pset pager off
+    \timing off
+    SELECT id, corpus_id, status,
+           substring(coalesce(error,'') for 240) AS err,
+           to_timestamp(created_at) AS created_at,
+           to_timestamp(updated_at) AS updated_at
+    FROM indexer_jobs
+    ORDER BY created_at DESC
+    LIMIT 15;
+    EOF
+    echo "✓ wrote $OUT"
+
 # PHASE3 smoke uses this between an initial demo-remote (which leaves
 # a bundle in blob + a cloud_corpora row) and a follow-up query, to
 # validate that (a) the durable registry survived the restart and
