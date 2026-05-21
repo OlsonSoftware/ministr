@@ -18,3 +18,4 @@ pub mod error;
 pub mod sampling;
 pub mod server;
 pub mod task;
+pub mod tenant_scope;
