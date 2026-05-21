@@ -24,6 +24,7 @@ pub mod index_job_sink;
 pub mod mail;
 pub mod query;
 pub mod session;
+pub mod session_storage;
 pub mod status;
 pub mod tenant;
 pub mod tenant_filter;
@@ -42,6 +43,10 @@ pub use index_job_sink::{
     IndexJobError, IndexJobFuture, IndexJobSink, IndexJobSnapshot, IndexJobStatus,
 };
 pub use mail::{InviteMessage, MailSender};
+pub use session_storage::{
+    LoadSessionFuture, SaveSessionFuture, SessionMutFuture, SessionSnapshot, SessionStorage,
+    SessionStorageError,
+};
 pub use tenant::TenantId;
 pub use tenant_filter::{
     DefaultCorpusFuture, TenantCorpusFilter, TenantCorpusVisibility, TenantFilterError,
