@@ -397,6 +397,92 @@ impl StripeClient {
         Ok(parsed.url)
     }
 
+    /// F3.1c-iii — cancel a customer's active subscription, used by
+    /// the personal-Pro → org-Team transfer path so the user can run
+    /// Checkout against the org's Stripe Customer without paying for
+    /// both plans simultaneously.
+    ///
+    /// Two API calls when the customer has an active sub:
+    ///   1. `GET /v1/subscriptions?customer={cus_id}&status=active&limit=1`
+    ///      — find the current active subscription (returns 0 or 1).
+    ///   2. `DELETE /v1/subscriptions/{sub_id}` — immediately cancel.
+    ///      We use immediate cancel (not `cancel_at_period_end`) because
+    ///      the new Team subscription on the org's Customer mints its
+    ///      own proration credit, so the user gets refunded for the
+    ///      unused portion via Stripe's invoicing — no double billing.
+    ///
+    /// Returns [`CancelSubscriptionOutcome::NoSubscription`] when the
+    /// customer has nothing to cancel (typical for a Customer that
+    /// hasn't run Checkout yet — the transfer endpoint reports this
+    /// as a no-op outcome).
+    ///
+    /// # Errors
+    ///
+    /// - [`StripeApiError::Transport`] for network failures.
+    /// - [`StripeApiError::Protocol`] for non-2xx responses or
+    ///   malformed JSON on either call.
+    pub async fn cancel_active_subscription_for_customer(
+        &self,
+        customer_id: &str,
+    ) -> Result<CancelSubscriptionOutcome, StripeApiError> {
+        let list_url = format!(
+            "{}/v1/subscriptions?customer={}&status=active&limit=1",
+            self.base_url,
+            form_encode(customer_id)
+        );
+        let resp = self
+            .http
+            .get(&list_url)
+            .basic_auth(&self.api_key, Some(""))
+            .header("Stripe-Version", STRIPE_API_VERSION)
+            .send()
+            .await
+            .map_err(|e| StripeApiError::Transport(format!("list_subscriptions: {e}")))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(StripeApiError::Protocol(format!(
+                "list_subscriptions status {status}: {body}"
+            )));
+        }
+        let listed: SubscriptionList = resp
+            .json()
+            .await
+            .map_err(|e| StripeApiError::Protocol(format!("list_subscriptions parse: {e}")))?;
+        let Some(sub) = listed.data.into_iter().next() else {
+            debug!(
+                customer_id,
+                "no active subscription — cancel-for-transfer is a no-op"
+            );
+            return Ok(CancelSubscriptionOutcome::NoSubscription);
+        };
+
+        let cancel_url = format!("{}/v1/subscriptions/{}", self.base_url, sub.id);
+        let resp = self
+            .http
+            .delete(&cancel_url)
+            .basic_auth(&self.api_key, Some(""))
+            .header("Stripe-Version", STRIPE_API_VERSION)
+            .send()
+            .await
+            .map_err(|e| StripeApiError::Transport(format!("cancel_subscription: {e}")))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(StripeApiError::Protocol(format!(
+                "cancel_subscription status {status}: {body}"
+            )));
+        }
+        debug!(
+            customer_id,
+            subscription_id = %sub.id,
+            "subscription cancelled for personal-to-org transfer",
+        );
+        Ok(CancelSubscriptionOutcome::Cancelled {
+            subscription_id: sub.id,
+        })
+    }
+
     /// F3.1c-ii — set the seat quantity on the customer's active
     /// subscription. Idempotent: takes an absolute `target_quantity`
     /// (= `count(org_members)`), so concurrent invite acceptances
@@ -514,6 +600,22 @@ impl StripeClient {
             new_quantity: target_quantity,
         })
     }
+}
+
+/// F3.1c-iii — outcome of a
+/// [`StripeClient::cancel_active_subscription_for_customer`] call.
+/// Distinguishes "nothing to cancel" (Customer has no active sub)
+/// from "Stripe was actually mutated" so the caller can log + skip
+/// downstream actions (e.g. audit emission) when there was no
+/// observable change.
+#[derive(Debug, Clone)]
+pub enum CancelSubscriptionOutcome {
+    /// Customer has no active subscription. Common when the user
+    /// signed in (which creates a Stripe Customer) but never ran
+    /// Checkout. Caller treats this as a no-op transfer.
+    NoSubscription,
+    /// Stripe state mutated — the named subscription is now `canceled`.
+    Cancelled { subscription_id: String },
 }
 
 /// F3.1c-ii — outcome of a [`StripeClient::sync_subscription_seats`]

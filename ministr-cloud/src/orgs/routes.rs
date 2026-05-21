@@ -51,6 +51,9 @@ use super::repo::{
     org_name, set_org_stripe_customer_id, user_email,
 };
 use super::seats::sync_org_seats;
+use super::transfer_personal::{
+    TransferPersonalError, TransferPersonalOutcome, transfer_personal_to_org,
+};
 use crate::billing::StripeClient;
 
 /// Handler state — the cloud Postgres pool. Shared `Arc` with the rest
@@ -267,6 +270,14 @@ pub fn orgs_routes(state: OrgsState) -> Router {
         .route(
             "/api/v1/corpora/{corpus_id}/transfer",
             post(transfer_handler),
+        )
+        // F3.1c-iii — cancel a user's personal Pro subscription as the
+        // first half of moving them to a Team subscription on the
+        // org's Stripe Customer. The caller then runs Checkout for
+        // the org's Team plan via the existing F2.4 flow.
+        .route(
+            "/api/v1/orgs/{id}/transfer-personal-sub",
+            post(transfer_personal_handler),
         )
         .with_state(state)
 }
@@ -694,6 +705,94 @@ async fn transfer_handler(
     }
 }
 
+/// `POST /api/v1/orgs/{id}/transfer-personal-sub` response body. The
+/// outcome is encoded as a discriminator string so the UI can render
+/// one of three messages without inspecting the optional id.
+#[derive(Debug, Serialize)]
+struct TransferPersonalResponse {
+    /// `"cancelled"` | `"no_active_subscription"` | `"no_personal_customer"`.
+    outcome: String,
+    /// Subscription id that was just cancelled. Present only on
+    /// `outcome = "cancelled"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subscription_id: Option<String>,
+}
+
+async fn transfer_personal_handler(
+    State(state): State<OrgsState>,
+    full_tenant: Option<Extension<Tenant>>,
+    Path(org_id): Path<String>,
+) -> Result<(StatusCode, Json<TransferPersonalResponse>), OrgsApiError> {
+    let user_id = tenant_user_id(full_tenant)?;
+
+    // Caller must be owner/admin of the org they're transferring INTO.
+    // Mirrors the F3.2-iv transfer-handler authz: only an org owner /
+    // admin can land a personal subscription on the org's billing
+    // surface. Member-role callers are rejected here, not at the
+    // orchestrator layer (the orchestrator is wire-shape only).
+    let role = member_role(&state.pool, &org_id, &user_id)
+        .await
+        .map_err(OrgsApiError::Repo)?;
+    if !matches!(role.as_deref(), Some("owner" | "admin")) {
+        return Err(OrgsApiError::Forbidden);
+    }
+
+    let Some(stripe) = state.stripe.as_ref() else {
+        // Deployment has no `MINISTR_STRIPE_SECRET_KEY` configured.
+        // The orchestrator would land on the same outcome (no
+        // Customer to look up) but we short-circuit so the user
+        // sees a clearer signal.
+        return Ok((
+            StatusCode::OK,
+            Json(TransferPersonalResponse {
+                outcome: "no_personal_customer".into(),
+                subscription_id: None,
+            }),
+        ));
+    };
+
+    let outcome = transfer_personal_to_org(&state.pool, stripe, &user_id, &org_id)
+        .await
+        .map_err(OrgsApiError::TransferPersonal)?;
+
+    match outcome {
+        TransferPersonalOutcome::Cancelled { subscription_id } => {
+            // F3.7 audit — resource encodes the user→org direction so
+            // the orgs audit feed surfaces who initiated the transfer
+            // into which org.
+            state.audit_record(
+                AuditEntry::new(
+                    "personal_sub.cancelled",
+                    format!("{subscription_id}:->{org_id}"),
+                )
+                .with_org(&org_id)
+                .with_actor(&user_id),
+            );
+            Ok((
+                StatusCode::OK,
+                Json(TransferPersonalResponse {
+                    outcome: "cancelled".into(),
+                    subscription_id: Some(subscription_id),
+                }),
+            ))
+        }
+        TransferPersonalOutcome::NoActiveSubscription => Ok((
+            StatusCode::OK,
+            Json(TransferPersonalResponse {
+                outcome: "no_active_subscription".into(),
+                subscription_id: None,
+            }),
+        )),
+        TransferPersonalOutcome::NoPersonalCustomer => Ok((
+            StatusCode::OK,
+            Json(TransferPersonalResponse {
+                outcome: "no_personal_customer".into(),
+                subscription_id: None,
+            }),
+        )),
+    }
+}
+
 async fn revoke_share_handler(
     State(state): State<OrgsState>,
     full_tenant: Option<Extension<Tenant>>,
@@ -813,6 +912,10 @@ enum OrgsApiError {
     /// Repo layer failure. Validation errors map to 422; everything
     /// else logs at warn + returns 500 without leaking detail.
     Repo(OrgError),
+    /// F3.1c-iii — `transfer_personal_to_org` orchestrator surfaced an
+    /// error. Both arms (Repo / Stripe) collapse to 500 with the actual
+    /// failure logged at warn.
+    TransferPersonal(TransferPersonalError),
 }
 
 impl IntoResponse for OrgsApiError {
@@ -844,7 +947,57 @@ impl IntoResponse for OrgsApiError {
                 warn!(error = %other, "orgs handler internal error");
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response()
             }
+            Self::TransferPersonal(e) => {
+                warn!(error = %e, "transfer-personal handler internal error");
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response()
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod transfer_personal_wire_shape {
+    //! F3.1c-iii — non-gated unit tests for the wire shape of the
+    //! `TransferPersonalResponse`. Verifies `skip_serializing_if` drops
+    //! `subscription_id` when absent (the `no_active_subscription` /
+    //! `no_personal_customer` outcomes).
+
+    use super::TransferPersonalResponse;
+
+    #[test]
+    fn cancelled_outcome_carries_subscription_id() {
+        let resp = TransferPersonalResponse {
+            outcome: "cancelled".into(),
+            subscription_id: Some("sub_abc".into()),
+        };
+        let json = serde_json::to_value(&resp).expect("serialize");
+        assert_eq!(json["outcome"], "cancelled");
+        assert_eq!(json["subscription_id"], "sub_abc");
+    }
+
+    #[test]
+    fn no_active_subscription_omits_id() {
+        let resp = TransferPersonalResponse {
+            outcome: "no_active_subscription".into(),
+            subscription_id: None,
+        };
+        let json = serde_json::to_value(&resp).expect("serialize");
+        assert_eq!(json["outcome"], "no_active_subscription");
+        assert!(
+            json.get("subscription_id").is_none(),
+            "skip_serializing_if must drop the None field",
+        );
+    }
+
+    #[test]
+    fn no_personal_customer_omits_id() {
+        let resp = TransferPersonalResponse {
+            outcome: "no_personal_customer".into(),
+            subscription_id: None,
+        };
+        let json = serde_json::to_value(&resp).expect("serialize");
+        assert_eq!(json["outcome"], "no_personal_customer");
+        assert!(json.get("subscription_id").is_none());
     }
 }
 
