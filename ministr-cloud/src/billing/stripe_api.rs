@@ -396,6 +396,149 @@ impl StripeClient {
         debug!(customer_id, "stripe billing portal session created");
         Ok(parsed.url)
     }
+
+    /// F3.1c-ii — set the seat quantity on the customer's active
+    /// subscription. Idempotent: takes an absolute `target_quantity`
+    /// (= `count(org_members)`), so concurrent invite acceptances
+    /// converge to the right final value regardless of ordering.
+    ///
+    /// Two API calls: list active subscriptions for the customer,
+    /// then POST the first subscription with the first line item's
+    /// quantity updated. Stripe creates a proration credit/charge
+    /// at the next invoice cycle (`proration_behavior=create_prorations`).
+    ///
+    /// Returns a [`SyncSeatOutcome`] so the caller can log + take
+    /// action (e.g. surface a warning when no subscription exists
+    /// for the customer — F3.1c-i pre-Checkout state).
+    ///
+    /// # Errors
+    ///
+    /// - [`StripeApiError::Transport`] for network failures.
+    /// - [`StripeApiError::Protocol`] for non-2xx responses or
+    ///   malformed JSON on either call.
+    pub async fn sync_subscription_seats(
+        &self,
+        customer_id: &str,
+        target_quantity: u64,
+    ) -> Result<SyncSeatOutcome, StripeApiError> {
+        // Step 1: list active subscriptions for the customer. Cap at
+        // 1 — orgs have one Team-tier subscription each in F3.1c-ii;
+        // future multi-product setups will need a price-aware lookup.
+        let list_url = format!(
+            "{}/v1/subscriptions?customer={}&status=active&limit=1",
+            self.base_url,
+            form_encode(customer_id)
+        );
+        let resp = self
+            .http
+            .get(&list_url)
+            .basic_auth(&self.api_key, Some(""))
+            .header("Stripe-Version", STRIPE_API_VERSION)
+            .send()
+            .await
+            .map_err(|e| StripeApiError::Transport(format!("list_subscriptions: {e}")))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(StripeApiError::Protocol(format!(
+                "list_subscriptions status {status}: {body}"
+            )));
+        }
+        let listed: SubscriptionList = resp.json().await.map_err(|e| {
+            StripeApiError::Protocol(format!("list_subscriptions parse: {e}"))
+        })?;
+        let Some(sub) = listed.data.into_iter().next() else {
+            debug!(
+                customer_id,
+                target_quantity, "no active subscription — seat sync no-op"
+            );
+            return Ok(SyncSeatOutcome::NoSubscription);
+        };
+        let Some(first_item) = sub.items.data.into_iter().next() else {
+            return Err(StripeApiError::Protocol(format!(
+                "subscription {} has no items — cannot sync seats",
+                sub.id
+            )));
+        };
+        if first_item.quantity == target_quantity {
+            debug!(
+                customer_id,
+                subscription_id = %sub.id,
+                target_quantity,
+                "subscription already at target seat quantity",
+            );
+            return Ok(SyncSeatOutcome::AlreadyAtTarget {
+                subscription_id: sub.id,
+                quantity: target_quantity,
+            });
+        }
+
+        // Step 2: update the first line item's quantity. We POST to
+        // the subscription (not the subscription_item) so Stripe can
+        // recompute the whole subscription's billing in one shot.
+        let form = seat_quantity_form_body(&first_item.id, target_quantity);
+        let idempotency_key = format!(
+            "sync-seats-{}-q{target_quantity}",
+            sub.id
+        );
+        let update_url = format!("{}/v1/subscriptions/{}", self.base_url, sub.id);
+        let resp = self
+            .http
+            .post(&update_url)
+            .basic_auth(&self.api_key, Some(""))
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header("Stripe-Version", STRIPE_API_VERSION)
+            .header("Idempotency-Key", &idempotency_key)
+            .body(form)
+            .send()
+            .await
+            .map_err(|e| StripeApiError::Transport(format!("update_subscription: {e}")))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(StripeApiError::Protocol(format!(
+                "update_subscription status {status}: {body}"
+            )));
+        }
+        let prior = first_item.quantity;
+        debug!(
+            customer_id,
+            subscription_id = %sub.id,
+            prior_quantity = prior,
+            new_quantity = target_quantity,
+            "seat quantity updated",
+        );
+        Ok(SyncSeatOutcome::Updated {
+            subscription_id: sub.id,
+            prior_quantity: prior,
+            new_quantity: target_quantity,
+        })
+    }
+}
+
+/// F3.1c-ii — outcome of a [`StripeClient::sync_subscription_seats`]
+/// call. Distinguishes "nothing to do" (already at target / no
+/// subscription) from "Stripe was actually mutated" so the caller can
+/// log meaningfully + surface follow-up actions.
+#[derive(Debug, Clone)]
+pub enum SyncSeatOutcome {
+    /// Customer has no active subscription yet. Normal state for an
+    /// org whose owner hasn't run Checkout — the sync becomes a no-op
+    /// until F2.4's Checkout flow mints the subscription.
+    NoSubscription,
+    /// The subscription's line item already has the target quantity.
+    /// Reached when a concurrent sync race already wrote the value,
+    /// or when the caller is re-syncing without an underlying change.
+    AlreadyAtTarget {
+        subscription_id: String,
+        quantity: u64,
+    },
+    /// Stripe state mutated from `prior_quantity` to `new_quantity`.
+    Updated {
+        subscription_id: String,
+        prior_quantity: u64,
+        new_quantity: u64,
+    },
 }
 
 /// Subset of `Checkout.Session` / `BillingPortal.Session` — both
@@ -412,6 +555,32 @@ struct CustomerResponse {
     id: String,
 }
 
+/// F3.1c-ii — `GET /v1/subscriptions` list response. Stripe paginates
+/// with `data[]`; we only ever need the first row (the active
+/// subscription) so we don't follow `has_more`.
+#[derive(Debug, Deserialize)]
+struct SubscriptionList {
+    data: Vec<SubscriptionListItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubscriptionListItem {
+    id: String,
+    items: SubscriptionItems,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubscriptionItems {
+    data: Vec<SubscriptionLineItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubscriptionLineItem {
+    id: String,
+    #[serde(default)]
+    quantity: u64,
+}
+
 /// Build the form-encoded body for `POST /v1/customers`. Pulled out so
 /// the encoding can be unit-tested without an HTTP round-trip.
 fn customer_form_body(email: &str, github_id: i64) -> String {
@@ -421,6 +590,22 @@ fn customer_form_body(email: &str, github_id: i64) -> String {
     body.push_str("&metadata[github_id]=");
     body.push_str(&form_encode(&github_id.to_string()));
     body.push_str("&metadata[source]=ministr-cloud-signin");
+    body
+}
+
+/// F3.1c-ii — build the form-encoded body for `POST /v1/subscriptions/{id}`
+/// when updating the first line item's seat quantity. Stripe expects
+/// `items[0][id]=<si_…>&items[0][quantity]=<N>` plus a
+/// `proration_behavior` so mid-cycle changes credit/charge fairly at
+/// the next invoice. Extracted so the encoding can be asserted in
+/// unit tests without an HTTP round-trip.
+fn seat_quantity_form_body(line_item_id: &str, quantity: u64) -> String {
+    let mut body = String::new();
+    body.push_str("items[0][id]=");
+    body.push_str(&form_encode(line_item_id));
+    body.push_str("&items[0][quantity]=");
+    body.push_str(&form_encode(&quantity.to_string()));
+    body.push_str("&proration_behavior=create_prorations");
     body
 }
 
@@ -562,6 +747,31 @@ mod tests {
         assert!(body.contains("email=user%2Bplus%40example.com"), "got {body}");
         assert!(body.contains("metadata[github_id]=42"), "got {body}");
         assert!(body.contains("metadata[source]=ministr-cloud-signin"));
+    }
+
+    #[test]
+    fn seat_quantity_form_body_carries_item_id_quantity_and_proration() {
+        // F3.1c-ii — Stripe wants `items[0][id]` + `items[0][quantity]`
+        // (not the bare quantity), and a proration_behavior so mid-
+        // cycle changes credit/charge fairly at the next invoice.
+        let body = seat_quantity_form_body("si_test123", 3);
+        assert!(body.contains("items[0][id]=si_test123"), "got {body}");
+        assert!(body.contains("items[0][quantity]=3"), "got {body}");
+        assert!(
+            body.contains("proration_behavior=create_prorations"),
+            "got {body}"
+        );
+    }
+
+    #[test]
+    fn seat_quantity_form_body_url_encodes_line_item_id() {
+        // Line item ids are well-shaped (`si_…`) in practice, but
+        // belt-and-braces — if Stripe ever changes the shape we
+        // shouldn't generate a malformed body. `form_encode` uses
+        // `+` for spaces (matches application/x-www-form-urlencoded;
+        // mirrors the F3.1c-i comment in routes.rs).
+        let body = seat_quantity_form_body("si test", 1);
+        assert!(body.contains("items[0][id]=si+test"), "got {body}");
     }
 
     #[test]
