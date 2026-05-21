@@ -69,6 +69,7 @@ import {
   type CloudOrg,
   type CloudOrgUsage,
   type CloudProgressEvent,
+  type CloudSessionBundle,
   type CloudStatus,
   type CloudUsage,
   type CloudWebhookSub,
@@ -523,6 +524,8 @@ export function CloudPanel() {
       <WebhooksSection authenticated={!!status?.authenticated} />
 
       <OrgUsageSection authenticated={!!status?.authenticated} />
+
+      <SessionInspectorSection authenticated={!!status?.authenticated} />
 
       <section className="flex flex-col gap-2 border-t border-border-soft pt-5">
         <Button
@@ -3022,5 +3025,227 @@ function UsageChip({ label, value }: { label: string; value: string }) {
       </span>
       <span className="font-mono text-text">{value}</span>
     </span>
+  );
+}
+
+// ── F6.2-d — Session inspector ─────────────────────────────────────────────
+
+interface SessionInspectorProps {
+  authenticated: boolean;
+}
+
+/**
+ * F6.2-d — fetch + render a session bundle for replay/audit. v0 takes
+ * a manual session_id (no /sessions list endpoint yet) and surfaces
+ * the parsed manifest + delivered + drops tables.
+ *
+ * UX choice: each render is fresh — there's no auto-refresh because
+ * sessions are immutable post-export. The Fetch button is the only
+ * trigger; results clear on auth flip.
+ */
+function SessionInspectorSection({ authenticated }: SessionInspectorProps) {
+  const [sessionId, setSessionId] = useState("");
+  const [bundle, setBundle] = useState<CloudSessionBundle | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!authenticated) {
+      setBundle(null);
+      setError(null);
+      setSessionId("");
+    }
+  }, [authenticated]);
+
+  const onFetch = useCallback(async () => {
+    const id = sessionId.trim();
+    if (!id) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setBundle(await cloudClient.fetchSessionBundle(id));
+    } catch (e) {
+      setError(String(e));
+      setBundle(null);
+    } finally {
+      setBusy(false);
+    }
+  }, [sessionId]);
+
+  return (
+    <section className="flex flex-col gap-3 border-t border-border-soft pt-5">
+      <div className="flex items-center justify-between">
+        <h3 className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+          Session inspector
+        </h3>
+      </div>
+
+      <p className="text-xs text-text-muted">
+        Fetch + render a session bundle for replay or audit. The cloud
+        builds a tar with{" "}
+        <span className="font-mono">manifest.json</span> +{" "}
+        <span className="font-mono">delivered.jsonl</span> (+{" "}
+        <span className="font-mono">drops.jsonl</span> when a tenant scope
+        + ledger are wired); the inspector parses it locally.
+      </p>
+
+      {!authenticated && (
+        <div className="rounded-md border border-border-soft bg-surface-overlay px-3 py-2 text-sm text-text-muted">
+          Sign in to inspect sessions.
+        </div>
+      )}
+
+      {authenticated && (
+        <div className="flex items-end gap-2">
+          <label className="flex flex-col gap-1.5 flex-1">
+            <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+              Session ID
+            </span>
+            <input
+              value={sessionId}
+              onChange={(e) => setSessionId(e.target.value)}
+              placeholder="agent-session-…"
+              className="h-9 px-3 rounded-md border border-border bg-surface font-mono text-sm text-text focus:outline-none focus:border-border-hover"
+            />
+          </label>
+          <Button
+            size="sm"
+            onClick={() => void onFetch()}
+            disabled={!sessionId.trim() || busy}
+          >
+            {busy ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Download className="size-3.5" />
+            )}
+            Fetch
+          </Button>
+        </div>
+      )}
+
+      {error && (
+        <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs font-mono text-text">
+          {error}
+        </div>
+      )}
+
+      {bundle && <SessionBundleView bundle={bundle} />}
+    </section>
+  );
+}
+
+function SessionBundleView({ bundle }: { bundle: CloudSessionBundle }) {
+  const { manifest, delivered, drops } = bundle;
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="rounded-md border border-border-soft bg-surface-overlay px-3 py-2 flex flex-col gap-1">
+        <div className="flex items-baseline gap-1.5">
+          <span className="font-mono text-xs uppercase tracking-[0.06em] text-text-muted">
+            Session
+          </span>
+          <span className="font-mono text-xs text-text">{manifest.session_id}</span>
+        </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+          <UsageChip
+            label="opened"
+            value={manifest.opened_at}
+          />
+          <UsageChip
+            label="exported"
+            value={manifest.exported_at}
+          />
+          <UsageChip
+            label="budget"
+            value={manifest.budget_used.toLocaleString()}
+          />
+          <UsageChip
+            label="delivered"
+            value={manifest.delivered_count.toLocaleString()}
+          />
+          <UsageChip
+            label="tokens"
+            value={manifest.total_delivered_tokens.toLocaleString()}
+          />
+          <UsageChip
+            label="pressure"
+            value={manifest.pressure_level}
+          />
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+          Delivered ({delivered.length})
+        </span>
+        {delivered.length === 0 ? (
+          <div className="text-xs text-text-muted">
+            No deliveries recorded.
+          </div>
+        ) : (
+          <div className="max-h-64 overflow-y-auto rounded-md border border-border-soft">
+            <table className="w-full text-xs font-mono">
+              <thead className="bg-surface-overlay text-text-muted">
+                <tr>
+                  <th className="text-left px-2 py-1">Turn</th>
+                  <th className="text-left px-2 py-1">Content ID</th>
+                  <th className="text-right px-2 py-1">Tokens</th>
+                  <th className="text-left px-2 py-1">Tier</th>
+                </tr>
+              </thead>
+              <tbody>
+                {delivered.map((d, i) => (
+                  <tr key={`${d.content_id}-${i}`} className="border-t border-border-soft">
+                    <td className="px-2 py-1 text-text-muted">{d.turn_delivered}</td>
+                    <td className="px-2 py-1 text-text break-all">{d.content_id}</td>
+                    <td className="px-2 py-1 text-right text-text">
+                      {d.token_count.toLocaleString()}
+                    </td>
+                    <td className="px-2 py-1 text-text-muted">{d.compression_tier}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+          Drops{" "}
+          {drops === undefined
+            ? "(ledger not wired)"
+            : `(${drops.length})`}
+        </span>
+        {drops === undefined ? (
+          <div className="text-xs text-text-muted">
+            Drops ledger not consulted — either self-hosted serve or no
+            tenant scope on the server side.
+          </div>
+        ) : drops.length === 0 ? (
+          <div className="text-xs text-text-muted">
+            No evictions recorded for this session.
+          </div>
+        ) : (
+          <div className="max-h-64 overflow-y-auto rounded-md border border-border-soft">
+            <table className="w-full text-xs font-mono">
+              <thead className="bg-surface-overlay text-text-muted">
+                <tr>
+                  <th className="text-left px-2 py-1">Evicted</th>
+                  <th className="text-left px-2 py-1">Claim ID</th>
+                </tr>
+              </thead>
+              <tbody>
+                {drops.map((d, i) => (
+                  <tr key={`${d.claim_id}-${i}`} className="border-t border-border-soft">
+                    <td className="px-2 py-1 text-text-muted">{d.evicted_at}</td>
+                    <td className="px-2 py-1 text-text break-all">{d.claim_id}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
