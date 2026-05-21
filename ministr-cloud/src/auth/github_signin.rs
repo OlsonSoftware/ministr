@@ -78,6 +78,14 @@ struct PendingState {
     /// State value the CALLER sent us. We echo it back so the loopback
     /// listener can verify its own CSRF nonce.
     client_state: String,
+    /// F3.1b-i — optional invite token supplied by the recipient
+    /// clicking the magic link. When set, the callback handler calls
+    /// `consume_invite` after the user is upserted; success appends a
+    /// row to `org_members` so the recipient lands in the org as part
+    /// of sign-in. Unknown / expired / already-accepted are logged but
+    /// don't block sign-in itself (the recipient still gets a token,
+    /// just no membership).
+    invite_token: Option<String>,
     /// Used by the TTL pruner.
     created_at: Instant,
 }
@@ -227,6 +235,12 @@ struct StartQuery {
     /// Caller's CSRF nonce. Echoed back on the loopback redirect so
     /// the listener can verify it.
     state: String,
+    /// F3.1b-i — optional org-invite token. When the recipient clicks
+    /// `…/auth/github/start?invite=<raw>&loopback_redirect=…&state=…`,
+    /// the raw token rides through `PendingState` and gets consumed
+    /// after user upsert. Empty / missing means a regular sign-in.
+    #[serde(default)]
+    invite: Option<String>,
 }
 
 /// Query string accepted by `/auth/github/callback`.
@@ -267,6 +281,7 @@ async fn handle_github_start(
                 code_verifier,
                 loopback_redirect: query.loopback_redirect,
                 client_state: query.state,
+                invite_token: query.invite.filter(|s| !s.is_empty()),
                 created_at: Instant::now(),
             },
         );
@@ -287,6 +302,7 @@ async fn handle_github_start(
         .into_response())
 }
 
+#[allow(clippy::too_many_lines)]
 async fn handle_github_callback(
     State(state): State<GitHubSigninState>,
     Query(query): Query<CallbackQuery>,
@@ -333,6 +349,42 @@ async fn handle_github_callback(
         inserted = user.inserted,
         "github sign-in user upserted"
     );
+
+    // F3.1b-i — apply the invite if one was threaded through. We
+    // intentionally tolerate failure: an expired / unknown / already-
+    // accepted invite logs and proceeds rather than aborting the
+    // entire sign-in. The recipient still gets a bearer token; the
+    // missing membership is recoverable (the inviter can mint a new
+    // link). Hard-failing here would block sign-in for unrelated
+    // reasons — a worse UX than landing them in the panel with no
+    // orgs and a clear "invite expired" toast in F3.1b-ii's email
+    // half. The result is observable via tracing today.
+    if let Some(raw_invite) = pending.invite_token.as_deref() {
+        match crate::orgs::consume_invite(&state.pool, raw_invite, &user.id).await {
+            Ok(crate::orgs::ConsumeOutcome::Accepted { org_id, role }) => {
+                info!(
+                    user_id = %user.id,
+                    org_id = %org_id,
+                    role = %role,
+                    "org invite accepted as part of github sign-in"
+                );
+            }
+            Ok(other) => {
+                warn!(
+                    user_id = %user.id,
+                    outcome = ?other,
+                    "org invite present but not applied (expired / unknown / already accepted)"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    user_id = %user.id,
+                    error = %e,
+                    "org invite lookup failed — sign-in proceeds without membership"
+                );
+            }
+        }
+    }
 
     // F1.5 — create a Stripe Customer on the user's FIRST sign-in.
     // Best-effort: a Stripe outage must not block the user from
@@ -548,6 +600,7 @@ mod tests {
                 code_verifier: "v".into(),
                 loopback_redirect: "http://127.0.0.1:1/cb".into(),
                 client_state: "s".into(),
+                invite_token: None,
                 created_at: Instant::now(),
             },
         );
@@ -562,6 +615,7 @@ mod tests {
                 code_verifier: "v".into(),
                 loopback_redirect: "http://127.0.0.1:1/cb".into(),
                 client_state: "s".into(),
+                invite_token: None,
                 created_at: aged,
             },
         );

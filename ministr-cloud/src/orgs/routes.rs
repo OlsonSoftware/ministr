@@ -33,13 +33,14 @@ use axum::{
     extract::{Extension, Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
 };
 use deadpool_postgres::Pool;
 use ministr_mcp::auth::Tenant;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
+use super::invites::{DEFAULT_INVITE_TTL, create_invite};
 use super::repo::{
     OrgError, OrgRow, OrgWithRole, create_org, list_org_members, list_orgs_for_user, member_role,
 };
@@ -49,6 +50,18 @@ use super::repo::{
 #[derive(Clone)]
 pub struct OrgsState {
     pool: Arc<Pool>,
+    /// F3.1b-i — cloud base URL for invite-link building. `None` falls
+    /// back to a relative path in the response, which the caller can
+    /// prefix client-side; production deployments should always set
+    /// this via [`Self::with_cloud_base_url`].
+    cloud_base_url: Option<String>,
+}
+
+fn trim_trailing_slashes(mut s: String) -> String {
+    while s.ends_with('/') {
+        s.pop();
+    }
+    s
 }
 
 impl OrgsState {
@@ -58,6 +71,7 @@ impl OrgsState {
     pub fn new(pool: Pool) -> Self {
         Self {
             pool: Arc::new(pool),
+            cloud_base_url: None,
         }
     }
 
@@ -67,7 +81,21 @@ impl OrgsState {
     /// `Arc`-aware means the orgs surface composes cleanly.
     #[must_use]
     pub fn from_arc(pool: Arc<Pool>) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            cloud_base_url: None,
+        }
+    }
+
+    /// F3.1b-i — the absolute base URL of the cloud. Used to build the
+    /// invite URL returned by `POST /api/v1/orgs/{id}/invites`. Set
+    /// from `MINISTR_CLOUD_BASE_URL` in `cmd_serve_http`. `None` on
+    /// self-hosted serve (where the orgs router is not mounted anyway).
+    #[must_use]
+    pub fn with_cloud_base_url(mut self, base: impl Into<String>) -> Self {
+        let raw = base.into();
+        self.cloud_base_url = Some(trim_trailing_slashes(raw));
+        self
     }
 }
 
@@ -142,6 +170,7 @@ pub fn orgs_routes(state: OrgsState) -> Router {
     Router::new()
         .route("/api/v1/orgs", get(list_handler).post(create_handler))
         .route("/api/v1/orgs/{id}/members", get(members_handler))
+        .route("/api/v1/orgs/{id}/invites", post(create_invite_handler))
         .with_state(state)
 }
 
@@ -169,6 +198,125 @@ async fn list_handler(
         .map(OrgSummary::from_join)
         .collect();
     Ok(Json(ListOrgsResponse { orgs }))
+}
+
+/// `POST /api/v1/orgs/{id}/invites` request body. `role` defaults to
+/// `"member"`; the route rejects any other value than `member|admin`
+/// (only owners can mint owners — implementer-side guardrail, not a
+/// product feature yet).
+#[derive(Debug, Deserialize)]
+struct CreateInviteRequest {
+    email: String,
+    #[serde(default)]
+    role: Option<String>,
+}
+
+/// `POST /api/v1/orgs/{id}/invites` response body. The `invite_url`
+/// is the URL the caller pastes into Slack / DM / their preferred
+/// channel until F3.1b-ii ships email delivery. `expires_at` is
+/// ISO-8601 UTC so the UI can render a human-readable countdown.
+#[derive(Debug, Serialize)]
+struct CreateInviteResponse {
+    invite_id: String,
+    invite_url: String,
+    role: String,
+    expires_at: String,
+}
+
+async fn create_invite_handler(
+    State(state): State<OrgsState>,
+    full_tenant: Option<Extension<Tenant>>,
+    Path(org_id): Path<String>,
+    Json(body): Json<CreateInviteRequest>,
+) -> Result<(StatusCode, Json<CreateInviteResponse>), OrgsApiError> {
+    let user_id = tenant_user_id(full_tenant)?;
+
+    // Authz: only owners and admins of the org may mint invites.
+    // Same shape as `members_handler` — non-members hit a 403 without
+    // existence-leak.
+    let Some(role) = member_role(&state.pool, &org_id, &user_id)
+        .await
+        .map_err(OrgsApiError::Repo)?
+    else {
+        return Err(OrgsApiError::Forbidden);
+    };
+    if role != "owner" && role != "admin" {
+        return Err(OrgsApiError::Forbidden);
+    }
+
+    // Pick + validate the target role. Default member; admin allowed;
+    // owner explicitly forbidden via the invite path (org-creator is
+    // the only owner today, and a future "transfer ownership" flow
+    // belongs on its own endpoint).
+    let target_role = body.role.unwrap_or_else(|| "member".to_owned());
+    if target_role != "member" && target_role != "admin" {
+        return Err(OrgsApiError::InvalidInviteRole);
+    }
+
+    let trimmed = body.email.trim();
+    if trimmed.is_empty() || !trimmed.contains('@') {
+        return Err(OrgsApiError::InvalidInviteEmail);
+    }
+
+    let created = create_invite(
+        &state.pool,
+        &org_id,
+        trimmed,
+        &target_role,
+        &user_id,
+        DEFAULT_INVITE_TTL,
+    )
+    .await
+    .map_err(OrgsApiError::Repo)?;
+
+    let invite_url = build_invite_url(state.cloud_base_url.as_deref(), &created.raw_token);
+
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateInviteResponse {
+            invite_id: created.row.id,
+            invite_url,
+            role: created.row.role,
+            expires_at: created.row.expires_at,
+        }),
+    ))
+}
+
+/// F3.1b-i — assemble the magic-link URL. When `cloud_base` is set
+/// the URL is absolute; otherwise the caller gets a relative path
+/// (`/auth/github/start?invite=...`) and must prepend its own origin.
+fn build_invite_url(cloud_base: Option<&str>, raw_token: &str) -> String {
+    let path = format!(
+        "/auth/github/start?invite={}",
+        url_percent_encode(raw_token)
+    );
+    match cloud_base {
+        Some(b) => format!("{b}{path}"),
+        None => path,
+    }
+}
+
+fn url_percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        let allowed = b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~');
+        if allowed {
+            out.push(b as char);
+        } else {
+            out.push('%');
+            out.push(hex_nibble(b >> 4));
+            out.push(hex_nibble(b & 0x0f));
+        }
+    }
+    out
+}
+
+fn hex_nibble(b: u8) -> char {
+    match b {
+        0..=9 => (b'0' + b) as char,
+        10..=15 => (b'A' + (b - 10)) as char,
+        _ => '0',
+    }
 }
 
 async fn members_handler(
@@ -216,6 +364,12 @@ enum OrgsApiError {
     MissingTenant,
     /// Caller authenticated but is not a member of the requested org.
     Forbidden,
+    /// F3.1b-i — `role` field on the invite payload was neither
+    /// `"member"` nor `"admin"`.
+    InvalidInviteRole,
+    /// F3.1b-i — `email` field on the invite payload was empty or
+    /// missing an `@`.
+    InvalidInviteEmail,
     /// Repo layer failure. Validation errors map to 422; everything
     /// else logs at warn + returns 500 without leaking detail.
     Repo(OrgError),
@@ -228,6 +382,16 @@ impl IntoResponse for OrgsApiError {
                 (StatusCode::UNAUTHORIZED, "missing tenant identity").into_response()
             }
             Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden").into_response(),
+            Self::InvalidInviteRole => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invite role must be 'member' or 'admin'",
+            )
+                .into_response(),
+            Self::InvalidInviteEmail => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invite email must contain '@'",
+            )
+                .into_response(),
             Self::Repo(OrgError::InvalidName) => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "invalid org name").into_response()
             }

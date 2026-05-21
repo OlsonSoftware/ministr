@@ -38,6 +38,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../migrations/0001_initial.sql")),
     (2, include_str!("../migrations/0002_usage_rollups.sql")),
     (3, include_str!("../migrations/0003_corpus_registry.sql")),
+    (4, include_str!("../migrations/0004_org_invites.sql")),
 ];
 
 /// Errors surfaced by [`connect`] and [`run_migrations`].
@@ -191,6 +192,7 @@ mod tests {
                  DROP TABLE IF EXISTS api_keys CASCADE;
                  DROP TABLE IF EXISTS corpus_acl CASCADE;
                  DROP TABLE IF EXISTS corpora CASCADE;
+                 DROP TABLE IF EXISTS org_invites CASCADE;
                  DROP TABLE IF EXISTS org_members CASCADE;
                  DROP TABLE IF EXISTS orgs CASCADE;
                  DROP TABLE IF EXISTS users CASCADE;
