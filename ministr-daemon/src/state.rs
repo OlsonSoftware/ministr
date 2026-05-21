@@ -6,7 +6,8 @@ use std::sync::Arc;
 use ministr_api::activity::ActivityEvent;
 use ministr_api::coherence::CoherenceEvent;
 use ministr_api::{
-    BlobSink, IndexJobSink, InstallationTokenMinter, TenantCorpusVisibility, UsageSink,
+    AuditSink, BlobSink, IndexJobSink, InstallationTokenMinter, TenantCorpusVisibility,
+    UsageSink,
 };
 use tokio::sync::RwLock;
 
@@ -86,6 +87,13 @@ pub struct AppState {
     /// on self-hosted serve where every authenticated caller sees
     /// every corpus.
     pub corpus_visibility: Option<Arc<dyn TenantCorpusVisibility>>,
+    /// F3.7b — audit-log emission sink for corpus-mutation actions.
+    /// `Some` in cloud mode wires `ministr_cloud::PostgresAuditSink`;
+    /// the daemon's `register_corpus` / `clone_repo` / `unregister_corpus`
+    /// handlers call `record` after a successful state change so
+    /// `audit_events` carries the `corpus.created` / `corpus.cloned` /
+    /// `corpus.deleted` row. `None` on self-hosted serve.
+    pub audit_sink: Option<Arc<dyn AuditSink>>,
 }
 
 impl AppState {
@@ -112,6 +120,7 @@ impl AppState {
             blob_sink: None,
             index_job_sink: None,
             corpus_visibility: None,
+            audit_sink: None,
         }
     }
 
@@ -136,6 +145,7 @@ impl AppState {
             blob_sink: None,
             index_job_sink: None,
             corpus_visibility: None,
+            audit_sink: None,
         }
     }
 
@@ -186,6 +196,17 @@ impl AppState {
         visibility: Arc<dyn TenantCorpusVisibility>,
     ) -> Self {
         self.corpus_visibility = Some(visibility);
+        self
+    }
+
+    /// F3.7b — wire an audit-log sink for corpus mutations. When set,
+    /// the daemon's `register_corpus`, `clone_repo`, and
+    /// `unregister_corpus` handlers fire an `audit_events` row on
+    /// success. Fire-and-forget inside the sink: a Postgres outage
+    /// never propagates to the user's response.
+    #[must_use]
+    pub fn with_audit_sink(mut self, sink: Arc<dyn AuditSink>) -> Self {
+        self.audit_sink = Some(sink);
         self
     }
 
