@@ -249,7 +249,7 @@ fn generate_task_id() -> String {
 }
 
 /// Return the current time as an ISO-8601 string.
-fn iso8601_now() -> String {
+pub(crate) fn iso8601_now() -> String {
     // Use a simple approach without external chrono dependency.
     let duration = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
