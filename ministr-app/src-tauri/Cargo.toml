@@ -60,6 +60,10 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
+# F6.2-d — parse session bundle tar archives client-side so the
+# inspector renders the trace locally without re-fetching pieces.
+tar = { workspace = true }
+
 # Embedding & indexing (owned by daemon)
 fastembed = { workspace = true }
 ort = { workspace = true }
