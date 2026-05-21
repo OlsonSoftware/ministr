@@ -658,17 +658,27 @@ pub(crate) async fn cmd_serve_http(
             composed = composed.merge(billing_protected);
             tracing::info!("billing endpoint mounted — GET /api/v1/billing/usage");
 
-            // F3.1a — orgs CRUD + member listing. Mounted only when the
-            // cloud Postgres pool exists (self-hosted serve has no
-            // multi-tenant orgs surface). Behind `ministr:read` —
-            // creating an org is a self-service tenant action, not a
-            // corpus mutation, so the `:write` scope's rate-limit +
-            // quota layers are intentionally not in this path. F3.1b
-            // (invites) and F3.1c (Stripe seat sync) extend the same
-            // router.
-            let orgs_router = ministr_cloud::orgs_routes(
-                ministr_cloud::OrgsState::from_arc(Arc::clone(pool)),
-            );
+            // F3.1a/b — orgs CRUD + member listing + magic-link invites.
+            // Mounted only when the cloud Postgres pool exists (self-
+            // hosted serve has no multi-tenant orgs surface). Behind
+            // `ministr:read` — creating an org or minting an invite is
+            // a self-service tenant action, not a corpus mutation, so
+            // the `:write` scope's rate-limit + quota layers are
+            // intentionally not in this path. F3.1c (Stripe seat sync)
+            // will extend the same router.
+            //
+            // `with_cloud_base_url` provides the absolute origin the
+            // invite handler stitches into the returned `invite_url`.
+            // `cloud_env.cloud_base_url` is the same value the GitHub
+            // sign-in handler uses for its OAuth redirect_uri, so the
+            // invite URL is on the same origin as `/auth/github/start`
+            // and the recipient's loopback callback works end-to-end.
+            let mut orgs_state =
+                ministr_cloud::OrgsState::from_arc(Arc::clone(pool));
+            if let Some(base) = cloud_env.cloud_base_url.as_deref() {
+                orgs_state = orgs_state.with_cloud_base_url(base);
+            }
+            let orgs_router = ministr_cloud::orgs_routes(orgs_state);
             let orgs_protected = ministr_mcp::auth::scope_protected_router(
                 orgs_router,
                 store.clone(),
@@ -676,7 +686,7 @@ pub(crate) async fn cmd_serve_http(
             );
             composed = composed.merge(orgs_protected);
             tracing::info!(
-                "orgs endpoints mounted — POST /api/v1/orgs, GET /api/v1/orgs, GET /api/v1/orgs/{{id}}/members"
+                "orgs endpoints mounted — POST /api/v1/orgs, GET /api/v1/orgs, GET /api/v1/orgs/{{id}}/members, POST /api/v1/orgs/{{id}}/invites"
             );
 
             // F2.6 — Atlas v0 pilot. Manifest + per-slug query stubs.
