@@ -1336,7 +1336,33 @@ interface ApiKeysTableProps {
   onRevokeRequest: (id: string) => void;
 }
 
+/**
+ * F3.4c-ii — staleness threshold matches the backend's
+ * `DEFAULT_STALE_API_KEY_DAYS` (90). Keeping the same number on both
+ * sides means the badge fires for the same rows the cron emits
+ * `api_key.stale` events for.
+ */
+const STALE_API_KEY_THRESHOLD_DAYS = 90;
+const STALE_API_KEY_THRESHOLD_MS = STALE_API_KEY_THRESHOLD_DAYS * 24 * 60 * 60 * 1000;
+
+/**
+ * Mirror of the backend's stale-detection rule:
+ *   COALESCE(last_used_at, created_at) < now() - interval '90 days'
+ * Returns true when the key hasn't authenticated in the last 90 days
+ * (or was never used and is older than 90 days).
+ */
+function isStaleApiKey(k: CloudApiKey, now: number): boolean {
+  const anchor = k.last_used_at ?? k.created_at;
+  if (!anchor) return false;
+  const t = Date.parse(anchor);
+  if (Number.isNaN(t)) return false;
+  return now - t > STALE_API_KEY_THRESHOLD_MS;
+}
+
 function ApiKeysTable({ keys, busy, onRevokeRequest }: ApiKeysTableProps) {
+  // Single Date.now() per render so all rows judge against the same
+  // wall-clock; otherwise borderline cases could flip mid-paint.
+  const now = Date.now();
   return (
     <div className="rounded-md border border-border-soft bg-surface overflow-hidden">
       <table className="w-full text-sm">
@@ -1349,37 +1375,50 @@ function ApiKeysTable({ keys, busy, onRevokeRequest }: ApiKeysTableProps) {
           </tr>
         </thead>
         <tbody>
-          {keys.map((k) => (
-            <tr key={k.id} className="border-b border-border-soft last:border-b-0">
-              <td className="px-3 py-2 align-top">
-                <div className="text-xs text-text">{k.name}</div>
-                <div className="text-xs text-text-muted">{k.scopes}</div>
-              </td>
-              <td className="px-3 py-2 align-top">
-                <span className="font-mono text-xs text-text-muted">
-                  mst_pk_{k.prefix}…
-                </span>
-              </td>
-              <td className="px-3 py-2 align-top">
-                <span className="text-xs text-text-muted">
-                  {k.last_used_at?.slice(0, 10) ?? "never"}
-                </span>
-              </td>
-              <td className="px-3 py-2 align-top">
-                <div className="flex justify-end">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={() => onRevokeRequest(k.id)}
-                    title="Revoke"
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
-                </div>
-              </td>
-            </tr>
-          ))}
+          {keys.map((k) => {
+            const stale = isStaleApiKey(k, now);
+            return (
+              <tr key={k.id} className="border-b border-border-soft last:border-b-0">
+                <td className="px-3 py-2 align-top">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-text">{k.name}</span>
+                    {stale && (
+                      <span
+                        className="rounded-sm border border-warning/40 bg-warning/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-warning"
+                        title={`No use in the last ${STALE_API_KEY_THRESHOLD_DAYS} days. The cloud's weekly cron will record an api_key.stale audit event.`}
+                      >
+                        stale
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-text-muted">{k.scopes}</div>
+                </td>
+                <td className="px-3 py-2 align-top">
+                  <span className="font-mono text-xs text-text-muted">
+                    mst_pk_{k.prefix}…
+                  </span>
+                </td>
+                <td className="px-3 py-2 align-top">
+                  <span className="text-xs text-text-muted">
+                    {k.last_used_at?.slice(0, 10) ?? "never"}
+                  </span>
+                </td>
+                <td className="px-3 py-2 align-top">
+                  <div className="flex justify-end">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => onRevokeRequest(k.id)}
+                      title="Revoke"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

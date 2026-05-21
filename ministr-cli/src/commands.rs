@@ -2249,6 +2249,46 @@ pub(crate) fn cmd_atlas_manifest() -> miette::Result<()> {
     Ok(())
 }
 
+/// `ministr api-keys flag-stale --threshold-days N` — F3.4c-ii
+/// weekly stale-keys cron entrypoint. Scans `api_keys` for rows whose
+/// `last_used_at` (or `created_at` for never-used keys) is older than
+/// `threshold_days` days and emits an `api_key.stale` audit event per
+/// row. Returns the flagged-count + elapsed wall-clock as structured
+/// log fields so the cron's dashboard can alarm on a runaway pass.
+///
+/// Requires `MINISTR_PG_URL` (the cloud Postgres connection string).
+/// Exits with a miette error if the env var is missing or the SELECT
+/// fails; the Container Apps Job's failure-retry policy can then alert.
+///
+/// Idempotent: re-runs against an unchanged table emit the same
+/// audit-event set. The audit table itself dedupes only at the row
+/// level; downstream consumers should treat a re-emitted
+/// `api_key.stale` as informational, not duplicate-detection-required.
+pub(crate) async fn cmd_api_keys_flag_stale(threshold_days: u32) -> miette::Result<()> {
+    let pg_url = std::env::var("MINISTR_PG_URL").map_err(|_| {
+        miette::miette!(
+            "ministr api-keys flag-stale requires MINISTR_PG_URL (the cloud Postgres connection string)"
+        )
+    })?;
+    let pool = ministr_cloud::connect(&pg_url)
+        .into_diagnostic()
+        .wrap_err("open cloud postgres pool")?;
+    let pool_arc = std::sync::Arc::new(pool);
+    let sink = ministr_cloud::PostgresAuditSink::from_arc(std::sync::Arc::clone(&pool_arc));
+    tracing::info!(threshold_days, "api-keys flag-stale starting");
+    let outcome = ministr_cloud::flag_stale_api_keys(&pool_arc, threshold_days, &sink)
+        .await
+        .into_diagnostic()
+        .wrap_err("flag stale api_keys")?;
+    tracing::info!(
+        flagged = outcome.flagged,
+        elapsed_ms = u64::try_from(outcome.elapsed.as_millis()).unwrap_or(u64::MAX),
+        threshold_days = outcome.threshold_days,
+        "api-keys flag-stale complete"
+    );
+    Ok(())
+}
+
 /// `ministr audit prune --retention-days N` — F3.7c daily-retention
 /// cron entrypoint. Drops `audit_events` rows older than
 /// `retention_days` days; logs the row count + elapsed wall-clock so
