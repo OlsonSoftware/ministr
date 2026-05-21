@@ -35,7 +35,10 @@ use axum::http::StatusCode;
 use axum::routing::{delete, post};
 use deadpool_postgres::Pool;
 use getrandom::fill as getrandom_fill;
-use ministr_api::{ApiKeyError, ApiKeyResolver, ResolveApiKeyFuture, ResolvedApiKey, TouchLastUsedFuture};
+use ministr_api::{
+    ApiKeyError, ApiKeyResolver, AuditEntry, AuditSink, ResolveApiKeyFuture, ResolvedApiKey,
+    TouchLastUsedFuture,
+};
 use ministr_mcp::auth::tenant::Tenant;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -346,9 +349,43 @@ impl ApiKeyResolver for PostgresApiKeyResolver {
 // ── Routes ─────────────────────────────────────────────────────────────────
 
 /// Axum state for the `api_keys` router.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ApiKeysState {
     pub pool: Pool,
+    /// F3.7a — optional audit sink. `Some` makes create/revoke emit
+    /// `audit_events` rows on successful writes.
+    pub audit: Option<Arc<dyn AuditSink>>,
+}
+
+impl std::fmt::Debug for ApiKeysState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiKeysState")
+            .field("audit_wired", &self.audit.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl ApiKeysState {
+    /// Build a state from a pool with no audit sink. Tests use this.
+    #[must_use]
+    pub fn new(pool: Pool) -> Self {
+        Self { pool, audit: None }
+    }
+
+    /// F3.7a — wire an audit sink. Cloud deployments call this; self-
+    /// hosted serve never constructs an `ApiKeysState` because the
+    /// router itself is gated on `cloud_pool.is_some()`.
+    #[must_use]
+    pub fn with_audit(mut self, audit: Arc<dyn AuditSink>) -> Self {
+        self.audit = Some(audit);
+        self
+    }
+
+    fn audit_record(&self, entry: AuditEntry) {
+        if let Some(sink) = self.audit.as_ref() {
+            sink.record(entry);
+        }
+    }
 }
 
 /// Build the `api_keys` router. Mounted under no prefix; routes carry
@@ -443,6 +480,12 @@ async fn create_handler(
     let created = create_user_api_key(&state.pool, &user_id, name, &scopes)
         .await
         .map_err(ApiKeysApiError::Repo)?;
+    // F3.7a — audit `api_key.created`. User-level action (no org_id).
+    // Resource = the new key id so admins can correlate against
+    // `api_keys.id` directly.
+    state.audit_record(
+        AuditEntry::new("api_key.created", &created.row.id).with_actor(&user_id),
+    );
     Ok((
         StatusCode::CREATED,
         Json(CreateResponse {
@@ -473,6 +516,13 @@ async fn revoke_handler(
         .await
         .map_err(ApiKeysApiError::Repo)?;
     if revoked {
+        // F3.7a — audit `api_key.revoked` only on actual state change.
+        // A repeat DELETE of an already-revoked key returns NotFound
+        // upstream (since the WHERE `revoked_at IS NULL` clause makes
+        // it a 0-row UPDATE) so we won't enter this branch twice.
+        state.audit_record(
+            AuditEntry::new("api_key.revoked", &key_id).with_actor(&user_id),
+        );
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiKeysApiError::NotFound)

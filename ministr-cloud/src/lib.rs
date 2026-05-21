@@ -37,6 +37,7 @@
 #![deny(unsafe_code)]
 
 pub mod api_keys;
+pub mod audit;
 pub mod auth;
 pub mod billing;
 pub mod blob;
@@ -60,6 +61,10 @@ pub use api_keys::{
     ApiKeyRow, ApiKeysError, ApiKeysState, CreatedApiKey, DEFAULT_API_KEY_SCOPE,
     PostgresApiKeyResolver, TOKEN_PREFIX, api_keys_routes, create_user_api_key,
     list_user_api_keys, revoke_user_api_key,
+};
+pub use audit::{
+    AuditError, AuditListQuery, AuditRow, AuditState, PostgresAuditSink, audit_routes,
+    list_org_audit,
 };
 pub use billing::{
     billing_routes, checkout_routes, record_usage, rollup_day, stripe_webhook_routes,

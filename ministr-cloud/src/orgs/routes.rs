@@ -36,6 +36,7 @@ use axum::{
     routing::{get, post},
 };
 use deadpool_postgres::Pool;
+use ministr_api::{AuditEntry, AuditSink};
 use ministr_mcp::auth::Tenant;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -67,6 +68,11 @@ pub struct OrgsState {
     /// `orgs.stripe_customer_id` NULL — populated later by a sync
     /// job or the F3.1c-iii personal-to-org transfer.
     stripe: Option<Arc<StripeClient>>,
+    /// F3.7a — optional audit sink. `Some` makes the org / share /
+    /// invite handlers fire `audit_events` rows on successful writes.
+    /// `None` (self-hosted serve or cloud deployments that haven't
+    /// wired the sink yet) makes audit emission a no-op.
+    audit: Option<Arc<dyn AuditSink>>,
 }
 
 fn trim_trailing_slashes(mut s: String) -> String {
@@ -85,6 +91,7 @@ impl OrgsState {
             pool: Arc::new(pool),
             cloud_base_url: None,
             stripe: None,
+            audit: None,
         }
     }
 
@@ -98,6 +105,7 @@ impl OrgsState {
             pool,
             cloud_base_url: None,
             stripe: None,
+            audit: None,
         }
     }
 
@@ -121,6 +129,22 @@ impl OrgsState {
     pub fn with_stripe(mut self, stripe: Arc<StripeClient>) -> Self {
         self.stripe = Some(stripe);
         self
+    }
+
+    /// F3.7a — wire an audit sink so org / share / invite handlers
+    /// emit `audit_events` rows on successful writes. Fire-and-forget
+    /// inside the sink — the request hot path is unaffected.
+    #[must_use]
+    pub fn with_audit(mut self, audit: Arc<dyn AuditSink>) -> Self {
+        self.audit = Some(audit);
+        self
+    }
+
+    /// Read-only access to the audit sink for handler helpers.
+    fn audit_record(&self, entry: AuditEntry) {
+        if let Some(sink) = self.audit.as_ref() {
+            sink.record(entry);
+        }
     }
 }
 
@@ -310,6 +334,13 @@ async fn create_handler(
         }
     }
 
+    // F3.7a — audit `org.created`. Self-records under the new org's
+    // own id; actor is the creating user (resolved tenant subject).
+    state.audit_record(
+        AuditEntry::new("org.created", &org.id)
+            .with_org(&org.id)
+            .with_actor(&user_id),
+    );
     Ok((StatusCode::CREATED, Json(OrgSummary::for_creator(&org))))
 }
 
@@ -397,6 +428,16 @@ async fn create_invite_handler(
     .map_err(OrgsApiError::Repo)?;
 
     let invite_url = build_invite_url(state.cloud_base_url.as_deref(), &created.raw_token);
+
+    // F3.7a — audit `invite.created`. Resource = invite id so the
+    // audit feed can join through to `org_invites` if needed for
+    // forensic reporting; org context preserved separately for fast
+    // tenant scoping.
+    state.audit_record(
+        AuditEntry::new("invite.created", &created.row.id)
+            .with_org(&org_id)
+            .with_actor(&user_id),
+    );
 
     Ok((
         StatusCode::CREATED,
@@ -496,6 +537,14 @@ async fn share_handler(
     let entry = share_with_org(&state.pool, &corpus_id, &body.org_id, &scope, &user_id)
         .await
         .map_err(OrgsApiError::Repo)?;
+    // F3.7a — audit `share.granted`. Resource encodes both
+    // participants `corpus_id:org_id` so the list endpoint can
+    // render either side without round-tripping the row.
+    state.audit_record(
+        AuditEntry::new("share.granted", format!("{corpus_id}:{}", body.org_id))
+            .with_org(&body.org_id)
+            .with_actor(&user_id),
+    );
     Ok((StatusCode::CREATED, Json(ShareResponse { entry })))
 }
 
@@ -510,11 +559,20 @@ async fn revoke_share_handler(
     let removed = revoke_org_share(&state.pool, &corpus_id, &org_id)
         .await
         .map_err(OrgsApiError::Repo)?;
+    // F3.7a — audit `share.revoked` only when a row was actually
+    // removed. Idempotent re-DELETEs of an already-revoked grant
+    // don't pollute the audit feed with synthetic events.
+    if removed {
+        state.audit_record(
+            AuditEntry::new("share.revoked", format!("{corpus_id}:{org_id}"))
+                .with_org(&org_id)
+                .with_actor(&user_id),
+        );
+    }
     // 204 whether or not a row was actually removed — DELETE is
     // idempotent, and surfacing absence as 404 would let an attacker
     // distinguish "you don't own this corpus" from "you do but the
     // grant was already revoked".
-    let _ = removed;
     Ok(StatusCode::NO_CONTENT)
 }
 
