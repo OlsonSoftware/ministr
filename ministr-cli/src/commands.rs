@@ -673,10 +673,34 @@ pub(crate) async fn cmd_serve_http(
             // sign-in handler uses for its OAuth redirect_uri, so the
             // invite URL is on the same origin as `/auth/github/start`
             // and the recipient's loopback callback works end-to-end.
+            //
+            // F3.1c-i — build the outbound Stripe client here (hoisted
+            // from below) so the orgs router can use it to mint an
+            // org-owned Customer at org-creation. F1.5's GitHub sign-in
+            // hook and F2.4's Checkout routes both still reach the
+            // same `stripe_client` lower in this function.
+            let stripe_client = cloud_env.stripe_secret_key.as_ref().and_then(|key| {
+                match ministr_cloud::StripeClient::new(key.clone()) {
+                    Ok(c) => {
+                        tracing::info!(
+                            "stripe outbound client built — Customer creation + Meters API enabled"
+                        );
+                        Some(Arc::new(c))
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "stripe client disabled — STRIPE_SECRET_KEY rejected");
+                        None
+                    }
+                }
+            });
+
             let mut orgs_state =
                 ministr_cloud::OrgsState::from_arc(Arc::clone(pool));
             if let Some(base) = cloud_env.cloud_base_url.as_deref() {
                 orgs_state = orgs_state.with_cloud_base_url(base);
+            }
+            if let Some(stripe) = stripe_client.as_ref() {
+                orgs_state = orgs_state.with_stripe(Arc::clone(stripe));
             }
             let orgs_router = ministr_cloud::orgs_routes(orgs_state);
             let orgs_protected = ministr_mcp::auth::scope_protected_router(
@@ -727,26 +751,10 @@ pub(crate) async fn cmd_serve_http(
             // (sign-in must be reachable without an existing token); the
             // CSRF + loopback-allowlist check inside the handlers is
             // the only gate.
-            // F1.5 — outbound Stripe client. Built independently of the
-            // GitHub sign-in routes so a future direct caller (Checkout
-            // session, billing portal in F2.4) can read it from the
-            // wired surface even without the GitHub IdP configured. The
-            // GitHub callback hook is the only F1.5 internal caller for
-            // now.
-            let stripe_client = cloud_env.stripe_secret_key.as_ref().and_then(|key| {
-                match ministr_cloud::StripeClient::new(key.clone()) {
-                    Ok(c) => {
-                        tracing::info!(
-                            "stripe outbound client built — Customer creation + Meters API enabled"
-                        );
-                        Some(Arc::new(c))
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "stripe client disabled — STRIPE_SECRET_KEY rejected");
-                        None
-                    }
-                }
-            });
+            // F1.5 — outbound Stripe client was hoisted above the orgs
+            // wiring (F3.1c-i needs it at org-creation). The same
+            // `stripe_client` is reused here for F2.4 (Checkout +
+            // portal) and the F1.5 GitHub-callback hook.
 
             // F2.4 — Stripe Checkout + Customer Portal routes.
             // Requires the outbound stripe client AND the cloud base
