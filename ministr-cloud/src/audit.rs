@@ -140,6 +140,20 @@ pub struct AuditListQuery {
     /// Fetch older — return rows with `id < before_id`. Cursor pattern
     /// is stable across new inserts.
     pub before_id: Option<i64>,
+    /// F3.7b — exact-match filter on `audit_events.action`
+    /// (e.g. `"corpus.created"`, `"share.granted"`).
+    pub action: Option<String>,
+    /// F3.7b — exact-match filter on `audit_events.actor` (UUID
+    /// string of the acting user). Useful for "what did X do?"
+    /// admin investigations.
+    pub actor: Option<String>,
+    /// F3.7b — lower bound on `audit_events.ts` (ISO-8601 UTC).
+    /// Inclusive — rows with `ts >= from_ts` admit.
+    pub from_ts: Option<String>,
+    /// F3.7b — upper bound on `audit_events.ts` (ISO-8601 UTC).
+    /// Exclusive — rows with `ts < to_ts` admit, mirroring the
+    /// half-open `[from, to)` convention in `usage_rollups`.
+    pub to_ts: Option<String>,
 }
 
 /// `GET /api/v1/orgs/{id}/audit` response.
@@ -211,7 +225,7 @@ async fn list_handler(
     }
 
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
-    let rows = list_org_audit(&state.pool, &org_id, limit, q.before_id)
+    let rows = list_org_audit(&state.pool, &org_id, limit, &q)
         .await
         .map_err(AuditApiError::Repo)?;
     Ok(Json(AuditListResponse { rows }))
@@ -220,6 +234,9 @@ async fn list_handler(
 /// Direct read used by the list handler. Exposed `pub` for the
 /// eventual /orgs/{slug}/audit web page to call from the same crate.
 ///
+/// All filters in `query` are AND-combined. Empty / `None` filters
+/// admit every row.
+///
 /// # Errors
 ///
 /// [`AuditError::GetConn`] / [`AuditError::Sql`] on DB issues.
@@ -227,52 +244,50 @@ pub async fn list_org_audit(
     pool: &Pool,
     org_id: &str,
     limit: i64,
-    before_id: Option<i64>,
+    query: &AuditListQuery,
 ) -> Result<Vec<AuditRow>, AuditError> {
     let client = pool
         .get()
         .await
         .map_err(|e| AuditError::GetConn(format!("list_audit: {e}")))?;
-    let rows = if let Some(before) = before_id {
-        client
-            .query(
-                "SELECT
-                   id::text                AS id_text,
-                   org_id::text            AS org_id_text,
-                   actor::text             AS actor_text,
-                   action,
-                   resource,
-                   to_char(ts AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS ts_iso,
-                   host(ip)                AS ip_text,
-                   ua
-                 FROM audit_events
-                 WHERE org_id = $1::uuid AND id < $2
-                 ORDER BY id DESC
-                 LIMIT $3",
-                &[&org_id, &before, &limit],
-            )
-            .await
-    } else {
-        client
-            .query(
-                "SELECT
-                   id::text                AS id_text,
-                   org_id::text            AS org_id_text,
-                   actor::text             AS actor_text,
-                   action,
-                   resource,
-                   to_char(ts AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS ts_iso,
-                   host(ip)                AS ip_text,
-                   ua
-                 FROM audit_events
-                 WHERE org_id = $1::uuid
-                 ORDER BY id DESC
-                 LIMIT $2",
-                &[&org_id, &limit],
-            )
-            .await
-    }
-    .map_err(|e| AuditError::Sql(format!("list audit_events: {e}")))?;
+
+    // Build the WHERE clause incrementally. `org_id` is always
+    // present; subsequent filters use `COALESCE` so we can pass `None`
+    // as a single canonical wire-shape parameter without conditional
+    // SQL string assembly. Postgres optimiser handles the constant
+    // `IS NULL` predicates efficiently.
+    let action: Option<String> = query.action.clone();
+    let actor: Option<String> = query.actor.clone();
+    let before_id: Option<i64> = query.before_id;
+    let from_ts: Option<String> = query.from_ts.clone();
+    let to_ts: Option<String> = query.to_ts.clone();
+
+    let sql = "SELECT
+           id::text                AS id_text,
+           org_id::text            AS org_id_text,
+           actor::text             AS actor_text,
+           action,
+           resource,
+           to_char(ts AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS ts_iso,
+           host(ip)                AS ip_text,
+           ua
+         FROM audit_events
+         WHERE org_id = $1::uuid
+           AND ($2::bigint IS NULL OR id < $2::bigint)
+           AND ($3::text   IS NULL OR action = $3::text)
+           AND ($4::text   IS NULL OR actor::text = $4::text)
+           AND ($5::text   IS NULL OR ts >= $5::timestamptz)
+           AND ($6::text   IS NULL OR ts <  $6::timestamptz)
+         ORDER BY id DESC
+         LIMIT $7";
+
+    let rows = client
+        .query(
+            sql,
+            &[&org_id, &before_id, &action, &actor, &from_ts, &to_ts, &limit],
+        )
+        .await
+        .map_err(|e| AuditError::Sql(format!("list audit_events: {e}")))?;
 
     Ok(rows
         .into_iter()
@@ -298,6 +313,36 @@ mod tests {
         let q = AuditListQuery::default();
         assert!(q.limit.is_none());
         assert!(q.before_id.is_none());
+        assert!(q.action.is_none());
+        assert!(q.actor.is_none());
+        assert!(q.from_ts.is_none());
+        assert!(q.to_ts.is_none());
+    }
+
+    #[test]
+    fn audit_query_deserialises_filters_from_json() {
+        // Verify the serde wire-shape of every filter field. axum's
+        // Query extractor uses serde_urlencoded under the hood; the
+        // field names + Option<…> shapes must match for any caller's
+        // `?action=…&from_ts=…` to land in the expected variant.
+        let raw = serde_json::json!({
+            "limit": 25,
+            "before_id": 42,
+            "action": "corpus.created",
+            "actor": "00000000-0000-0000-0000-000000000001",
+            "from_ts": "2026-01-01T00:00:00Z",
+            "to_ts": "2026-02-01T00:00:00Z"
+        });
+        let q: AuditListQuery = serde_json::from_value(raw).unwrap();
+        assert_eq!(q.limit, Some(25));
+        assert_eq!(q.before_id, Some(42));
+        assert_eq!(q.action.as_deref(), Some("corpus.created"));
+        assert_eq!(
+            q.actor.as_deref(),
+            Some("00000000-0000-0000-0000-000000000001")
+        );
+        assert_eq!(q.from_ts.as_deref(), Some("2026-01-01T00:00:00Z"));
+        assert_eq!(q.to_ts.as_deref(), Some("2026-02-01T00:00:00Z"));
     }
 
     #[test]

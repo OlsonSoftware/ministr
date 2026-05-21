@@ -385,6 +385,19 @@ pub(crate) async fn cmd_serve_http(
         daemon_state = daemon_state.with_usage_sink(sink);
         tracing::info!("PostgresUsageSink wired — billable usage events enabled");
 
+        // F3.7b — wire the audit sink so the daemon's corpus-mutation
+        // handlers (register/clone/unregister) emit audit_events rows.
+        // Same Arc<dyn AuditSink> instance is shared with the orgs +
+        // api_keys + GitHub-callback paths below, so every cloud-side
+        // audit lands in the same logical pipeline.
+        let audit_sink: std::sync::Arc<dyn ministr_api::AuditSink> = std::sync::Arc::new(
+            ministr_cloud::PostgresAuditSink::from_arc(Arc::clone(pool)),
+        );
+        daemon_state = daemon_state.with_audit_sink(Arc::clone(&audit_sink));
+        tracing::info!(
+            "PostgresAuditSink wired into daemon — corpus.created/cloned/deleted emit audit_events"
+        );
+
         // PHASE3 chunk 4 — route POST /api/v1/corpora and the clone
         // route through the cloud index-job queue instead of running
         // ingestion inline. The serve pod's in-process WorkerLoop
@@ -892,6 +905,9 @@ pub(crate) async fn cmd_serve_http(
                         if let Some(stripe) = stripe_client.as_ref() {
                             state = state.with_stripe(Arc::clone(stripe));
                         }
+                        // F3.7b — wire the audit sink so invite
+                        // acceptance fires a `member.added` row.
+                        state = state.with_audit(Arc::clone(&audit_sink));
                         composed = composed.merge(ministr_cloud::github_signin_routes(state));
                         tracing::info!(
                             base_url = %base_url,

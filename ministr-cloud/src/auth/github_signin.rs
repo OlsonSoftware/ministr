@@ -114,6 +114,11 @@ pub struct GitHubSigninState {
     /// sign-in (F1.5). Failures here are best-effort — they log and
     /// continue rather than blocking sign-in.
     stripe: Option<Arc<StripeClient>>,
+    /// F3.7b — optional audit sink. `Some` fires a `member.added`
+    /// audit row when invite acceptance lands. `None` (self-hosted
+    /// serve or cloud deployments without audit wiring) skips
+    /// emission silently.
+    audit: Option<Arc<dyn ministr_api::AuditSink>>,
     /// Open requests awaiting callback. `parking_lot::Mutex` matches the
     /// workspace convention (no poisoning, smaller, faster).
     pending: Arc<Mutex<HashMap<String, PendingState>>>,
@@ -127,6 +132,7 @@ impl std::fmt::Debug for GitHubSigninState {
             .field("pool", &"<Pool>")
             .field("oauth_store", &"<OAuthStore>")
             .field("stripe_configured", &self.stripe.is_some())
+            .field("audit_wired", &self.audit.is_some())
             .field("pending_count", &self.pending.lock().len())
             .finish()
     }
@@ -150,6 +156,7 @@ impl GitHubSigninState {
             oauth_store,
             cloud_base_url: trim_trailing_slashes(cloud_base_url.into()),
             stripe: None,
+            audit: None,
             pending: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -162,6 +169,14 @@ impl GitHubSigninState {
     #[must_use]
     pub fn with_stripe(mut self, stripe: Arc<StripeClient>) -> Self {
         self.stripe = Some(stripe);
+        self
+    }
+
+    /// F3.7b — wire an audit sink. When set, the callback emits a
+    /// `member.added` row after `consume_invite` returns `Accepted`.
+    #[must_use]
+    pub fn with_audit(mut self, audit: Arc<dyn ministr_api::AuditSink>) -> Self {
+        self.audit = Some(audit);
         self
     }
 }
@@ -368,6 +383,19 @@ async fn handle_github_callback(
                     role = %role,
                     "org invite accepted as part of github sign-in"
                 );
+
+                // F3.7b — audit `member.added`. Resource = user id of
+                // the new member; org_id contextualises the action.
+                // Best-effort like every other audit emission: the
+                // sink spawns its own task so a Postgres outage cannot
+                // unwind the membership insert.
+                if let Some(audit) = state.audit.as_ref() {
+                    audit.record(
+                        ministr_api::AuditEntry::new("member.added", &user.id)
+                            .with_org(&org_id)
+                            .with_actor(&user.id),
+                    );
+                }
 
                 // F3.1c-ii — bump the Stripe subscription's seat
                 // quantity to match the new member count. Best-
