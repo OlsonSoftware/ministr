@@ -356,6 +356,50 @@ impl MinistrServer {
         self
     }
 
+    /// F6.1-g — attach a durable [`SessionStorage`] backend to the
+    /// server's session registry. Self-hosted serve leaves this unset
+    /// (registry's `storage` field stays `None` and `persist_snapshot`
+    /// collapses to a no-op); the cloud `cmd_serve_http` wires this with
+    /// a `PostgresSessionStorage` so the F6.1-e snapshot helper actually
+    /// persists to durable storage.
+    ///
+    /// Async because the registry sits behind a `tokio::sync::Mutex`.
+    /// Called once at server boot — before the factory closure is built —
+    /// so the lock is uncontended.
+    ///
+    /// [`SessionStorage`]: ministr_api::SessionStorage
+    #[must_use = "the builder consumes self; assign the returned value"]
+    pub async fn with_session_storage(
+        self,
+        storage: Arc<dyn ministr_api::SessionStorage>,
+    ) -> Self {
+        {
+            let mut reg = self.registry.lock().await;
+            reg.set_storage(storage);
+        }
+        self
+    }
+
+    /// F6.1-g — attach a durable [`DropsLedger`] backend to the
+    /// server's session registry. Mirrors [`Self::with_session_storage`]
+    /// for the eviction-event side: self-hosted serve leaves it unset
+    /// (registry's `drops_ledger` field stays `None`); cloud wires a
+    /// `PostgresDropsLedger` so the F6.1-d-c drops helper actually
+    /// persists.
+    ///
+    /// [`DropsLedger`]: ministr_api::DropsLedger
+    #[must_use = "the builder consumes self; assign the returned value"]
+    pub async fn with_session_drops_ledger(
+        self,
+        ledger: Arc<dyn ministr_api::DropsLedger>,
+    ) -> Self {
+        {
+            let mut reg = self.registry.lock().await;
+            reg.set_drops_ledger(ledger);
+        }
+        self
+    }
+
     /// Remove tools that are irrelevant for the current corpus configuration.
     ///
     /// Inspects the server's capabilities (web fetcher, git fetcher) and scans
