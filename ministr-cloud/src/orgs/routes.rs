@@ -36,7 +36,7 @@ use axum::{
     routing::{get, post},
 };
 use deadpool_postgres::Pool;
-use ministr_api::{AuditEntry, AuditSink};
+use ministr_api::{AuditEntry, AuditSink, InviteMessage, MailSender};
 use ministr_mcp::auth::Tenant;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -48,7 +48,7 @@ use super::corpus_acl::{
 use super::invites::{DEFAULT_INVITE_TTL, create_invite};
 use super::repo::{
     OrgError, OrgRow, OrgWithRole, create_org, list_org_members, list_orgs_for_user, member_role,
-    set_org_stripe_customer_id, user_email,
+    org_name, set_org_stripe_customer_id, user_email,
 };
 use super::seats::sync_org_seats;
 use crate::billing::StripeClient;
@@ -74,6 +74,12 @@ pub struct OrgsState {
     /// `None` (self-hosted serve or cloud deployments that haven't
     /// wired the sink yet) makes audit emission a no-op.
     audit: Option<Arc<dyn AuditSink>>,
+    /// F3.1b-ii-a — optional mail sender. `Some` makes the invite
+    /// handler fire a transactional email alongside the invite-URL
+    /// response. `None` makes the email-emit a no-op; the invite URL
+    /// is still in the response body either way (the inviter can
+    /// copy-paste it out-of-band if no provider is configured).
+    mailer: Option<Arc<dyn MailSender>>,
 }
 
 fn trim_trailing_slashes(mut s: String) -> String {
@@ -93,6 +99,7 @@ impl OrgsState {
             cloud_base_url: None,
             stripe: None,
             audit: None,
+            mailer: None,
         }
     }
 
@@ -107,6 +114,7 @@ impl OrgsState {
             cloud_base_url: None,
             stripe: None,
             audit: None,
+            mailer: None,
         }
     }
 
@@ -141,10 +149,29 @@ impl OrgsState {
         self
     }
 
+    /// F3.1b-ii-a — wire a mail sender so the invite handler fires a
+    /// transactional email alongside the invite-URL response. The
+    /// HTTP response always carries the URL — the email is a
+    /// convenience hook so the recipient gets the link without the
+    /// inviter manually copy-pasting it.
+    #[must_use]
+    pub fn with_mailer(mut self, mailer: Arc<dyn MailSender>) -> Self {
+        self.mailer = Some(mailer);
+        self
+    }
+
     /// Read-only access to the audit sink for handler helpers.
     fn audit_record(&self, entry: AuditEntry) {
         if let Some(sink) = self.audit.as_ref() {
             sink.record(entry);
+        }
+    }
+
+    /// Read-only access to the mail sender for handler helpers.
+    /// `None` collapses to a no-op at the call site.
+    fn mailer_send_invite(&self, message: InviteMessage) {
+        if let Some(sender) = self.mailer.as_ref() {
+            sender.send_invite(message);
         }
     }
 }
@@ -447,6 +474,26 @@ async fn create_invite_handler(
             .with_org(&org_id)
             .with_actor(&user_id),
     );
+
+    // F3.1b-ii-a — best-effort transactional email. The HTTP response
+    // carries the URL regardless, so an email-provider outage or
+    // missing-provider config (LogOnlyMailSender default) is not a
+    // user-visible failure. Lookups (`org_name`, `user_email`) are
+    // tolerated as None: the template uses placeholders so the message
+    // still tells the recipient why they got it.
+    let org_display_name = org_name(&state.pool, &org_id)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "your org".to_owned());
+    let inviter_display_name = user_email(&state.pool, &user_id).await.ok().flatten();
+    state.mailer_send_invite(InviteMessage {
+        to_email: trimmed.to_owned(),
+        invite_url: invite_url.clone(),
+        org_name: org_display_name,
+        inviter_name: inviter_display_name,
+        role: created.row.role.clone(),
+    });
 
     Ok((
         StatusCode::CREATED,
