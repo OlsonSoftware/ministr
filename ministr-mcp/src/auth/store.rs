@@ -7,12 +7,14 @@
 
 use std::io;
 use std::path::Path;
+use std::sync::Arc;
 
+use ministr_api::ApiKeyResolver;
 use tracing::warn;
 
 use super::OAuthConfig;
 use super::storage::{InMemoryStorage, OAuthBackend, PostgresStorage, SqliteStorage, StorageResult};
-use super::tenant::Tenant;
+use super::tenant::{Plan, Tenant};
 use super::types::{AccessToken, AuthorizationCode, RegisteredClient};
 use super::util::{epoch_now, generate_id};
 
@@ -25,6 +27,11 @@ use super::util::{epoch_now, generate_id};
 pub struct OAuthStore {
     config: OAuthConfig,
     backend: OAuthBackend,
+    /// F3.4a — optional fall-through resolver for service-account API
+    /// keys. When `Some`, [`Self::resolve_tenant`] tries OAuth first
+    /// and falls back to this resolver on miss. Self-hosted serve
+    /// leaves it `None`; only OAuth tokens authenticate there.
+    api_key_resolver: Option<Arc<dyn ApiKeyResolver>>,
 }
 
 impl OAuthStore {
@@ -34,7 +41,18 @@ impl OAuthStore {
         Self {
             config,
             backend: OAuthBackend::InMemory(InMemoryStorage::new()),
+            api_key_resolver: None,
         }
+    }
+
+    /// F3.4a — install an [`ApiKeyResolver`] so service-account API
+    /// keys authenticate alongside OAuth tokens. Cloud deployments call
+    /// this with a `PostgresApiKeyResolver` from `ministr-cloud`;
+    /// self-hosted serve leaves the field `None`.
+    #[must_use]
+    pub fn with_api_key_resolver(mut self, resolver: Arc<dyn ApiKeyResolver>) -> Self {
+        self.api_key_resolver = Some(resolver);
+        self
     }
 
     /// Construct a store backed by `SQLite` at `db_path`. The file is
@@ -49,7 +67,11 @@ impl OAuthStore {
         let backend = SqliteStorage::open(db_path)
             .map(OAuthBackend::Sqlite)
             .map_err(io::Error::other)?;
-        Ok(Self { config, backend })
+        Ok(Self {
+            config,
+            backend,
+            api_key_resolver: None,
+        })
     }
 
     /// Construct a store backed by Postgres at `url` — the cloud default
@@ -72,7 +94,11 @@ impl OAuthStore {
             .await
             .map(OAuthBackend::Postgres)
             .map_err(io::Error::other)?;
-        Ok(Self { config, backend })
+        Ok(Self {
+            config,
+            backend,
+            api_key_resolver: None,
+        })
     }
 
     /// Read-only view of the configuration.
@@ -168,27 +194,75 @@ impl OAuthStore {
 
     /// Resolve the [`Tenant`] for a bearer token.
     ///
-    /// Today this is a thin wrapper around [`Self::validate_token`] that
-    /// returns a self-hosted-default [`Tenant::local`]. F1.2 sub-bullet
-    /// 4 swaps this for a Postgres lookup against `users.plan_id` and
-    /// `org_members` once the cloud OAuth backend is wired as the
-    /// default. The seam stays in the same place so the middleware
-    /// doesn't have to change again.
+    /// Order: try the OAuth path first (the hot path — short-lived
+    /// access tokens minted via the OAuth code grant or the F1.3 GitHub
+    /// federation). On miss, fall through to the F3.4a service-account
+    /// API key resolver if one is installed. The fall-through never
+    /// runs for self-hosted serve (which leaves `api_key_resolver` as
+    /// `None`) so the existing `Tenant::local` shape is preserved
+    /// there.
     pub(crate) async fn resolve_tenant(&self, token: &str) -> Option<Tenant> {
-        let client_id = self.validate_token(token).await?;
-        Some(Tenant::local(client_id))
+        if let Some(client_id) = self.validate_token(token).await {
+            return Some(Tenant::local(client_id));
+        }
+        self.resolve_api_key(token, None).await
     }
 
     /// Resolve the [`Tenant`] for a bearer token **and** require a
-    /// specific scope claim. Same future-extension story as
+    /// specific scope claim. Same OAuth-then-api-key fallback as
     /// [`Self::resolve_tenant`].
     pub(crate) async fn resolve_tenant_with_scope(
         &self,
         token: &str,
         required_scope: &str,
     ) -> Option<Tenant> {
-        let client_id = self.validate_token_with_scope(token, required_scope).await?;
-        Some(Tenant::local(client_id))
+        if let Some(client_id) = self.validate_token_with_scope(token, required_scope).await {
+            return Some(Tenant::local(client_id));
+        }
+        self.resolve_api_key(token, Some(required_scope)).await
+    }
+
+    /// F3.4a — fall-through resolver: hash the candidate token, look it
+    /// up in `api_keys`, optionally check the required scope, and
+    /// fire-and-forget a `last_used_at` touch on success. Returns
+    /// `None` when no resolver is installed, the lookup misses, the
+    /// scope check fails, or the storage layer errors out (fail
+    /// closed, mirroring the OAuth-path posture).
+    async fn resolve_api_key(
+        &self,
+        raw_token: &str,
+        required_scope: Option<&str>,
+    ) -> Option<Tenant> {
+        let api_resolver = self.api_key_resolver.as_ref()?;
+        let key_data = match api_resolver.resolve(raw_token).await {
+            Ok(Some(r)) => r,
+            Ok(None) => return None,
+            Err(e) => {
+                warn!(error = %e, "api-key resolver storage error; rejecting");
+                return None;
+            }
+        };
+        if let Some(needed) = required_scope
+            && !key_data.scopes.split_whitespace().any(|s| s == needed)
+        {
+            return None;
+        }
+        let plan = parse_plan_id(&key_data.plan_id);
+        // Fire-and-forget last_used touch — the request hot path doesn't
+        // wait on the write. A failed touch logs but is otherwise
+        // invisible (the user's request still succeeds).
+        let toucher = Arc::clone(api_resolver);
+        let key_id = key_data.key_id.clone();
+        tokio::spawn(async move {
+            if let Err(e) = toucher.touch_last_used(&key_id).await {
+                warn!(error = %e, key_id, "api-key last_used touch failed");
+            }
+        });
+        Some(Tenant {
+            subject: key_data.subject,
+            org_id: key_data.org_id,
+            plan,
+        })
     }
 
     /// Validate a bearer token **and** require that its scope claim contains
@@ -212,6 +286,19 @@ impl OAuthStore {
                 None
             }
         }
+    }
+}
+
+/// Parse a wire-shape plan id (`"pro" | "team" | "enterprise"`) into
+/// the [`Plan`] enum. Unknown / malformed values fall through to the
+/// default ([`Plan::Pro`]) — fail-open here is fine because the worst
+/// case is admitting a paying tier at a lower quota lane.
+fn parse_plan_id(plan_id: &str) -> Plan {
+    match plan_id.trim().to_ascii_lowercase().as_str() {
+        "team" => Plan::Team,
+        "enterprise" => Plan::Enterprise,
+        // "pro" or anything else: default to Pro.
+        _ => Plan::Pro,
     }
 }
 
