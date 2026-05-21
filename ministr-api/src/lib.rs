@@ -19,6 +19,7 @@ pub mod coherence;
 pub mod corpora_repo;
 pub mod corpus;
 pub mod corpus_restorer;
+pub mod drops_ledger;
 pub mod github_app;
 pub mod index_job_sink;
 pub mod mail;
@@ -36,6 +37,9 @@ pub use api_key::{
 };
 pub use audit::{AuditEntry, AuditSink};
 pub use blob_sink::BlobSink;
+pub use drops_ledger::{
+    AppendDropFuture, DropEntry, DropsLedger, DropsLedgerError, ListDropsFuture,
+};
 pub use corpora_repo::{CorporaRepo, CorporaRepoError, CorpusRegistration, RepoFuture};
 pub use corpus_restorer::{CorpusRestoreError, CorpusRestorer, RestoreFuture};
 pub use github_app::{InstallationTokenMinter, MintError};
