@@ -51,6 +51,14 @@ impl PostgresIndexJobSink {
             tenant_id,
         }
     }
+
+    /// F2.x-d — resolve the `tenant_id` for an upsert. Precedence:
+    /// task-local from `ministr_mcp::tenant_scope::current` first;
+    /// the sink's own configured `tenant_id` as fallback. Mirrors
+    /// `PostgresCorporaRepo::resolve_tenant_id`.
+    fn resolve_tenant_id(&self) -> Option<String> {
+        ministr_mcp::tenant_scope::current().or_else(|| self.tenant_id.clone())
+    }
 }
 
 fn map_err<E: std::fmt::Display>(prefix: &str) -> impl FnOnce(E) -> IndexJobError + '_ {
@@ -166,19 +174,21 @@ impl IndexJobSink for PostgresIndexJobSink {
                 .map_err(map_err("create_pending: begin tx"))?;
 
             // 1. UPSERT cloud_corpora — mirror PostgresCorporaRepo's
-            //    column set so the chunk 1 row stays canonical.
+            //    column set so the chunk 1 row stays canonical. F2.x-d:
+            //    stamp the request's tenant_id when available.
+            let tenant_id = self.resolve_tenant_id();
             tx.execute(
                 "INSERT INTO cloud_corpora \
                    (corpus_id, tenant_id, paths, display_name, updated_at) \
                  VALUES ($1, $2, $3::jsonb, $4, now()) \
                  ON CONFLICT (corpus_id) DO UPDATE SET \
-                   tenant_id    = EXCLUDED.tenant_id, \
+                   tenant_id    = COALESCE(EXCLUDED.tenant_id, cloud_corpora.tenant_id), \
                    paths        = EXCLUDED.paths, \
                    display_name = EXCLUDED.display_name, \
                    updated_at   = now()",
                 &[
                     &corpus_id,
-                    &self.tenant_id,
+                    &tenant_id,
                     &paths_json,
                     &display_name,
                 ],
@@ -223,17 +233,19 @@ impl IndexJobSink for PostgresIndexJobSink {
                 .get()
                 .await
                 .map_err(map_err("register_corpus_only: get conn"))?;
+            // F2.x-d — stamp the request's tenant_id when available.
+            let tenant_id = self.resolve_tenant_id();
             client
                 .execute(
                     "INSERT INTO cloud_corpora \
                        (corpus_id, tenant_id, paths, display_name, updated_at) \
                      VALUES ($1, $2, $3::jsonb, $4, now()) \
                      ON CONFLICT (corpus_id) DO UPDATE SET \
-                       tenant_id    = EXCLUDED.tenant_id, \
+                       tenant_id    = COALESCE(EXCLUDED.tenant_id, cloud_corpora.tenant_id), \
                        paths        = EXCLUDED.paths, \
                        display_name = EXCLUDED.display_name, \
                        updated_at   = now()",
-                    &[&corpus_id, &self.tenant_id, &paths_json, &display_name],
+                    &[&corpus_id, &tenant_id, &paths_json, &display_name],
                 )
                 .await
                 .map_err(map_err("register_corpus_only: upsert cloud_corpora"))?;

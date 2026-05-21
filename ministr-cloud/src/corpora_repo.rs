@@ -37,6 +37,18 @@ impl PostgresCorporaRepo {
     pub fn new(pool: Arc<Pool>, tenant_id: Option<String>) -> Self {
         Self { pool, tenant_id }
     }
+
+    /// F2.x-d — resolve the `tenant_id` for an upsert. Precedence:
+    /// (1) the current axum request's tenant via
+    /// `ministr_mcp::tenant_scope::current` (set by the `scope_tenant`
+    /// middleware on the daemon write router); (2) the repo's own
+    /// configured `tenant_id` (legacy single-tenant constructor arg).
+    /// Returning `None` leaves the row's `tenant_id` NULL, which the
+    /// F2.x-b `TenantCorpusFilter` treats as permissive — keep that
+    /// arm only for back-compat with rows written before F2.x-d.
+    fn resolve_tenant_id(&self) -> Option<String> {
+        ministr_mcp::tenant_scope::current().or_else(|| self.tenant_id.clone())
+    }
 }
 
 fn map_err<E: std::fmt::Display>(prefix: &str) -> impl FnOnce(E) -> CorporaRepoError + '_ {
@@ -55,19 +67,26 @@ impl CorporaRepo for PostgresCorporaRepo {
             let paths_json = serde_json::to_value(&entry.paths)
                 .map_err(map_err("cloud_corpora upsert: serialize paths"))?;
 
+            // F2.x-d — stamp the request's tenant_id when one is in
+            // scope, falling back to the repo's configured tenant. The
+            // ON CONFLICT clause preserves any previously-set tenant_id
+            // on rows that lose their scope (e.g. a `restore()`-driven
+            // re-upsert at boot, where no axum request is in play) by
+            // COALESCing: never clobber a populated tenant_id with NULL.
+            let tenant_id = self.resolve_tenant_id();
             client
                 .execute(
                     "INSERT INTO cloud_corpora \
                        (corpus_id, tenant_id, paths, display_name, updated_at) \
                      VALUES ($1, $2, $3::jsonb, $4, now()) \
                      ON CONFLICT (corpus_id) DO UPDATE SET \
-                       tenant_id    = EXCLUDED.tenant_id, \
+                       tenant_id    = COALESCE(EXCLUDED.tenant_id, cloud_corpora.tenant_id), \
                        paths        = EXCLUDED.paths, \
                        display_name = EXCLUDED.display_name, \
                        updated_at   = now()",
                     &[
                         &entry.corpus_id,
-                        &self.tenant_id,
+                        &tenant_id,
                         &paths_json,
                         &entry.display_name,
                     ],
@@ -160,6 +179,23 @@ impl CorporaRepo for PostgresCorporaRepo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// F2.x-d — `resolve_tenant_id` precedence: task-local first, then
+    /// the configured fallback, then `None`. Exercised outside any
+    /// `tokio::task_local!` scope, so the task-local read returns
+    /// `None` and the configured fallback wins.
+    #[tokio::test]
+    async fn resolve_tenant_id_falls_back_to_config_outside_scope() {
+        let repo = PostgresCorporaRepo::new(Arc::new(build_dummy_pool()), Some("from-config".into()));
+        assert_eq!(repo.resolve_tenant_id().as_deref(), Some("from-config"));
+    }
+
+    /// `None` config + no scope → `None` (leaves the row's `tenant_id` NULL).
+    #[tokio::test]
+    async fn resolve_tenant_id_none_outside_scope_with_none_config() {
+        let repo = PostgresCorporaRepo::new(Arc::new(build_dummy_pool()), None);
+        assert!(repo.resolve_tenant_id().is_none());
+    }
 
     /// Compile-time proof the impl is `dyn`-safe.
     #[test]
