@@ -1396,17 +1396,55 @@ interface CreateApiKeyDialogProps {
  * response; we hand it to the parent which opens [`ShowApiKeyDialog`]
  * to display + copy it once. The token is never stored on this side.
  */
+/**
+ * F3.4c-i — closed-vocabulary scope list. Mirrors
+ * `ministr_cloud::api_keys::ALLOWED_API_KEY_SCOPES`. If the backend
+ * ever adds a fifth scope, update this list in lockstep — the server
+ * already rejects unknown tokens with 400, so a stale frontend won't
+ * silently mint broken keys.
+ */
+const API_KEY_SCOPE_OPTIONS: Array<{ value: string; label: string; hint: string }> = [
+  { value: "ministr:read", label: "Read", hint: "Survey, read, extract — all read-only tool calls." },
+  { value: "ministr:write", label: "Write", hint: "Register / reindex / unregister corpora." },
+  { value: "ministr:bundle:read", label: "Bundle read", hint: "Export a corpus bundle." },
+  { value: "ministr:bundle:write", label: "Bundle write", hint: "Import a corpus bundle." },
+];
+
+/** Defaults match the server's behaviour when the request omits scopes. */
+const DEFAULT_API_KEY_SCOPES = new Set(["ministr:read", "ministr:write"]);
+
 function CreateApiKeyDialog({ onClose, onSuccess }: CreateApiKeyDialogProps) {
   const [name, setName] = useState("");
-  const [scopes, setScopes] = useState("ministr:read ministr:write");
+  const [selectedScopes, setSelectedScopes] = useState<Set<string>>(
+    () => new Set(DEFAULT_API_KEY_SCOPES),
+  );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const toggleScope = (scope: string) => {
+    setSelectedScopes((prev) => {
+      const next = new Set(prev);
+      if (next.has(scope)) next.delete(scope);
+      else next.add(scope);
+      return next;
+    });
+  };
+
   const onSubmit = async () => {
     setError(null);
+    if (selectedScopes.size === 0) {
+      setError("Select at least one scope.");
+      return;
+    }
     setBusy(true);
     try {
-      const created = await cloudClient.createApiKey(name.trim(), scopes.trim() || undefined);
+      // Preserve API_KEY_SCOPE_OPTIONS order so the canonical string
+      // matches what the server would produce on a same-input request.
+      const scopes = API_KEY_SCOPE_OPTIONS
+        .filter((opt) => selectedScopes.has(opt.value))
+        .map((opt) => opt.value)
+        .join(" ");
+      const created = await cloudClient.createApiKey(name.trim(), scopes);
       onSuccess(created);
     } catch (e) {
       setError(String(e));
@@ -1423,19 +1461,32 @@ function CreateApiKeyDialog({ onClose, onSuccess }: CreateApiKeyDialogProps) {
         value={name}
         onChange={setName}
       />
-      <LabeledInput
-        label="Scopes (whitespace separated)"
-        placeholder="ministr:read ministr:write"
-        value={scopes}
-        onChange={setScopes}
-      />
-      <p className="text-xs text-text-muted -mt-1">
-        Available scopes:{" "}
-        <span className="font-mono">ministr:read</span>,{" "}
-        <span className="font-mono">ministr:write</span>,{" "}
-        <span className="font-mono">ministr:bundle:read</span>,{" "}
-        <span className="font-mono">ministr:bundle:write</span>.
-      </p>
+      <fieldset className="flex flex-col gap-1.5">
+        <legend className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+          Scopes
+        </legend>
+        {API_KEY_SCOPE_OPTIONS.map((opt) => (
+          <label
+            key={opt.value}
+            className="flex items-start gap-2 rounded-md border border-border-soft bg-surface-overlay px-3 py-2 cursor-pointer hover:border-border-hover"
+          >
+            <input
+              type="checkbox"
+              checked={selectedScopes.has(opt.value)}
+              onChange={() => toggleScope(opt.value)}
+              disabled={busy}
+              className="mt-0.5"
+            />
+            <span className="flex flex-col gap-0.5">
+              <span className="text-xs text-text">
+                <span className="font-semibold">{opt.label}</span>
+                <span className="ml-2 font-mono text-text-muted">{opt.value}</span>
+              </span>
+              <span className="text-xs text-text-muted">{opt.hint}</span>
+            </span>
+          </label>
+        ))}
+      </fieldset>
       {error && (
         <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs font-mono text-text">
           {error}
@@ -1445,7 +1496,11 @@ function CreateApiKeyDialog({ onClose, onSuccess }: CreateApiKeyDialogProps) {
         <Button size="sm" variant="ghost" onClick={onClose} disabled={busy}>
           Cancel
         </Button>
-        <Button size="sm" onClick={() => void onSubmit()} disabled={busy || !name.trim()}>
+        <Button
+          size="sm"
+          onClick={() => void onSubmit()}
+          disabled={busy || !name.trim() || selectedScopes.size === 0}
+        >
           {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Key className="size-3.5" />}
           Mint key
         </Button>
