@@ -1583,6 +1583,69 @@ pub async fn cloud_test_webhook_sub(
         .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse test result: {e}")))
 }
 
+// ── F3.3b — Org usage dashboard ────────────────────────────────────────────
+
+/// One per-day, per-kind, per-member rollup row. Mirrors
+/// `ministr_cloud::orgs::OrgRollupRow`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CloudOrgRollupRow {
+    pub user_id: String,
+    pub email: String,
+    pub day: String,
+    pub kind: String,
+    pub total: i64,
+}
+
+/// One per-kind, per-member row for today's not-yet-rolled-up
+/// events. Mirrors `ministr_cloud::orgs::OrgPartialRow`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CloudOrgPartialRow {
+    pub user_id: String,
+    pub email: String,
+    pub kind: String,
+    pub total: i64,
+}
+
+/// `GET /api/v1/orgs/{id}/usage` response. Mirrors
+/// `ministr_cloud::orgs::OrgUsageResponse`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CloudOrgUsage {
+    pub org_id: String,
+    pub range_days: i32,
+    pub rollups: Vec<CloudOrgRollupRow>,
+    pub today_partial: Vec<CloudOrgPartialRow>,
+}
+
+/// GET /api/v1/orgs/{id}/usage — fetch per-member usage rollups for
+/// the last `days` days. Owner/admin only on the server side.
+#[tauri::command]
+pub async fn cloud_get_org_usage(
+    org_id: String,
+    days: Option<i32>,
+) -> Result<CloudOrgUsage, CommandError> {
+    use std::fmt::Write as _;
+    let (client, endpoint, token) = authed_client(10)?;
+    let mut url = format!("{endpoint}/api/v1/orgs/{org_id}/usage");
+    if let Some(d) = days {
+        let _ = write!(url, "?days={d}");
+    }
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("get {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("org usage returned HTTP {}", resp.status()),
+        ));
+    }
+    resp.json::<CloudOrgUsage>()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse org usage: {e}")))
+}
+
 /// POST `/reindex` on the configured cloud endpoint. Returns the
 /// server-assigned `job_id` that can later be subscribed to via SSE.
 #[tauri::command]

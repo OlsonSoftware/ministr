@@ -126,6 +126,40 @@ export interface CloudWebhookTestResult {
   succeeded: boolean;
 }
 
+/**
+ * Mirrors `ministr_cloud::orgs::OrgRollupRow` (F3.3a). One per-day,
+ * per-kind, per-member rollup row.
+ */
+export interface CloudOrgRollupRow {
+  user_id: string;
+  email: string;
+  day: string;
+  kind: string;
+  total: number;
+}
+
+/**
+ * Mirrors `ministr_cloud::orgs::OrgPartialRow` (F3.3a). Today's
+ * not-yet-rolled-up events summed per (member, kind).
+ */
+export interface CloudOrgPartialRow {
+  user_id: string;
+  email: string;
+  kind: string;
+  total: number;
+}
+
+/**
+ * Mirrors `ministr_cloud::orgs::OrgUsageResponse` (F3.3a). Per-member
+ * usage breakdown for the F3.3b dashboard.
+ */
+export interface CloudOrgUsage {
+  org_id: string;
+  range_days: number;
+  rollups: CloudOrgRollupRow[];
+  today_partial: CloudOrgPartialRow[];
+}
+
 /** Minimal subset of `ministr_api::corpus::CorpusInfo` the panel renders. */
 export interface CloudCorpusInfo {
   corpus_id: string;
@@ -280,6 +314,14 @@ export const cloudClient = {
       orgId,
       subscriptionId,
     }),
+  /**
+   * F3.3b — fetch per-member usage rollups for an org. Owner/admin
+   * only on the server side; non-privileged callers see 403. Default
+   * window is 30 days; pass `days` to override (clamped server-side
+   * to [1, 366]).
+   */
+  getOrgUsage: (orgId: string, days?: number) =>
+    invoke<CloudOrgUsage>("cloud_get_org_usage", { orgId, days }),
   /**
    * Open the SSE progress stream for a corpus on the remote server.
    * Returns the Channel; consumers attach `.onmessage` and let the

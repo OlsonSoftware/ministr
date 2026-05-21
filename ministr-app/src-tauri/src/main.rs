@@ -170,6 +170,7 @@ fn main() {
             commands_cloud::cloud_create_webhook_sub,
             commands_cloud::cloud_delete_webhook_sub,
             commands_cloud::cloud_test_webhook_sub,
+            commands_cloud::cloud_get_org_usage,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ministr app");
