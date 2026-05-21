@@ -171,11 +171,28 @@ pub fn build_from_env() -> BlobResult<Option<BlobBackend>> {
                 );
                 return Ok(None);
             };
-            // `DeveloperToolsCredential` chains `az login`, env vars,
-            // and Azure CLI credentials. Wrap in an `Arc<dyn …>` so
-            // `CorpusBlobStore::with_credential` accepts it.
+            // Pick credential by environment. ACA injects
+            // `IDENTITY_ENDPOINT` for system-assigned MI; absence means
+            // we're outside Azure (local dev, CI). DeveloperToolsCredential
+            // only chains CLI tools (`az`, `azd`), neither of which exist
+            // in the runtime image — using it in-pod was the cause of
+            // every blob call failing with "non-transport error occurred
+            // which will not be retried."
+            // MINISTR_BLOB_STORE_KIND=azure is only set in cloud
+            // deploys (Pulumi-templated env on the Container App).
+            // Local dev never opts into the Azure variant — it uses
+            // the filesystem store under MINISTR_BLOB_FS_ROOT. So
+            // when we're here, we are by definition in-pod with a
+            // system-assigned managed identity; ManagedIdentityCredential
+            // is the only correct choice. Previously this used
+            // DeveloperToolsCredential which only chains `az`/`azd`
+            // CLI lookups, neither of which exist in the runtime
+            // image — every blob call failed with "non-transport
+            // error occurred which will not be retried" with the
+            // real cause buried as "az not found on PATH".
+            tracing::info!("constructing blob credential via ManagedIdentityCredential");
             let cred: std::sync::Arc<dyn azure_core::credentials::TokenCredential> =
-                azure_identity::DeveloperToolsCredential::new(None)
+                azure_identity::ManagedIdentityCredential::new(None)
                     .map_err(BlobError::Azure)?;
             let store = CorpusBlobStore::with_credential(&account, &container, cred)?;
             Ok(Some(BlobBackend::Azure(Arc::new(store))))

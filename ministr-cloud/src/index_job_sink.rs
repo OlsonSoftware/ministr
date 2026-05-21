@@ -209,6 +209,38 @@ impl IndexJobSink for PostgresIndexJobSink {
         })
     }
 
+    fn register_corpus_only<'a>(
+        &'a self,
+        corpus_id: &'a str,
+        paths: &'a [String],
+        display_name: Option<&'a str>,
+    ) -> IndexJobFuture<'a, ()> {
+        Box::pin(async move {
+            let paths_json = serde_json::to_value(paths)
+                .map_err(map_err("serialize paths"))?;
+            let client = self
+                .pool
+                .get()
+                .await
+                .map_err(map_err("register_corpus_only: get conn"))?;
+            client
+                .execute(
+                    "INSERT INTO cloud_corpora \
+                       (corpus_id, tenant_id, paths, display_name, updated_at) \
+                     VALUES ($1, $2, $3::jsonb, $4, now()) \
+                     ON CONFLICT (corpus_id) DO UPDATE SET \
+                       tenant_id    = EXCLUDED.tenant_id, \
+                       paths        = EXCLUDED.paths, \
+                       display_name = EXCLUDED.display_name, \
+                       updated_at   = now()",
+                    &[&corpus_id, &self.tenant_id, &paths_json, &display_name],
+                )
+                .await
+                .map_err(map_err("register_corpus_only: upsert cloud_corpora"))?;
+            Ok(())
+        })
+    }
+
     fn latest_for_corpus<'a>(
         &'a self,
         corpus_id: &'a str,
