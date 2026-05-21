@@ -70,6 +70,7 @@ import {
   type CloudOrgUsage,
   type CloudProgressEvent,
   type CloudSessionBundle,
+  type CloudSessionSummary,
   type CloudStatus,
   type CloudUsage,
   type CloudWebhookSub,
@@ -3048,12 +3049,48 @@ function SessionInspectorSection({ authenticated }: SessionInspectorProps) {
   const [bundle, setBundle] = useState<CloudSessionBundle | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // F6.2-e — populated by `listSessions` on auth flip / refresh.
+  // Empty array = "list endpoint returned no sessions"; null = "haven't
+  // loaded yet" (or load failed). UI falls back to a manual input when
+  // either branch leaves us without a dropdown to render.
+  const [sessions, setSessions] = useState<CloudSessionSummary[] | null>(null);
 
   useEffect(() => {
     if (!authenticated) {
       setBundle(null);
       setError(null);
       setSessionId("");
+      setSessions(null);
+      return;
+    }
+    let cancelled = false;
+    void cloudClient
+      .listSessions()
+      .then((list) => {
+        if (cancelled) return;
+        setSessions(list);
+        if (list.length > 0 && !sessionId) {
+          setSessionId(list[0].session_id);
+        }
+      })
+      .catch(() => {
+        // List endpoint failed — fall back to manual input. Not an
+        // error worth surfacing inline; the user can still type the id.
+        if (!cancelled) setSessions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // sessionId intentionally excluded — don't re-list on selection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated]);
+
+  const refreshSessions = useCallback(async () => {
+    if (!authenticated) return;
+    try {
+      setSessions(await cloudClient.listSessions());
+    } catch {
+      setSessions([]);
     }
   }, [authenticated]);
 
@@ -3099,15 +3136,41 @@ function SessionInspectorSection({ authenticated }: SessionInspectorProps) {
         <div className="flex items-end gap-2">
           <label className="flex flex-col gap-1.5 flex-1">
             <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
-              Session ID
+              Session
             </span>
-            <input
-              value={sessionId}
-              onChange={(e) => setSessionId(e.target.value)}
-              placeholder="agent-session-…"
-              className="h-9 px-3 rounded-md border border-border bg-surface font-mono text-sm text-text focus:outline-none focus:border-border-hover"
-            />
+            {sessions && sessions.length > 0 ? (
+              <select
+                value={sessionId}
+                onChange={(e) => setSessionId(e.target.value)}
+                className="h-9 px-3 rounded-md border border-border bg-surface font-mono text-sm text-text focus:outline-none focus:border-border-hover"
+              >
+                {sessions.map((s) => (
+                  <option key={s.session_id} value={s.session_id}>
+                    {s.session_id} · {s.delivered_count} delivered · {s.budget_used.toLocaleString()} tokens
+                  </option>
+                ))}
+              </select>
+            ) : (
+              // F6.2-e fallback — manual input when the list endpoint
+              // returned empty (no live sessions) or failed.
+              <input
+                value={sessionId}
+                onChange={(e) => setSessionId(e.target.value)}
+                placeholder="agent-session-…"
+                className="h-9 px-3 rounded-md border border-border bg-surface font-mono text-sm text-text focus:outline-none focus:border-border-hover"
+              />
+            )}
           </label>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void refreshSessions()}
+            disabled={busy}
+            title="Re-list sessions on the contacted pod"
+          >
+            <RefreshCw className="size-3.5" />
+            Refresh
+          </Button>
           <Button
             size="sm"
             onClick={() => void onFetch()}
