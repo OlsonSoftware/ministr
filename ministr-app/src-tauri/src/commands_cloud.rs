@@ -1646,6 +1646,82 @@ pub async fn cloud_get_org_usage(
         .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse org usage: {e}")))
 }
 
+/// F3.3c — fetch the org's usage CSV from `/api/v1/orgs/{id}/usage.csv`,
+/// open a native Save dialog, and write the CSV to the chosen path.
+///
+/// Returns the absolute path that was written, or `None` if the user
+/// cancelled the dialog. The CSV body never lands in JS — keeping it
+/// out of the renderer means a 50K-row finance export doesn't bloat
+/// the IPC channel.
+#[tauri::command]
+pub async fn cloud_export_org_usage_csv(
+    app: AppHandle,
+    org_id: String,
+    days: Option<i32>,
+) -> Result<Option<String>, CommandError> {
+    use std::fmt::Write as _;
+    use tauri_plugin_dialog::DialogExt;
+
+    let (client, endpoint, token) = authed_client(15)?;
+    let mut url = format!("{endpoint}/api/v1/orgs/{org_id}/usage.csv");
+    if let Some(d) = days {
+        let _ = write!(url, "?days={d}");
+    }
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("get {url}: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(CommandError::new(
+            ErrorKind::Io,
+            format!("org usage CSV returned HTTP {}", resp.status()),
+        ));
+    }
+    let csv = resp
+        .text()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("read CSV body: {e}")))?;
+
+    let default_name = {
+        let safe_org: String = org_id
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+            .collect();
+        let stem = if safe_org.is_empty() { "org".to_string() } else { safe_org };
+        format!("{stem}-usage-{}d.csv", days.unwrap_or(30))
+    };
+
+    // `blocking_save_file` parks the calling thread while the native
+    // dialog is open; off-load it so the async runtime's worker threads
+    // stay free (mirrors the linked-project pattern in commands.rs).
+    let app_for_dialog = app.clone();
+    let default_name_for_dialog = default_name.clone();
+    let picked = tokio::task::spawn_blocking(move || {
+        app_for_dialog
+            .dialog()
+            .file()
+            .set_file_name(&default_name_for_dialog)
+            .add_filter("CSV", &["csv"])
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|e| CommandError::new(ErrorKind::Io, format!("save dialog task failed: {e}")))?;
+
+    let Some(target) = picked else {
+        return Ok(None);
+    };
+    let path: PathBuf = match target.into_path() {
+        Ok(p) => p,
+        Err(e) => return Err(CommandError::new(ErrorKind::Io, format!("resolve save path: {e}"))),
+    };
+    tokio::fs::write(&path, csv.as_bytes())
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("write CSV: {e}")))?;
+    Ok(Some(path.display().to_string()))
+}
+
 /// POST `/reindex` on the configured cloud endpoint. Returns the
 /// server-assigned `job_id` that can later be subscribed to via SSE.
 #[tauri::command]

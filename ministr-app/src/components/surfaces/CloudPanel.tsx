@@ -18,6 +18,7 @@ import {
   CloudOff,
   Copy,
   CreditCard,
+  Download,
   GitBranch,
   Key,
   Loader2,
@@ -28,6 +29,7 @@ import {
   Share2,
   ShieldAlert,
   Trash2,
+  TrendingUp,
   Webhook,
   X,
 } from "lucide-react";
@@ -2041,7 +2043,8 @@ function OrgUsageSection({ authenticated }: OrgUsageSectionProps) {
   const [selectedOrgId, setSelectedOrgId] = useState<string>("");
   const [usage, setUsage] = useState<CloudOrgUsage | null>(null);
   const [listError, setListError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<null | "list-orgs" | "load-usage">(null);
+  const [busy, setBusy] = useState<null | "list-orgs" | "load-usage" | "export-csv">(null);
+  const [exportNote, setExportNote] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authenticated) {
@@ -2134,25 +2137,77 @@ function OrgUsageSection({ authenticated }: OrgUsageSectionProps) {
     return { rollup, partial };
   }, [members]);
 
+  // F3.3c — linear end-of-month projection. Take the rolled-up total
+  // for the lookback window and extrapolate to a 30-day calendar
+  // month. Excludes `today_partial` so a low-volume morning doesn't
+  // distort the rate. v0: same denominator (`range_days`) regardless
+  // of how much usage actually accumulated — good enough for a
+  // dashboard signal, will tighten if finance asks for cycle anchoring.
+  const projection = useMemo(() => {
+    if (!usage || usage.range_days <= 0) return null;
+    const projected = new Map<string, number>();
+    for (const [kind, v] of totals.rollup) {
+      projected.set(kind, Math.round((v / usage.range_days) * 30));
+    }
+    return projected;
+  }, [usage, totals]);
+
+  const exportCsv = useCallback(async () => {
+    if (!authenticated || !selectedOrgId) return;
+    setBusy("export-csv");
+    setExportNote(null);
+    setListError(null);
+    try {
+      const saved = await cloudClient.exportOrgUsageCsv(selectedOrgId);
+      setExportNote(saved ? `Saved to ${saved}` : "Save cancelled.");
+    } catch (e) {
+      setListError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  }, [authenticated, selectedOrgId]);
+
   return (
     <section className="flex flex-col gap-3 border-t border-border-soft pt-5">
       <div className="flex items-center justify-between">
         <h3 className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
           Team usage
         </h3>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={refresh}
-          disabled={!authenticated || !selectedOrgId || busy === "load-usage"}
-        >
-          {busy === "load-usage" ? (
-            <Loader2 className="size-3.5 animate-spin" />
-          ) : (
-            <RefreshCw className="size-3.5" />
-          )}
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={exportCsv}
+            disabled={
+              !authenticated ||
+              !selectedOrgId ||
+              !usage ||
+              members.length === 0 ||
+              busy === "export-csv"
+            }
+            title="Save the per-member usage rollup as CSV for finance."
+          >
+            {busy === "export-csv" ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Download className="size-3.5" />
+            )}
+            Export CSV
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={refresh}
+            disabled={!authenticated || !selectedOrgId || busy === "load-usage"}
+          >
+            {busy === "load-usage" ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="size-3.5" />
+            )}
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <p className="text-xs text-text-muted">
@@ -2202,6 +2257,12 @@ function OrgUsageSection({ authenticated }: OrgUsageSectionProps) {
         </div>
       )}
 
+      {exportNote && !listError && (
+        <div className="rounded-md border border-border-soft bg-surface-overlay px-3 py-2 text-xs text-text-muted font-mono">
+          {exportNote}
+        </div>
+      )}
+
       {authenticated && selectedOrgId && members.length === 0 && !listError && (
         <div className="rounded-md border border-border-soft bg-surface-overlay px-3 py-2 text-sm text-text-muted">
           {busy === "load-usage"
@@ -2213,6 +2274,9 @@ function OrgUsageSection({ authenticated }: OrgUsageSectionProps) {
       {members.length > 0 && (
         <>
           <UsageTotalsRow totals={totals} memberCount={members.length} />
+          {projection && (
+            <UsageProjectionRow projection={projection} rangeDays={usage?.range_days ?? 30} />
+          )}
           <UsageMembersTable members={members} />
         </>
       )}
@@ -2263,6 +2327,50 @@ function UsageTotalsRow({
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/**
+ * F3.3c — end-of-month linear projection from the rolled-up window.
+ * No $ amount: per-meter overage prices aren't configured yet (the
+ * Stripe meter prices live in the dashboard, not in our env), so v0
+ * surfaces unit projections only. Finance can multiply against the
+ * invoice line items if they need a cost estimate.
+ */
+function UsageProjectionRow({
+  projection,
+  rangeDays,
+}: {
+  projection: Map<string, number>;
+  rangeDays: number;
+}) {
+  const kinds: Array<{ key: string; label: string }> = [
+    { key: "query.served", label: "Queries" },
+    { key: "index.minutes", label: "Index min" },
+    { key: "atlas.queries", label: "Atlas" },
+  ];
+  return (
+    <div className="rounded-md border border-border-soft bg-surface-overlay px-3 py-2 flex items-center gap-4">
+      <div className="flex items-center gap-1.5">
+        <TrendingUp className="size-3.5 text-text-muted" />
+        <span className="font-mono text-xs uppercase tracking-[0.08em] text-text-muted">
+          30-day projection
+        </span>
+      </div>
+      <div className="flex gap-4 ml-auto">
+        {kinds.map(({ key, label }) => (
+          <div key={key} className="flex flex-col items-end">
+            <span className="text-xs text-text-muted">{label}</span>
+            <span className="font-mono text-xs text-text">
+              {(projection.get(key) ?? 0).toLocaleString()}
+            </span>
+          </div>
+        ))}
+      </div>
+      <span className="font-mono text-[10px] text-text-muted">
+        extrapolated from {rangeDays}d
+      </span>
     </div>
   );
 }

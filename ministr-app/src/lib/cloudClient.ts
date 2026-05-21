@@ -323,6 +323,14 @@ export const cloudClient = {
   getOrgUsage: (orgId: string, days?: number) =>
     invoke<CloudOrgUsage>("cloud_get_org_usage", { orgId, days }),
   /**
+   * F3.3c — fetch the same org usage data as `getOrgUsage` but rendered
+   * as RFC-4180 CSV, then prompt the user with a native Save dialog and
+   * write the file. Resolves with the saved path, or `null` if the
+   * dialog was cancelled. Owner/admin only on the server side.
+   */
+  exportOrgUsageCsv: (orgId: string, days?: number) =>
+    invoke<string | null>("cloud_export_org_usage_csv", { orgId, days }),
+  /**
    * Open the SSE progress stream for a corpus on the remote server.
    * Returns the Channel; consumers attach `.onmessage` and let the
    * channel be GC'd when they unmount — the Rust side detects the closed
