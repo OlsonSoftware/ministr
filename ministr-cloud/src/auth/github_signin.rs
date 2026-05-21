@@ -368,6 +368,35 @@ async fn handle_github_callback(
                     role = %role,
                     "org invite accepted as part of github sign-in"
                 );
+
+                // F3.1c-ii — bump the Stripe subscription's seat
+                // quantity to match the new member count. Best-
+                // effort: a Stripe outage must not unwind the
+                // membership insert that consume_invite just
+                // committed; failures log + continue (F3.1c-iv
+                // backfill job will catch up). Skipped when no
+                // Stripe client is wired (self-hosted serve / no
+                // MINISTR_STRIPE_SECRET_KEY).
+                if let Some(stripe) = state.stripe.as_ref() {
+                    match crate::orgs::sync_org_seats(&state.pool, stripe, &org_id).await {
+                        Ok(outcome) => {
+                            debug!(
+                                user_id = %user.id,
+                                org_id = %org_id,
+                                ?outcome,
+                                "seat sync after invite accept"
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                user_id = %user.id,
+                                org_id = %org_id,
+                                error = %e,
+                                "seat sync after invite accept failed — sign-in proceeds"
+                            );
+                        }
+                    }
+                }
             }
             Ok(other) => {
                 warn!(

@@ -25,6 +25,7 @@
 pub mod invites;
 pub mod repo;
 pub mod routes;
+pub mod seats;
 
 pub use invites::{
     CreatedInvite, ConsumeOutcome, DEFAULT_INVITE_TTL, InviteRow, consume_invite, create_invite,
@@ -34,3 +35,4 @@ pub use repo::{
     list_orgs_for_user, member_role, set_org_stripe_customer_id, user_email,
 };
 pub use routes::{OrgsState, orgs_routes};
+pub use seats::{SeatsSyncError, SeatsSyncOutcome, count_org_members, sync_org_seats};

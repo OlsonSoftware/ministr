@@ -45,6 +45,7 @@ use super::repo::{
     OrgError, OrgRow, OrgWithRole, create_org, list_org_members, list_orgs_for_user, member_role,
     set_org_stripe_customer_id, user_email,
 };
+use super::seats::sync_org_seats;
 use crate::billing::StripeClient;
 
 /// Handler state — the cloud Postgres pool. Shared `Arc` with the rest
@@ -211,6 +212,14 @@ async fn create_handler(
     // past this hook with `orgs.stripe_customer_id IS NULL`. Mirrors
     // the user-side post-sign-in pattern in
     // `auth::github_signin::handle_github_callback`.
+    //
+    // F3.1c-ii — after the Customer is wired, immediately call
+    // `sync_org_seats` so the (typically NoSubscription / quantity=1)
+    // seat-sync path runs even on org-create. In practice the owner
+    // has no Stripe subscription yet (Checkout happens later) and
+    // the helper resolves to a noop, but the symmetric call ensures
+    // a pre-existing subscription (e.g. F3.1c-iii transfer) gets
+    // synced from the moment org creation completes.
     if let Some(stripe) = state.stripe.as_ref() {
         // Derive the billing email from the owner's `users.email`
         // rather than asking the create-org form for it — F3.1a's
@@ -238,6 +247,26 @@ async fn create_handler(
                                 stripe_customer_id = %customer_id,
                                 "stripe customer created for new org",
                             );
+                            // F3.1c-ii — fire-and-log seat sync. Best
+                            // effort: a Stripe outage must not block
+                            // org creation. Typical outcome on a
+                            // brand-new org: NoSubscription (the
+                            // owner hasn't run Checkout yet); the
+                            // call is still cheap and keeps the
+                            // semantics symmetric with the
+                            // invite-accept hook.
+                            match sync_org_seats(&state.pool, stripe, &org.id).await {
+                                Ok(outcome) => tracing::debug!(
+                                    org_id = %org.id,
+                                    ?outcome,
+                                    "seat sync after org creation"
+                                ),
+                                Err(e) => warn!(
+                                    error = %e,
+                                    org_id = %org.id,
+                                    "seat sync after org creation failed — org creation proceeds",
+                                ),
+                            }
                         }
                     }
                     Err(e) => {
