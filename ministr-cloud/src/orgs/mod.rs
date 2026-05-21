@@ -30,7 +30,8 @@ pub mod seats;
 pub mod usage;
 
 pub use corpus_acl::{
-    AclEntry, acl_grants_access, corpus_owner_tenant, list_acl, revoke_org_share, share_with_org,
+    AclEntry, TransferOutcome, acl_grants_access, corpus_owner_tenant, list_acl,
+    revoke_org_share, share_with_org, transfer_corpus_to_org,
 };
 pub use invites::{
     CreatedInvite, ConsumeOutcome, DEFAULT_INVITE_TTL, InviteRow, consume_invite, create_invite,

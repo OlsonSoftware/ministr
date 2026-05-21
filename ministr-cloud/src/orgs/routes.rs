@@ -42,7 +42,8 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use super::corpus_acl::{
-    AclEntry, corpus_owner_tenant, list_acl, revoke_org_share, share_with_org,
+    AclEntry, TransferOutcome, corpus_owner_tenant, list_acl, revoke_org_share, share_with_org,
+    transfer_corpus_to_org,
 };
 use super::invites::{DEFAULT_INVITE_TTL, create_invite};
 use super::repo::{
@@ -231,6 +232,14 @@ pub fn orgs_routes(state: OrgsState) -> Router {
         .route(
             "/api/v1/corpora/{corpus_id}/share/{org_id}",
             axum::routing::delete(revoke_share_handler),
+        )
+        // F3.2-iv — transfer corpus ownership from a user tenant to
+        // an org tenant. Mounted on the orgs router (alongside the
+        // share routes) because the resource is the cross-link
+        // between `cloud_corpora.tenant_id` and the `orgs` table.
+        .route(
+            "/api/v1/corpora/{corpus_id}/transfer",
+            post(transfer_handler),
         )
         .with_state(state)
 }
@@ -509,6 +518,28 @@ struct ListShareResponse {
     entries: Vec<AclEntry>,
 }
 
+/// `POST /api/v1/corpora/{corpus_id}/transfer` request body. `org_id`
+/// is required; the caller must own the corpus AND be an owner/admin
+/// of the target org.
+#[derive(Debug, Deserialize)]
+struct TransferRequest {
+    org_id: String,
+}
+
+/// `POST /api/v1/corpora/{corpus_id}/transfer` response body.
+#[derive(Debug, Serialize)]
+struct TransferResponse {
+    corpus_id: String,
+    /// Tenant id before the transfer (caller's user UUID).
+    previous_tenant_id: String,
+    /// Tenant id after the transfer (target org UUID).
+    new_tenant_id: String,
+    /// `true` when this call actually moved the corpus; `false` when
+    /// the corpus was already on the target org and the call was a
+    /// no-op (the route returns 200 instead of 201 in that case).
+    transferred: bool,
+}
+
 async fn share_handler(
     State(state): State<OrgsState>,
     full_tenant: Option<Extension<Tenant>>,
@@ -546,6 +577,74 @@ async fn share_handler(
             .with_actor(&user_id),
     );
     Ok((StatusCode::CREATED, Json(ShareResponse { entry })))
+}
+
+async fn transfer_handler(
+    State(state): State<OrgsState>,
+    full_tenant: Option<Extension<Tenant>>,
+    Path(corpus_id): Path<String>,
+    Json(body): Json<TransferRequest>,
+) -> Result<(StatusCode, Json<TransferResponse>), OrgsApiError> {
+    let user_id = tenant_user_id(full_tenant)?;
+
+    // Caller must be owner/admin of the target org. Mirrors the
+    // share_handler check: a corpus owner shouldn't be able to dump
+    // their corpus into an arbitrary org they have no authority
+    // over. F3.1c sub-billing (per-org seat / quota) attaches to
+    // this membership so we reject member-role callers too — only
+    // org owners/admins can accept incoming corpora.
+    let role = member_role(&state.pool, &body.org_id, &user_id)
+        .await
+        .map_err(OrgsApiError::Repo)?;
+    if !matches!(role.as_deref(), Some("owner" | "admin")) {
+        return Err(OrgsApiError::Forbidden);
+    }
+
+    let outcome = transfer_corpus_to_org(&state.pool, &corpus_id, &body.org_id, &user_id)
+        .await
+        .map_err(OrgsApiError::Repo)?;
+
+    match outcome {
+        TransferOutcome::Transferred {
+            previous_tenant_id,
+            new_tenant_id,
+        } => {
+            // F3.7 audit — resource encodes the user→org direction so
+            // the list endpoint can render either side without
+            // round-tripping the row.
+            state.audit_record(
+                AuditEntry::new(
+                    "corpus.transferred",
+                    format!("{corpus_id}:{previous_tenant_id}->{new_tenant_id}"),
+                )
+                .with_org(&new_tenant_id)
+                .with_actor(&user_id),
+            );
+            Ok((
+                StatusCode::CREATED,
+                Json(TransferResponse {
+                    corpus_id,
+                    previous_tenant_id,
+                    new_tenant_id,
+                    transferred: true,
+                }),
+            ))
+        }
+        TransferOutcome::AlreadyOnTarget => {
+            // Idempotent re-call. No audit emission so retries don't
+            // pollute the feed; the row is already where it should be.
+            Ok((
+                StatusCode::OK,
+                Json(TransferResponse {
+                    corpus_id,
+                    previous_tenant_id: body.org_id.clone(),
+                    new_tenant_id: body.org_id,
+                    transferred: false,
+                }),
+            ))
+        }
+        TransferOutcome::NotOwner => Err(OrgsApiError::Forbidden),
+    }
 }
 
 async fn revoke_share_handler(
