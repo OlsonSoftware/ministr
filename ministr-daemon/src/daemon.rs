@@ -434,12 +434,14 @@ async fn register_corpus(
     Json(req): Json<RegisterCorpusRequest>,
 ) -> impl IntoResponse {
     // PHASE3 chunk 4 — when an IndexJobSink is wired (cloud mode), do
-    // NOT run ingestion inline. Compute the deterministic corpus_id,
-    // upsert cloud_corpora + enqueue a Tenant job via the sink, and
-    // return (corpus_id, indexing_started=true) so the existing
-    // demo-client contract is preserved (the worker will set the
-    // status; the SSE will see the transition).
+    // NOT run ingestion inline. Compute the deterministic corpus_id
+    // and use the sink to either upsert-only (paths-only registration:
+    // serve pod has no local source files, so dispatching an indexer
+    // job would discover 0 files and pollute the queue) or upsert +
+    // enqueue (when a Git/Web URL is included). The demo's "register
+    // a parent corpus" pattern hits the upsert-only branch.
     if let Some(sink) = state.index_job_sink.as_ref() {
+        use ministr_core::config::{CorpusSource, classify_corpus_path};
         let canonical = match ministr_core::corpus_id::canonical_corpus_paths(&req.paths) {
             Ok(c) => c,
             Err(e) => {
@@ -452,21 +454,34 @@ async fn register_corpus(
                 return err(StatusCode::BAD_REQUEST, "register_failed", e).into_response();
             }
         };
-        if let Err(e) = sink
-            .create_pending(
-                &corpus_id,
-                &canonical,
-                req.display_name.as_deref(),
-                None,
+        let has_remote = canonical.iter().any(|p| {
+            matches!(
+                classify_corpus_path(p),
+                CorpusSource::Git(_) | CorpusSource::Web(_)
             )
-            .await
-        {
-            return err(StatusCode::INTERNAL_SERVER_ERROR, "enqueue_failed", e)
-                .into_response();
-        }
+        });
+        let indexing_started = if has_remote {
+            if let Err(e) = sink
+                .create_pending(&corpus_id, &canonical, req.display_name.as_deref(), None)
+                .await
+            {
+                return err(StatusCode::INTERNAL_SERVER_ERROR, "enqueue_failed", e)
+                    .into_response();
+            }
+            true
+        } else {
+            if let Err(e) = sink
+                .register_corpus_only(&corpus_id, &canonical, req.display_name.as_deref())
+                .await
+            {
+                return err(StatusCode::INTERNAL_SERVER_ERROR, "register_failed", e)
+                    .into_response();
+            }
+            false
+        };
         return Json(RegisterCorpusResponse {
             corpus_id,
-            indexing_started: true,
+            indexing_started,
         })
         .into_response();
     }
