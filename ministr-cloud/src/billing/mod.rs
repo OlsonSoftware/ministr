@@ -25,5 +25,5 @@ pub use endpoint::{billing_routes, BillingState, PartialRow, RollupRow, UsageRes
 pub use rollup::rollup_day;
 pub use sink::PostgresUsageSink;
 pub use stripe::{stripe_webhook_routes, StripeWebhookError, StripeWebhookState};
-pub use stripe_api::{StripeApiError, StripeClient, SyncSeatOutcome};
+pub use stripe_api::{CancelSubscriptionOutcome, StripeApiError, StripeClient, SyncSeatOutcome};
 pub use usage::{record_usage, UsageEventKind};
