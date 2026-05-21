@@ -744,15 +744,44 @@ pub(crate) async fn cmd_serve_http(
                 }
             });
 
-            // F3.7a — build the audit sink once and share it across
-            // every cloud-side state that emits audit_events rows
-            // (orgs + api_keys today; corpus/daemon-write extension is
-            // F3.7b). Single `Arc<dyn AuditSink>` so all sites land
-            // in the same logical pipeline.
-            let audit_sink: Arc<dyn ministr_api::AuditSink> = Arc::new(
+            // F3.5a — outbound webhook dispatcher. Built once and
+            // shared between the webhook routes router (CRUD + /test
+            // endpoint) AND the F3.5b-i WebhookFanoutSink below so
+            // both call paths reuse the same TLS connection pool.
+            let webhook_dispatcher = match ministr_cloud::WebhookDispatcher::new() {
+                Ok(d) => Some(Arc::new(d)),
+                Err(e) => {
+                    tracing::warn!(error = %e, "webhook dispatcher init failed; webhooks + fan-out disabled");
+                    None
+                }
+            };
+
+            // F3.7a + F3.5b-i — build the audit sink chain. The
+            // Postgres sink always lands first so the audit_events
+            // row is durable BEFORE any outbound dispatch. The
+            // webhook fan-out sink only joins the chain when the
+            // dispatcher initialised successfully; otherwise the
+            // chain degrades to plain Postgres.
+            let postgres_audit: Arc<dyn ministr_api::AuditSink> = Arc::new(
                 ministr_cloud::PostgresAuditSink::from_arc(Arc::clone(pool)),
             );
-            tracing::info!("PostgresAuditSink wired — write actions emit audit_events rows");
+            let audit_sink: Arc<dyn ministr_api::AuditSink> =
+                if let Some(d) = webhook_dispatcher.as_ref() {
+                    let fanout = ministr_cloud::WebhookFanoutSink::new(
+                        Arc::clone(pool),
+                        Arc::clone(d),
+                    );
+                    tracing::info!(
+                        "audit pipeline wired — PostgresAuditSink → WebhookFanoutSink chain"
+                    );
+                    Arc::new(ministr_cloud::ChainedAuditSink::new(vec![
+                        postgres_audit,
+                        Arc::new(fanout),
+                    ]))
+                } else {
+                    tracing::info!("PostgresAuditSink wired — webhook fan-out disabled");
+                    postgres_audit
+                };
 
             let mut orgs_state =
                 ministr_cloud::OrgsState::from_arc(Arc::clone(pool));
@@ -814,29 +843,24 @@ pub(crate) async fn cmd_serve_http(
             );
 
             // F3.5a — outbound webhook subscriptions. Cloud-only;
-            // owner/admin-only authz inside the handlers. The
-            // dispatcher is built once and shared across requests so
-            // multiple deliveries reuse the same TLS pool.
-            match ministr_cloud::WebhookDispatcher::new() {
-                Ok(dispatcher) => {
-                    let webhooks_state = ministr_cloud::WebhooksState::new(
-                        Arc::clone(pool),
-                        Arc::new(dispatcher),
-                    );
-                    let webhooks_router = ministr_cloud::webhooks_routes(webhooks_state);
-                    let webhooks_protected = ministr_mcp::auth::scope_protected_router(
-                        webhooks_router,
-                        store.clone(),
-                        "ministr:read",
-                    );
-                    composed = composed.merge(webhooks_protected);
-                    tracing::info!(
-                        "webhook endpoints mounted — POST /api/v1/orgs/{{id}}/webhooks, GET/DELETE, POST /test"
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "webhook dispatcher init failed; webhooks disabled");
-                }
+            // owner/admin-only authz inside the handlers. Re-uses
+            // the `webhook_dispatcher` constructed above so the CRUD
+            // routes share TLS pool with the F3.5b-i fan-out path.
+            if let Some(dispatcher) = webhook_dispatcher.as_ref() {
+                let webhooks_state = ministr_cloud::WebhooksState::new(
+                    Arc::clone(pool),
+                    Arc::clone(dispatcher),
+                );
+                let webhooks_router = ministr_cloud::webhooks_routes(webhooks_state);
+                let webhooks_protected = ministr_mcp::auth::scope_protected_router(
+                    webhooks_router,
+                    store.clone(),
+                    "ministr:read",
+                );
+                composed = composed.merge(webhooks_protected);
+                tracing::info!(
+                    "webhook endpoints mounted — POST /api/v1/orgs/{{id}}/webhooks, GET/DELETE, POST /test"
+                );
             }
 
             // F2.6 — Atlas v0 pilot. Manifest + per-slug query stubs.
