@@ -84,6 +84,11 @@ struct CloudEnv {
     github_app_private_key: Option<String>,
     stripe_price_pro: Option<String>,
     stripe_price_team: Option<String>,
+    /// F3.6-b-ii-a — comma-separated CORS allowlist
+    /// (`MINISTR_CORS_ALLOWED_ORIGINS`). Unset (`None`) ⇒ no CORS
+    /// layer mounted ⇒ self-hosted serve has zero browser exposure.
+    /// Each entry is a full origin (`https://ministr.ai`).
+    cors_allowed_origins: Option<String>,
 }
 
 fn read_cloud_env() -> CloudEnv {
@@ -110,7 +115,80 @@ fn read_cloud_env() -> CloudEnv {
             .filter(|s| !s.trim().is_empty()),
         stripe_price_pro: trimmed("MINISTR_STRIPE_PRICE_PRO"),
         stripe_price_team: trimmed("MINISTR_STRIPE_PRICE_TEAM"),
+        cors_allowed_origins: trimmed("MINISTR_CORS_ALLOWED_ORIGINS"),
     }
+}
+
+/// F3.6-b-ii-a — parse a comma-separated CORS allowlist into
+/// validated origins. Each entry must look like a full origin
+/// (`scheme://host[:port]`). Malformed entries are dropped with a
+/// warn log so a typo in one slot doesn't disable CORS entirely.
+///
+/// Returns `None` when input is `None` or every entry was rejected;
+/// `Some(vec)` otherwise. The empty-output case logs an explicit
+/// warn so an operator who typoed every entry hears about it.
+#[must_use]
+fn parse_cors_allowed_origins(raw: Option<&str>) -> Option<Vec<String>> {
+    let raw = raw?;
+    let parsed: Vec<String> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| {
+            // Minimal sanity check: must contain "://" and no whitespace.
+            // axum + tower-http will reject malformed values at layer-build
+            // time too, but we filter+log here so the boot log is
+            // operator-debuggable.
+            if s.contains("://") && !s.chars().any(char::is_whitespace) {
+                Some(s.to_owned())
+            } else {
+                tracing::warn!(origin = %s, "MINISTR_CORS_ALLOWED_ORIGINS — skipping malformed entry");
+                None
+            }
+        })
+        .collect();
+    if parsed.is_empty() {
+        tracing::warn!(
+            "MINISTR_CORS_ALLOWED_ORIGINS was set but no valid origins parsed — CORS disabled"
+        );
+        return None;
+    }
+    Some(parsed)
+}
+
+/// F3.6-b-ii-a — build a `CorsLayer` from a parsed allowlist.
+///
+/// Methods admitted: GET / POST / PUT / DELETE / OPTIONS — the union
+/// of methods the cloud HTTP surface exposes today.
+/// Headers admitted: `Authorization` + `Content-Type` (the only
+/// non-CORS-safelisted headers callers send) — request-side. Browsers
+/// auto-send the safelisted ones.
+///
+/// Credentials NOT allowed: agents authenticate via `Authorization:
+/// Bearer …` rather than cookies; widening to credentials-included
+/// would expand the attack surface for no benefit.
+fn build_cors_layer(origins: &[String]) -> tower_http::cors::CorsLayer {
+    use axum::http::{HeaderName, HeaderValue, Method};
+    use tower_http::cors::{AllowOrigin, CorsLayer};
+
+    let header_origins: Vec<HeaderValue> = origins
+        .iter()
+        .filter_map(|o| HeaderValue::from_str(o).ok())
+        .collect();
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(header_origins))
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([
+            HeaderName::from_static("authorization"),
+            HeaderName::from_static("content-type"),
+        ])
+        .max_age(std::time::Duration::from_secs(600))
 }
 
 fn build_admin_state(env: &CloudEnv, corpus_count: usize) -> Result<ministr_mcp::admin::AdminState> {
@@ -1108,6 +1186,21 @@ pub(crate) async fn cmd_serve_http(
             .merge(daemon_bundle_router)
             .merge(daemon_obs_router)
             .merge(session_export_router)
+    };
+
+    // F3.6-b-ii-a — opt-in CORS layer. Mounted last so the headers
+    // wrap the final composed router (including OAuth-protected and
+    // public surfaces). Default-off: missing/blank
+    // `MINISTR_CORS_ALLOWED_ORIGINS` leaves the layer unmounted and
+    // self-hosted serve keeps its zero-browser-exposure posture.
+    let app = if let Some(origins) = parse_cors_allowed_origins(cloud_env.cors_allowed_origins.as_deref()) {
+        tracing::info!(
+            origins = ?origins,
+            "CORS enabled — Access-Control-Allow-Origin headers added for browser callers"
+        );
+        app.layer(build_cors_layer(&origins))
+    } else {
+        app
     };
 
     let bind_addr = format!("{host}:{port}");
@@ -2417,4 +2510,80 @@ pub(crate) async fn cmd_audit_prune(retention_days: u32) -> miette::Result<()> {
         "audit prune complete"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cors_parser_none_when_input_is_none() {
+        assert!(parse_cors_allowed_origins(None).is_none());
+    }
+
+    #[test]
+    fn cors_parser_single_origin_round_trips() {
+        let out = parse_cors_allowed_origins(Some("https://ministr.ai"))
+            .expect("single origin parses");
+        assert_eq!(out, vec!["https://ministr.ai".to_string()]);
+    }
+
+    #[test]
+    fn cors_parser_multiple_origins_round_trip() {
+        let out = parse_cors_allowed_origins(Some(
+            "https://ministr.ai, https://docs.ministr.ai,http://localhost:3000",
+        ))
+        .expect("three origins parse");
+        assert_eq!(
+            out,
+            vec![
+                "https://ministr.ai".to_string(),
+                "https://docs.ministr.ai".to_string(),
+                "http://localhost:3000".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn cors_parser_drops_malformed_entries_but_keeps_valid_ones() {
+        // First entry is missing the scheme; should be dropped + log.
+        let out = parse_cors_allowed_origins(Some(
+            "ministr.ai, https://ministr.ai",
+        ))
+        .expect("at least one entry parses");
+        assert_eq!(out, vec!["https://ministr.ai".to_string()]);
+    }
+
+    #[test]
+    fn cors_parser_returns_none_when_every_entry_is_malformed() {
+        // Every entry lacks "://" → all rejected → overall None.
+        assert!(parse_cors_allowed_origins(Some("foo, bar baz")).is_none());
+    }
+
+    #[test]
+    fn cors_parser_returns_none_for_empty_string() {
+        assert!(parse_cors_allowed_origins(Some("")).is_none());
+        assert!(parse_cors_allowed_origins(Some("  ,  ")).is_none());
+    }
+
+    #[test]
+    fn cors_parser_rejects_entries_containing_whitespace() {
+        // Whitespace inside an origin is malformed (e.g. accidental
+        // newline embedded in the env var). The outer trim handles
+        // surrounding spaces; this guards the inside.
+        let out = parse_cors_allowed_origins(Some("https://good.example, https://bad ex.com"));
+        assert_eq!(out, Some(vec!["https://good.example".to_string()]));
+    }
+
+    #[test]
+    fn cors_layer_builds_without_panicking_on_valid_origins() {
+        // build_cors_layer takes already-parsed origins, so it's
+        // mainly a "does the tower-http API still compile + accept"
+        // smoke. The CorsLayer type is opaque so we just confirm
+        // construction succeeds.
+        let _layer = build_cors_layer(&[
+            "https://ministr.ai".to_string(),
+            "http://localhost:3000".to_string(),
+        ]);
+    }
 }
