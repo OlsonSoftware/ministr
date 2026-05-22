@@ -2512,6 +2512,74 @@ pub(crate) async fn cmd_audit_prune(retention_days: u32) -> miette::Result<()> {
     Ok(())
 }
 
+/// `ministr cloud mint-test-bearer --github-id N --email E [--scope S]`
+/// — F-Test-1 helper. The OAuth self-issuer's DCR flow mints `client_id`
+/// values that aren't UUIDs (22-char base64url strings), but the cloud
+/// schema's tenant lattice (`users.id`, `org_members.user_id`, the
+/// visibility-filter `$1::uuid` cast) assumes UUID subjects produced by
+/// the GitHub callback. This helper bridges that gap by:
+///
+/// 1. Upserting a `users` row via `upsert_github_user` — same path the
+///    real GitHub callback uses, so the resulting UUID has the exact
+///    shape production tenants have.
+/// 2. Minting a bearer token via `OAuthStore::issue_bearer_token` bound
+///    to that UUID subject.
+///
+/// Prints `{"user_id":"...","token":"...","plan_id":"..."}` on stdout.
+/// The harness scripts this once per tenant and uses the returned token
+/// as `Authorization: Bearer …` for assertions.
+///
+/// Requires `MINISTR_PG_URL`. Idempotent: re-running with the same
+/// `github_id` returns the same UUID (the `users.github_id` UNIQUE key
+/// drives `ON CONFLICT`). A fresh token is minted each call — old
+/// tokens remain valid until they expire.
+pub(crate) async fn cmd_cloud_mint_test_bearer(
+    github_id: i64,
+    email: &str,
+    scope: &str,
+) -> miette::Result<()> {
+    let pg_url = std::env::var("MINISTR_PG_URL").map_err(|_| {
+        miette::miette!(
+            "ministr cloud mint-test-bearer requires MINISTR_PG_URL (the cloud Postgres connection string)"
+        )
+    })?;
+    let pool = ministr_cloud::connect(&pg_url)
+        .into_diagnostic()
+        .wrap_err("open cloud postgres pool")?;
+    let identity = ministr_cloud::idp::ResolvedIdentity {
+        issuer: ministr_cloud::idp::github::GITHUB_ISSUER.to_string(),
+        subject: github_id.to_string(),
+        email: Some(email.to_string()),
+        display_name: None,
+        github_id: Some(github_id),
+    };
+    let user = ministr_cloud::upsert_github_user(&pool, &identity)
+        .await
+        .into_diagnostic()
+        .wrap_err("upsert test user")?;
+    let store = ministr_mcp::auth::OAuthStore::postgres(
+        ministr_mcp::auth::OAuthConfig::default(),
+        &pg_url,
+    )
+    .await
+    .into_diagnostic()
+    .wrap_err("open OAuth store")?;
+    let token = store
+        .issue_bearer_token(&user.id, scope)
+        .await
+        .into_diagnostic()
+        .wrap_err("issue bearer token")?;
+    // Stdout is JSON so the harness can `jq -r .token`. Logs go to
+    // stderr already (tracing default), so this doesn't pollute either.
+    let out = serde_json::json!({
+        "user_id": user.id,
+        "token": token,
+        "plan_id": user.plan_id,
+    });
+    println!("{}", serde_json::to_string(&out).unwrap_or_else(|_| "{}".into()));
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
