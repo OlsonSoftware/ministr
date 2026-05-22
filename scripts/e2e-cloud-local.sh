@@ -1484,6 +1484,30 @@ else
     note "skipped F5.3-a tier-aware retention assertions — ORG_ID_A not captured"
 fi
 
+# 23) **F5.3-c-i — audit_events is partitioned by quarter.** Migration
+#     0013 converted the table to PARTITION BY RANGE (ts) with 16
+#     quarterly partitions covering 2024-Q1 through 2027-Q4. The
+#     F5.3-a assertions already proved the old INSERT + DELETE +
+#     SELECT paths still work post-conversion; this assertion locks
+#     in the partition count + parent relkind so a future migration
+#     can't silently un-partition the table.
+info "F5.3-c-i: audit_events partitioned by quarter (16 partitions seeded)"
+PART_COUNT=$(psql_count "SELECT count(*) FROM pg_inherits WHERE inhparent = 'audit_events'::regclass;")
+if [[ "${PART_COUNT}" == "16" ]]; then
+    pass "audit_events has 16 quarterly partitions (2024-Q1 .. 2027-Q4)"
+else
+    fail "audit_events partition count — expected 16, got ${PART_COUNT}"
+fi
+RELKIND=$(docker compose -f docker-compose.dev.yml exec -T postgres \
+    psql -U ministr -d ministr_dev -tA \
+    -c "SELECT relkind FROM pg_class WHERE relname='audit_events';" \
+    2>/dev/null | tr -d ' \r\n')
+if [[ "${RELKIND}" == "p" ]]; then
+    pass "audit_events relkind == 'p' (partitioned table)"
+else
+    fail "audit_events relkind expected 'p', got '${RELKIND}'"
+fi
+
 # ─── summary ──────────────────────────────────────────────────────────
 
 echo
