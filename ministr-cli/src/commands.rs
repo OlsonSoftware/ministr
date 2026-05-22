@@ -503,8 +503,19 @@ pub(crate) async fn cmd_serve_http(
         }
         state
     };
-    let session_export_router =
-        ministr_mcp::sessions::session_export_routes(session_export_state);
+    // F-Test-3 finding: handle_list / handle_export read
+    // `tenant_scope::current()` for cross-tenant 404 + list-scoping
+    // (F6.2-e-followup-ii), but the task-local is only populated when
+    // `scope_tenant` middleware is layered on the router. Without it,
+    // every authenticated tenant sees the bootstrap `ministr-<hash>`
+    // session (and any other unstamped legacy entries) — a real
+    // cross-tenant leak surfaced by F-Test-3's session-isolation
+    // assertions. The daemon routers below already mount this layer;
+    // session_export was the gap.
+    let session_export_scope_tenant_layer =
+        axum::middleware::from_fn(ministr_mcp::tenant_scope::scope_tenant);
+    let session_export_router = ministr_mcp::sessions::session_export_routes(session_export_state)
+        .layer(session_export_scope_tenant_layer);
 
     let admin_state = build_admin_state(&cloud_env, corpus_paths.len())?;
     let admin_public = ministr_mcp::admin::admin_public_routes(admin_state.clone());
