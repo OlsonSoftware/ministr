@@ -54,6 +54,38 @@ pub type VisibleCorpusFuture<'a> = Pin<
     Box<dyn Future<Output = Result<Option<Vec<String>>, TenantFilterError>> + Send + 'a>,
 >;
 
+/// Minimal view of a corpus registration row, shaped for the daemon's
+/// `list_corpora` handler to synthesise a `CorpusInfo` when the
+/// in-memory `CorpusRegistry` hasn't picked the corpus up yet.
+///
+/// F-Test-1 finding: cloud-mode `register_corpus` writes to
+/// `cloud_corpora` via `IndexJobSink` but never updates the in-memory
+/// `CorpusRegistry`, so `GET /api/v1/corpora` returned empty even for
+/// the corpus's owner until the worker indexed it. This shape carries
+/// just enough to render a pending-status row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CorpusRegistrationView {
+    /// `cloud_corpora.corpus_id` (TEXT PK).
+    pub id: String,
+    /// `cloud_corpora.paths` (deserialised from the JSONB column).
+    pub paths: Vec<String>,
+    /// `cloud_corpora.display_name` — `None` when the caller didn't
+    /// supply one at registration.
+    pub display_name: Option<String>,
+    /// Raw `cloud_corpora.status` (`"pending"`, `"indexing"`,
+    /// `"completed"`, `"failed"`). Daemon synthesis maps this to the
+    /// nearest `IndexingStatus` variant; consumers expecting a closed
+    /// vocabulary should treat anything outside the known set as
+    /// `pending`.
+    pub status: String,
+}
+
+/// Future shape returned by
+/// [`TenantCorpusVisibility::pending_corpora_for_tenant`].
+pub type PendingCorporaFuture<'a> = Pin<
+    Box<dyn Future<Output = Result<Vec<CorpusRegistrationView>, TenantFilterError>> + Send + 'a>,
+>;
+
 /// Decides whether a tenant may dispatch tool calls against a corpus.
 ///
 /// Implementations must be `Send + Sync` so they can be stored as
@@ -114,6 +146,29 @@ pub trait TenantCorpusVisibility: Send + Sync + std::fmt::Debug {
         &'a self,
         tenant_subject: &'a str,
     ) -> VisibleCorpusFuture<'a>;
+
+    /// Return registration rows for corpora the tenant owns directly
+    /// (the cloud-side source of truth — `cloud_corpora.tenant_id =
+    /// tenant_subject`). Used by the daemon's `list_corpora` handler
+    /// to synthesise a `CorpusInfo` for pending corpora that haven't
+    /// landed in the in-memory `CorpusRegistry` yet.
+    ///
+    /// Default impl returns `Vec::new()` so self-hosted serve stays a
+    /// pure no-op — the in-memory registry IS the source of truth
+    /// there.
+    ///
+    /// Note this returns only direct-ownership rows, not ACL-grant
+    /// rows: ACL-shared corpora must have been indexed before the
+    /// grant fires (the granting tenant could see them via the
+    /// in-memory registry), so the merged-list path covers them via
+    /// the existing `visible_corpus_ids` intersection arm.
+    fn pending_corpora_for_tenant<'a>(
+        &'a self,
+        tenant_subject: &'a str,
+    ) -> PendingCorporaFuture<'a> {
+        let _ = tenant_subject;
+        Box::pin(async { Ok(Vec::new()) })
+    }
 }
 
 #[cfg(test)]
