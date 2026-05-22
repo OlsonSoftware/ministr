@@ -395,25 +395,22 @@ pub(crate) async fn cmd_serve_http(
         .expect("HTTP serve constructs MinistrServer in local mode");
     let a2a_registry = server.registry_arc();
 
-    // Each HTTP session gets its own MinistrServer clone.
-    // All clones share the same Arc'd infrastructure.
+    // Each HTTP session gets its own MinistrServer fork — shares the
+    // Arc'd infrastructure (registry, prefetch, storage) but gets a
+    // fresh `active_session_id` (uuid_v4) AND a fresh tenant_id_hint
+    // Mutex<Option<String>>. Per F-Test-3b-fix-1-shared-bootstrap:
+    // without the fork, all /mcp connections share the bootstrap
+    // active_session_id → one SessionEntry → tenant A's first stamp
+    // pins the entry to tenant A → tenant B's tool-call activity
+    // mutates A's session shadow (data leak on F6.2 export).
     //
-    // F-Test-3b-fix-1 considered switching to
-    // `server.fork_for_new_session()` so each /mcp connection got a
-    // unique `active_session_id` (preventing the shared-bootstrap
-    // tenant-cross-pollination on `SessionEntry`). That broke tool
-    // calls: a fresh-UUID active_session_id has no associated corpus
-    // resolution path, and `ministr_survey` hung waiting on an empty
-    // default service. The shared-bootstrap issue is a real
-    // multi-tenant gap worth a separate chunk (see ROADMAP
-    // F-Test-3b-fix-1-shared-bootstrap). For F-Test-3b-fix-1's scope
-    // (recover tenant_scope through rmcp's spawn boundary via
-    // context.extensions), the tenant_id_hint capture in
-    // MinistrServer::initialize is enough: tenant A's first MCP call
-    // stamps the session entry; tenant B's subsequent call observes
-    // tenant_id is_some and skips stamping (so B's calls won't get
-    // visibility on the entry via /sessions either — A's id wins).
-    let server_factory = move || Ok(server.clone());
+    // The prior attempt at this fix hung tool calls because handlers
+    // like ministr_survey called `get_session(...).expect("active
+    // session exists")` — the fresh fork session id doesn't exist
+    // until first written. F-Test-3b-fix-1-shared-bootstrap Phase A
+    // replaced those 5 panic sites with `ensure_session_mut` so
+    // get-or-create happens automatically; this fork is now safe.
+    let server_factory = move || Ok(server.fork_for_new_session());
 
     let session_manager = Arc::new(LocalSessionManager::default());
     // Override the default loopback-only allowed_hosts list with the

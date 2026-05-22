@@ -990,11 +990,18 @@ impl MinistrServer {
             // Collect delivered IDs so the service can exclude them
             // before truncating to top_k (prevents the over-fetch buffer
             // from being wasted by premature truncation).
+            //
+            // F-Test-3b-fix-1-shared-bootstrap: use ensure_session_mut
+            // so the session is get-or-created on the first tool call.
+            // The pre-fork-per-connection world relied on the bootstrap
+            // session being pre-created at MinistrServer init; with
+            // server.fork_for_new_session() each /mcp connection has a
+            // fresh uuid_v4 active_session_id that doesn't exist until
+            // first touched. ensure_session_mut creates if missing and
+            // also runs the tenant_id_hint stamping path early.
             let exclude_ids = {
-                let reg = self.registry.lock().await;
-                let entry = reg
-                    .get_session(&self.active_session_id)
-                    .expect("active session exists");
+                let mut reg = self.registry.lock().await;
+                let entry = self.ensure_session_mut(&mut reg);
                 entry.session.delivered_ids()
             };
 
@@ -1663,9 +1670,9 @@ impl MinistrServer {
                         let ids = choice.ids();
                         if !ids.is_empty() {
                             let mut reg = self.registry.lock().await;
-                            let entry = reg
-                                .get_session_mut(&self.active_session_id)
-                                .expect("active session exists");
+                            // F-Test-3b-fix-1-shared-bootstrap: ensure_session_mut
+                            // creates the entry if missing (fresh fork session id).
+                            let entry = self.ensure_session_mut(&mut reg);
                             for id_str in &ids {
                                 let content_id = ContentId(id_str.clone());
                                 if entry.session.remove_delivered(&content_id).is_some() {
@@ -2772,10 +2779,11 @@ impl MinistrServer {
         description = "Summarize sections read and session activity"
     )]
     async fn session_summary(&self) -> Result<GetPromptResult, McpError> {
-        let reg = self.registry.lock().await;
-        let entry = reg
-            .get_session(&self.active_session_id)
-            .expect("active session exists");
+        let mut reg = self.registry.lock().await;
+        // F-Test-3b-fix-1-shared-bootstrap: get-or-create so a fresh
+        // /mcp connection that opens the session-summary prompt before
+        // any tool call gets an empty session rather than a panic.
+        let entry = self.ensure_session_mut(&mut reg);
         let status = entry.budget.usage_status();
         let prefetch = self.prefetch.lock().await;
         let metrics = prefetch.metrics();
@@ -2841,10 +2849,11 @@ impl MinistrServer {
         description = "Recommend unread sections based on access patterns and prefetch"
     )]
     async fn what_next(&self) -> Result<GetPromptResult, McpError> {
-        let reg = self.registry.lock().await;
-        let entry = reg
-            .get_session(&self.active_session_id)
-            .expect("active session exists");
+        let mut reg = self.registry.lock().await;
+        // F-Test-3b-fix-1-shared-bootstrap: get-or-create so a fresh
+        // /mcp connection that opens the what-next prompt before any
+        // tool call gets an empty session rather than a panic.
+        let entry = self.ensure_session_mut(&mut reg);
         let prefetch = self.prefetch.lock().await;
         let status = entry.budget.usage_status();
 
