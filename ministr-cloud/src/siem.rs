@@ -146,56 +146,179 @@ impl AuditSink for SplunkHecSink {
         let token = Arc::clone(&self.token);
         let client = self.client.clone();
         tokio::spawn(async move {
-            let time = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs());
-            let payload = HecPayload {
-                sourcetype: "ministr_audit",
-                event: HecEvent {
-                    action: entry.action.as_str(),
-                    resource: entry.resource.as_str(),
-                    org_id: entry.org_id.as_deref(),
-                    actor: entry.actor.as_deref(),
-                    ip: entry.ip.as_deref(),
-                    user_agent: entry.user_agent.as_deref(),
-                },
-                time,
-            };
-            let auth_header = format!("Splunk {token}");
-            let req = client
-                .post(url.as_str())
-                .header("Authorization", auth_header)
-                .header("Content-Type", "application/json")
-                .json(&payload);
-            match req.send().await {
-                Ok(resp) if resp.status().is_success() => {
-                    debug!(
-                        action = %entry.action,
-                        status = resp.status().as_u16(),
-                        "splunk hec dispatch ok"
-                    );
-                }
-                Ok(resp) => {
-                    let status = resp.status();
-                    let body = resp
-                        .text()
-                        .await
-                        .unwrap_or_else(|_| "<unreadable>".to_string());
-                    warn!(
-                        action = %entry.action,
-                        status = status.as_u16(),
-                        body = %body.chars().take(200).collect::<String>(),
-                        "splunk hec dispatch failed; row stays in Postgres audit_events"
-                    );
-                }
+            dispatch_splunk_hec(&client, url.as_str(), token.as_str(), &entry).await;
+        });
+    }
+}
+
+/// F5.3-d-i + F5.3-d-ii-dispatch — shared HEC POST helper. Builds
+/// the Splunk-event-shaped body, signs with `Authorization: Splunk
+/// <token>`, fires the POST, and logs the outcome at `debug` (ok) /
+/// `warn` (non-2xx response or connect/read error). Caller's
+/// responsibility to invoke from a fire-and-forget tokio task — this
+/// helper does NOT spawn its own.
+///
+/// Pulled out to a free function so [`SplunkHecSink`] (global,
+/// env-var-config) and [`PerOrgSplunkHecDispatcher`] (per-org,
+/// `org_siem_configs` table) share one POST shape with no
+/// duplication.
+pub(crate) async fn dispatch_splunk_hec(
+    client: &Client,
+    url: &str,
+    token: &str,
+    entry: &AuditEntry,
+) {
+    let time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let payload = HecPayload {
+        sourcetype: "ministr_audit",
+        event: HecEvent {
+            action: entry.action.as_str(),
+            resource: entry.resource.as_str(),
+            org_id: entry.org_id.as_deref(),
+            actor: entry.actor.as_deref(),
+            ip: entry.ip.as_deref(),
+            user_agent: entry.user_agent.as_deref(),
+        },
+        time,
+    };
+    let auth_header = format!("Splunk {token}");
+    let req = client
+        .post(url)
+        .header("Authorization", auth_header)
+        .header("Content-Type", "application/json")
+        .json(&payload);
+    match req.send().await {
+        Ok(resp) if resp.status().is_success() => {
+            debug!(
+                action = %entry.action,
+                status = resp.status().as_u16(),
+                "splunk hec dispatch ok"
+            );
+        }
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unreadable>".to_string());
+            warn!(
+                action = %entry.action,
+                status = status.as_u16(),
+                body = %body.chars().take(200).collect::<String>(),
+                "splunk hec dispatch failed; row stays in Postgres audit_events"
+            );
+        }
+        Err(e) => {
+            warn!(
+                action = %entry.action,
+                error = %e,
+                "splunk hec dispatch error; row stays in Postgres audit_events"
+            );
+        }
+    }
+}
+
+/// F5.3-d-ii-dispatch — per-org SIEM dispatcher. Looks up
+/// `org_siem_configs` on every audit event with `org_id IS NOT NULL`
+/// and dispatches via [`dispatch_splunk_hec`] when a matching enabled
+/// row exists. Personal-account events (`org_id IS NULL`) are skipped
+/// — the per-org promise covers org-scoped actions only, same policy
+/// as F5.3-a's tier-aware retention.
+///
+/// No cache in v0 — the lookup is one indexed query per audit event,
+/// well under the audit volume threshold where caching would pay off.
+/// A `Arc<RwLock<HashMap<org_id, (url, token, enabled)>>>` cache layer
+/// can land in a follow-up chunk if volume grows.
+///
+/// Fires IN ADDITION to the global env-var sink (operator's central
+/// SIEM still receives every event; customers' per-org endpoints
+/// receive their org's slice).
+#[derive(Clone)]
+pub struct PerOrgSplunkHecDispatcher {
+    pool: Arc<Pool>,
+    client: Client,
+}
+
+impl std::fmt::Debug for PerOrgSplunkHecDispatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PerOrgSplunkHecDispatcher")
+            .field("pool", &"<Pool>")
+            .finish()
+    }
+}
+
+impl PerOrgSplunkHecDispatcher {
+    /// Construct from a shared pool. The internal `reqwest::Client`
+    /// is built once with the same 10s timeout as
+    /// [`SplunkHecSink`] so a slow customer endpoint can't back up
+    /// the audit pipeline.
+    #[must_use]
+    pub fn new(pool: Arc<Pool>) -> Self {
+        let client = Client::builder()
+            .timeout(HEC_TIMEOUT)
+            .build()
+            .unwrap_or_default();
+        Self { pool, client }
+    }
+}
+
+impl AuditSink for PerOrgSplunkHecDispatcher {
+    fn record(&self, entry: AuditEntry) {
+        // Skip personal-account events — per-org dispatch only
+        // covers org-scoped actions.
+        let Some(org_id) = entry.org_id.clone() else {
+            return;
+        };
+        let pool = Arc::clone(&self.pool);
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            let conn = match pool.get().await {
+                Ok(c) => c,
                 Err(e) => {
                     warn!(
-                        action = %entry.action,
+                        org_id = %org_id,
                         error = %e,
-                        "splunk hec dispatch error; row stays in Postgres audit_events"
+                        "per-org SIEM lookup: pool get failed"
                     );
+                    return;
                 }
-            }
+            };
+            // Single query: WHERE org_id = $1 AND enabled = TRUE AND
+            // kind = 'splunk_hec'. The partial index from migration
+            // 0014 on (org_id) WHERE enabled = TRUE makes this an
+            // index lookup; the `kind` filter happens after.
+            let row = match conn
+                .query_opt(
+                    "SELECT endpoint_url, token \
+                     FROM org_siem_configs \
+                     WHERE org_id = $1::text::uuid \
+                       AND enabled = TRUE \
+                       AND kind = 'splunk_hec'",
+                    &[&org_id],
+                )
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(
+                        org_id = %org_id,
+                        error = %e,
+                        "per-org SIEM lookup: query failed"
+                    );
+                    return;
+                }
+            };
+            let Some(row) = row else {
+                // No per-org config for this org — that's normal,
+                // not an error. The global env-var sink (if wired)
+                // still receives the event.
+                return;
+            };
+            let url: String = row.get(0);
+            let token: String = row.get(1);
+            dispatch_splunk_hec(&client, &url, &token, &entry).await;
         });
     }
 }
