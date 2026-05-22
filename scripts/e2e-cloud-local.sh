@@ -125,10 +125,25 @@ trap cleanup EXIT INT TERM
 # UUID; old tokens remain valid until they expire.
 mint_token() {
     local github_id="$1" email="$2"
-    cargo run -q -p ministr-cli -- cloud mint-test-bearer \
+    # Capture stderr to a file so a transient cargo / db / tracing
+    # failure surfaces in the harness output instead of vanishing. The
+    # F5.2-b-harness-flake noted "zero log lines on failure" — keeping
+    # stderr means future regressions of that shape carry their own
+    # diagnostic instead of needing a separate `bash -x` reproduction.
+    local err_file
+    err_file=$(mktemp)
+    local out
+    if ! out=$(cargo run -q -p ministr-cli -- cloud mint-test-bearer \
         --github-id "${github_id}" \
-        --email "${email}" 2>/dev/null \
-        | jq -r '.token'
+        --email "${email}" 2> "${err_file}"); then
+        echo "DIAGNOSTIC: mint_token exited non-zero — stderr:" >&2
+        head -c 4000 "${err_file}" >&2
+        echo >&2
+        rm -f "${err_file}"
+        return 1
+    fi
+    rm -f "${err_file}"
+    printf '%s\n' "${out}" | jq -r '.token'
 }
 
 # Query Postgres directly for a user_id by github_id. Used by the

@@ -33,7 +33,14 @@ def main() -> int:
         print("usage: e2e-oidc-mock-idp.py <port>", file=sys.stderr)
         return 2
     port = int(sys.argv[1])
-    base = f"http://localhost:{port}"
+    # Issuer must match the harness's `org_oidc_configs.issuer_url`
+    # byte-for-byte (OIDC Discovery 1.0 §4.3 — openidconnect-rs rejects
+    # a discovery doc whose `issuer` differs from the URL prefix used
+    # to discover it). The harness inserts `http://127.0.0.1:${PORT}`
+    # so we use 127.0.0.1 here too. The server binds to 127.0.0.1
+    # below as well, so "localhost" and "127.0.0.1" both resolve, but
+    # the JSON must use the canonical form the harness configured.
+    base = f"http://127.0.0.1:{port}"
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: object) -> None:
