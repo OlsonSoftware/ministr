@@ -79,6 +79,7 @@ impl MinistrServer {
             custom_instructions: None,
             parent_session_id_hint: read_parent_session_env(),
             client_name_hint: Arc::new(std::sync::Mutex::new(None)),
+            tenant_id_hint: Arc::new(std::sync::Mutex::new(None)),
             corpus_registry: None,
         }
     }
@@ -148,6 +149,7 @@ impl MinistrServer {
             custom_instructions: None,
             parent_session_id_hint: read_parent_session_env(),
             client_name_hint: Arc::new(std::sync::Mutex::new(None)),
+            tenant_id_hint: Arc::new(std::sync::Mutex::new(None)),
             corpus_registry: None,
         }
     }
@@ -168,6 +170,11 @@ impl MinistrServer {
     pub fn fork_for_new_session(&self) -> Self {
         let mut forked = self.clone();
         forked.active_session_id = uuid_v4();
+        // F-Test-3b-fix-1 — reset the tenant_id_hint so a fresh
+        // /mcp connection from a different tenant doesn't inherit the
+        // previous tenant's captured subject through the shared Arc.
+        // Each connection re-stamps via its own `initialize` handler.
+        forked.tenant_id_hint = std::sync::Arc::new(std::sync::Mutex::new(None));
         forked
     }
 
@@ -239,6 +246,7 @@ impl MinistrServer {
             custom_instructions: None,
             parent_session_id_hint: read_parent_session_env(),
             client_name_hint: Arc::new(std::sync::Mutex::new(None)),
+            tenant_id_hint: Arc::new(std::sync::Mutex::new(None)),
             corpus_registry: None,
         }
     }

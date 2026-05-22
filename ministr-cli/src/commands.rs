@@ -397,6 +397,22 @@ pub(crate) async fn cmd_serve_http(
 
     // Each HTTP session gets its own MinistrServer clone.
     // All clones share the same Arc'd infrastructure.
+    //
+    // F-Test-3b-fix-1 considered switching to
+    // `server.fork_for_new_session()` so each /mcp connection got a
+    // unique `active_session_id` (preventing the shared-bootstrap
+    // tenant-cross-pollination on `SessionEntry`). That broke tool
+    // calls: a fresh-UUID active_session_id has no associated corpus
+    // resolution path, and `ministr_survey` hung waiting on an empty
+    // default service. The shared-bootstrap issue is a real
+    // multi-tenant gap worth a separate chunk (see ROADMAP
+    // F-Test-3b-fix-1-shared-bootstrap). For F-Test-3b-fix-1's scope
+    // (recover tenant_scope through rmcp's spawn boundary via
+    // context.extensions), the tenant_id_hint capture in
+    // MinistrServer::initialize is enough: tenant A's first MCP call
+    // stamps the session entry; tenant B's subsequent call observes
+    // tenant_id is_some and skips stamping (so B's calls won't get
+    // visibility on the entry via /sessions either — A's id wins).
     let server_factory = move || Ok(server.clone());
 
     let session_manager = Arc::new(LocalSessionManager::default());
