@@ -63,7 +63,7 @@ pub mod tenant_filter;
 pub mod users;
 pub mod webhooks;
 
-pub use saml::{SamlState, saml_routes};
+pub use saml::{SamlState, saml_config_routes, saml_routes};
 
 pub use api_keys::{
     ApiKeyRow, ApiKeysError, ApiKeysState, CreatedApiKey, DEFAULT_API_KEY_SCOPE,

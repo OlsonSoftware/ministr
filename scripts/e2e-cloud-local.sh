@@ -958,6 +958,58 @@ else
     note "skipped F5.1-b SAML assertions — ORG_ID_A not captured"
 fi
 
+# 15) **F5.1-d — per-org SAML config CRUD endpoints (owner-only).**
+#     Owner POST upserts; owner GET returns the config; non-owner
+#     (tenant B who isn't a member of A's org) GET returns 403;
+#     owner DELETE returns 204; subsequent GET returns 404.
+info "F5.1-d: per-org SAML config CRUD endpoints"
+if [[ -n "${ORG_ID_A}" ]]; then
+    # First, DROP the row we INSERT'd directly in the F5.1-b block so
+    # the CRUD POST exercises the INSERT branch of the upsert (not
+    # just UPDATE on the existing row).
+    docker compose -f docker-compose.dev.yml exec -T postgres \
+        psql -U ministr -d ministr_dev -tA \
+        -c "DELETE FROM org_saml_configs WHERE org_id = '${ORG_ID_A}'::uuid;" >/dev/null 2>&1
+
+    SAML_CRUD_BODY='{"idp_entity_id":"https://idp.crud.test/entity","idp_sso_url":"https://idp.crud.test/sso","idp_x509_cert":"-----BEGIN CERTIFICATE-----\nMIIBcrudfixture\n-----END CERTIFICATE-----","sp_entity_id":"http://localhost:8088/orgs/'${ORG_ID_A}'/saml","sp_acs_url":"http://localhost:8088/orgs/'${ORG_ID_A}'/saml/acs"}'
+
+    # Owner POST → 200 with the row JSON.
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/saml/config" "${TOKEN_A}" "${SAML_CRUD_BODY}"
+    assert_status "${RESPONSE_STATUS}" "200" "owner POST /saml/config → 200 (upsert)"
+    GOT_ENTITY=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.idp_entity_id // empty')
+    if [[ "${GOT_ENTITY}" == "https://idp.crud.test/entity" ]]; then
+        pass "POST /saml/config returns the saved row"
+    else
+        fail "POST /saml/config response missing idp_entity_id (got: ${RESPONSE_BODY:0:200})"
+    fi
+
+    # Owner GET → 200 + same row.
+    curl_request GET "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/saml/config" "${TOKEN_A}"
+    assert_status "${RESPONSE_STATUS}" "200" "owner GET /saml/config → 200"
+    GOT_ENFORCE=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.enforce_signed_assertions')
+    if [[ "${GOT_ENFORCE}" == "true" ]]; then
+        pass "GET /saml/config defaults enforce_signed_assertions to true"
+    else
+        fail "GET /saml/config enforce_signed_assertions=${GOT_ENFORCE} (expected true)"
+    fi
+
+    # Non-owner (tenant B) GET → 403 (member_role returns None →
+    # assert_owner_or_admin maps to Forbidden — same shape as
+    # webhooks/audit).
+    curl_request GET "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/saml/config" "${TOKEN_B}"
+    assert_status "${RESPONSE_STATUS}" "403" "non-owner GET /saml/config → 403"
+
+    # Owner DELETE → 204 (no body).
+    curl_request DELETE "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/saml/config" "${TOKEN_A}"
+    assert_status "${RESPONSE_STATUS}" "204" "owner DELETE /saml/config → 204"
+
+    # GET after DELETE → 404.
+    curl_request GET "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/saml/config" "${TOKEN_A}"
+    assert_status "${RESPONSE_STATUS}" "404" "GET /saml/config after DELETE → 404"
+else
+    note "skipped F5.1-d SAML CRUD assertions — ORG_ID_A not captured"
+fi
+
 # ─── summary ──────────────────────────────────────────────────────────
 
 echo

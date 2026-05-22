@@ -79,6 +79,21 @@ pub fn saml_routes(state: SamlState) -> Router {
         .with_state(state)
 }
 
+/// F5.1-d — per-org SAML config CRUD router. Mount under the
+/// `OAuth`-protected branch in `cmd_serve_http`; owner-only ACL
+/// is enforced by each handler via [`assert_owner_or_admin`].
+pub fn saml_config_routes(state: SamlState) -> Router {
+    use axum::routing::post;
+    Router::new()
+        .route(
+            "/api/v1/orgs/{id}/saml/config",
+            post(handle_config_upsert)
+                .get(handle_config_get)
+                .delete(handle_config_delete),
+        )
+        .with_state(state)
+}
+
 async fn handle_metadata(
     State(state): State<SamlState>,
     Path(org_id): Path<String>,
@@ -314,6 +329,280 @@ fn internal_error(context: &str, e: &str) -> Response {
 fn _idp_x509_cert_used_in_f5_1_c(cfg: &OrgSamlConfig) -> &str {
     &cfg.idp_x509_cert
 }
+
+// ── F5.1-d — per-org SAML config CRUD ────────────────────────────────
+
+use axum::Extension;
+use axum::Json;
+use ministr_mcp::auth::tenant::Tenant;
+
+/// Errors surfaced by the SAML config CRUD handlers. Maps to HTTP
+/// statuses inside `IntoResponse`.
+#[derive(Debug)]
+enum SamlConfigError {
+    Unauthenticated,
+    Forbidden,
+    NotFound,
+    Invalid(&'static str),
+    Db(String),
+}
+
+impl IntoResponse for SamlConfigError {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Unauthenticated => {
+                (StatusCode::UNAUTHORIZED, "unauthenticated").into_response()
+            }
+            Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden").into_response(),
+            Self::NotFound => (StatusCode::NOT_FOUND, "not_found").into_response(),
+            Self::Invalid(msg) => (StatusCode::BAD_REQUEST, msg).into_response(),
+            Self::Db(msg) => {
+                tracing::warn!(error = %msg, "saml config db error");
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal").into_response()
+            }
+        }
+    }
+}
+
+/// POST body for `/api/v1/orgs/{id}/saml/config`. All `idp_*` and
+/// `sp_*` fields required; attribute mappings + enforce flag
+/// optional with sensible defaults.
+#[derive(serde::Deserialize)]
+struct SamlConfigUpsertBody {
+    idp_entity_id: String,
+    idp_sso_url: String,
+    idp_x509_cert: String,
+    #[serde(default)]
+    idp_slo_url: Option<String>,
+    sp_entity_id: String,
+    sp_acs_url: String,
+    #[serde(default)]
+    attribute_email: Option<String>,
+    #[serde(default)]
+    attribute_display_name: Option<String>,
+    #[serde(default)]
+    enforce_signed_assertions: Option<bool>,
+}
+
+/// GET response shape for `/api/v1/orgs/{id}/saml/config`. Mirrors
+/// the table columns. `idp_x509_cert` is public `IdP` material; we
+/// don't redact it. SP private key isn't a column yet — if added
+/// (F5.1-c-prep-libxmlsec-crash resolution), it MUST stay
+/// server-side and never appear in this response.
+#[derive(serde::Serialize)]
+struct SamlConfigView {
+    org_id: String,
+    idp_entity_id: String,
+    idp_sso_url: String,
+    idp_x509_cert: String,
+    idp_slo_url: Option<String>,
+    sp_entity_id: String,
+    sp_acs_url: String,
+    attribute_email: String,
+    attribute_display_name: Option<String>,
+    enforce_signed_assertions: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+/// Owner / admin gate. Mirrors `webhooks::assert_owner_or_admin`.
+/// Members get 403; non-members get 403 too (we don't distinguish
+/// "org doesn't exist" from "you're not in it" to avoid org-id
+/// existence probing).
+async fn assert_owner_or_admin(
+    pool: &Pool,
+    org_id: &str,
+    user_id: &str,
+) -> Result<(), SamlConfigError> {
+    let role = crate::orgs::repo::member_role(pool, org_id, user_id)
+        .await
+        .map_err(|e| SamlConfigError::Db(format!("member_role: {e}")))?;
+    if !matches!(role.as_deref(), Some("owner" | "admin")) {
+        return Err(SamlConfigError::Forbidden);
+    }
+    Ok(())
+}
+
+fn validate_upsert(body: &SamlConfigUpsertBody) -> Result<(), SamlConfigError> {
+    for (name, value) in [
+        ("idp_entity_id", body.idp_entity_id.as_str()),
+        ("idp_sso_url", body.idp_sso_url.as_str()),
+        ("sp_entity_id", body.sp_entity_id.as_str()),
+        ("sp_acs_url", body.sp_acs_url.as_str()),
+    ] {
+        if value.trim().is_empty() {
+            return Err(match name {
+                "idp_entity_id" => SamlConfigError::Invalid("idp_entity_id is required"),
+                "idp_sso_url" => SamlConfigError::Invalid("idp_sso_url is required"),
+                "sp_entity_id" => SamlConfigError::Invalid("sp_entity_id is required"),
+                "sp_acs_url" => SamlConfigError::Invalid("sp_acs_url is required"),
+                _ => SamlConfigError::Invalid("required field is empty"),
+            });
+        }
+    }
+    if !body.idp_x509_cert.contains("BEGIN CERTIFICATE") {
+        return Err(SamlConfigError::Invalid(
+            "idp_x509_cert must be a PEM-encoded X.509 certificate",
+        ));
+    }
+    Ok(())
+}
+
+async fn handle_config_upsert(
+    State(state): State<SamlState>,
+    tenant: Option<Extension<Tenant>>,
+    Path(org_id): Path<String>,
+    Json(body): Json<SamlConfigUpsertBody>,
+) -> Result<(StatusCode, Json<SamlConfigView>), SamlConfigError> {
+    let tenant = tenant.ok_or(SamlConfigError::Unauthenticated)?;
+    if parse_uuid(&org_id).is_none() {
+        return Err(SamlConfigError::Invalid("invalid org id"));
+    }
+    assert_owner_or_admin(&state.pool, &org_id, &tenant.0.subject).await?;
+    validate_upsert(&body)?;
+
+    let attr_email = body
+        .attribute_email
+        .as_deref()
+        .unwrap_or("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress");
+    let enforce = body.enforce_signed_assertions.unwrap_or(true);
+
+    let client = state
+        .pool
+        .get()
+        .await
+        .map_err(|e| SamlConfigError::Db(format!("pool get: {e}")))?;
+    let row = client
+        .query_one(
+            "INSERT INTO org_saml_configs (\
+                org_id, idp_entity_id, idp_sso_url, idp_x509_cert, idp_slo_url, \
+                sp_entity_id, sp_acs_url, attribute_email, attribute_display_name, \
+                enforce_signed_assertions) \
+             VALUES ($1::text::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+             ON CONFLICT (org_id) DO UPDATE SET \
+                idp_entity_id = EXCLUDED.idp_entity_id, \
+                idp_sso_url = EXCLUDED.idp_sso_url, \
+                idp_x509_cert = EXCLUDED.idp_x509_cert, \
+                idp_slo_url = EXCLUDED.idp_slo_url, \
+                sp_entity_id = EXCLUDED.sp_entity_id, \
+                sp_acs_url = EXCLUDED.sp_acs_url, \
+                attribute_email = EXCLUDED.attribute_email, \
+                attribute_display_name = EXCLUDED.attribute_display_name, \
+                enforce_signed_assertions = EXCLUDED.enforce_signed_assertions, \
+                updated_at = NOW() \
+             RETURNING idp_entity_id, idp_sso_url, idp_x509_cert, idp_slo_url, \
+                       sp_entity_id, sp_acs_url, attribute_email, \
+                       attribute_display_name, enforce_signed_assertions, \
+                       to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
+                       to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
+            &[
+                &org_id,
+                &body.idp_entity_id,
+                &body.idp_sso_url,
+                &body.idp_x509_cert,
+                &body.idp_slo_url,
+                &body.sp_entity_id,
+                &body.sp_acs_url,
+                &attr_email,
+                &body.attribute_display_name,
+                &enforce,
+            ],
+        )
+        .await
+        .map_err(|e| SamlConfigError::Db(format!("upsert: {e:?}")))?;
+
+    let view = SamlConfigView {
+        org_id: org_id.clone(),
+        idp_entity_id: row.get(0),
+        idp_sso_url: row.get(1),
+        idp_x509_cert: row.get(2),
+        idp_slo_url: row.get(3),
+        sp_entity_id: row.get(4),
+        sp_acs_url: row.get(5),
+        attribute_email: row.get(6),
+        attribute_display_name: row.get(7),
+        enforce_signed_assertions: row.get(8),
+        created_at: row.get(9),
+        updated_at: row.get(10),
+    };
+    Ok((StatusCode::OK, Json(view)))
+}
+
+async fn handle_config_get(
+    State(state): State<SamlState>,
+    tenant: Option<Extension<Tenant>>,
+    Path(org_id): Path<String>,
+) -> Result<Json<SamlConfigView>, SamlConfigError> {
+    let tenant = tenant.ok_or(SamlConfigError::Unauthenticated)?;
+    if parse_uuid(&org_id).is_none() {
+        return Err(SamlConfigError::Invalid("invalid org id"));
+    }
+    assert_owner_or_admin(&state.pool, &org_id, &tenant.0.subject).await?;
+
+    let client = state
+        .pool
+        .get()
+        .await
+        .map_err(|e| SamlConfigError::Db(format!("pool get: {e}")))?;
+    let row = client
+        .query_opt(
+            "SELECT idp_entity_id, idp_sso_url, idp_x509_cert, idp_slo_url, \
+                    sp_entity_id, sp_acs_url, attribute_email, \
+                    attribute_display_name, enforce_signed_assertions, \
+                    to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
+                    to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') \
+             FROM org_saml_configs WHERE org_id = $1::text::uuid",
+            &[&org_id],
+        )
+        .await
+        .map_err(|e| SamlConfigError::Db(format!("select: {e:?}")))?
+        .ok_or(SamlConfigError::NotFound)?;
+
+    Ok(Json(SamlConfigView {
+        org_id: org_id.clone(),
+        idp_entity_id: row.get(0),
+        idp_sso_url: row.get(1),
+        idp_x509_cert: row.get(2),
+        idp_slo_url: row.get(3),
+        sp_entity_id: row.get(4),
+        sp_acs_url: row.get(5),
+        attribute_email: row.get(6),
+        attribute_display_name: row.get(7),
+        enforce_signed_assertions: row.get(8),
+        created_at: row.get(9),
+        updated_at: row.get(10),
+    }))
+}
+
+async fn handle_config_delete(
+    State(state): State<SamlState>,
+    tenant: Option<Extension<Tenant>>,
+    Path(org_id): Path<String>,
+) -> Result<StatusCode, SamlConfigError> {
+    let tenant = tenant.ok_or(SamlConfigError::Unauthenticated)?;
+    if parse_uuid(&org_id).is_none() {
+        return Err(SamlConfigError::Invalid("invalid org id"));
+    }
+    assert_owner_or_admin(&state.pool, &org_id, &tenant.0.subject).await?;
+
+    let client = state
+        .pool
+        .get()
+        .await
+        .map_err(|e| SamlConfigError::Db(format!("pool get: {e}")))?;
+    let deleted = client
+        .execute(
+            "DELETE FROM org_saml_configs WHERE org_id = $1::text::uuid",
+            &[&org_id],
+        )
+        .await
+        .map_err(|e| SamlConfigError::Db(format!("delete: {e:?}")))?;
+    if deleted == 0 {
+        return Err(SamlConfigError::NotFound);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
 
 #[cfg(test)]
 mod tests {
