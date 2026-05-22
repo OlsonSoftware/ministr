@@ -1112,6 +1112,27 @@ pub(crate) async fn cmd_serve_http(
                 );
             }
 
+            // F5.2-d — per-org OIDC config CRUD. Same shape as the
+            // F5.1-d SAML block: owner-only ACL inside each handler,
+            // scope_protected_router supplies the Tenant extension.
+            // Uses a fresh OidcState (no need to share with the
+            // /oidc/login + /oidc/callback wiring above — these are
+            // pool-only handlers).
+            {
+                let oidc_config_state =
+                    ministr_cloud::OidcState::new(Arc::clone(pool));
+                let oidc_config_router = ministr_cloud::oidc_config_routes(oidc_config_state);
+                let oidc_config_protected = ministr_mcp::auth::scope_protected_router(
+                    oidc_config_router,
+                    store.clone(),
+                    "ministr:read",
+                );
+                composed = composed.merge(oidc_config_protected);
+                tracing::info!(
+                    "oidc config CRUD mounted — POST/GET/DELETE /api/v1/orgs/{{id}}/oidc/config"
+                );
+            }
+
             // F2.6 — Atlas v0 pilot. Manifest + per-slug query stubs.
             // Mounted behind `ministr:read` so any paid-tier token
             // admits; the F2.3 `AtlasAccessRule` runs higher up in the
