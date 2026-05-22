@@ -748,17 +748,182 @@ pub async fn ensure_audit_partitions(
 // remaining copy. The read-path handler that streams that file back
 // for compliance queries lands in F5.3-c-ii-archive-read.
 
-/// Outcome of one [`archive_audit_partition_to_dir`] call. Echoed
-/// back in the structured boot/cron log so the operator dashboard
-/// can chart "rows archived per partition per quarter".
+/// Outcome of one archive call. Echoed back in the structured
+/// boot/cron log so the operator dashboard can chart "rows archived
+/// per partition per quarter".
 #[derive(Debug, Clone)]
 pub struct ArchiveOutcome {
-    /// Number of audit-event rows written to the gzipped JSONL file.
+    /// Number of audit-event rows written.
     pub rows: u64,
-    /// Size of the gzipped file on disk, in bytes.
+    /// Size of the gzipped payload, in bytes.
     pub bytes_on_disk: u64,
-    /// Absolute path to the gzipped JSONL file.
-    pub file_path: std::path::PathBuf,
+    /// Human-readable target location — FS path or `blob://account/container/key`.
+    /// Echoed into logs so the operator can locate the archive.
+    pub target: String,
+}
+
+/// F5.3-c-ii-archive-blob-sink — destination for one gzipped audit
+/// partition archive. Two impls today: [`FsArchiveSink`] (local
+/// directory, used by the dev/test harness and on-prem deployments
+/// with a persistent volume mount) and [`AzureBlobArchiveSink`]
+/// (Azure Blob Storage, the natural production target). Both
+/// accept the same key + gzipped body; the dispatcher picks based
+/// on which env vars the operator sets.
+#[allow(async_fn_in_trait)] // We never need to be dyn-compatible; trait users always know the concrete impl at the boundary.
+pub trait ArchiveSink: std::fmt::Debug + Send + Sync {
+    /// Persist `gz_body` at the location identified by `key`. Returns
+    /// a human-readable target string for the structured log (e.g.
+    /// `"file:///var/.../audit_events_y2024q1.jsonl.gz"` for FS or
+    /// `"blob://ministrdata/audit-archive/audit_events_y2024q1.jsonl.gz"`
+    /// for Azure Blob).
+    ///
+    /// `key` is the partition's bare filename (e.g. `"audit_events_y2024q1.jsonl.gz"`).
+    /// Sinks compose this with their configured prefix as appropriate.
+    async fn put(&self, key: &str, gz_body: Vec<u8>) -> Result<String, AuditError>;
+}
+
+/// FS-backed archive sink. Production deployments with a persistent
+/// volume mount can use this; the dev/test harness uses it
+/// unconditionally (Azure Blob is harder to mock locally without
+/// the Azurite emulator).
+#[derive(Debug, Clone)]
+pub struct FsArchiveSink {
+    pub dir: std::path::PathBuf,
+}
+
+impl FsArchiveSink {
+    #[must_use]
+    pub fn new(dir: impl Into<std::path::PathBuf>) -> Self {
+        Self { dir: dir.into() }
+    }
+}
+
+impl ArchiveSink for FsArchiveSink {
+    async fn put(&self, key: &str, gz_body: Vec<u8>) -> Result<String, AuditError> {
+        tokio::fs::create_dir_all(&self.dir)
+            .await
+            .map_err(|e| AuditError::Sql(format!("archive: create_dir_all: {e}")))?;
+        let file_path = self.dir.join(key);
+        tokio::fs::write(&file_path, &gz_body)
+            .await
+            .map_err(|e| {
+                AuditError::Sql(format!("archive: write {}: {e}", file_path.display()))
+            })?;
+        Ok(format!("file://{}", file_path.display()))
+    }
+}
+
+/// F5.3-c-ii-archive-blob-sink — Azure Blob Storage archive sink.
+/// Wraps an `azure_storage_blob::BlobContainerClient`. Uses
+/// `azure_identity` for auth — production pods pass a
+/// `ManagedIdentityCredential`; dev/CI flows pass a
+/// `DeveloperToolsCredential` (which chains `az login`, env vars,
+/// etc).
+///
+/// **Cost posture (zero local validation, zero default spend)**:
+/// the SDK is endpoint-pinned at the production
+/// `<account>.blob.core.windows.net` URL — no Azurite harness is
+/// shipped in this chunk because the SDK's `TokenCredential` path
+/// requires HTTPS and Azurite uses plain HTTP. Customers validate
+/// in their own Azure tenant when they configure
+/// `MINISTR_AUDIT_ARCHIVE_BLOB_ACCOUNT` +
+/// `MINISTR_AUDIT_ARCHIVE_BLOB_CONTAINER`.
+pub struct AzureBlobArchiveSink {
+    account_name: String,
+    container_name: String,
+    container: azure_storage_blob::BlobContainerClient,
+}
+
+impl std::fmt::Debug for AzureBlobArchiveSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AzureBlobArchiveSink")
+            .field("account", &self.account_name)
+            .field("container", &self.container_name)
+            .finish()
+    }
+}
+
+impl AzureBlobArchiveSink {
+    /// Construct using `ManagedIdentityCredential` — the same auth
+    /// pattern as [`crate::session_bundle_store`]. Production
+    /// Container Apps pods auth via their assigned Managed
+    /// Identity automatically. Local dev needs to be run inside an
+    /// Azure VM or with a workaround (operator-driven, so usually
+    /// fine to defer local validation to F5.3-c-ii-archive-blob-pulumi).
+    ///
+    /// # Errors
+    ///
+    /// Fails if `ManagedIdentityCredential::new(None)` errors (rare —
+    /// chain construction is mostly infallible) or if the constructed
+    /// service URL is malformed.
+    pub fn with_managed_identity(
+        account_name: &str,
+        container_name: &str,
+    ) -> Result<Self, AuditError> {
+        let credential = azure_identity::ManagedIdentityCredential::new(None).map_err(|e| {
+            AuditError::Sql(format!("archive blob: ManagedIdentityCredential: {e}"))
+        })?;
+        Self::with_credential(account_name, container_name, credential)
+    }
+
+    /// Construct from explicit account + container + credential.
+    /// Pulled out so tests and future caller paths (e.g. a Pulumi
+    /// init job that uses a different credential chain) can pass
+    /// their own. Production code uses [`with_default_credential`].
+    ///
+    /// # Errors
+    ///
+    /// Fails if the constructed service URL is malformed (rare —
+    /// validates `account_name` is a syntactic host label) or the
+    /// SDK's pipeline construction errors.
+    pub fn with_credential(
+        account_name: &str,
+        container_name: &str,
+        credential: std::sync::Arc<dyn azure_core::credentials::TokenCredential>,
+    ) -> Result<Self, AuditError> {
+        let service_url = azure_core::http::Url::parse(&format!(
+            "https://{account_name}.blob.core.windows.net/"
+        ))
+        .map_err(|e| AuditError::Sql(format!("archive blob: parse service url: {e}")))?;
+        let service = azure_storage_blob::BlobServiceClient::new(
+            service_url,
+            Some(credential),
+            None,
+        )
+        .map_err(|e| AuditError::Sql(format!("archive blob: service client: {e}")))?;
+        let container = service.blob_container_client(container_name);
+        Ok(Self {
+            account_name: account_name.to_string(),
+            container_name: container_name.to_string(),
+            container,
+        })
+    }
+}
+
+impl ArchiveSink for AzureBlobArchiveSink {
+    async fn put(&self, key: &str, gz_body: Vec<u8>) -> Result<String, AuditError> {
+        // BlobClient::upload_blob: PUT block blob with the supplied
+        // bytes. overwrite=false by default — but for archive files
+        // we WANT overwrite-safe semantics because a retry after a
+        // transient failure must succeed. Default content-type
+        // "application/gzip" so the customer's downstream tooling
+        // (Azure portal, azcopy) recognises it.
+        let blob = self.container.blob_client(key);
+        // `RequestContent::from(Vec<u8>)` wraps as a `Bytes` body —
+        // BlobClient::upload signs the request via the pipeline's
+        // bearer-token policy. Block-blob default is overwrite-safe;
+        // audit-file contents for a given partition are idempotent
+        // (same SELECT → same JSONL) so a retry after a transient
+        // failure is harmless.
+        let body = azure_core::http::RequestContent::from(gz_body);
+        blob.upload(body, None)
+            .await
+            .map_err(|e| AuditError::Sql(format!("archive blob: upload {key}: {e}")))?;
+        Ok(format!(
+            "blob://{}/{}/{}",
+            self.account_name, self.container_name, key
+        ))
+    }
 }
 
 /// F5.3-c-ii-archive-fs — archive one `audit_events` partition to a
@@ -772,19 +937,45 @@ pub struct ArchiveOutcome {
 /// the name is validated via [`parse_audit_partition_name`] before
 /// touching the filesystem).
 ///
+/// Backward-compat thin wrapper for
+/// [`archive_audit_partition_with_sink`] with an [`FsArchiveSink`].
+/// Existing callers (CLI default, harness) keep working through the
+/// FS path; production deployments opt into Azure Blob via the
+/// `_with_sink` form + [`AzureBlobArchiveSink`].
+///
 /// # Errors
 ///
-/// - [`AuditError::Invalid`] when the partition name doesn't match
-///   the expected pattern or the partition doesn't exist in
-///   `pg_inherits`.
-/// - [`AuditError::GetConn`] when the pool refuses a connection.
-/// - [`AuditError::Sql`] when SELECT / DETACH / DROP fail.
-/// - [`AuditError::Io`] when the gzipped file can't be written.
-#[allow(clippy::too_many_lines)] // validation + SELECT + serialize + FS write + DETACH/DROP → cohesive flow
+/// Surfaces whatever the wrapped call returns.
 pub async fn archive_audit_partition_to_dir(
     pool: &Pool,
     partition_name: &str,
     archive_dir: &std::path::Path,
+) -> Result<ArchiveOutcome, AuditError> {
+    let sink = FsArchiveSink::new(archive_dir);
+    archive_audit_partition_with_sink(pool, partition_name, &sink).await
+}
+
+/// F5.3-c-ii-archive-fs + -blob-sink — archive one `audit_events`
+/// partition through the supplied [`ArchiveSink`], then DETACH +
+/// DROP it from the live database inside the same transaction.
+///
+/// `partition_name` MUST match the migration-0013 pattern
+/// (`audit_events_y{YYYY}q{N}`) — anything else is rejected as a
+/// defense-in-depth measure against path-traversal via a malicious
+/// DB row.
+///
+/// # Errors
+///
+/// - [`AuditError::Sql`] when the partition name doesn't match the
+///   expected pattern, the partition doesn't exist in `pg_inherits`,
+///   the SELECT / DETACH / DROP statements fail, or the sink's
+///   `put` errors.
+/// - [`AuditError::GetConn`] when the pool refuses a connection.
+#[allow(clippy::too_many_lines)] // validation + SELECT + serialize + sink put + DETACH/DROP → cohesive flow
+pub async fn archive_audit_partition_with_sink<S: ArchiveSink + ?Sized>(
+    pool: &Pool,
+    partition_name: &str,
+    sink: &S,
 ) -> Result<ArchiveOutcome, AuditError> {
     // Defense-in-depth: validate the partition name before any
     // filesystem path construction. parse_audit_partition_name
@@ -895,19 +1086,15 @@ pub async fn archive_audit_partition_to_dir(
             .map_err(|e| AuditError::Sql(format!("archive: gzip finish: {e}")))?;
     }
 
-    // Write to disk. tokio::fs::create_dir_all is idempotent if the
-    // dir already exists. Path construction is safe due to the
-    // earlier parse_audit_partition_name validation.
-    tokio::fs::create_dir_all(archive_dir)
-        .await
-        .map_err(|e| AuditError::Sql(format!("archive: create_dir_all: {e}")))?;
-    let file_path = archive_dir.join(format!("{partition_name}.jsonl.gz"));
-    tokio::fs::write(&file_path, &gz_buf)
-        .await
-        .map_err(|e| {
-            AuditError::Sql(format!("archive: write {}: {e}", file_path.display()))
-        })?;
+    // Hand the gzipped buffer to the configured sink. Both
+    // FsArchiveSink (local dir) and AzureBlobArchiveSink (Azure
+    // Blob) implement the same trait — the dispatch happens at the
+    // CLI / cmd_serve_http edge based on which env vars the
+    // operator set. The sink returns a human-readable target string
+    // for the structured log.
     let bytes_on_disk = u64::try_from(gz_buf.len()).unwrap_or(u64::MAX);
+    let key = format!("{partition_name}.jsonl.gz");
+    let target = sink.put(&key, gz_buf).await?;
 
     // DETACH + DROP. Both inside the same transaction so a crash
     // between them is rolled back. The file is already written; if
@@ -929,7 +1116,7 @@ pub async fn archive_audit_partition_to_dir(
     Ok(ArchiveOutcome {
         rows: row_count,
         bytes_on_disk,
-        file_path,
+        target,
     })
 }
 
