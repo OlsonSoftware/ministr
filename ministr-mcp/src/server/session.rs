@@ -127,6 +127,17 @@ impl MinistrServer {
         // `scope_tenant`. Mirrors the parent / client_name stamping
         // shape so the hint is captured on every resolution rather
         // than only on first-create.
+        //
+        // F-Test-3b finding (2026-05-21): on the cloud `/mcp` path,
+        // `tenant_scope::current()` ALWAYS returns `None` here — the
+        // scope_tenant middleware DOES wrap the rmcp `StreamableHttpService`
+        // (`cmd_serve_http` line ~433), but rmcp's internal request
+        // dispatcher spawns the tool handler in a task that doesn't
+        // inherit tokio task-locals. So every tool-call session is left
+        // unstamped, and the F6.2-e-followup-ii filters route it to the
+        // "self-hosted, admit nothing for scoped callers" arm of
+        // `admit_session_for_scope`. Tracked as F-Test-3b-blocker in
+        // ROADMAP discovered findings.
         if entry.tenant_id.is_none()
             && let Some(subject) = crate::tenant_scope::current()
         {
