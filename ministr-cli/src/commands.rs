@@ -2743,16 +2743,51 @@ pub(crate) async fn cmd_audit_archive(
     let pool = ministr_cloud::connect(&pg_url)
         .into_diagnostic()
         .wrap_err("open cloud postgres pool")?;
-    tracing::info!(partition, archive_dir = %archive_dir.display(), "audit archive starting");
-    let outcome = ministr_cloud::archive_audit_partition_to_dir(&pool, partition, archive_dir)
-        .await
+
+    // F5.3-c-ii-archive-blob-sink — dispatch on env vars. When the
+    // operator sets MINISTR_AUDIT_ARCHIVE_BLOB_{ACCOUNT,CONTAINER}
+    // the Azure sink takes precedence (assumes the customer has
+    // wired DefaultAzureCredential — `az login` locally or Managed
+    // Identity in Container Apps). Falls back to the FS sink at
+    // `--archive-dir` when the Azure vars are absent.
+    let blob_account = std::env::var("MINISTR_AUDIT_ARCHIVE_BLOB_ACCOUNT").ok();
+    let blob_container = std::env::var("MINISTR_AUDIT_ARCHIVE_BLOB_CONTAINER").ok();
+    let outcome = if let (Some(account), Some(container)) = (blob_account, blob_container) {
+        tracing::info!(
+            partition,
+            account = %account,
+            container = %container,
+            "audit archive starting (Azure Blob sink)"
+        );
+        let sink = ministr_cloud::AzureBlobArchiveSink::with_managed_identity(
+            &account,
+            &container,
+        )
         .into_diagnostic()
-        .wrap_err("archive audit partition")?;
+        .wrap_err(
+            "build AzureBlobArchiveSink (requires Managed Identity — run from a \
+             Container App or Azure VM, OR fall back to FS sink via --archive-dir)",
+        )?;
+        ministr_cloud::archive_audit_partition_with_sink(&pool, partition, &sink)
+            .await
+            .into_diagnostic()
+            .wrap_err("archive audit partition (blob)")?
+    } else {
+        tracing::info!(
+            partition,
+            archive_dir = %archive_dir.display(),
+            "audit archive starting (FS sink)"
+        );
+        ministr_cloud::archive_audit_partition_to_dir(&pool, partition, archive_dir)
+            .await
+            .into_diagnostic()
+            .wrap_err("archive audit partition (fs)")?
+    };
     tracing::info!(
         partition,
         rows = outcome.rows,
         bytes_on_disk = outcome.bytes_on_disk,
-        file_path = %outcome.file_path.display(),
+        target = %outcome.target,
         "audit archive complete"
     );
     Ok(())
