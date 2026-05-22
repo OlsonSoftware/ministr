@@ -755,6 +755,56 @@ else
     note "skipped tenant A/B export assertions — A's session id was not captured"
 fi
 
+# 12) **F-Test-3b-fix-1-shared-bootstrap — per-connection SessionEntry.**
+#     Pre-fix-1-shared-bootstrap, `server_factory` used `server.clone()`
+#     so all /mcp connections shared the bootstrap `active_session_id`.
+#     First tenant stamped the entry; subsequent tenants' tool-call
+#     activity mutated the shared shadow (real cross-tenant data leak
+#     via F6.2 export). Fix: `server.fork_for_new_session()` gives each
+#     connection a fresh uuid_v4 active_session_id. This assertion
+#     proves: tenant B's MCP call yields a DISTINCT session_id from
+#     tenant A's (not the same shared bootstrap), AND /sessions for
+#     each tenant returns only their own session.
+info "F-Test-3b-fix-1-shared-bootstrap: tenant B drives its own MCP call"
+mcp_initialize_and_call "${TOKEN_B}" "ministr_survey" '{"query":"function","top_k":1}' >/dev/null || true
+
+B_SESSION_ID=""
+SESSIONS_B_AFTER_OWN_MCP="0"
+attempts=0
+while [[ "${attempts}" -lt 60 ]]; do
+    curl_request GET "${ENDPOINT}/api/v1/sessions" "${TOKEN_B}"
+    SESSIONS_B_AFTER_OWN_MCP=$(printf '%s' "${RESPONSE_BODY}" | jq 'length' 2>/dev/null || echo "ERR")
+    if [[ "${SESSIONS_B_AFTER_OWN_MCP}" =~ ^[1-9][0-9]*$ ]]; then
+        B_SESSION_ID=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.[0].session_id')
+        break
+    fi
+    attempts=$((attempts + 1))
+    sleep 0.5
+done
+if [[ -n "${B_SESSION_ID}" ]]; then
+    pass "tenant B /sessions count >= 1 after own MCP tool call (fork gives B its own SessionEntry)"
+    if [[ "${B_SESSION_ID}" != "${A_SESSION_ID}" ]]; then
+        pass "tenant B session_id differs from tenant A's (no shared-bootstrap contamination)"
+    else
+        fail "tenant B session_id == tenant A's — shared-bootstrap leak still present (A=${A_SESSION_ID})"
+    fi
+else
+    fail "tenant B /sessions count=${SESSIONS_B_AFTER_OWN_MCP} after own MCP — fork didn't create per-connection entry"
+fi
+
+# Re-verify tenant A's /sessions still returns only A's session
+# (not A + B). Without the fork, B's call would have mutated A's
+# shadow and /sessions for A would still be size 1 (with the now
+# also-shared session). With the fork, A's /sessions still shows
+# just A's session_id.
+curl_request GET "${ENDPOINT}/api/v1/sessions" "${TOKEN_A}"
+A_SESSIONS_AFTER_B=$(printf '%s' "${RESPONSE_BODY}" | jq -r '[.[].session_id] | join(",")' 2>/dev/null)
+if [[ "${A_SESSIONS_AFTER_B}" == "${A_SESSION_ID}" ]]; then
+    pass "tenant A /sessions still returns only A's session id after B's MCP call"
+else
+    fail "tenant A /sessions changed after B's MCP call — expected ${A_SESSION_ID}, got ${A_SESSIONS_AFTER_B}"
+fi
+
 # ─── summary ──────────────────────────────────────────────────────────
 
 echo
