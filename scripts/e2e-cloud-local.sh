@@ -171,6 +171,65 @@ curl_request() {
     rm -f "${tmp}"
 }
 
+# F-Test-3b — MCP Streamable HTTP handshake. Drives initialize +
+# notifications/initialized + a single tools/call so the cloud's
+# `ensure_session_mut` stamps a tenant-scoped session in the
+# in-memory registry. Side-effect: prints the Mcp-Session-Id header
+# value on stdout so callers can capture it; response bodies are
+# discarded (rmcp returns SSE which we don't need to parse here —
+# the side-effect of session registration is the only thing we
+# care about for the F-Test-3b round-trip).
+mcp_initialize_and_call() {
+    local bearer="$1" tool_name="$2"
+    # bash quirk: `${3:-{}}` appends an extra `}` to the actual value
+    # because the parser greedily closes parameter expansion on the
+    # first `}`. Use an unambiguous default with an explicit branch.
+    local args_json
+    if [[ -z "${3:-}" ]]; then
+        args_json='{}'
+    else
+        args_json="$3"
+    fi
+    local init_out mcp_sid
+    init_out=$(curl -sS --max-time 15 -D - -o /dev/null -X POST "${ENDPOINT}/mcp" \
+        -H "authorization: Bearer ${bearer}" \
+        -H 'content-type: application/json' \
+        -H 'accept: application/json, text/event-stream' \
+        -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"e2e","version":"0.0.0"}}}')
+    mcp_sid=$(printf '%s' "${init_out}" | awk 'BEGIN{IGNORECASE=1}/^mcp-session-id:/ {print $2}' | tr -d '\r\n')
+    if [[ -z "${mcp_sid}" ]]; then
+        echo "mcp_initialize_and_call: no Mcp-Session-Id header returned" >&2
+        return 1
+    fi
+    local notif_status
+    notif_status=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' \
+        -X POST "${ENDPOINT}/mcp" \
+        -H "authorization: Bearer ${bearer}" \
+        -H "mcp-session-id: ${mcp_sid}" \
+        -H 'content-type: application/json' \
+        -H 'accept: application/json, text/event-stream' \
+        -d '{"jsonrpc":"2.0","method":"notifications/initialized"}')
+    info "  mcp notify status=${notif_status} sid=${mcp_sid:0:8}…" >&2
+    # tools/call returns SSE; --max-time bounds the wait. Body is
+    # discarded — the side-effect we want is ensure_session_mut firing
+    # inside the handler and stamping the SessionEntry's tenant_id.
+    local call_status body_tmp
+    body_tmp=$(mktemp)
+    printf '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"%s","arguments":%s}}' \
+        "${tool_name}" "${args_json}" > "${body_tmp}"
+    call_status=$(curl -sS --max-time 90 -o /dev/null -w '%{http_code}' \
+        -X POST "${ENDPOINT}/mcp" \
+        -H "authorization: Bearer ${bearer}" \
+        -H "mcp-session-id: ${mcp_sid}" \
+        -H 'content-type: application/json' \
+        -H 'accept: application/json, text/event-stream' \
+        --data-binary "@${body_tmp}" \
+        || echo "TIMEOUT")
+    rm -f "${body_tmp}"
+    info "  mcp tools/call status=${call_status}" >&2
+    printf '%s' "${mcp_sid}"
+}
+
 assert_status() {
     local actual="$1" expected="$2" name="$3"
     if [[ "${actual}" == "${expected}" ]]; then
@@ -617,6 +676,84 @@ curl_request POST "${ENDPOINT}/api/v1/sessions/${SYNTH_ID}/export" "${TOKEN_A}"
 assert_status "${RESPONSE_STATUS}" "404" "tenant A /sessions/{synthetic}/export → 404"
 curl_request POST "${ENDPOINT}/api/v1/sessions/${SYNTH_ID}/export" "${TOKEN_B}"
 assert_status "${RESPONSE_STATUS}" "404" "tenant B /sessions/{synthetic}/export → 404 (existence-resistant)"
+
+# 11) **F-Test-3b — full session bundle round-trip via MCP /mcp.**
+#     Drives a real MCP Streamable HTTP handshake as tenant A so
+#     `MinistrServer::initialize` captures tenant_id via context.extensions
+#     (F-Test-3b-fix-1) and the subsequent tools/call's ensure_session_mut
+#     stamps the SessionEntry. Then verifies the session is visible only
+#     to tenant A and that POST /sessions/{id}/export returns a tar bundle
+#     for A but 404 for B. Tool choice: `ministr_survey` because its
+#     handler calls `ensure_session_mut` (the trigger that stamps
+#     tenant_id on the SessionEntry). ministr_toc reads structure
+#     without firing ensure_session_mut, so it doesn't exercise the
+#     tenant-stamping path the round-trip depends on.
+info "F-Test-3b: tenant A drives an MCP handshake + tools/call ministr_survey"
+mcp_initialize_and_call "${TOKEN_A}" "ministr_survey" '{"query":"function","top_k":1}' >/dev/null || true
+
+# Poll /sessions for up to 30s — ministr_survey's ensure_session_mut
+# call only fires AFTER the backend returns results, which can lag
+# behind the curl --max-time bound when the daemon is busy indexing
+# the cwd corpus (the auto-discovered ingestion runs concurrently in
+# this harness). The poll deals with both: a quick path where the
+# stamp lands immediately, and a slow path where the cloud finishes
+# the survey a few seconds after the curl returned.
+A_SESSION_ID=""
+SESSIONS_A_AFTER_MCP="0"
+attempts=0
+while [[ "${attempts}" -lt 60 ]]; do
+    curl_request GET "${ENDPOINT}/api/v1/sessions" "${TOKEN_A}"
+    SESSIONS_A_AFTER_MCP=$(printf '%s' "${RESPONSE_BODY}" | jq 'length' 2>/dev/null || echo "ERR")
+    if [[ "${SESSIONS_A_AFTER_MCP}" =~ ^[1-9][0-9]*$ ]]; then
+        A_SESSION_ID=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.[0].session_id')
+        break
+    fi
+    attempts=$((attempts + 1))
+    sleep 0.5
+done
+if [[ -n "${A_SESSION_ID}" ]]; then
+    pass "tenant A /sessions count >= 1 after MCP tool call (tenant_id_hint capture works)"
+else
+    fail "tenant A /sessions count=${SESSIONS_A_AFTER_MCP} after 30s — tenant_id_hint capture broken · body=${RESPONSE_BODY:0:200}"
+fi
+
+curl_request GET "${ENDPOINT}/api/v1/sessions" "${TOKEN_B}"
+SESSIONS_B_AFTER_MCP=$(printf '%s' "${RESPONSE_BODY}" | jq 'length' 2>/dev/null || echo "ERR")
+if [[ "${SESSIONS_B_AFTER_MCP}" == "0" ]]; then
+    pass "tenant B /sessions still empty after tenant A's MCP call (isolation preserved)"
+else
+    fail "tenant B /sessions count=${SESSIONS_B_AFTER_MCP} — cross-tenant leak after MCP"
+fi
+
+if [[ -n "${A_SESSION_ID}" ]]; then
+    # Tenant A exports the session — expect 200 + tar bytes.
+    EXPORT_TMP=$(mktemp -t e2e-export.XXXXXX.tar)
+    EXPORT_STATUS=$(curl -sS -o "${EXPORT_TMP}" -w '%{http_code}' \
+        -X POST "${ENDPOINT}/api/v1/sessions/${A_SESSION_ID}/export" \
+        -H "authorization: Bearer ${TOKEN_A}")
+    if [[ "${EXPORT_STATUS}" == "200" ]]; then
+        pass "tenant A POST /sessions/{real-id}/export → 200"
+        # The tar's first 5 bytes after offset 257 are the ustar magic;
+        # tar -tf walking it confirms the archive shape AND surfaces
+        # the manifest.json entry.
+        if tar -tf "${EXPORT_TMP}" 2>/dev/null | grep -q '^manifest\.json$'; then
+            pass "exported tar contains manifest.json (F6.2-a wire shape)"
+        else
+            fail "exported tar missing manifest.json (got entries: $(tar -tf "${EXPORT_TMP}" 2>/dev/null | tr '\n' ',' | head -c 100))"
+        fi
+    else
+        fail "tenant A POST /sessions/{real-id}/export → expected 200, got ${EXPORT_STATUS}"
+    fi
+    rm -f "${EXPORT_TMP}"
+
+    # Tenant B tries to export tenant A's real session id — must 404
+    # (existence-resistant per F6.2-e-followup-ii). This is the
+    # higher-bar variant of the synthetic-id check above.
+    curl_request POST "${ENDPOINT}/api/v1/sessions/${A_SESSION_ID}/export" "${TOKEN_B}"
+    assert_status "${RESPONSE_STATUS}" "404" "tenant B POST /sessions/{tenant-A-real-id}/export → 404 (existence-resistant)"
+else
+    note "skipped tenant A/B export assertions — A's session id was not captured"
+fi
 
 # ─── summary ──────────────────────────────────────────────────────────
 
