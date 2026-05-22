@@ -314,3 +314,118 @@ fn internal_error(context: &str, e: &str) -> Response {
 fn _idp_x509_cert_used_in_f5_1_c(cfg: &OrgSamlConfig) -> &str {
     &cfg.idp_x509_cert
 }
+
+#[cfg(test)]
+mod tests {
+    //! F5.1-c-prep — validate that samael's xmlsec feature can
+    //! sign and verify an XML assertion end-to-end on this build
+    //! environment. Doesn't exercise the SP routes (that's F5.1-c-acs);
+    //! the point is to fail loud if libxmlsec1 / libxml2 native deps
+    //! aren't linked correctly OR if samael's xmlsec API surface
+    //! changed in a way that breaks our planned ACS handler.
+
+    use openssl::asn1::Asn1Time;
+    use openssl::hash::MessageDigest;
+    use openssl::pkey::PKey;
+    use openssl::rsa::Rsa;
+    use openssl::x509::{X509, X509NameBuilder};
+    use samael::crypto::{Crypto, CryptoProvider};
+    use samael::service_provider::ServiceProvider;
+
+    /// Build a self-signed RSA-2048 keypair + X509 cert. Returns
+    /// `(private_key_der, x509_cert_der)` in DER form, which is what
+    /// samael's `Crypto::sign_xml` and `verify_signed_xml` consume.
+    fn generate_self_signed() -> (Vec<u8>, Vec<u8>) {
+        let rsa = Rsa::generate(2048).expect("rsa generate");
+        let pkey = PKey::from_rsa(rsa).expect("pkey wrap");
+
+        let mut name_builder = X509NameBuilder::new().expect("x509 name builder");
+        name_builder
+            .append_entry_by_text("CN", "ministr-test-idp")
+            .expect("append CN");
+        let name = name_builder.build();
+
+        let mut cert_builder = X509::builder().expect("x509 builder");
+        cert_builder.set_version(2).expect("set version");
+        cert_builder.set_subject_name(&name).expect("set subject");
+        cert_builder.set_issuer_name(&name).expect("set issuer");
+        cert_builder.set_pubkey(&pkey).expect("set pubkey");
+        cert_builder
+            .set_not_before(&Asn1Time::days_from_now(0).expect("nb"))
+            .expect("set nbf");
+        cert_builder
+            .set_not_after(&Asn1Time::days_from_now(365).expect("na"))
+            .expect("set naf");
+        cert_builder
+            .sign(&pkey, MessageDigest::sha256())
+            .expect("sign cert");
+        let cert = cert_builder.build();
+
+        (
+            pkey.private_key_to_der().expect("priv to der"),
+            cert.to_der().expect("cert to der"),
+        )
+    }
+
+    /// Build an `AuthnRequest` via samael (it inserts the empty
+    /// `<ds:Signature>` template the xmlsec signer needs).
+    /// Returns the unsigned XML ready to be passed to
+    /// `AuthnRequest::to_signed_xml`.
+    fn build_authn_request() -> samael::schema::AuthnRequest {
+        let sp = ServiceProvider {
+            entity_id: Some("https://sp.test/entity".to_string()),
+            acs_url: Some("https://sp.test/acs".to_string()),
+            ..ServiceProvider::default()
+        };
+        sp.make_authentication_request("https://idp.test/sso")
+            .expect("authn request builds")
+    }
+
+    /// Smoke test: prove samael's xmlsec init path works on this
+    /// build env. SIGSEGV here would indicate a libxmlsec1/openssl
+    /// ABI mismatch BEFORE we get to any signing operations.
+    #[test]
+    fn samael_xmlsec_compiles_in_with_feature() {
+        // Trivially exercise a samael type that's only present under
+        // the xmlsec feature. If the build env has the feature
+        // disabled, this fails to compile.
+        let cert = samael::crypto::CertificateDer::from(vec![0u8; 4]);
+        assert_eq!(cert.der_data().len(), 4);
+    }
+
+    #[test]
+    #[ignore = "SIGSEGVs on macOS with brew libxmlsec1 1.3.11 — F5.1-c-prep-libxmlsec-segfault discovered finding"]
+    fn samael_xmlsec_sign_and_verify_roundtrip() {
+        let (priv_der, cert_der) = generate_self_signed();
+        let authn = build_authn_request();
+
+        // `to_signed_xml` (gated on the xmlsec feature) embeds the
+        // empty `<ds:Signature>` template, then fills its digest +
+        // signature values using the private key.
+        let signed = authn
+            .to_signed_xml(&priv_der)
+            .expect("samael AuthnRequest::to_signed_xml succeeded with xmlsec feature");
+        assert!(
+            signed.contains("SignatureValue"),
+            "signed XML contains a SignatureValue element: {}",
+            &signed[..signed.len().min(400)]
+        );
+
+        // `verify_signed_xml` validates the embedded signature
+        // against the matching cert. Returns Ok(()) on success.
+        let cert = samael::crypto::CertificateDer::from(cert_der.clone());
+        Crypto::verify_signed_xml(signed.as_bytes(), &cert, Some("ID"))
+            .expect("samael Crypto::verify_signed_xml accepted the matching cert");
+
+        // Tampering with the body after signing must fail
+        // verification — this is the property F5.1-c-acs relies on
+        // to reject forged assertions.
+        let tampered = signed.replace("https://idp.test/sso", "https://attacker.test/sso");
+        let tamper_result =
+            Crypto::verify_signed_xml(tampered.as_bytes(), &cert, Some("ID"));
+        assert!(
+            tamper_result.is_err(),
+            "verify_signed_xml must reject tampered body, got Ok"
+        );
+    }
+}

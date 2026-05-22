@@ -88,13 +88,17 @@ getrandom = "0.3"
 # standard 2026 Rust JWT crate (no transitive openssl, pure-Rust
 # ring/rustls under the hood).
 jsonwebtoken = "9"
-# F5.1-b — SAML 2.0 service-provider primitives. Pinned to 0.0.20
-# (Mar 2026, the latest release as of /roadmap research). The
-# `xmlsec` feature pulls in libxml2 + xmlsec1 native libraries and
-# is needed for assertion-signature verification (lands in F5.1-c);
-# kept off here so F5.1-b's metadata + AuthnRequest generation
-# stays pure-Rust + dep-light.
-samael = { version = "0.0.20", default-features = false }
+# F5.1-b / F5.1-c-prep — SAML 2.0 service-provider primitives.
+# Pinned to 0.0.20 (Mar 2026, the latest release as of /roadmap
+# research). The default features include `xmlsec`, which pulls in
+# libxml2 + libxmlsec1 native libraries (install via
+# `brew install libxmlsec1` on macOS or `apt-get install
+# libxmlsec1-dev` on Debian/Ubuntu). xmlsec is required for
+# assertion-signature verification at the POST /saml/acs endpoint
+# (F5.1-c-acs). F5.1-b's metadata + AuthnRequest endpoints don't
+# need xmlsec at runtime, but enabling it crate-wide here lets the
+# whole SAML module share one compilation surface.
+samael = "0.0.20"
 # F5.1-b — SAML HTTP-Redirect binding requires DEFLATE-compressed
 # + base64-encoded `SAMLRequest` query parameter per SAML Bindings
 # §3.4.4. samael doesn't expose a helper for unsigned redirects,
@@ -111,3 +115,8 @@ tower = { version = "0.5", features = ["util"] }
 # so the embedder's 429-Retry-After backoff tests don't wait wall-clock
 # seconds. Not in `full` because it changes runtime behavior.
 tokio = { workspace = true, features = ["test-util"] }
+# F5.1-c-prep — test-only dep used to generate a self-signed
+# RSA key + cert for the sign+verify roundtrip test in saml.rs.
+# samael's xmlsec feature already pulls openssl transitively;
+# making it a direct dev-dep keeps the test self-documenting.
+openssl = "0.10.80"
