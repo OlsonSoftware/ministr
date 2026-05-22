@@ -1169,6 +1169,26 @@ pub(crate) async fn cmd_serve_http(
                 );
             }
 
+            // F5.3-d-ii-config — per-org SIEM config CRUD. Owner-only
+            // ACL inside each handler; scope_protected_router supplies
+            // the Tenant extension. Lookup state for dispatch will
+            // land in F5.3-d-ii-dispatch; this CRUD just persists.
+            {
+                let siem_config_state =
+                    ministr_cloud::SiemConfigState::from_arc(Arc::clone(pool));
+                let siem_config_router =
+                    ministr_cloud::siem_config_routes(siem_config_state);
+                let siem_config_protected = ministr_mcp::auth::scope_protected_router(
+                    siem_config_router,
+                    store.clone(),
+                    "ministr:read",
+                );
+                composed = composed.merge(siem_config_protected);
+                tracing::info!(
+                    "siem config CRUD mounted — POST/GET/DELETE /api/v1/orgs/{{id}}/siem/config"
+                );
+            }
+
             // F2.6 — Atlas v0 pilot. Manifest + per-slug query stubs.
             // Mounted behind `ministr:read` so any paid-tier token
             // admits; the F2.3 `AtlasAccessRule` runs higher up in the

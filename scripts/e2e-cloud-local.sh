@@ -1667,6 +1667,84 @@ else
     fail "HEC event missing the action field — body=${HEC_FIRST:0:200}"
 fi
 
+# 26) **F5.3-d-ii-config — per-org SIEM config CRUD.** Mirrors the
+#     F5.2-d OIDC CRUD shape. Dispatch wiring lands in F5.3-d-ii-dispatch.
+info "F5.3-d-ii-config: per-org SIEM config CRUD endpoints"
+if [[ -n "${ORG_ID_A}" ]]; then
+    # First, ensure no row exists (the dispatch chunk will seed via
+    # CRUD; for the wire-shape assertions we want INSERT, not UPDATE).
+    docker compose -f docker-compose.dev.yml exec -T postgres \
+        psql -U ministr -d ministr_dev -tA \
+        -c "DELETE FROM org_siem_configs WHERE org_id = '${ORG_ID_A}'::uuid;" >/dev/null 2>&1
+
+    SIEM_CRUD_TOKEN="hec-tenant-a-secret-${RUN_TS}"
+    SIEM_CRUD_BODY=$(cat <<EOF
+{"kind":"splunk_hec","endpoint_url":"https://splunk.tenant-a.test:8088/services/collector/event","token":"${SIEM_CRUD_TOKEN}","enabled":true}
+EOF
+)
+
+    # Owner POST → 200 with the row JSON.
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/siem/config" "${TOKEN_A}" "${SIEM_CRUD_BODY}"
+    assert_status "${RESPONSE_STATUS}" "200" "owner POST /siem/config → 200 (upsert)"
+    GOT_KIND=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.kind // empty')
+    if [[ "${GOT_KIND}" == "splunk_hec" ]]; then
+        pass "POST /siem/config returns the saved kind"
+    else
+        fail "POST /siem/config missing kind (got: ${RESPONSE_BODY:0:200})"
+    fi
+    GOT_TOKEN=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.token // empty')
+    if [[ "${GOT_TOKEN}" == "[REDACTED]" ]]; then
+        pass "POST /siem/config redacts token in response"
+    else
+        fail "POST /siem/config LEAKED token: '${GOT_TOKEN:0:40}'"
+    fi
+
+    # Owner GET → 200 + REDACTED token.
+    curl_request GET "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/siem/config" "${TOKEN_A}"
+    assert_status "${RESPONSE_STATUS}" "200" "owner GET /siem/config → 200"
+    GOT_GET_TOKEN=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.token // empty')
+    if [[ "${GOT_GET_TOKEN}" == "[REDACTED]" ]]; then
+        pass "GET /siem/config redacts token"
+    else
+        fail "GET /siem/config LEAKED token: '${GOT_GET_TOKEN:0:40}'"
+    fi
+    # DB-ground-truth: the REAL token is in Postgres while only the
+    # sentinel reached the HTTP wire.
+    DB_TOKEN=$(docker compose -f docker-compose.dev.yml exec -T postgres \
+        psql -U ministr -d ministr_dev -tA \
+        -c "SELECT token FROM org_siem_configs WHERE org_id='${ORG_ID_A}'::uuid;" \
+        2>/dev/null | tr -d ' \r\n')
+    if [[ "${DB_TOKEN}" == "${SIEM_CRUD_TOKEN}" ]]; then
+        pass "DB still has the real token (redaction is HTTP-only)"
+    else
+        fail "DB token mismatch — expected '${SIEM_CRUD_TOKEN}', got '${DB_TOKEN:0:40}'"
+    fi
+
+    # Non-owner (tenant B) GET → 403.
+    curl_request GET "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/siem/config" "${TOKEN_B}"
+    assert_status "${RESPONSE_STATUS}" "403" "non-owner GET /siem/config → 403"
+
+    # Reject unknown kind.
+    SIEM_BAD_KIND='{"kind":"future_provider","endpoint_url":"https://x.test","token":"t"}'
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/siem/config" "${TOKEN_A}" "${SIEM_BAD_KIND}"
+    assert_status "${RESPONSE_STATUS}" "400" "POST unknown kind → 400 (rejected)"
+
+    # Reject URL without scheme.
+    SIEM_BAD_URL='{"kind":"splunk_hec","endpoint_url":"splunk.test:8088","token":"t"}'
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/siem/config" "${TOKEN_A}" "${SIEM_BAD_URL}"
+    assert_status "${RESPONSE_STATUS}" "400" "POST missing-scheme URL → 400 (rejected)"
+
+    # Owner DELETE → 204.
+    curl_request DELETE "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/siem/config" "${TOKEN_A}"
+    assert_status "${RESPONSE_STATUS}" "204" "owner DELETE /siem/config → 204"
+
+    # GET after DELETE → 404.
+    curl_request GET "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/siem/config" "${TOKEN_A}"
+    assert_status "${RESPONSE_STATUS}" "404" "GET /siem/config after DELETE → 404"
+else
+    note "skipped F5.3-d-ii-config CRUD assertions — ORG_ID_A not captured"
+fi
+
 # ─── summary ──────────────────────────────────────────────────────────
 
 echo
