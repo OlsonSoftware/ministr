@@ -266,6 +266,25 @@ enum AuditAction {
         #[arg(long, default_value_t = ministr_cloud::DEFAULT_PARTITION_LOOKAHEAD_QUARTERS)]
         lookahead_quarters: u32,
     },
+    /// F5.3-c-ii-archive-fs — archive one `audit_events` partition
+    /// to a gzipped JSONL file in `--archive-dir`, then DETACH +
+    /// DROP it from the live database. The named file becomes the
+    /// authoritative copy of the data.
+    Archive {
+        /// Partition name to archive — must match the
+        /// `audit_events_y{YYYY}q{N}` pattern from migration 0013.
+        /// Names that don't match are rejected as a defense-in-depth
+        /// measure against path traversal.
+        #[arg(long)]
+        partition: String,
+        /// Local directory where the gzipped JSONL file will land.
+        /// Created if it doesn't exist. Production deployments
+        /// point this at a Container-Apps volume mount;
+        /// F5.3-c-ii-archive-blob will add an Azure Blob sink as
+        /// the alternative target.
+        #[arg(long)]
+        archive_dir: std::path::PathBuf,
+    },
 }
 
 /// Subcommands for `ministr cloud` — operator diagnostics + future
@@ -702,6 +721,10 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
             AuditAction::EnsurePartitions { lookahead_quarters } => {
                 commands::cmd_audit_ensure_partitions(lookahead_quarters).await
             }
+            AuditAction::Archive {
+                partition,
+                archive_dir,
+            } => commands::cmd_audit_archive(&partition, &archive_dir).await,
         },
         Command::ApiKeys { action } => match action {
             ApiKeysAction::FlagStale { threshold_days } => {

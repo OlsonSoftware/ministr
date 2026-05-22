@@ -79,9 +79,11 @@ pub use api_keys::{
     list_user_api_keys, revoke_user_api_key,
 };
 pub use audit::{
-    AuditError, AuditListQuery, AuditRow, AuditState, DEFAULT_AUDIT_RETENTION_DAYS,
-    DEFAULT_PARTITION_LOOKAHEAD_QUARTERS, EnsurePartitionsOutcome, PostgresAuditSink,
-    PruneOutcome, audit_routes, ensure_audit_partitions, list_org_audit, prune_audit_events,
+    ArchiveOutcome, AuditError, AuditListQuery, AuditRow, AuditState,
+    DEFAULT_AUDIT_RETENTION_DAYS, DEFAULT_PARTITION_LOOKAHEAD_QUARTERS,
+    EnsurePartitionsOutcome, PostgresAuditSink, PruneOutcome,
+    archive_audit_partition_to_dir, audit_routes, ensure_audit_partitions, list_org_audit,
+    prune_audit_events,
 };
 pub use billing::{
     billing_routes, checkout_routes, record_usage, rollup_day, stripe_webhook_routes,

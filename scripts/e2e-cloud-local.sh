@@ -2431,6 +2431,96 @@ else
     fail "child partition unexpectedly missing INSERT privilege: '${CHILD_INSERT_PRIV}'"
 fi
 
+# 34) **F5.3-c-ii-archive-fs — cold partition archive (FS sink).**
+#     Seed a fixture row into an OLD partition (audit_events_y2024q1
+#     was the migration-0013 seed for Q1-2024), invoke the archive
+#     CLI, and verify (a) the gzipped JSONL file lands on disk,
+#     (b) the partition is DETACH'd + DROP'd from the database,
+#     (c) the fixture row decodes back from the archived file.
+info "F5.3-c-ii-archive-fs: cold partition archive (DETACH + DROP)"
+
+ARCHIVE_DIR="/tmp/ministr-e2e-audit-archive-${RUN_TS}"
+rm -rf "${ARCHIVE_DIR}"
+mkdir -p "${ARCHIVE_DIR}"
+
+# Seed a fixture audit row into the 2024-Q1 partition. ts is a
+# specific UTC date inside that quarter; PG routes the INSERT to
+# the matching child partition automatically.
+docker compose -f docker-compose.dev.yml exec -T postgres \
+    psql -U ministr -d ministr_dev \
+    -c "INSERT INTO audit_events (action, resource, ts) \
+        VALUES ('archive.fixture', 'fixture-resource', '2024-02-15 12:00:00+00');" \
+    >/dev/null 2>&1
+FIXTURE_INSERTED=$(docker compose -f docker-compose.dev.yml exec -T postgres \
+    psql -U ministr -d ministr_dev -tA \
+    -c "SELECT count(*) FROM audit_events_y2024q1 WHERE action='archive.fixture';" \
+    2>/dev/null | tr -d ' \r\n')
+if [[ "${FIXTURE_INSERTED}" == "1" ]]; then
+    pass "seeded archive.fixture row into audit_events_y2024q1"
+else
+    fail "fixture INSERT didn't land in audit_events_y2024q1 (count=${FIXTURE_INSERTED})"
+fi
+
+# Snapshot partition count + relkind BEFORE archive.
+PARTS_PRE=$(psql_count "SELECT count(*) FROM pg_inherits WHERE inhparent = 'audit_events'::regclass;")
+
+# Run the archive CLI. `|| ARCHIVE_STATUS=$?` captures the exit
+# code without tripping `set -e` (set -e doesn't fire when the
+# command is on the LHS of `||`).
+ARCHIVE_STATUS=0
+cargo run -q -p ministr-cli -- audit archive \
+    --partition audit_events_y2024q1 \
+    --archive-dir "${ARCHIVE_DIR}" \
+    > /tmp/ministr-e2e-archive.log 2>&1 || ARCHIVE_STATUS=$?
+if [[ "${ARCHIVE_STATUS}" == "0" ]]; then
+    pass "ministr audit archive CLI exits 0"
+else
+    fail "audit archive exited ${ARCHIVE_STATUS} · log: $(tail -5 /tmp/ministr-e2e-archive.log)"
+fi
+
+# Verify the gzipped JSONL file landed at the expected path.
+ARCHIVE_FILE="${ARCHIVE_DIR}/audit_events_y2024q1.jsonl.gz"
+if [[ -s "${ARCHIVE_FILE}" ]]; then
+    pass "archive file landed at ${ARCHIVE_FILE} (non-empty)"
+else
+    fail "archive file missing or empty at ${ARCHIVE_FILE}"
+fi
+
+# Verify the archive contains the fixture row when decompressed.
+ARCHIVE_CONTENTS=$(gunzip -c "${ARCHIVE_FILE}" 2>/dev/null || echo '')
+if printf '%s' "${ARCHIVE_CONTENTS}" | jq -e 'select(.action=="archive.fixture") | .resource' >/dev/null 2>&1; then
+    pass "archive contains the archive.fixture row (decompressed + parses as JSONL)"
+else
+    fail "archive missing the fixture row · contents head: $(printf '%s' "${ARCHIVE_CONTENTS}" | head -c 200)"
+fi
+
+# Verify the partition is GONE from the live database.
+PARTS_POST=$(psql_count "SELECT count(*) FROM pg_inherits WHERE inhparent = 'audit_events'::regclass;")
+PARTS_EXPECT=$((PARTS_PRE - 1))
+if [[ "${PARTS_POST}" == "${PARTS_EXPECT}" ]]; then
+    pass "audit_events partition count dropped (pre=${PARTS_PRE}, post=${PARTS_POST}; DETACH'd 1)"
+else
+    fail "partition count expected ${PARTS_EXPECT}, got ${PARTS_POST}"
+fi
+PARTITION_EXISTS=$(psql_count "SELECT count(*) FROM pg_class WHERE relname='audit_events_y2024q1';")
+if [[ "${PARTITION_EXISTS}" == "0" ]]; then
+    pass "audit_events_y2024q1 no longer exists in pg_class (DROP'd)"
+else
+    fail "audit_events_y2024q1 still in pg_class (count=${PARTITION_EXISTS}); DETACH but not DROP?"
+fi
+
+# Verify defense-in-depth: invalid partition name rejected.
+INVALID_OUT=$(cargo run -q -p ministr-cli -- audit archive \
+    --partition "../../etc/passwd" \
+    --archive-dir "${ARCHIVE_DIR}" 2>&1 || true)
+# miette word-wraps long error messages; grep on a short stable
+# substring rather than the full sentence.
+if printf '%s' "${INVALID_OUT}" | grep -q "doesn't match"; then
+    pass "path-traversal partition name '../../etc/passwd' rejected at CLI edge"
+else
+    fail "invalid partition name not rejected · output: $(printf '%s' "${INVALID_OUT}" | head -c 200)"
+fi
+
 # ─── summary ──────────────────────────────────────────────────────────
 
 echo

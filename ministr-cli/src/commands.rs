@@ -2703,6 +2703,48 @@ pub(crate) async fn cmd_audit_prune(retention_days: u32) -> miette::Result<()> {
 ///
 /// Requires `MINISTR_PG_URL`. Idempotent — a re-run with the same
 /// lookahead creates 0 new partitions.
+/// `ministr audit archive --partition NAME --archive-dir DIR` —
+/// F5.3-c-ii-archive-fs operator-driven cold archive. SELECTs all
+/// rows from the named partition, writes them as a gzipped JSONL
+/// file at `<archive_dir>/<partition>.jsonl.gz` (typically
+/// `audit_events_yYYYYqN.jsonl.gz`), then `DETACH PARTITION` +
+/// `DROP TABLE` it from the live database. The named file
+/// becomes the authoritative copy.
+///
+/// Idempotency: a second invocation against an already-archived
+/// partition returns a non-zero exit with a clear error
+/// (`"partition is not a child of audit_events"`). The archive file
+/// is OVERWRITTEN if the customer re-runs after a transient
+/// failure between FS write + DETACH; this is acceptable since
+/// the file contents would be identical (same partition data).
+pub(crate) async fn cmd_audit_archive(
+    partition: &str,
+    archive_dir: &std::path::Path,
+) -> miette::Result<()> {
+    let pg_url = std::env::var("MINISTR_PG_URL").map_err(|_| {
+        miette::miette!(
+            "ministr audit archive requires MINISTR_PG_URL \
+             (the cloud Postgres connection string)"
+        )
+    })?;
+    let pool = ministr_cloud::connect(&pg_url)
+        .into_diagnostic()
+        .wrap_err("open cloud postgres pool")?;
+    tracing::info!(partition, archive_dir = %archive_dir.display(), "audit archive starting");
+    let outcome = ministr_cloud::archive_audit_partition_to_dir(&pool, partition, archive_dir)
+        .await
+        .into_diagnostic()
+        .wrap_err("archive audit partition")?;
+    tracing::info!(
+        partition,
+        rows = outcome.rows,
+        bytes_on_disk = outcome.bytes_on_disk,
+        file_path = %outcome.file_path.display(),
+        "audit archive complete"
+    );
+    Ok(())
+}
+
 pub(crate) async fn cmd_audit_ensure_partitions(
     lookahead_quarters: u32,
 ) -> miette::Result<()> {

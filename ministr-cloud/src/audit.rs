@@ -508,6 +508,212 @@ pub async fn ensure_audit_partitions(
     })
 }
 
+// ─── F5.3-c-ii-archive-fs — cold partition archive (FS sink) ──────
+//
+// Once a quarterly partition is older than the customer's retention
+// window, its rows can move from hot Postgres storage to cheap
+// long-term durable storage (Azure Blob with Object Replication for
+// immutability — that's F5.3-c-ii-archive-blob). This chunk ships
+// the engine — SELECT → gzipped JSONL → write-to-disk → DETACH →
+// DROP — with a filesystem sink. The Azure Blob backend is a sink
+// swap.
+//
+// Operator workflow:
+//
+//   ministr audit archive --partition audit_events_y2024q1 \
+//                          --archive-dir /var/lib/ministr/audit-archive
+//
+// After completion, the named partition is GONE from the database
+// (DETACH'd + DROP'd inside one transaction) and the gzipped JSONL
+// file at `<archive_dir>/<partition_name>.jsonl.gz` is the only
+// remaining copy. The read-path handler that streams that file back
+// for compliance queries lands in F5.3-c-ii-archive-read.
+
+/// Outcome of one [`archive_audit_partition_to_dir`] call. Echoed
+/// back in the structured boot/cron log so the operator dashboard
+/// can chart "rows archived per partition per quarter".
+#[derive(Debug, Clone)]
+pub struct ArchiveOutcome {
+    /// Number of audit-event rows written to the gzipped JSONL file.
+    pub rows: u64,
+    /// Size of the gzipped file on disk, in bytes.
+    pub bytes_on_disk: u64,
+    /// Absolute path to the gzipped JSONL file.
+    pub file_path: std::path::PathBuf,
+}
+
+/// F5.3-c-ii-archive-fs — archive one `audit_events` partition to a
+/// gzipped JSONL file in `archive_dir`, then DETACH + DROP it from
+/// the live database in a single transaction.
+///
+/// `partition_name` MUST match the migration-0013 pattern
+/// (`audit_events_y{YYYY}q{N}`) — anything else is rejected as a
+/// defense-in-depth measure against path-traversal via a malicious
+/// DB row (the file path is `archive_dir/<partition_name>.jsonl.gz`;
+/// the name is validated via [`parse_audit_partition_name`] before
+/// touching the filesystem).
+///
+/// # Errors
+///
+/// - [`AuditError::Invalid`] when the partition name doesn't match
+///   the expected pattern or the partition doesn't exist in
+///   `pg_inherits`.
+/// - [`AuditError::GetConn`] when the pool refuses a connection.
+/// - [`AuditError::Sql`] when SELECT / DETACH / DROP fail.
+/// - [`AuditError::Io`] when the gzipped file can't be written.
+#[allow(clippy::too_many_lines)] // validation + SELECT + serialize + FS write + DETACH/DROP → cohesive flow
+pub async fn archive_audit_partition_to_dir(
+    pool: &Pool,
+    partition_name: &str,
+    archive_dir: &std::path::Path,
+) -> Result<ArchiveOutcome, AuditError> {
+    // Defense-in-depth: validate the partition name before any
+    // filesystem path construction. parse_audit_partition_name
+    // returns None for anything that doesn't match
+    // `audit_events_y{YYYY}q{N}` so a name like `../../etc/passwd`
+    // never reaches the FS layer.
+    if parse_audit_partition_name(partition_name).is_none() {
+        return Err(AuditError::Sql(format!(
+            "archive: partition name '{partition_name}' doesn't match audit_events_y{{YYYY}}q{{N}} pattern"
+        )));
+    }
+
+    let mut client = pool
+        .get()
+        .await
+        .map_err(|e| AuditError::GetConn(format!("archive: {e}")))?;
+
+    // Verify the partition currently exists as a child of
+    // audit_events. Without this, a typo in --partition would happily
+    // produce an empty JSONL + then fail on DETACH; this surfaces
+    // the error early and clearly.
+    let exists_row = client
+        .query_one(
+            "SELECT count(*) FROM pg_inherits i \
+             JOIN pg_class c ON c.oid = i.inhrelid \
+             WHERE i.inhparent = 'audit_events'::regclass \
+               AND c.relname = $1",
+            &[&partition_name],
+        )
+        .await
+        .map_err(|e| AuditError::Sql(format!("archive: existence check: {e}")))?;
+    let exists_count: i64 = exists_row.get(0);
+    if exists_count == 0 {
+        return Err(AuditError::Sql(format!(
+            "archive: partition '{partition_name}' is not a child of audit_events"
+        )));
+    }
+
+    // Open a transaction. The SELECT + DETACH + DROP must commit
+    // atomically — otherwise a crash between DETACH and DROP would
+    // leave a dangling detached table that's invisible to queries
+    // (gone from pg_inherits) but still occupies disk space.
+    let tx = client
+        .transaction()
+        .await
+        .map_err(|e| AuditError::Sql(format!("archive: begin: {e}")))?;
+
+    // SELECT all rows. Cast id + ts to text to avoid carrying
+    // tokio_postgres type plumbing for chrono / i64; we re-serialize
+    // each row as a JSON object below.
+    //
+    // SECURITY: the table name interpolation is safe because
+    // partition_name was already validated against the strict
+    // pattern. Belt-and-suspenders alternative would be format!
+    // with `%I` via a DO block; the validation-at-the-edge approach
+    // is simpler.
+    let select_sql = format!(
+        "SELECT id::text, action, resource, org_id::text, actor::text, \
+                ip::text, ua, \
+                to_char(ts AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') \
+         FROM {partition_name} ORDER BY id"
+    );
+    let rows = tx
+        .query(&select_sql, &[])
+        .await
+        .map_err(|e| AuditError::Sql(format!("archive: SELECT: {e}")))?;
+    let row_count = u64::try_from(rows.len()).unwrap_or(u64::MAX);
+
+    // Serialize each row as one JSON line. The schema mirrors the
+    // F5.3-d-i Splunk HEC event shape so consumers reading the
+    // archive can use one query template across hot + cold storage.
+    let mut buf = Vec::with_capacity(rows.len() * 256);
+    for row in &rows {
+        let id: String = row.get(0);
+        let action: String = row.get(1);
+        let resource: String = row.get(2);
+        let org_id: Option<String> = row.get(3);
+        let actor: Option<String> = row.get(4);
+        let ip: Option<String> = row.get(5);
+        let ua: Option<String> = row.get(6);
+        let ts: String = row.get(7);
+        let line = serde_json::json!({
+            "id": id,
+            "action": action,
+            "resource": resource,
+            "org_id": org_id,
+            "actor": actor,
+            "ip": ip,
+            "ua": ua,
+            "ts": ts,
+        });
+        serde_json::to_writer(&mut buf, &line)
+            .map_err(|e| AuditError::Sql(format!("archive: serialize row: {e}")))?;
+        buf.push(b'\n');
+    }
+
+    // Gzip the buffer. flate2's GzEncoder requires explicit finish()
+    // to flush the trailer; without it the file is corrupt.
+    let mut gz_buf: Vec<u8> = Vec::with_capacity(buf.len() / 4);
+    {
+        use std::io::Write;
+        let mut encoder = flate2::write::GzEncoder::new(&mut gz_buf, flate2::Compression::default());
+        encoder
+            .write_all(&buf)
+            .map_err(|e| AuditError::Sql(format!("archive: gzip write: {e}")))?;
+        encoder
+            .finish()
+            .map_err(|e| AuditError::Sql(format!("archive: gzip finish: {e}")))?;
+    }
+
+    // Write to disk. tokio::fs::create_dir_all is idempotent if the
+    // dir already exists. Path construction is safe due to the
+    // earlier parse_audit_partition_name validation.
+    tokio::fs::create_dir_all(archive_dir)
+        .await
+        .map_err(|e| AuditError::Sql(format!("archive: create_dir_all: {e}")))?;
+    let file_path = archive_dir.join(format!("{partition_name}.jsonl.gz"));
+    tokio::fs::write(&file_path, &gz_buf)
+        .await
+        .map_err(|e| {
+            AuditError::Sql(format!("archive: write {}: {e}", file_path.display()))
+        })?;
+    let bytes_on_disk = u64::try_from(gz_buf.len()).unwrap_or(u64::MAX);
+
+    // DETACH + DROP. Both inside the same transaction so a crash
+    // between them is rolled back. The file is already written; if
+    // the transaction aborts, the customer just has a redundant copy
+    // of the data — never the inverse (data missing from both).
+    let detach_sql = format!("ALTER TABLE audit_events DETACH PARTITION {partition_name}");
+    tx.batch_execute(&detach_sql)
+        .await
+        .map_err(|e| AuditError::Sql(format!("archive: DETACH: {e}")))?;
+    let drop_sql = format!("DROP TABLE {partition_name}");
+    tx.batch_execute(&drop_sql)
+        .await
+        .map_err(|e| AuditError::Sql(format!("archive: DROP: {e}")))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| AuditError::Sql(format!("archive: commit: {e}")))?;
+
+    Ok(ArchiveOutcome {
+        rows: row_count,
+        bytes_on_disk,
+        file_path,
+    })
+}
+
 /// Direct read used by the list handler. Exposed `pub` for the
 /// eventual /orgs/{slug}/audit web page to call from the same crate.
 ///
