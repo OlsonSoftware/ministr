@@ -674,6 +674,23 @@ impl AuditSink for PerOrgSiemDispatcher {
                     let _ = token;
                     dispatch_syslog_cef(&url, &entry).await;
                 }
+                "s3_jsonl" => {
+                    // F5.3-d-iii-b-shim — kind is CRUD-validatable but
+                    // dispatch is not yet wired (F5.3-d-iii-b-dispatch
+                    // will add aws-sdk-s3 + the PUT path). Log a loud
+                    // warn so the gap is visible in production logs
+                    // until that chunk lands. Don't fall through to
+                    // the unknown-kind arm — that would obscure the
+                    // distinction between "kind we know but haven't
+                    // wired" and "kind we don't recognise at all".
+                    let _ = (url, token);
+                    warn!(
+                        org_id = %org_id,
+                        action = %entry.action,
+                        "per-org SIEM dispatch: s3_jsonl row found but dispatch not yet wired \
+                         (F5.3-d-iii-b-dispatch will add the aws-sdk-s3 PUT path)"
+                    );
+                }
                 other => {
                     warn!(
                         org_id = %org_id,
@@ -700,10 +717,12 @@ impl AuditSink for PerOrgSiemDispatcher {
 
 /// Allowed `kind` values for `org_siem_configs.kind`. F5.3-d-i
 /// admitted `"splunk_hec"` only; F5.3-d-iii-a added
-/// `"datadog_logs"`; F5.3-d-iii-c added `"syslog_cef"`. F5.3-d-iii-b
-/// will add `"s3_jsonl"`. The `PerOrgSiemDispatcher`'s `record()`
-/// branches on this exact set.
-const ALLOWED_SIEM_KINDS: &[&str] = &["splunk_hec", "datadog_logs", "syslog_cef"];
+/// `"datadog_logs"`; F5.3-d-iii-c added `"syslog_cef"`;
+/// F5.3-d-iii-b-shim added `"s3_jsonl"` (CRUD-validatable;
+/// dispatch lands in F5.3-d-iii-b-dispatch with `aws-sdk-s3`).
+/// The `PerOrgSiemDispatcher`'s `record()` branches on this set.
+const ALLOWED_SIEM_KINDS: &[&str] =
+    &["splunk_hec", "datadog_logs", "syslog_cef", "s3_jsonl"];
 
 /// `kind` values where the `token` column is unused — auth happens
 /// at the network layer (mTLS / VPN / source-IP allowlist) rather
@@ -823,24 +842,73 @@ async fn assert_siem_owner_or_admin(
     Ok(())
 }
 
+/// F5.3-d-iii-b-shim — credentials shape carried in the `token`
+/// column for `kind = "s3_jsonl"`. The dispatcher (F5.3-d-iii-b-dispatch)
+/// will deserialize this same struct at audit-emission time, build an
+/// `aws_sdk_s3` Config from it, and PUT one JSONL object per event.
+///
+/// `endpoint_url_override` is optional. AWS S3 deployments omit it
+/// (the SDK derives the endpoint from `region` + bucket). S3-compatible
+/// providers (`MinIO`, Cloudflare R2, Backblaze B2) require it to point
+/// at their custom endpoint.
+#[derive(Debug, Deserialize)]
+struct S3JsonlCredentials {
+    access_key_id: String,
+    secret_access_key: String,
+    region: String,
+    #[serde(default)]
+    #[allow(dead_code)] // Honest finding: read by F5.3-d-iii-b-dispatch, not yet.
+    endpoint_url_override: Option<String>,
+}
+
+/// Parse + validate the token field for `kind = "s3_jsonl"`. Pure;
+/// pulled out for unit-testability without HTTP.
+fn validate_s3_credentials_shape(token: &str) -> Result<(), SiemConfigError> {
+    let creds: S3JsonlCredentials = serde_json::from_str(token).map_err(|_| {
+        SiemConfigError::Invalid(
+            "s3_jsonl token must be JSON with {access_key_id, secret_access_key, region}",
+        )
+    })?;
+    // serde_json's deserialization already enforces presence of the
+    // three required fields. Catch empty strings (which deserialize
+    // fine but render the credentials useless).
+    if creds.access_key_id.trim().is_empty() {
+        return Err(SiemConfigError::Invalid(
+            "s3_jsonl token: access_key_id must not be empty",
+        ));
+    }
+    if creds.secret_access_key.trim().is_empty() {
+        return Err(SiemConfigError::Invalid(
+            "s3_jsonl token: secret_access_key must not be empty",
+        ));
+    }
+    if creds.region.trim().is_empty() {
+        return Err(SiemConfigError::Invalid(
+            "s3_jsonl token: region must not be empty",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_siem_upsert(body: &SiemConfigUpsertBody) -> Result<(), SiemConfigError> {
     if !ALLOWED_SIEM_KINDS.contains(&body.kind.as_str()) {
         return Err(SiemConfigError::Invalid(
-            "kind must be one of: splunk_hec, datadog_logs, syslog_cef",
+            "kind must be one of: splunk_hec, datadog_logs, syslog_cef, s3_jsonl",
         ));
     }
     if body.endpoint_url.trim().is_empty() {
         return Err(SiemConfigError::Invalid("endpoint_url is required"));
     }
-    // syslog_cef admits tcp:// or udp:// (F5.3-d-iii-c TCP + -c-udp
-    // UDP fallback); other kinds use http(s)://. Branch the scheme
-    // check rather than admitting any scheme for any kind — keeps
-    // misconfiguration detectable at the CRUD edge.
+    // Per-kind scheme branching:
+    //   splunk_hec / datadog_logs → http(s)://
+    //   syslog_cef                 → tcp:// or udp:// (F5.3-d-iii-c + -c-udp)
+    //   s3_jsonl                   → s3:// (F5.3-d-iii-b-shim)
     let scheme_ok = match body.kind.as_str() {
         "syslog_cef" => {
             body.endpoint_url.starts_with("tcp://")
                 || body.endpoint_url.starts_with("udp://")
         }
+        "s3_jsonl" => body.endpoint_url.starts_with("s3://"),
         _ => {
             body.endpoint_url.starts_with("http://")
                 || body.endpoint_url.starts_with("https://")
@@ -849,16 +917,20 @@ fn validate_siem_upsert(body: &SiemConfigUpsertBody) -> Result<(), SiemConfigErr
     if !scheme_ok {
         return Err(SiemConfigError::Invalid(
             "endpoint_url scheme mismatch for kind \
-             (http/https for splunk_hec + datadog_logs; tcp:// or udp:// for syslog_cef)",
+             (http/https for splunk_hec + datadog_logs; \
+              tcp:// or udp:// for syslog_cef; \
+              s3:// for s3_jsonl)",
         ));
     }
-    // F5.3-d-iii-c — TOKENLESS_SIEM_KINDS skips the empty-token check
-    // because their auth happens at the network layer (mTLS / VPN /
-    // source-IP allowlist). Customers POSTing config for those kinds
-    // can leave `token` as an empty string.
+    // TOKENLESS_SIEM_KINDS skips the empty-token check (syslog_cef's
+    // auth is at the network layer). All other kinds require a token;
+    // s3_jsonl further requires it to be JSON-shaped.
     let tokenless = TOKENLESS_SIEM_KINDS.contains(&body.kind.as_str());
     if !tokenless && body.token.trim().is_empty() {
         return Err(SiemConfigError::Invalid("token is required"));
+    }
+    if body.kind == "s3_jsonl" {
+        validate_s3_credentials_shape(&body.token)?;
     }
     Ok(())
 }
@@ -1103,13 +1175,14 @@ mod tests {
     }
 
     #[test]
-    fn allowed_siem_kinds_includes_splunk_datadog_syslog() {
+    fn allowed_siem_kinds_includes_all_four_providers() {
         // F5.3-d-i shipped "splunk_hec"; F5.3-d-iii-a added
-        // "datadog_logs"; F5.3-d-iii-c added "syslog_cef".
-        // F5.3-d-iii-b will extend this list with "s3_jsonl".
+        // "datadog_logs"; F5.3-d-iii-c added "syslog_cef";
+        // F5.3-d-iii-b-shim added "s3_jsonl" (CRUD-validatable;
+        // dispatch lands in F5.3-d-iii-b-dispatch).
         assert_eq!(
             ALLOWED_SIEM_KINDS,
-            &["splunk_hec", "datadog_logs", "syslog_cef"]
+            &["splunk_hec", "datadog_logs", "syslog_cef", "s3_jsonl"]
         );
     }
 
@@ -1153,6 +1226,73 @@ mod tests {
         let b = body("splunk_hec", "udp://splunk.example.com:8088", "tok");
         let e = validate_siem_upsert(&b).expect_err("must reject udp scheme for HEC");
         assert!(matches!(e, SiemConfigError::Invalid(msg) if msg.contains("scheme")));
+    }
+
+    fn s3_token_json(access: &str, secret: &str, region: &str) -> String {
+        format!(
+            r#"{{"access_key_id":"{access}","secret_access_key":"{secret}","region":"{region}"}}"#
+        )
+    }
+
+    #[test]
+    fn validate_siem_upsert_admits_s3_jsonl_with_credentials_json() {
+        // F5.3-d-iii-b-shim — happy path: JSON-shape token + s3:// scheme.
+        let tok = s3_token_json("AKIA…", "secret…", "us-east-1");
+        let b = body("s3_jsonl", "s3://my-bucket/audit-prefix/", &tok);
+        assert!(validate_siem_upsert(&b).is_ok());
+    }
+
+    #[test]
+    fn validate_siem_upsert_rejects_s3_jsonl_with_http_scheme() {
+        let tok = s3_token_json("AKIA…", "secret…", "us-east-1");
+        let b = body("s3_jsonl", "https://s3.amazonaws.com/bucket/", &tok);
+        let e = validate_siem_upsert(&b).expect_err("must reject http scheme for s3_jsonl");
+        assert!(matches!(e, SiemConfigError::Invalid(msg) if msg.contains("scheme")));
+    }
+
+    #[test]
+    fn validate_siem_upsert_rejects_s3_jsonl_with_malformed_json_token() {
+        // Token is not valid JSON — the validator surfaces the JSON
+        // shape error rather than letting it crash at dispatch time.
+        let b = body("s3_jsonl", "s3://my-bucket/", "this-is-not-json");
+        let e = validate_siem_upsert(&b).expect_err("must reject non-JSON token");
+        assert!(
+            matches!(e, SiemConfigError::Invalid(msg) if msg.contains("JSON")),
+            "expected JSON-shape error, got {e:?}"
+        );
+    }
+
+    #[test]
+    fn validate_siem_upsert_rejects_s3_jsonl_with_missing_access_key_id() {
+        // JSON parses but a required field is missing — serde's
+        // deserialization fails, surfaced as the JSON-shape error.
+        let tok = r#"{"secret_access_key":"secret…","region":"us-east-1"}"#;
+        let b = body("s3_jsonl", "s3://my-bucket/", tok);
+        let e = validate_siem_upsert(&b)
+            .expect_err("must reject token missing access_key_id");
+        assert!(matches!(e, SiemConfigError::Invalid(msg) if msg.contains("JSON")));
+    }
+
+    #[test]
+    fn validate_siem_upsert_rejects_s3_jsonl_with_empty_field_value() {
+        // JSON parses + has all 3 fields, but `region` is "" — the
+        // dispatch path would fail with an unhelpful AWS error
+        // ("invalid region"); rejecting at the CRUD edge surfaces it
+        // immediately.
+        let tok = s3_token_json("AKIA…", "secret…", "");
+        let b = body("s3_jsonl", "s3://my-bucket/", &tok);
+        let e = validate_siem_upsert(&b).expect_err("must reject empty region");
+        assert!(matches!(e, SiemConfigError::Invalid(msg) if msg.contains("region")));
+    }
+
+    #[test]
+    fn validate_s3_credentials_shape_admits_optional_endpoint_override() {
+        // S3-compatible providers (MinIO, R2, B2) use the optional
+        // endpoint_url_override field. Serde's #[serde(default)] keeps
+        // the validator silent when it's omitted; including it must
+        // also pass cleanly.
+        let tok = r#"{"access_key_id":"AKIA…","secret_access_key":"secret…","region":"us-east-1","endpoint_url_override":"https://r2.example.com"}"#;
+        assert!(validate_s3_credentials_shape(tok).is_ok());
     }
 
     #[test]

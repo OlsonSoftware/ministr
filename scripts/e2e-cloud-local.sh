@@ -2170,8 +2170,55 @@ EOF
     else
         fail "UDP CEF extension missing orgId=${ORG_ID_A}: '${UDP_CEF_LINE:0:200}'"
     fi
+
+    # 31) **F5.3-d-iii-b-shim — s3_jsonl kind passes CRUD validation.**
+    #     Validator only; no dispatch (F5.3-d-iii-b-dispatch will wire
+    #     aws-sdk-s3). Exercises the per-kind scheme branch, the
+    #     JSON-shape token validator, and the unknown-kind defensive
+    #     reject cases.
+    info "F5.3-d-iii-b-shim: s3_jsonl CRUD validation (dispatch deferred)"
+
+    # Happy path: JSON-shape token + s3:// endpoint → 200.
+    S3_GOOD_TOKEN='{"access_key_id":"AKIAEXAMPLE","secret_access_key":"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY","region":"us-east-1"}'
+    S3_GOOD_BODY=$(jq -nc --arg t "${S3_GOOD_TOKEN}" '{"kind":"s3_jsonl","endpoint_url":"s3://my-audit-bucket/audit/","token":$t,"enabled":true}')
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/siem/config" "${TOKEN_A}" "${S3_GOOD_BODY}"
+    assert_status "${RESPONSE_STATUS}" "200" "POST s3_jsonl with JSON token + s3:// → 200"
+    GOT_S3_KIND=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.kind // empty')
+    if [[ "${GOT_S3_KIND}" == "s3_jsonl" ]]; then
+        pass "POST returns kind=s3_jsonl (CRUD admits the new kind)"
+    else
+        fail "POST kind expected s3_jsonl, got '${GOT_S3_KIND}'"
+    fi
+    # Token is still REDACTED on the response — same posture as Splunk/Datadog
+    # despite the JSON-shape payload.
+    GOT_S3_TOKEN=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.token // empty')
+    if [[ "${GOT_S3_TOKEN}" == "[REDACTED]" ]]; then
+        pass "POST s3_jsonl redacts the JSON-shape token in response"
+    else
+        fail "POST s3_jsonl LEAKED the credentials: '${GOT_S3_TOKEN:0:80}'"
+    fi
+
+    # Reject: s3_jsonl with http:// scheme (cross-kind mismatch).
+    S3_BAD_SCHEME=$(jq -nc --arg t "${S3_GOOD_TOKEN}" '{"kind":"s3_jsonl","endpoint_url":"https://s3.amazonaws.com/bucket/","token":$t}')
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/siem/config" "${TOKEN_A}" "${S3_BAD_SCHEME}"
+    assert_status "${RESPONSE_STATUS}" "400" "POST s3_jsonl with https:// → 400 (scheme mismatch)"
+
+    # Reject: malformed JSON token.
+    S3_BAD_JSON='{"kind":"s3_jsonl","endpoint_url":"s3://b/","token":"this-is-not-json"}'
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/siem/config" "${TOKEN_A}" "${S3_BAD_JSON}"
+    assert_status "${RESPONSE_STATUS}" "400" "POST s3_jsonl with non-JSON token → 400"
+
+    # Reject: JSON parses but missing required field.
+    S3_MISSING_FIELD=$(jq -nc '{"kind":"s3_jsonl","endpoint_url":"s3://b/","token":"{\"secret_access_key\":\"s\",\"region\":\"r\"}"}')
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/siem/config" "${TOKEN_A}" "${S3_MISSING_FIELD}"
+    assert_status "${RESPONSE_STATUS}" "400" "POST s3_jsonl with token missing access_key_id → 400"
+
+    # Reject: JSON-shape but empty region.
+    S3_EMPTY_REGION='{"kind":"s3_jsonl","endpoint_url":"s3://b/","token":"{\"access_key_id\":\"AKIA\",\"secret_access_key\":\"s\",\"region\":\"\"}"}'
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/siem/config" "${TOKEN_A}" "${S3_EMPTY_REGION}"
+    assert_status "${RESPONSE_STATUS}" "400" "POST s3_jsonl with empty region → 400"
 else
-    note "skipped F5.3-d-ii-config + F5.3-d-ii-dispatch + F5.3-d-iii-a + F5.3-d-iii-c + F5.3-d-iii-c-udp — ORG_ID_A not captured"
+    note "skipped F5.3-d-ii-config + F5.3-d-ii-dispatch + F5.3-d-iii-a + F5.3-d-iii-c + F5.3-d-iii-c-udp + F5.3-d-iii-b-shim — ORG_ID_A not captured"
 fi
 
 # ─── summary ──────────────────────────────────────────────────────────
