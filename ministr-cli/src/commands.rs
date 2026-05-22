@@ -1108,9 +1108,22 @@ pub(crate) async fn cmd_serve_http(
             // members get 403. Mounted behind `ministr:read` so any
             // authenticated org member's token can call it; the
             // role check inside is the actual gate.
-            let audit_router = ministr_cloud::audit_routes(
-                ministr_cloud::AuditState::from_arc(Arc::clone(pool)),
-            );
+            // F5.3-c-ii-archive-read — optional archive dir. When
+            // MINISTR_AUDIT_ARCHIVE_DIR is set, /audit/archived
+            // reads gzipped JSONL files from that path; unset → 503
+            // from that endpoint so customer compliance tooling
+            // distinguishes "no archived data" from "config gap".
+            let mut audit_state =
+                ministr_cloud::AuditState::from_arc(Arc::clone(pool));
+            if let Ok(dir) = std::env::var("MINISTR_AUDIT_ARCHIVE_DIR")
+                && !dir.trim().is_empty()
+            {
+                audit_state = audit_state.with_archive_dir(dir);
+                tracing::info!(
+                    "audit archive dir wired (MINISTR_AUDIT_ARCHIVE_DIR)"
+                );
+            }
+            let audit_router = ministr_cloud::audit_routes(audit_state);
             let audit_protected = ministr_mcp::auth::scope_protected_router(
                 audit_router,
                 store.clone(),
