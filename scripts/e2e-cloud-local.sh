@@ -99,7 +99,8 @@ cleanup() {
     docker compose -f docker-compose.dev.yml down >/dev/null 2>&1 || true
     info "wiping per-run scratch (preserving model cache at ${DATA_DIR}/models)"
     rm -rf "${SAMPLE_DIR}" "${DATA_DIR}/corpora" "${DATA_DIR}/corpora.json" \
-        "${BLOB_ROOT}" "${CONFIG_PATH}" "${RECEIVER_LOG}" || true
+        "${BLOB_ROOT}" "${CONFIG_PATH}" "${RECEIVER_LOG}" \
+        /tmp/ministr-e2e-quota-source-${RUN_TS}-* || true
 }
 trap cleanup EXIT INT TERM
 
@@ -515,6 +516,60 @@ if [[ -n "${API_TOKEN}" ]]; then
     assert_status "${RESPONSE_STATUS}" "200" "GET /corpora with API key bearer (authn proves resolver wired)"
 else
     fail "api key token missing in response — body=${RESPONSE_BODY:0:200}"
+fi
+
+# 8b) **F-Test-5 — quota / paywall enforcement e2e.** Tenant A on the
+#     Pro plan has §3 cap of 10 corpora. Register 9 more (10 total),
+#     each succeeds. The 11th attempt must return HTTP 402 with the
+#     byte-for-byte payload from F2.3's `Violation` spec:
+#     `{reason: "corpus_quota_exceeded", upgrade_url:
+#     "https://ministr.ai/billing/upgrade?from=pro"}`.
+#     Requires PostgresCorporaProbe (this chunk) — RegistryProbe
+#     counted the wrong thing on cloud-mode because in-memory registry
+#     stays empty until indexing. cap value confirmed in
+#     ministr-cloud::caps::caps_for_plan: Pro = Some(10).
+QUOTA_SAMPLE_BASE="/tmp/ministr-e2e-quota-source-${RUN_TS}"
+QUOTA_ALL_SUCCEED=1
+for i in 2 3 4 5 6 7 8 9 10; do
+    DIR="${QUOTA_SAMPLE_BASE}-${i}"
+    rm -rf "${DIR}"
+    mkdir -p "${DIR}"
+    printf 'corpus %s\n' "${i}" > "${DIR}/README.md"
+    curl_request POST "${ENDPOINT}/api/v1/corpora" "${TOKEN_A}" \
+        "$(printf '{"paths":["%s"],"display_name":"e2e-quota-%s"}' "${DIR}" "${i}")"
+    if [[ "${RESPONSE_STATUS}" != "200" && "${RESPONSE_STATUS}" != "201" ]]; then
+        fail "quota: corpus #${i} POST /corpora got ${RESPONSE_STATUS} (expected 200/201) · body=${RESPONSE_BODY:0:200}"
+        QUOTA_ALL_SUCCEED=0
+        break
+    fi
+done
+if [[ "${QUOTA_ALL_SUCCEED}" == "1" ]]; then
+    pass "tenant A registered 10 corpora at Pro cap (all 200/201)"
+fi
+
+# 11th attempt — should 402.
+DIR_OVER="${QUOTA_SAMPLE_BASE}-11"
+rm -rf "${DIR_OVER}"
+mkdir -p "${DIR_OVER}"
+printf 'over cap\n' > "${DIR_OVER}/README.md"
+curl_request POST "${ENDPOINT}/api/v1/corpora" "${TOKEN_A}" \
+    "$(printf '{"paths":["%s"],"display_name":"e2e-quota-over"}' "${DIR_OVER}")"
+if [[ "${RESPONSE_STATUS}" == "402" ]]; then
+    pass "11th corpus blocked by quota (HTTP 402)"
+    PAYWALL_REASON=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.reason // empty' 2>/dev/null || echo "")
+    PAYWALL_URL=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.upgrade_url // empty' 2>/dev/null || echo "")
+    if [[ "${PAYWALL_REASON}" == "corpus_quota_exceeded" ]]; then
+        pass "paywall reason == corpus_quota_exceeded"
+    else
+        fail "paywall reason mismatch — expected corpus_quota_exceeded, got '${PAYWALL_REASON}'"
+    fi
+    if [[ "${PAYWALL_URL}" == "https://ministr.ai/billing/upgrade?from=pro" ]]; then
+        pass "paywall upgrade_url matches §3 spec (from=pro)"
+    else
+        fail "paywall upgrade_url mismatch — got '${PAYWALL_URL}'"
+    fi
+else
+    fail "11th corpus NOT blocked — got HTTP ${RESPONSE_STATUS} · body=${RESPONSE_BODY:0:200}"
 fi
 
 # 9) tenant A's GET /api/v1/sessions returns an empty list (no MCP

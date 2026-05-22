@@ -102,7 +102,7 @@ pub use github::{GitHubAppClient, GitHubAppError};
 pub use idp::{GitHubIdp, IdentityProvider, IdpError, ResolvedIdentity, GITHUB_ISSUER};
 pub use quota::{
     caps_for_plan, quota_middleware, AtlasAccessRule, CorpusCountRule, Decision, PlanCaps,
-    ProbeError, QuotaRule, QuotaState, RegistryProbe, UsageProbe, Violation,
+    PostgresCorporaProbe, ProbeError, QuotaRule, QuotaState, RegistryProbe, UsageProbe, Violation,
 };
 pub use ratelimit::{
     ip_key, rate_limit_middleware, tenant_key, InMemoryBucket, RateLimitConfig,

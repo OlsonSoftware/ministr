@@ -1,15 +1,18 @@
 //! `UsageProbe` — the DIP seam quota rules ask "how many X does this
 //! tenant own right now?".
 //!
-//! Today's only concrete impl is [`RegistryProbe`], which counts via
-//! the daemon's in-memory `CorpusRegistry`. When F3 lands a multi-
-//! tenant corpora table the registered count flips to a Postgres
-//! query over `corpora.owner_user_id`; the rules never change because
-//! they bind to the trait.
+//! Two concrete impls: [`RegistryProbe`] counts the daemon's in-memory
+//! `CorpusRegistry` (correct on self-hosted serve, where every corpus
+//! is in-memory by definition); [`PostgresCorporaProbe`] counts
+//! `cloud_corpora` rows filtered by `tenant_id` (the cloud-mode
+//! answer, since cloud-mode `register_corpus` writes to
+//! `cloud_corpora` via `IndexJobSink` but doesn't populate the
+//! in-memory registry until the worker indexes — F-Test-1 finding).
 
 use std::pin::Pin;
 use std::sync::Arc;
 
+use deadpool_postgres::Pool;
 use ministr_daemon::registry::CorpusRegistry;
 
 /// Errors a probe can surface. Kept narrow + string-based so the
@@ -76,6 +79,68 @@ impl UsageProbe for RegistryProbe {
         Box::pin(async move {
             let list = self.registry.list().await;
             Ok(u64::try_from(list.len()).unwrap_or(u64::MAX))
+        })
+    }
+}
+
+/// `UsageProbe` backed by the cloud Postgres `cloud_corpora` table.
+///
+/// Tenant-scoped: `SELECT count(*) FROM cloud_corpora WHERE tenant_id
+/// = $1`. The `tenant_id` column is TEXT (migration 0003) so the bind
+/// is direct — no `::uuid` cast needed. Cloud-mode `register_corpus`
+/// writes here via `IndexJobSink` before the worker has indexed
+/// anything, so this probe sees registrations the in-memory
+/// `CorpusRegistry` doesn't (the F-Test-1 cloud-registry gap).
+///
+/// Self-hosted serve continues to wire [`RegistryProbe`]; only
+/// `cmd_serve_http` with `MINISTR_PG_URL` set substitutes this impl.
+#[derive(Clone)]
+pub struct PostgresCorporaProbe {
+    pool: Arc<Pool>,
+}
+
+impl std::fmt::Debug for PostgresCorporaProbe {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PostgresCorporaProbe")
+            .field("pool_strong_count", &Arc::strong_count(&self.pool))
+            .finish_non_exhaustive()
+    }
+}
+
+impl PostgresCorporaProbe {
+    #[must_use]
+    pub fn new(pool: Arc<Pool>) -> Self {
+        Self { pool }
+    }
+
+    #[must_use]
+    pub fn from_arc(pool: Arc<Pool>) -> Self {
+        Self::new(pool)
+    }
+}
+
+impl UsageProbe for PostgresCorporaProbe {
+    fn corpus_count<'a>(
+        &'a self,
+        tenant_id: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<u64, ProbeError>> + Send + 'a>> {
+        Box::pin(async move {
+            let client = self
+                .pool
+                .get()
+                .await
+                .map_err(|e| ProbeError::Backend(format!("get conn: {e}")))?;
+            let row = client
+                .query_one(
+                    "SELECT count(*)::bigint AS n FROM cloud_corpora WHERE tenant_id = $1",
+                    &[&tenant_id],
+                )
+                .await
+                .map_err(|e| ProbeError::Backend(format!("count query: {e}")))?;
+            let n: i64 = row
+                .try_get("n")
+                .map_err(|e| ProbeError::Backend(format!("read count: {e}")))?;
+            Ok(u64::try_from(n).unwrap_or(0))
         })
     }
 }

@@ -38,5 +38,5 @@ pub mod rule;
 
 pub use caps::{caps_for_plan, PlanCaps};
 pub use middleware::{quota_middleware, QuotaState};
-pub use probe::{ProbeError, RegistryProbe, UsageProbe};
+pub use probe::{PostgresCorporaProbe, ProbeError, RegistryProbe, UsageProbe};
 pub use rule::{AtlasAccessRule, CorpusCountRule, Decision, QuotaRule, Violation};
