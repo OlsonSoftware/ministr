@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@orama/orama": "^3.1.18",
+    "@xyflow/react": "^12.4.5",
     "asciinema-player": "^3.15.1",
     "fumadocs-core": "^16.8",
     "fumadocs-mdx": "^14",
