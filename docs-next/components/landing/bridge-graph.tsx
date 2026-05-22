@@ -54,6 +54,12 @@ export interface LiveBridgeNode {
   /** Optional polar layout hint. */
   angle?: number;
   radius?: number;
+  /**
+   * Source file the symbol lives in. The F3.6-a backend wire shape
+   * always carries this; the F2.5 marketing sample omits it. F3.6-c-i
+   * uses it for the file substring filter.
+   */
+  file?: string;
 }
 
 /** F3.6-b — wider edge type for the live interactive visualizer. */

@@ -20,10 +20,18 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 
 import type { LiveBridgeEdge, LiveBridgeNode } from '../landing/bridge-graph';
+import {
+  applyBridgeFilters,
+  distinctKinds,
+  distinctLanguages,
+  noFilters,
+  type BridgeFilters,
+} from './bridge-filters';
+import { BridgeGraphFilters } from './bridge-graph-filters';
 import { BridgeGraphInteractive } from './bridge-graph-interactive';
 
 interface BridgeGraphLiveProps {
@@ -61,6 +69,11 @@ export function BridgeGraphLive({ defaultData }: BridgeGraphLiveProps) {
     edges: ReadonlyArray<LiveBridgeEdge>;
   }>(defaultData);
   const [status, setStatus] = useState<LiveStatus>({ state: 'idle' });
+  // F3.6-c-i — filter state held alongside the live data.
+  const [filters, setFilters] = useState<BridgeFilters>(noFilters);
+  const availableLanguages = useMemo(() => distinctLanguages(data), [data]);
+  const availableKinds = useMemo(() => distinctKinds(data), [data]);
+  const filteredData = useMemo(() => applyBridgeFilters(data, filters), [data, filters]);
 
   useEffect(() => {
     if (!api || !id) {
@@ -105,7 +118,13 @@ export function BridgeGraphLive({ defaultData }: BridgeGraphLiveProps) {
   return (
     <>
       <StatusBanner status={status} />
-      <BridgeGraphInteractive data={data} />
+      <BridgeGraphFilters
+        filters={filters}
+        onChange={setFilters}
+        availableLanguages={availableLanguages}
+        availableKinds={availableKinds}
+      />
+      <BridgeGraphInteractive data={filteredData} />
     </>
   );
 }
