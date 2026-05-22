@@ -98,6 +98,14 @@ SIEM_SYSLOG_LOG="${SIEM_SYSLOG_LOG:-/tmp/ministr-e2e-siem-syslog-${RUN_TS}.jsonl
 SIEM_SYSLOG_UDP_PID=""
 SIEM_SYSLOG_UDP_PORT="${SIEM_SYSLOG_UDP_PORT:-8095}"
 SIEM_SYSLOG_UDP_LOG="${SIEM_SYSLOG_UDP_LOG:-/tmp/ministr-e2e-siem-syslog-udp-${RUN_TS}.jsonl}"
+# F5.3-d-iii-b-dispatch — fake S3 PUT receiver. The aws-sdk-s3
+# client targets this endpoint via endpoint_url_override in the
+# per-org config's token JSON; SigV4 signing is performed but the
+# fake server skips signature validation (records the PUT body for
+# the harness assertions to grep).
+SIEM_S3_PID=""
+SIEM_S3_PORT="${SIEM_S3_PORT:-8096}"
+SIEM_S3_LOG="${SIEM_S3_LOG:-/tmp/ministr-e2e-siem-s3-${RUN_TS}.jsonl}"
 
 # Bail on missing tooling early — the failure mode otherwise is a
 # cryptic curl/jq error 200 lines into the script.
@@ -151,6 +159,11 @@ cleanup() {
         info "stopping SIEM syslog UDP receiver (PID ${SIEM_SYSLOG_UDP_PID})"
         kill "${SIEM_SYSLOG_UDP_PID}" 2>/dev/null || true
         wait "${SIEM_SYSLOG_UDP_PID}" 2>/dev/null || true
+    fi
+    if [[ -n "${SIEM_S3_PID}" ]] && kill -0 "${SIEM_S3_PID}" 2>/dev/null; then
+        info "stopping SIEM fake S3 receiver (PID ${SIEM_S3_PID})"
+        kill "${SIEM_S3_PID}" 2>/dev/null || true
+        wait "${SIEM_S3_PID}" 2>/dev/null || true
     fi
     if [[ -n "${SERVE_PID}" ]] && kill -0 "${SERVE_PID}" 2>/dev/null; then
         info "stopping serve (PID ${SERVE_PID})"
@@ -572,6 +585,26 @@ if ! kill -0 "${SIEM_SYSLOG_UDP_PID}" 2>/dev/null; then
     exit 1
 fi
 info "SIEM syslog UDP receiver PID ${SIEM_SYSLOG_UDP_PID}; record at ${SIEM_SYSLOG_UDP_LOG}"
+
+step "step 5b''''''/6 — spawn fake S3 PUT receiver on :${SIEM_S3_PORT} (for F5.3-d-iii-b-dispatch)"
+python3 "$(dirname "$0")/e2e-siem-s3-receiver.py" "${SIEM_S3_PORT}" "${SIEM_S3_LOG}" \
+    > /tmp/ministr-e2e-siem-s3-stdout.log 2>&1 &
+SIEM_S3_PID=$!
+attempts=0
+until curl -sf "http://127.0.0.1:${SIEM_S3_PORT}/" >/dev/null 2>&1; do
+    attempts=$((attempts + 1))
+    if ! kill -0 "${SIEM_S3_PID}" 2>/dev/null; then
+        echo "SIEM fake S3 receiver crashed during boot — log tail:" >&2
+        tail -10 /tmp/ministr-e2e-siem-s3-stdout.log >&2
+        exit 1
+    fi
+    if [[ "${attempts}" -gt 25 ]]; then
+        echo "SIEM fake S3 receiver didn't reach :${SIEM_S3_PORT} in 5s" >&2
+        exit 1
+    fi
+    sleep 0.2
+done
+info "SIEM fake S3 receiver PID ${SIEM_S3_PID}; record at ${SIEM_S3_LOG}"
 
 step "step 5c/6 — spawn mock OIDC IdP on :${OIDC_MOCK_PORT}"
 # F5.2-c — generate an RSA-2048 keypair the mock IdP uses to sign ID
@@ -2217,8 +2250,99 @@ EOF
     S3_EMPTY_REGION='{"kind":"s3_jsonl","endpoint_url":"s3://b/","token":"{\"access_key_id\":\"AKIA\",\"secret_access_key\":\"s\",\"region\":\"\"}"}'
     curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/siem/config" "${TOKEN_A}" "${S3_EMPTY_REGION}"
     assert_status "${RESPONSE_STATUS}" "400" "POST s3_jsonl with empty region → 400"
+
+    # 32) **F5.3-d-iii-b-dispatch — aws-sdk-s3 PUT path lands.**
+    #     Reconfigure the per-org s3_jsonl row with
+    #     endpoint_url_override pointing at the fake S3 server.
+    #     Trigger an audit emission; verify a PUT arrived at
+    #     /<bucket>/<key> with the right date-partition prefix +
+    #     body shape.
+    info "F5.3-d-iii-b-dispatch: S3 PUT path via aws-sdk-s3"
+    S3_DISPATCH_TOKEN=$(jq -nc \
+        --arg ak "AKIAEXAMPLE_E2E" \
+        --arg sk "wJalrXUtnFEMI_e2e_test_secret_$$" \
+        --arg rg "us-east-1" \
+        --arg ep "http://127.0.0.1:${SIEM_S3_PORT}" \
+        '{access_key_id:$ak, secret_access_key:$sk, region:$rg, endpoint_url_override:$ep}')
+    S3_DISPATCH_BODY=$(jq -nc --arg t "${S3_DISPATCH_TOKEN}" '{"kind":"s3_jsonl","endpoint_url":"s3://ministr-audit-bucket/audit/","token":$t,"enabled":true}')
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/siem/config" "${TOKEN_A}" "${S3_DISPATCH_BODY}"
+    assert_status "${RESPONSE_STATUS}" "200" "POST s3_jsonl dispatch config (endpoint_url_override → fake S3) → 200"
+
+    # Snapshot fake-S3 line count before audit trigger.
+    S3_PRE=$(wc -l < "${SIEM_S3_LOG}" 2>/dev/null | tr -d ' ' || echo 0)
+
+    # Fire one org-scoped audit emission via POST /invites.
+    INVITE_S3='{"email":"s3-dispatch-test@e2e.test"}'
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/invites" "${TOKEN_A}" "${INVITE_S3}"
+    if [[ "${RESPONSE_STATUS}" == "201" || "${RESPONSE_STATUS}" == "200" ]]; then
+        pass "POST /invites for S3 dispatch flow fires org-scoped audit (HTTP ${RESPONSE_STATUS})"
+    else
+        fail "POST /invites for ORG_ID_A — expected 201/200, got ${RESPONSE_STATUS}"
+    fi
+
+    # Poll fake S3 for the new PUT. aws-sdk-s3 SigV4 signing + DNS
+    # resolution + TCP connect take longer than the simpler dispatch
+    # paths; widen the poll timeout to 10s.
+    S3_WAIT=0
+    while true; do
+        S3_NOW=$(wc -l < "${SIEM_S3_LOG}" 2>/dev/null | tr -d ' ' || echo 0)
+        if [[ "${S3_NOW}" -gt "${S3_PRE}" ]]; then
+            break
+        fi
+        S3_WAIT=$((S3_WAIT + 1))
+        if [[ "${S3_WAIT}" -gt 50 ]]; then
+            break
+        fi
+        sleep 0.2
+    done
+    S3_POST=$(wc -l < "${SIEM_S3_LOG}" 2>/dev/null | tr -d ' ' || echo 0)
+    if [[ "${S3_POST}" -gt "${S3_PRE}" ]]; then
+        pass "fake S3 received ≥1 PUT (pre=${S3_PRE}, post=${S3_POST})"
+    else
+        fail "no PUTs arrived at fake S3 after 10s — aws-sdk-s3 dispatch may be misconfigured · serve log: $(tail -3 /tmp/ministr-e2e-serve.log 2>/dev/null)"
+    fi
+
+    # Inspect the most-recent PUT.
+    S3_LAST=$(tail -n1 "${SIEM_S3_LOG}" 2>/dev/null || echo '{}')
+    S3_METHOD=$(printf '%s' "${S3_LAST}" | jq -r '.method // empty')
+    S3_PATH=$(printf '%s' "${S3_LAST}" | jq -r '.path // empty')
+    S3_AUTH=$(printf '%s' "${S3_LAST}" | jq -r '.auth // empty')
+    if [[ "${S3_METHOD}" == "PUT" ]]; then
+        pass "fake S3 request method is PUT (S3 PutObject semantics)"
+    else
+        fail "fake S3 request method expected PUT, got '${S3_METHOD}'"
+    fi
+    # Path-style URL: /<bucket>/<prefix>/year=Y/month=M/day=D/<ms>-<rand>.json
+    # aws-sdk-s3 URL-encodes `=` to `%3D` and appends `?x-id=PutObject`.
+    # Match against both the encoded and decoded forms so the assertion
+    # survives future SDK encoding-policy changes.
+    if [[ "${S3_PATH}" == /ministr-audit-bucket/audit/year*month*day*.json* ]]; then
+        pass "fake S3 path matches /<bucket>/<prefix>/year…/month…/day…/*.json (Hive-partitioned)"
+    else
+        fail "fake S3 path didn't match expected partitioned shape: '${S3_PATH:0:200}'"
+    fi
+    # SigV4 signature must be present (proves the SDK signed the request).
+    if [[ "${S3_AUTH}" == AWS4-HMAC-SHA256\ Credential=* ]]; then
+        pass "fake S3 PUT carries an AWS4-HMAC-SHA256 SigV4 signature header"
+    else
+        fail "fake S3 auth header missing SigV4 signature: '${S3_AUTH:0:120}'"
+    fi
+    # The body decodes to JSON containing the audit action.
+    S3_BODY_ACTION=$(printf '%s' "${S3_LAST}" | jq -r '.body | fromjson | .action // empty' 2>/dev/null)
+    if [[ "${S3_BODY_ACTION}" == "invite.created" ]]; then
+        pass "fake S3 PUT body[.action] == invite.created (audit shape preserved through PUT)"
+    else
+        fail "fake S3 PUT body action expected invite.created, got '${S3_BODY_ACTION}' · body: $(printf '%s' "${S3_LAST}" | jq -r '.body' | head -c 200)"
+    fi
+    # The body's org_id matches the per-org routing.
+    S3_BODY_ORG=$(printf '%s' "${S3_LAST}" | jq -r '.body | fromjson | .org_id // empty' 2>/dev/null)
+    if [[ "${S3_BODY_ORG}" == "${ORG_ID_A}" ]]; then
+        pass "fake S3 PUT body[.org_id] == ORG_ID_A (per-org routing locked)"
+    else
+        fail "fake S3 PUT body org_id expected ${ORG_ID_A}, got '${S3_BODY_ORG}'"
+    fi
 else
-    note "skipped F5.3-d-ii-config + F5.3-d-ii-dispatch + F5.3-d-iii-a + F5.3-d-iii-c + F5.3-d-iii-c-udp + F5.3-d-iii-b-shim — ORG_ID_A not captured"
+    note "skipped F5.3-d-ii-config + F5.3-d-ii-dispatch + F5.3-d-iii-a + F5.3-d-iii-c + F5.3-d-iii-c-udp + F5.3-d-iii-b-shim + F5.3-d-iii-b-dispatch — ORG_ID_A not captured"
 fi
 
 # ─── summary ──────────────────────────────────────────────────────────
