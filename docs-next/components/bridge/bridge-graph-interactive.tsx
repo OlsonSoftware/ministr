@@ -40,6 +40,13 @@ interface BridgeGraphInteractiveProps {
   className?: string;
   /** Optional caption rendered below the canvas. */
   caption?: React.ReactNode;
+  /**
+   * F3.6-c-ii-a — fired with the original `LiveBridgeEdge` when an
+   * edge is clicked. The parent wrapper uses this to drive a side
+   * panel with the export/import source pair. Optional; when
+   * absent, edge clicks are no-ops.
+   */
+  onEdgeClick?: (edge: LiveBridgeEdge) => void;
 }
 
 // Language-slug → fill colour. Mirrors the F2.5 narrow palette where
@@ -113,6 +120,7 @@ export function BridgeGraphInteractive({
   size = 560,
   className,
   caption,
+  onEdgeClick,
 }: BridgeGraphInteractiveProps) {
   const center = size / 2;
   const fallbackRadius = Math.min(size * 0.34, 200);
@@ -154,6 +162,9 @@ export function BridgeGraphInteractive({
       labelBgStyle: { fill: 'rgba(15,23,42,0.55)' },
       style: { stroke, strokeWidth: 2, opacity: 0.85 },
       animated: false,
+      // F3.6-c-ii-a — stash the original LiveBridgeEdge so onEdgeClick
+      // can hand it back to the parent without lossy id parsing.
+      data: { liveEdge: e },
     };
   });
 
@@ -171,7 +182,15 @@ export function BridgeGraphInteractive({
           fitViewOptions={{ padding: 0.15 }}
           nodesDraggable={false}
           nodesConnectable={false}
-          elementsSelectable={false}
+          elementsSelectable
+          onEdgeClick={
+            onEdgeClick
+              ? (_e, edge) => {
+                  const live = (edge.data as { liveEdge?: LiveBridgeEdge } | undefined)?.liveEdge;
+                  if (live) onEdgeClick(live);
+                }
+              : undefined
+          }
           proOptions={{ hideAttribution: true }}
         >
           <Background gap={24} size={1} />
