@@ -57,6 +57,13 @@ tokio.workspace = true
 # trait. Same versions ministr-core already pins.
 tokio-util = "0.7"
 futures = "0.3"
+# F3.6-b-ii-a — opt-in CORS for the cloud HTTP server. Default-off:
+# when `MINISTR_CORS_ALLOWED_ORIGINS` is unset, no CORS layer is
+# mounted and self-hosted serve stays exactly as before. When set
+# (cloud deploys + dev workflows that browse a daemon from
+# `ministr.ai/demo/bridge`-style pages), the listed origins receive
+# the `Access-Control-Allow-*` headers.
+tower-http = { version = "0.6", features = ["cors"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 miette.workspace = true
