@@ -756,19 +756,36 @@ pub(crate) async fn cmd_serve_http(
             store.clone(),
             "ministr:read",
         );
-        // F2.3 — quota enforcement state. The probe wraps the daemon's
-        // existing CorpusRegistry; rules are ordered cheapest-first
-        // (CorpusCountRule's match predicate is a string compare).
-        // Mounted as a single Tower layer beneath the scope guards —
-        // see the daemon_write_q binding below.
+        // F2.3 — quota enforcement state. Probe selection: when
+        // cloud_pool is Some, use PostgresCorporaProbe so the count is
+        // tenant-scoped against cloud_corpora rows (the source of
+        // truth in cloud mode — register_corpus writes here via
+        // IndexJobSink before the worker indexes anything, so the
+        // in-memory CorpusRegistry trails). Self-hosted serve uses
+        // RegistryProbe over the in-memory registry, which is correct
+        // because every corpus IS in-memory there. Surfaced by
+        // F-Test-1's cloud-registry gap finding + lit up by F-Test-5.
+        let probe: std::sync::Arc<dyn ministr_cloud::UsageProbe> =
+            if let Some(pool) = cloud_pool.as_ref() {
+                tracing::info!(
+                    "PostgresCorporaProbe wired — quota counts cloud_corpora per-tenant"
+                );
+                std::sync::Arc::new(ministr_cloud::PostgresCorporaProbe::new(Arc::clone(pool)))
+            } else {
+                std::sync::Arc::new(ministr_cloud::RegistryProbe::new(Arc::clone(
+                    &corpus_registry,
+                )))
+            };
+        // Rules are ordered cheapest-first (CorpusCountRule's match
+        // predicate is a string compare). Mounted as a single Tower
+        // layer beneath the scope guards — see the daemon_write_q
+        // binding below.
         let quota_state = ministr_cloud::QuotaState::new(
             vec![
                 std::sync::Arc::new(ministr_cloud::CorpusCountRule),
                 std::sync::Arc::new(ministr_cloud::AtlasAccessRule),
             ],
-            std::sync::Arc::new(ministr_cloud::RegistryProbe::new(Arc::clone(
-                &corpus_registry,
-            ))),
+            probe,
         );
 
         // F2.2 — rate-limit write/clone routes on cloud only. Two
