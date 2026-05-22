@@ -60,12 +60,14 @@ pub mod ratelimit;
 pub mod saml;
 pub mod session_bundle_store;
 pub mod session_storage;
+pub mod siem;
 pub mod tenant_filter;
 pub mod users;
 pub mod webhooks;
 
 pub use oidc::{OidcState, REDACTED_CLIENT_SECRET, oidc_config_routes, oidc_routes};
 pub use saml::{SamlState, saml_config_routes, saml_routes};
+pub use siem::SplunkHecSink;
 
 pub use api_keys::{
     ApiKeyRow, ApiKeysError, ApiKeysState, CreatedApiKey, DEFAULT_API_KEY_SCOPE,

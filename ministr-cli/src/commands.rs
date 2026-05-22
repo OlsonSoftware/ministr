@@ -990,32 +990,40 @@ pub(crate) async fn cmd_serve_http(
                 }
             };
 
-            // F3.7a + F3.5b-i — build the audit sink chain. The
-            // Postgres sink always lands first so the audit_events
-            // row is durable BEFORE any outbound dispatch. The
-            // webhook fan-out sink only joins the chain when the
-            // dispatcher initialised successfully; otherwise the
-            // chain degrades to plain Postgres.
+            // F3.7a + F3.5b-i + F5.3-d-i — build the audit sink
+            // chain. The Postgres sink always lands first so the
+            // audit_events row is durable BEFORE any outbound
+            // dispatch. The webhook fan-out sink joins when the
+            // dispatcher initialised successfully; the SIEM (Splunk
+            // HEC) sink joins when MINISTR_SIEM_HEC_URL +
+            // MINISTR_SIEM_HEC_TOKEN are both set. All three
+            // sinks are fire-and-forget so chaining doesn't
+            // serialise their I/O.
             let postgres_audit: Arc<dyn ministr_api::AuditSink> = Arc::new(
                 ministr_cloud::PostgresAuditSink::from_arc(Arc::clone(pool)),
             );
-            let audit_sink: Arc<dyn ministr_api::AuditSink> =
-                if let Some(d) = webhook_dispatcher.as_ref() {
-                    let fanout = ministr_cloud::WebhookFanoutSink::new(
-                        Arc::clone(pool),
-                        Arc::clone(d),
-                    );
-                    tracing::info!(
-                        "audit pipeline wired — PostgresAuditSink → WebhookFanoutSink chain"
-                    );
-                    Arc::new(ministr_cloud::ChainedAuditSink::new(vec![
-                        postgres_audit,
-                        Arc::new(fanout),
-                    ]))
-                } else {
-                    tracing::info!("PostgresAuditSink wired — webhook fan-out disabled");
-                    postgres_audit
-                };
+            let mut audit_sinks: Vec<Arc<dyn ministr_api::AuditSink>> =
+                vec![Arc::clone(&postgres_audit)];
+            let mut chain_desc = String::from("PostgresAuditSink");
+            if let Some(d) = webhook_dispatcher.as_ref() {
+                let fanout = ministr_cloud::WebhookFanoutSink::new(
+                    Arc::clone(pool),
+                    Arc::clone(d),
+                );
+                audit_sinks.push(Arc::new(fanout));
+                chain_desc.push_str(" → WebhookFanoutSink");
+            }
+            if let Some(hec) = ministr_cloud::SplunkHecSink::from_env() {
+                audit_sinks.push(Arc::new(hec));
+                chain_desc.push_str(" → SplunkHecSink");
+            }
+            let audit_sink: Arc<dyn ministr_api::AuditSink> = if audit_sinks.len() == 1 {
+                tracing::info!(chain = %chain_desc, "audit pipeline wired");
+                postgres_audit
+            } else {
+                tracing::info!(chain = %chain_desc, "audit pipeline wired");
+                Arc::new(ministr_cloud::ChainedAuditSink::new(audit_sinks))
+            };
 
             let mut orgs_state =
                 ministr_cloud::OrgsState::from_arc(Arc::clone(pool));

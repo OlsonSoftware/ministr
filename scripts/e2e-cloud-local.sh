@@ -68,6 +68,10 @@ SERVE_PID=""
 RECEIVER_PID=""
 OIDC_MOCK_PID=""
 OIDC_MOCK_PORT=8090
+SIEM_HEC_PID=""
+SIEM_HEC_PORT="${SIEM_HEC_PORT:-8091}"
+SIEM_HEC_LOG="${SIEM_HEC_LOG:-/tmp/ministr-e2e-siem-hec-${RUN_TS}.jsonl}"
+SIEM_HEC_TOKEN="hec_e2e_test_$$"
 
 # Bail on missing tooling early — the failure mode otherwise is a
 # cryptic curl/jq error 200 lines into the script.
@@ -96,6 +100,11 @@ cleanup() {
         info "stopping OIDC mock IdP (PID ${OIDC_MOCK_PID})"
         kill "${OIDC_MOCK_PID}" 2>/dev/null || true
         wait "${OIDC_MOCK_PID}" 2>/dev/null || true
+    fi
+    if [[ -n "${SIEM_HEC_PID}" ]] && kill -0 "${SIEM_HEC_PID}" 2>/dev/null; then
+        info "stopping SIEM HEC receiver (PID ${SIEM_HEC_PID})"
+        kill "${SIEM_HEC_PID}" 2>/dev/null || true
+        wait "${SIEM_HEC_PID}" 2>/dev/null || true
     fi
     if [[ -n "${SERVE_PID}" ]] && kill -0 "${SERVE_PID}" 2>/dev/null; then
         info "stopping serve (PID ${SERVE_PID})"
@@ -319,6 +328,12 @@ export MINISTR_BLOB_FS_ROOT="${BLOB_ROOT}"
 # /webhooks/stripe; we never call Stripe's API. The value is a test
 # constant scoped to localhost — never leaves this machine.
 export MINISTR_STRIPE_WEBHOOK_SECRET="whsec_e2e_test_only_localhost_no_money"
+# F5.3-d-i — wire the Splunk-HEC sink to the fake receiver spawned
+# below. Setting both env vars triggers SplunkHecSink::from_env() to
+# succeed at serve boot; ChainedAuditSink picks it up alongside
+# PostgresAuditSink + WebhookFanoutSink.
+export MINISTR_SIEM_HEC_URL="http://127.0.0.1:${SIEM_HEC_PORT}/services/collector/event"
+export MINISTR_SIEM_HEC_TOKEN="${SIEM_HEC_TOKEN}"
 unset MINISTR_CLOUD_DATA_DIR
 # Persistent DATA_DIR keeps the embedding model cache across runs;
 # wipe only the corpora + corpora.json so the registry starts empty.
@@ -407,6 +422,27 @@ until curl -sf "http://127.0.0.1:${RECEIVER_PORT}/" >/dev/null 2>&1; do
     sleep 0.2
 done
 info "receiver PID ${RECEIVER_PID}; record at ${RECEIVER_LOG}"
+
+step "step 5b'/6 — spawn fake Splunk HEC receiver on :${SIEM_HEC_PORT}"
+rm -f "${SIEM_HEC_LOG}"
+python3 "$(dirname "$0")/e2e-siem-hec-receiver.py" "${SIEM_HEC_PORT}" "${SIEM_HEC_LOG}" \
+    > /tmp/ministr-e2e-siem-hec-stdout.log 2>&1 &
+SIEM_HEC_PID=$!
+attempts=0
+until curl -sf "http://127.0.0.1:${SIEM_HEC_PORT}/" >/dev/null 2>&1; do
+    attempts=$((attempts + 1))
+    if ! kill -0 "${SIEM_HEC_PID}" 2>/dev/null; then
+        echo "SIEM HEC receiver crashed during boot — log tail:" >&2
+        tail -10 /tmp/ministr-e2e-siem-hec-stdout.log >&2
+        exit 1
+    fi
+    if [[ "${attempts}" -gt 25 ]]; then
+        echo "SIEM HEC receiver didn't reach :${SIEM_HEC_PORT} in 5s" >&2
+        exit 1
+    fi
+    sleep 0.2
+done
+info "SIEM HEC receiver PID ${SIEM_HEC_PID}; record at ${SIEM_HEC_LOG}"
 
 step "step 5c/6 — spawn mock OIDC IdP on :${OIDC_MOCK_PORT}"
 # F5.2-c — generate an RSA-2048 keypair the mock IdP uses to sign ID
@@ -1573,6 +1609,62 @@ if [[ "${COUNT_AFTER_2ND}" == "${PRE_DROP}" ]]; then
     pass "second ensure-partitions call is a no-op (count still ${PRE_DROP})"
 else
     fail "second-call count expected ${PRE_DROP}, got ${COUNT_AFTER_2ND}"
+fi
+
+# 25) **F5.3-d-i — SplunkHecSink streams audit events to the fake HEC
+#     receiver.** The cloud's audit pipeline (PostgresAuditSink →
+#     WebhookFanoutSink → SplunkHecSink) fires on every audit emission.
+#     The harness has already triggered many such emissions (org.created,
+#     invite.created, share.granted, api_key.created, member.added,
+#     oidc.login, …) so by now the fake HEC receiver should have
+#     accumulated several JSONL lines. Poll briefly for the first line
+#     to land — the sink is fire-and-forget so the tokio task may not
+#     have completed by the time the last audit row landed in Postgres.
+info "F5.3-d-i: SplunkHecSink dispatches audit events to Splunk HEC"
+HEC_WAIT_ATTEMPTS=0
+while [[ ! -s "${SIEM_HEC_LOG}" ]]; do
+    HEC_WAIT_ATTEMPTS=$((HEC_WAIT_ATTEMPTS + 1))
+    if [[ "${HEC_WAIT_ATTEMPTS}" -gt 30 ]]; then
+        break
+    fi
+    sleep 0.2
+done
+HEC_LINES=$(wc -l < "${SIEM_HEC_LOG}" 2>/dev/null | tr -d ' ' || echo 0)
+if [[ "${HEC_LINES}" -ge "1" ]]; then
+    pass "SplunkHecSink delivered ≥1 audit event to fake HEC (lines=${HEC_LINES})"
+else
+    fail "no audit events arrived at fake HEC after 6s — sink not wired or all dispatches failing"
+fi
+
+# Inspect the first record: Authorization header must be Splunk-style,
+# path must be `/services/collector/event`, body must contain a
+# `sourcetype: "ministr_audit"` marker.
+HEC_FIRST=$(head -n1 "${SIEM_HEC_LOG}" 2>/dev/null || echo '{}')
+HEC_AUTH=$(printf '%s' "${HEC_FIRST}" | jq -r '.auth // empty')
+HEC_PATH=$(printf '%s' "${HEC_FIRST}" | jq -r '.path // empty')
+HEC_SOURCETYPE=$(printf '%s' "${HEC_FIRST}" | jq -r '.body | fromjson | .sourcetype // empty' 2>/dev/null)
+if [[ "${HEC_AUTH}" == "Splunk ${SIEM_HEC_TOKEN}" ]]; then
+    pass "HEC Authorization header matches \"Splunk <token>\" (token echoed exactly)"
+else
+    fail "HEC auth header mismatch — expected 'Splunk ${SIEM_HEC_TOKEN}', got '${HEC_AUTH:0:80}'"
+fi
+if [[ "${HEC_PATH}" == "/services/collector/event" ]]; then
+    pass "HEC path matches /services/collector/event (Splunk HEC convention)"
+else
+    fail "HEC path mismatch — expected /services/collector/event, got '${HEC_PATH}'"
+fi
+if [[ "${HEC_SOURCETYPE}" == "ministr_audit" ]]; then
+    pass "HEC event sourcetype == ministr_audit (Splunk search filter convention)"
+else
+    fail "HEC sourcetype mismatch — expected 'ministr_audit', got '${HEC_SOURCETYPE}'"
+fi
+# Verify the event payload contains an `action` field (the load-bearing
+# audit-row field — Splunk searches usually filter on action=X).
+HEC_FIRST_ACTION=$(printf '%s' "${HEC_FIRST}" | jq -r '.body | fromjson | .event.action // empty' 2>/dev/null)
+if [[ -n "${HEC_FIRST_ACTION}" ]]; then
+    pass "HEC event.action populated (first row action=${HEC_FIRST_ACTION})"
+else
+    fail "HEC event missing the action field — body=${HEC_FIRST:0:200}"
 fi
 
 # ─── summary ──────────────────────────────────────────────────────────
