@@ -297,6 +297,34 @@ pub(crate) async fn cmd_serve_http(
             .into_diagnostic()
             .wrap_err("apply cloud postgres migrations")?;
         tracing::info!("cloud postgres migrations applied");
+
+        // F5.3-c-ii — extend the audit_events partition surface
+        // forward to `now() + DEFAULT_PARTITION_LOOKAHEAD_QUARTERS`.
+        // Migration 0013 seeded 16 partitions covering 2024-Q1 ..
+        // 2027-Q4; without this call the pod silently breaks
+        // audit_events INSERT once `now()` crosses into Q1 2028.
+        // The helper is idempotent + cheap (single pg_inherits
+        // query + zero CREATEs on warm starts).
+        match ministr_cloud::ensure_audit_partitions(
+            &pool,
+            ministr_cloud::DEFAULT_PARTITION_LOOKAHEAD_QUARTERS,
+        )
+        .await
+        {
+            Ok(outcome) => tracing::info!(
+                existing = outcome.existing,
+                created = outcome.created,
+                target_end_year = outcome.target_end_year,
+                target_end_quarter = outcome.target_end_quarter,
+                "audit_events partition surface extended"
+            ),
+            Err(e) => tracing::warn!(
+                error = %e,
+                "ensure_audit_partitions failed — boot continues; future audit INSERTs may fail \
+                 if `now()` crosses past the highest seeded partition"
+            ),
+        }
+
         Some(Arc::new(pool))
     } else {
         None
@@ -2624,6 +2652,40 @@ pub(crate) async fn cmd_audit_prune(retention_days: u32) -> miette::Result<()> {
         elapsed_ms = u64::try_from(outcome.elapsed.as_millis()).unwrap_or(u64::MAX),
         retention_days = outcome.retention_days,
         "audit prune complete"
+    );
+    Ok(())
+}
+
+/// `ministr audit ensure-partitions --lookahead-quarters N` — F5.3-c-ii
+/// CLI surface that mirrors `cmd_serve_http`'s boot-time call. Useful
+/// for operator-driven catch-up + cron jobs that don't want to restart
+/// the serve to push the forward edge of `audit_events` partitions out.
+///
+/// Requires `MINISTR_PG_URL`. Idempotent — a re-run with the same
+/// lookahead creates 0 new partitions.
+pub(crate) async fn cmd_audit_ensure_partitions(
+    lookahead_quarters: u32,
+) -> miette::Result<()> {
+    let pg_url = std::env::var("MINISTR_PG_URL").map_err(|_| {
+        miette::miette!(
+            "ministr audit ensure-partitions requires MINISTR_PG_URL \
+             (the cloud Postgres connection string)"
+        )
+    })?;
+    let pool = ministr_cloud::connect(&pg_url)
+        .into_diagnostic()
+        .wrap_err("open cloud postgres pool")?;
+    tracing::info!(lookahead_quarters, "audit ensure-partitions starting");
+    let outcome = ministr_cloud::ensure_audit_partitions(&pool, lookahead_quarters)
+        .await
+        .into_diagnostic()
+        .wrap_err("ensure audit_events partitions")?;
+    tracing::info!(
+        existing = outcome.existing,
+        created = outcome.created,
+        target_end_year = outcome.target_end_year,
+        target_end_quarter = outcome.target_end_quarter,
+        "audit ensure-partitions complete"
     );
     Ok(())
 }
