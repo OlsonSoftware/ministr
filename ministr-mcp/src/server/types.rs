@@ -171,6 +171,20 @@ pub struct SurveyParams {
                        source_corpus, and merges results by score. Omit to query a single corpus."
     )]
     pub corpus_ids: Option<Vec<String>>,
+
+    /// F6.3-b — per-corpus score multipliers for cross-corpus ranking.
+    /// Keys are `corpus_id` strings matching `corpus_ids`; values are
+    /// non-negative multipliers (1.0 = unboosted, 2.0 = double weight,
+    /// 0.0 = suppressed). Absent corpora default to 1.0. Values are
+    /// clamped to `[0.0, 10.0]` and any non-finite (NaN, ±∞) value is
+    /// rejected back to 1.0. Only consulted when `corpus_ids` is set.
+    #[serde(default)]
+    #[schemars(
+        description = "Optional per-corpus score multipliers for cross-corpus ranking. \
+                       Map<corpus_id, multiplier>; absent corpora default to 1.0; clamped to [0, 10]. \
+                       Use 2.0 to float your own repo above Atlas hits, 0.0 to suppress a corpus."
+    )]
+    pub corpus_boost: Option<std::collections::HashMap<String, f32>>,
 }
 
 /// Parameters for the `ministr_read` tool.
