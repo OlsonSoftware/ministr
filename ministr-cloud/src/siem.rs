@@ -32,6 +32,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use getrandom::fill as getrandom_fill;
 use tokio::io::AsyncWriteExt as _;
 
 use axum::Router;
@@ -550,6 +551,211 @@ async fn dispatch_syslog_cef_udp(
     }
 }
 
+// ─── F5.3-d-iii-b-dispatch — S3 JSON-lines dispatch ────────────────
+//
+// Builds an `aws-sdk-s3` Client per audit event from the per-org
+// config row's parsed credentials, PUTs one JSON object at a
+// date-partitioned key. The PUT shape mirrors the JSONL convention
+// (one JSON document per line / file) — each event lands as its own
+// S3 object so customer-side queries via Athena / Glue can shard
+// over the `year=…/month=…/day=…/` Hive-style prefix.
+
+/// One audit event as it lands in the customer's S3 bucket.
+#[derive(Debug, Serialize)]
+struct S3JsonlEvent<'a> {
+    action: &'a str,
+    resource: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    org_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ip: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_agent: Option<&'a str>,
+    /// Unix epoch seconds. Same field shape as the Splunk + Datadog
+    /// payloads so customers can use one query template against any
+    /// of the three sinks.
+    ts_unix_secs: u64,
+}
+
+/// Howard Hinnant's `civil_from_days` — converts days-since-1970-01-01
+/// to (year, month, day) in the proleptic Gregorian calendar. Pure
+/// integer arithmetic; no `chrono` / `time` dep needed. Algorithm
+/// reference: <https://howardhinnant.github.io/date_algorithms.html>.
+/// Tested via the unit test directly below the dispatcher.
+///
+/// The casts are all within the algorithm's mathematically-bounded
+/// ranges (doe ≤ 146 096, doy ≤ 365, mp ≤ 11, year fits in i32 for
+/// any input that fits in u64-seconds-since-epoch). Clippy's pedantic
+/// wrap/truncation/sign-loss lints don't know that, so we silence
+/// them locally rather than restructure the canonical algorithm.
+#[allow(
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation,
+    clippy::bool_to_int_with_if
+)]
+fn civil_from_unix_secs(secs: u64) -> (i32, u32, u32) {
+    // secs / 86_400 is the day index since 1970-01-01.
+    let z_signed: i64 = (secs / 86_400) as i64 + 719_468;
+    let era = if z_signed >= 0 { z_signed } else { z_signed - 146_096 } / 146_097;
+    let doe = (z_signed - era * 146_097) as u64; // [0, 146_096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32; // [1, 12]
+    let y = (y + if m <= 2 { 1 } else { 0 }) as i32;
+    (y, m, d)
+}
+
+/// F5.3-d-iii-b-dispatch — POST helper for S3 JSON-lines. Parses the
+/// `s3://bucket/prefix/` endpoint + JSON-shape token (validated at
+/// the CRUD edge by [`validate_s3_credentials_shape`]), builds an
+/// `aws-sdk-s3` Client with static credentials + optional endpoint
+/// override (for `MinIO` / R2 / B2 / fake S3 in the e2e harness),
+/// and PUTs one JSON object at
+/// `<prefix>/year=YYYY/month=MM/day=DD/<unix_ms>-<rand_u64_hex>.json`.
+///
+/// 10s timeout on the PUT call so a slow customer endpoint doesn't
+/// back up the audit pipeline. Failures log `warn`; the persistent
+/// Postgres copy stays authoritative.
+#[allow(clippy::too_many_lines)] // SDK boilerplate + key construction + body serialization → one cohesive flow
+pub(crate) async fn dispatch_s3_jsonl(
+    endpoint: &str,
+    token_json: &str,
+    entry: &AuditEntry,
+) {
+    let Some(after_scheme) = endpoint.strip_prefix("s3://") else {
+        warn!(
+            endpoint = %endpoint,
+            "s3 jsonl dispatch: endpoint must start with s3://"
+        );
+        return;
+    };
+    let (bucket, key_prefix) = match after_scheme.split_once('/') {
+        Some((b, p)) => (b.to_string(), p.trim_end_matches('/').to_string()),
+        None => (after_scheme.to_string(), String::new()),
+    };
+    if bucket.is_empty() {
+        warn!(
+            endpoint = %endpoint,
+            "s3 jsonl dispatch: bucket name is empty"
+        );
+        return;
+    }
+
+    let creds: S3JsonlCredentials = match serde_json::from_str(token_json) {
+        Ok(c) => c,
+        Err(e) => {
+            // Validator should have caught this at CRUD POST time;
+            // surface defensively in case a row was written outside
+            // the CRUD path.
+            warn!(
+                error = %e,
+                "s3 jsonl dispatch: token JSON malformed (should have been rejected at CRUD edge)"
+            );
+            return;
+        }
+    };
+
+    let aws_creds = aws_credential_types::Credentials::new(
+        creds.access_key_id.clone(),
+        creds.secret_access_key.clone(),
+        None, // session token — not used; per-org rows don't carry STS sessions
+        None, // expiry — static credentials, no expiry
+        "ministr-per-org-siem",
+    );
+    let region = aws_sdk_s3::config::Region::new(creds.region.clone());
+    let mut config_builder = aws_sdk_s3::Config::builder()
+        .behavior_version(aws_config::BehaviorVersion::latest())
+        .region(region)
+        .credentials_provider(aws_creds);
+    if let Some(override_url) = creds.endpoint_url_override.as_deref() {
+        // S3-compatible providers (MinIO / R2 / B2) AND the e2e
+        // harness's fake S3 don't support virtual-hosted-style
+        // bucket addressing (`bucket.endpoint.com`). Force path-style
+        // (`endpoint.com/bucket/key`) when an override is set.
+        config_builder = config_builder
+            .endpoint_url(override_url.to_string())
+            .force_path_style(true);
+    }
+    let s3_config = config_builder.build();
+    let client = aws_sdk_s3::Client::from_conf(s3_config);
+
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let (year, month, day) = civil_from_unix_secs(now_secs);
+    let now_ms = now_secs.saturating_mul(1000);
+    let mut nonce_bytes = [0u8; 8];
+    // Best-effort RNG; if it fails the key still works (the unix-ms
+    // timestamp + bucket isolation makes collision astronomically
+    // unlikely even with a zero nonce).
+    let _ = getrandom_fill(&mut nonce_bytes);
+    let nonce = u64::from_be_bytes(nonce_bytes);
+    let key = if key_prefix.is_empty() {
+        format!("year={year:04}/month={month:02}/day={day:02}/{now_ms}-{nonce:016x}.json")
+    } else {
+        format!("{key_prefix}/year={year:04}/month={month:02}/day={day:02}/{now_ms}-{nonce:016x}.json")
+    };
+
+    let body_obj = S3JsonlEvent {
+        action: entry.action.as_str(),
+        resource: entry.resource.as_str(),
+        org_id: entry.org_id.as_deref(),
+        actor: entry.actor.as_deref(),
+        ip: entry.ip.as_deref(),
+        user_agent: entry.user_agent.as_deref(),
+        ts_unix_secs: now_secs,
+    };
+    let body = match serde_json::to_vec(&body_obj) {
+        Ok(b) => b,
+        Err(e) => {
+            warn!(
+                error = %e,
+                "s3 jsonl dispatch: body serialization failed"
+            );
+            return;
+        }
+    };
+
+    let put = client
+        .put_object()
+        .bucket(&bucket)
+        .key(&key)
+        .content_type("application/json")
+        .body(aws_sdk_s3::primitives::ByteStream::from(body))
+        .send();
+    match tokio::time::timeout(HEC_TIMEOUT, put).await {
+        Ok(Ok(_)) => {
+            debug!(
+                action = %entry.action,
+                bucket = %bucket,
+                key = %key,
+                "s3 jsonl dispatch ok"
+            );
+        }
+        Ok(Err(e)) => {
+            warn!(
+                action = %entry.action,
+                bucket = %bucket,
+                error = %e,
+                "s3 jsonl dispatch: PUT failed; row stays in Postgres audit_events"
+            );
+        }
+        Err(_) => {
+            warn!(
+                action = %entry.action,
+                bucket = %bucket,
+                "s3 jsonl dispatch: PUT timeout (>10s)"
+            );
+        }
+    }
+}
+
 /// F5.3-d-ii-dispatch + F5.3-d-iii — per-org SIEM dispatcher. Looks
 /// up `org_siem_configs` on every audit event with `org_id IS NOT
 /// NULL` and dispatches via the right helper based on `row.kind`:
@@ -675,21 +881,12 @@ impl AuditSink for PerOrgSiemDispatcher {
                     dispatch_syslog_cef(&url, &entry).await;
                 }
                 "s3_jsonl" => {
-                    // F5.3-d-iii-b-shim — kind is CRUD-validatable but
-                    // dispatch is not yet wired (F5.3-d-iii-b-dispatch
-                    // will add aws-sdk-s3 + the PUT path). Log a loud
-                    // warn so the gap is visible in production logs
-                    // until that chunk lands. Don't fall through to
-                    // the unknown-kind arm — that would obscure the
-                    // distinction between "kind we know but haven't
-                    // wired" and "kind we don't recognise at all".
-                    let _ = (url, token);
-                    warn!(
-                        org_id = %org_id,
-                        action = %entry.action,
-                        "per-org SIEM dispatch: s3_jsonl row found but dispatch not yet wired \
-                         (F5.3-d-iii-b-dispatch will add the aws-sdk-s3 PUT path)"
-                    );
+                    // F5.3-d-iii-b-dispatch — `token` carries JSON
+                    // credentials (parsed inside dispatch_s3_jsonl
+                    // via S3JsonlCredentials); `endpoint_url` is the
+                    // `s3://bucket/prefix/` target. Validator at the
+                    // CRUD edge enforces both shapes upfront.
+                    dispatch_s3_jsonl(&url, &token, &entry).await;
                 }
                 other => {
                     warn!(
@@ -1293,6 +1490,28 @@ mod tests {
         // also pass cleanly.
         let tok = r#"{"access_key_id":"AKIA…","secret_access_key":"secret…","region":"us-east-1","endpoint_url_override":"https://r2.example.com"}"#;
         assert!(validate_s3_credentials_shape(tok).is_ok());
+    }
+
+    #[test]
+    fn civil_from_unix_secs_known_dates() {
+        // F5.3-d-iii-b-dispatch — Howard Hinnant's algorithm.
+        // Check against well-known unix epochs.
+        // 0 = 1970-01-01.
+        assert_eq!(civil_from_unix_secs(0), (1970, 1, 1));
+        // 86_399 = same day (just before midnight UTC).
+        assert_eq!(civil_from_unix_secs(86_399), (1970, 1, 1));
+        // 86_400 = 1970-01-02.
+        assert_eq!(civil_from_unix_secs(86_400), (1970, 1, 2));
+        // 2024-01-01 = 1_704_067_200 unix.
+        assert_eq!(civil_from_unix_secs(1_704_067_200), (2024, 1, 1));
+        // 2026-05-22 = 1_779_408_000 unix (this session's date).
+        // 56 years * 365 + 14 leap days + 141 days-into-2026 = 20_595
+        // days since epoch; × 86_400 = 1_779_408_000 seconds.
+        assert_eq!(civil_from_unix_secs(1_779_408_000), (2026, 5, 22));
+        // 2024-02-29 (leap year) = 1_709_164_800 unix.
+        assert_eq!(civil_from_unix_secs(1_709_164_800), (2024, 2, 29));
+        // 2100-01-01 = 4_102_444_800 unix (centennial non-leap).
+        assert_eq!(civil_from_unix_secs(4_102_444_800), (2100, 1, 1));
     }
 
     #[test]

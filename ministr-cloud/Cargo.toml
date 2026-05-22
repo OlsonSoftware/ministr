@@ -110,6 +110,15 @@ flate2 = "1.1.9"
 # + `rustls-tls` features pull in an async reqwest-backed HTTP
 # client without native-tls / OpenSSL.
 openidconnect = { version = "4.0.1", default-features = false, features = ["reqwest", "rustls-tls"] }
+# F5.3-d-iii-b-dispatch — AWS S3 SDK for per-org `s3_jsonl` SIEM
+# dispatch. Builds a Client per audit event using credentials parsed
+# from the per-org config row's `token` JSON. aws-credential-types
+# exposes `Credentials::new` for the static-credentials provider
+# path (no env / instance / SSO discovery); aws-config provides the
+# `BehaviorVersion::latest` const the SDK requires.
+aws-sdk-s3 = { workspace = true }
+aws-credential-types = { workspace = true }
+aws-config = { workspace = true }
 
 [dev-dependencies]
 # F2.2 — rate-limit tests drive the axum middleware via

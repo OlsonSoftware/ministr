@@ -57,6 +57,15 @@ comrak = "0.36"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "charset", "http2"] }
 url = "2"
 
+# F5.3-d-iii-b-dispatch — AWS S3 SDK for per-org SIEM s3_jsonl
+# dispatch path. aws-sdk-s3 handles SigV4 signing + the PUT API
+# surface; aws-credential-types provides Credentials::new for the
+# parsed-from-token static credentials path (no env / file
+# discovery — per-org token IS the credential source).
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rustls", "rt-tokio"] }
+aws-credential-types = "1"
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest"] }
+
 # HTML parsing
 scraper = "0.26"
 
