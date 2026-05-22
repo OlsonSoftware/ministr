@@ -1126,6 +1126,19 @@ pub(crate) async fn cmd_serve_http(
                 composed = composed.merge(stripe_router);
                 tracing::info!("stripe webhook mounted — POST /webhooks/stripe");
             }
+            // F5.1-b — SAML SP endpoints. Public routes (IdP doesn't
+            // carry bearer tokens); per-org config gates whether
+            // a given org has SAML SSO enabled. F5.1-c will add the
+            // signed-assertion-receiving POST /orgs/{id}/saml/acs.
+            {
+                let saml_router = ministr_cloud::saml_routes(
+                    ministr_cloud::SamlState::new(Arc::clone(pool)),
+                );
+                composed = composed.merge(saml_router);
+                tracing::info!(
+                    "saml SP routes mounted — GET /orgs/{{id}}/saml/metadata.xml + /login"
+                );
+            }
             // F1.3 sub-bullet — GitHub sign-in flow. Mounted when the
             // cloud Postgres pool, the GitHub OAuth App credentials,
             // and a public base URL are ALL present. Public routes

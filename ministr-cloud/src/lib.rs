@@ -56,11 +56,14 @@ pub mod mail;
 pub mod orgs;
 pub mod quota;
 pub mod ratelimit;
+pub mod saml;
 pub mod session_bundle_store;
 pub mod session_storage;
 pub mod tenant_filter;
 pub mod users;
 pub mod webhooks;
+
+pub use saml::{SamlState, saml_routes};
 
 pub use api_keys::{
     ApiKeyRow, ApiKeysError, ApiKeysState, CreatedApiKey, DEFAULT_API_KEY_SCOPE,

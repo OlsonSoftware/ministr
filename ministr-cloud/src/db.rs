@@ -44,6 +44,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (7, include_str!("../migrations/0007_webhook_subscriptions.sql")),
     (8, include_str!("../migrations/0008_agent_sessions.sql")),
     (9, include_str!("../migrations/0009_session_drops.sql")),
+    (10, include_str!("../migrations/0010_org_saml_configs.sql")),
 ];
 
 /// Errors surfaced by [`connect`] and [`run_migrations`].
