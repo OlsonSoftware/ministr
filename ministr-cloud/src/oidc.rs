@@ -1,7 +1,7 @@
-//! F5.2-b — OIDC (`OpenID` Connect) Service Provider browser-facing
+//! F5.2-b/c — OIDC (`OpenID` Connect) Service Provider browser-facing
 //! endpoints.
 //!
-//! Mounts the per-org OIDC login-initiation route:
+//! Mounts the per-org OIDC login + callback routes:
 //!
 //! - `GET /orgs/{id}/oidc/login` — loads the org's
 //!   `org_oidc_configs` row, fetches the `IdP`'s OIDC discovery
@@ -11,14 +11,22 @@
 //!   map, and redirects (HTTP 302) the browser to the `IdP`'s
 //!   `authorization_endpoint`.
 //!
-//! F5.2-c lands `GET /orgs/{id}/oidc/callback` which reads from the
-//! pending-state map to validate the returned `state` and
-//! complete the authorization-code → ID token exchange. F5.2-d
-//! adds owner-gated CRUD endpoints for the config row.
+//! - `GET /orgs/{id}/oidc/callback` (F5.2-c) — consumes `?code=&state=`,
+//!   exchanges the code at the `IdP`'s token endpoint with the saved
+//!   PKCE verifier, validates the returned ID token (signature via
+//!   JWKS, `iss` / `aud` / `nonce` claims, optional `email_verified`),
+//!   extracts the email, upserts a `users` row (email-keyed; see
+//!   [`crate::users::upsert_oidc_user`] for the v0 limitation), mints
+//!   a bearer token via the same [`ministr_mcp::auth::OAuthStore`]
+//!   the GitHub callback uses, and returns
+//!   `{token, user_id, plan_id}` as JSON. Audit event `oidc.login`
+//!   fires when an audit sink is wired.
+//!
+//! F5.2-d adds owner-gated CRUD endpoints for the config row.
 //!
 //! No `OAuth` gate on these routes — the `IdP` can't carry ministr
 //! bearer tokens. Trust boundary is the discovery document + JWKS
-//! verification, which happens at the callback (F5.2-c).
+//! verification, which happens at the callback.
 //!
 //! Pure-Rust stack: openidconnect 4 + rustls + jsonwebtoken. No
 //! libxmlsec1, no openssl-sys — sidesteps the F5.1-c-prep-libxmlsec-
@@ -29,7 +37,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::Router;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -37,10 +45,13 @@ use deadpool_postgres::Pool;
 use openidconnect::core::{CoreClient, CoreProviderMetadata, CoreResponseType};
 use openidconnect::reqwest as oidc_reqwest;
 use openidconnect::{
-    AuthenticationFlow, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, PkceCodeChallenge,
-    PkceCodeVerifier, RedirectUrl, Scope,
+    AuthenticationFlow, AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl,
+    Nonce, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope,
 };
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
+
+use crate::users::upsert_oidc_user;
 
 /// In-memory discovery cache TTL. OIDC providers rotate JWKS more
 /// often than the discovery doc itself, so caching the metadata for
@@ -70,6 +81,25 @@ pub struct OidcState {
     /// exchange. Single client per pod so connections + DNS are
     /// reused.
     http_client: oidc_reqwest::Client,
+    /// F5.2-c — used to mint a bearer token after a successful
+    /// ID-token validation. `None` on self-hosted / pre-F5.2-c
+    /// deployments, in which case the callback returns 500 with a
+    /// "callback not wired" message (the login endpoint also won't
+    /// reach the callback without a configured org). `OAuthStore` is
+    /// `Clone` (Arc-backed internally) so we hold it by value to
+    /// match the `GitHubSigninState` pattern.
+    oauth_store: Option<ministr_mcp::auth::OAuthStore>,
+    /// F5.2-c — base URL used to construct the absolute
+    /// `redirect_uri` passed to the `IdP`. Must match the value the
+    /// `IdP` has registered for this Relying Party. `None` falls back
+    /// to `http://localhost:8088` so the harness's old behaviour
+    /// stays valid in tests; production deployments wire
+    /// `MINISTR_CLOUD_BASE_URL` so the `IdP` sees the real public URL.
+    cloud_base_url: Option<String>,
+    /// F5.2-c — optional audit sink. `Some` fires an `oidc.login`
+    /// audit row on successful callback. `None` (self-hosted serve
+    /// or cloud deployments without audit wiring) skips emission.
+    audit: Option<Arc<dyn ministr_api::AuditSink>>,
 }
 
 /// State persisted between `/oidc/login` and `/oidc/callback`. The
@@ -108,7 +138,41 @@ impl OidcState {
             discovery_cache: Arc::new(RwLock::new(HashMap::new())),
             pending_logins: Arc::new(RwLock::new(HashMap::new())),
             http_client,
+            oauth_store: None,
+            cloud_base_url: None,
+            audit: None,
         }
+    }
+
+    /// F5.2-c — attach the bearer-token minter the callback uses on
+    /// successful ID-token validation. Same store the GitHub callback
+    /// uses; bearer tokens from either `IdP` are indistinguishable
+    /// downstream because both flows mint via this single store.
+    #[must_use]
+    pub fn with_oauth_store(mut self, oauth_store: ministr_mcp::auth::OAuthStore) -> Self {
+        self.oauth_store = Some(oauth_store);
+        self
+    }
+
+    /// F5.2-c — set the cloud base URL used when assembling the
+    /// `redirect_uri` parameter. The `IdP` must have this URL registered
+    /// for the Relying Party. Trailing slashes are stripped.
+    #[must_use]
+    pub fn with_cloud_base_url(mut self, base_url: impl Into<String>) -> Self {
+        let mut s = base_url.into();
+        while s.ends_with('/') {
+            s.pop();
+        }
+        self.cloud_base_url = Some(s);
+        self
+    }
+
+    /// F5.2-c — wire an audit sink. When set, the callback emits an
+    /// `oidc.login` row on successful ID-token validation.
+    #[must_use]
+    pub fn with_audit(mut self, audit: Arc<dyn ministr_api::AuditSink>) -> Self {
+        self.audit = Some(audit);
+        self
     }
 }
 
@@ -118,15 +182,17 @@ impl OidcState {
 pub fn oidc_routes(state: OidcState) -> Router {
     Router::new()
         .route("/orgs/{id}/oidc/login", get(handle_login))
+        .route("/orgs/{id}/oidc/callback", get(handle_callback))
         .with_state(state)
 }
 
 /// One row from `org_oidc_configs`. Mirrors the schema in
-/// migration 0011 with the subset of columns this handler needs.
+/// migration 0011 with the subset of columns these handlers need.
 struct OrgOidcConfig {
     issuer_url: String,
     client_id: String,
     client_secret: String,
+    enforce_email_verified: bool,
 }
 
 async fn handle_login(
@@ -147,7 +213,7 @@ async fn handle_login(
         Err(e) => return internal_error("oidc discovery", &e),
     };
 
-    let redirect_uri = format!("http://localhost:8088/orgs/{org_id}/oidc/callback");
+    let redirect_uri = build_redirect_uri(&state, &org_id);
     let redirect = match RedirectUrl::new(redirect_uri) {
         Ok(r) => r,
         Err(e) => return internal_error("invalid redirect_uri", &e.to_string()),
@@ -196,6 +262,200 @@ async fn handle_login(
     redirect_to(auth_url.as_str())
 }
 
+/// Query string accepted by `/oidc/callback`. `code` and `state` are
+/// the OIDC-standard params; `error` / `error_description` surface an
+/// IdP-side rejection (the user denied the consent screen, etc.) and
+/// pass through to the response so the browser can show something
+/// useful.
+#[derive(Debug, Deserialize)]
+struct CallbackQuery {
+    code: Option<String>,
+    state: Option<String>,
+    error: Option<String>,
+    #[serde(rename = "error_description")]
+    _error_description: Option<String>,
+}
+
+/// JSON body the harness + (eventually) the desktop loopback receiver
+/// parse. F5.2-c v0 returns this directly; future iterations may
+/// redirect to a `MINISTR_CLOUD_BASE_URL/auth/done?token=…` page so a
+/// browser landing on the callback URL after a successful exchange
+/// gets a friendly UI instead of raw JSON.
+#[derive(Debug, Serialize)]
+struct CallbackResponse {
+    token: String,
+    user_id: String,
+    plan_id: String,
+}
+
+#[allow(clippy::too_many_lines)]
+async fn handle_callback(
+    State(state): State<OidcState>,
+    Path(org_id): Path<String>,
+    Query(query): Query<CallbackQuery>,
+) -> Response {
+    if parse_uuid(&org_id).is_none() {
+        return bad_request_response("invalid org id");
+    }
+
+    // The IdP can reject the consent screen — `?error=` surfaces that
+    // back to us. Surface it verbatim; the browser sees it and the
+    // operator can debug. No bearer is minted in this branch.
+    if let Some(err) = query.error {
+        return bad_request_response_owned(format!("idp error: {err}"));
+    }
+
+    let Some(state_token) = query.state else {
+        return bad_request_response("missing state");
+    };
+    let Some(code) = query.code else {
+        return bad_request_response("missing code");
+    };
+
+    // Consume the pending entry up-front so a replayed callback can't
+    // reuse the state. `remove` is the only mutation; everything else
+    // operates on the owned `PendingLogin`.
+    let pending = {
+        let mut map = state.pending_logins.write().await;
+        prune_expired(&mut map);
+        map.remove(&state_token)
+    };
+    let Some(pending) = pending else {
+        return bad_request_response("unknown or expired state");
+    };
+    if pending.org_id != org_id {
+        // Replayed state from a different org's login flow. Reject
+        // rather than risk crossing org boundaries.
+        return bad_request_response("state belongs to a different org");
+    }
+
+    let Some(oauth_store) = state.oauth_store.as_ref() else {
+        return internal_error(
+            "oauth store",
+            "OAuthStore not wired — cannot mint bearer token",
+        );
+    };
+
+    let cfg = match load_config(&state, &org_id).await {
+        Ok(Some(cfg)) => cfg,
+        Ok(None) => return not_found_response(),
+        Err(e) => return internal_error("load_config", &e),
+    };
+
+    let metadata = match get_or_fetch_discovery(&state, &cfg.issuer_url).await {
+        Ok(m) => m,
+        Err(e) => return internal_error("oidc discovery", &e),
+    };
+
+    let redirect_uri = build_redirect_uri(&state, &org_id);
+    let redirect = match RedirectUrl::new(redirect_uri) {
+        Ok(r) => r,
+        Err(e) => return internal_error("invalid redirect_uri", &e.to_string()),
+    };
+    let client = CoreClient::from_provider_metadata(
+        metadata,
+        ClientId::new(cfg.client_id.clone()),
+        Some(ClientSecret::new(cfg.client_secret.clone())),
+    )
+    .set_redirect_uri(redirect);
+
+    // Token exchange: code → access_token + id_token. The PKCE
+    // verifier proves we're the same client that initiated the flow.
+    let token_request = match client.exchange_code(AuthorizationCode::new(code)) {
+        Ok(req) => req.set_pkce_verifier(pending.pkce_verifier),
+        Err(e) => return internal_error("build token request", &e.to_string()),
+    };
+    let token_response = match token_request.request_async(&state.http_client).await {
+        Ok(t) => t,
+        Err(e) => return internal_error("token exchange", &e.to_string()),
+    };
+
+    let Some(id_token) = token_response.extra_fields().id_token() else {
+        return internal_error(
+            "id_token missing",
+            "token response carried no id_token (IdP misconfigured?)",
+        );
+    };
+
+    // Validate the ID token: signature against the IdP's JWKS, `iss`
+    // matches the discovery doc's issuer, `aud` matches our client_id,
+    // `nonce` matches the value we minted at /oidc/login. The verifier
+    // pulls all of those from the client; we only have to supply the
+    // saved nonce.
+    let claims = match id_token.claims(&client.id_token_verifier(), &pending.nonce) {
+        Ok(c) => c,
+        Err(e) => return bad_request_response_owned(format!("id_token validation: {e}")),
+    };
+
+    // Extract email — OIDC's `email` scope is the standard channel.
+    // For enterprise customers the IdP MUST issue it; without it we
+    // can't key the users table or grant access.
+    let Some(email_claim) = claims.email() else {
+        return bad_request_response(
+            "id_token carries no email claim — request the `email` scope or configure the IdP",
+        );
+    };
+    let email = email_claim.as_str();
+
+    // Honour `enforce_email_verified` — most enterprise IdPs always
+    // set `email_verified=true` so the default (TRUE in the schema)
+    // is the safe choice. Customers running a non-conforming IdP can
+    // flip it off explicitly via the F5.2-d CRUD path.
+    if cfg.enforce_email_verified
+        && !claims.email_verified().unwrap_or(false)
+    {
+        return bad_request_response(
+            "id_token's email_verified claim is false — sign-in rejected",
+        );
+    }
+
+    let user = match upsert_oidc_user(&state.pool, email).await {
+        Ok(u) => u,
+        Err(e) => return internal_error("upsert_oidc_user", &e.to_string()),
+    };
+
+    let token = match oauth_store
+        .issue_bearer_token(&user.id, DEFAULT_OIDC_SIGNIN_SCOPE)
+        .await
+    {
+        Ok(t) => t,
+        Err(e) => return internal_error("issue_bearer_token", &e.to_string()),
+    };
+
+    // F3.7-style audit emission. Best-effort: sink failures are logged
+    // by the impl, never propagated.
+    if let Some(audit) = state.audit.as_ref() {
+        audit.record(
+            ministr_api::AuditEntry::new("oidc.login", &user.id)
+                .with_org(&org_id)
+                .with_actor(&user.id),
+        );
+    }
+
+    tracing::info!(
+        user_id = %user.id,
+        org_id = %org_id,
+        issuer = %cfg.issuer_url,
+        inserted = user.inserted,
+        "oidc sign-in completed; bearer token issued"
+    );
+
+    let body = CallbackResponse {
+        token,
+        user_id: user.id,
+        plan_id: user.plan_id,
+    };
+    (StatusCode::OK, axum::Json(body)).into_response()
+}
+
+/// Default scope minted for OIDC sign-ins. Mirrors
+/// `ministr_mcp::auth::DEFAULT_SIGNIN_SCOPE` so the federated bearer
+/// is indistinguishable from a GitHub-IdP bearer downstream. Kept as
+/// a constant in this module rather than re-exporting so a future
+/// per-tier scope tightening (Pro vs Team minting different scopes)
+/// stays scoped to OIDC.
+const DEFAULT_OIDC_SIGNIN_SCOPE: &str = "ministr:read ministr:write";
+
 async fn load_config(
     state: &OidcState,
     org_id: &str,
@@ -207,7 +467,7 @@ async fn load_config(
         .map_err(|e| format!("pool get: {e}"))?;
     let row = client
         .query_opt(
-            "SELECT issuer_url, client_id, client_secret \
+            "SELECT issuer_url, client_id, client_secret, enforce_email_verified \
              FROM org_oidc_configs WHERE org_id = $1::text::uuid",
             &[&org_id.to_string()],
         )
@@ -217,7 +477,19 @@ async fn load_config(
         issuer_url: r.get(0),
         client_id: r.get(1),
         client_secret: r.get(2),
+        enforce_email_verified: r.get(3),
     }))
+}
+
+/// Build the per-org callback URL from the cloud base URL configured
+/// on the state. The `IdP` must have this URL registered for the
+/// Relying Party (per OIDC spec §3.1.2.1).
+fn build_redirect_uri(state: &OidcState, org_id: &str) -> String {
+    let base = state
+        .cloud_base_url
+        .as_deref()
+        .unwrap_or("http://localhost:8088");
+    format!("{base}/orgs/{org_id}/oidc/callback")
 }
 
 async fn get_or_fetch_discovery(
@@ -287,6 +559,10 @@ fn not_found_response() -> Response {
 }
 
 fn bad_request_response(msg: &'static str) -> Response {
+    (StatusCode::BAD_REQUEST, msg).into_response()
+}
+
+fn bad_request_response_owned(msg: String) -> Response {
     (StatusCode::BAD_REQUEST, msg).into_response()
 }
 
