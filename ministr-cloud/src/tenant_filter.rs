@@ -18,8 +18,8 @@ use std::sync::Arc;
 
 use deadpool_postgres::Pool;
 use ministr_api::tenant_filter::{
-    DefaultCorpusFuture, TenantCorpusFilter, TenantCorpusVisibility, TenantFilterError,
-    TenantFilterFuture, VisibleCorpusFuture,
+    CorpusRegistrationView, DefaultCorpusFuture, PendingCorporaFuture, TenantCorpusFilter,
+    TenantCorpusVisibility, TenantFilterError, TenantFilterFuture, VisibleCorpusFuture,
 };
 
 /// Postgres-backed tenant-corpus access decision.
@@ -186,6 +186,51 @@ impl TenantCorpusVisibility for PostgresTenantCorpusFilter {
                 .await
                 .map_err(map_err("visible_corpus_ids: query"))?;
             Ok(Some(rows.into_iter().map(|r| r.get::<_, String>("corpus_id")).collect()))
+        })
+    }
+
+    /// Closes the F-Test-1 cloud-registry pending-corpus gap: returns
+    /// every `cloud_corpora` row the tenant owns directly. The daemon
+    /// merges these into `list_corpora` so pending registrations (not
+    /// yet in the in-memory `CorpusRegistry`) are visible to their
+    /// owner immediately.
+    fn pending_corpora_for_tenant<'a>(
+        &'a self,
+        tenant_subject: &'a str,
+    ) -> PendingCorporaFuture<'a> {
+        Box::pin(async move {
+            let client = self
+                .pool
+                .get()
+                .await
+                .map_err(map_err("pending_corpora_for_tenant: get conn"))?;
+            // tenant_id is TEXT (migration 0003), so bare $1 — same
+            // lesson as F-Test-1-followup.
+            let rows = client
+                .query(
+                    "SELECT corpus_id, paths, display_name, status
+                     FROM cloud_corpora
+                     WHERE tenant_id = $1
+                     ORDER BY created_at ASC",
+                    &[&tenant_subject],
+                )
+                .await
+                .map_err(map_err("pending_corpora_for_tenant: query"))?;
+            let mut out = Vec::with_capacity(rows.len());
+            for row in rows {
+                let id: String = row.get("corpus_id");
+                let paths_json: serde_json::Value = row.get("paths");
+                let display_name: Option<String> = row.get("display_name");
+                let status: String = row.get("status");
+                let paths: Vec<String> = serde_json::from_value(paths_json).unwrap_or_default();
+                out.push(CorpusRegistrationView {
+                    id,
+                    paths,
+                    display_name,
+                    status,
+                });
+            }
+            Ok(out)
         })
     }
 }

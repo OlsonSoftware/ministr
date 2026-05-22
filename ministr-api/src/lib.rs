@@ -58,8 +58,8 @@ pub use session_storage::{
 };
 pub use tenant::TenantId;
 pub use tenant_filter::{
-    DefaultCorpusFuture, TenantCorpusFilter, TenantCorpusVisibility, TenantFilterError,
-    TenantFilterFuture, VisibleCorpusFuture,
+    CorpusRegistrationView, DefaultCorpusFuture, PendingCorporaFuture, TenantCorpusFilter,
+    TenantCorpusVisibility, TenantFilterError, TenantFilterFuture, VisibleCorpusFuture,
 };
 pub use usage::UsageSink;
 
