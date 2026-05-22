@@ -292,6 +292,11 @@ step "step 3/6 — start cloud serve in background"
 export MINISTR_PG_URL="postgres://ministr:ministr@localhost:55432/ministr_dev?sslmode=disable"
 export MINISTR_CLOUD_BASE_URL="${ENDPOINT}"
 export MINISTR_BLOB_FS_ROOT="${BLOB_ROOT}"
+# F-Test-4 — Stripe webhook signing secret. The harness signs fixture
+# events itself (openssl HMAC-SHA256) and POSTs them directly to
+# /webhooks/stripe; we never call Stripe's API. The value is a test
+# constant scoped to localhost — never leaves this machine.
+export MINISTR_STRIPE_WEBHOOK_SECRET="whsec_e2e_test_only_localhost_no_money"
 unset MINISTR_CLOUD_DATA_DIR
 # Persistent DATA_DIR keeps the embedding model cache across runs;
 # wipe only the corpora + corpora.json so the registry starts empty.
@@ -804,6 +809,97 @@ if [[ "${A_SESSIONS_AFTER_B}" == "${A_SESSION_ID}" ]]; then
 else
     fail "tenant A /sessions changed after B's MCP call — expected ${A_SESSION_ID}, got ${A_SESSIONS_AFTER_B}"
 fi
+
+# 13) **F-Test-4 — Stripe webhook subscription flip.** The cloud
+#     handler at POST /webhooks/stripe verifies a Stripe-Signature HMAC
+#     against MINISTR_STRIPE_WEBHOOK_SECRET, then on customer.subscription
+#     events runs `UPDATE users SET plan_id = $2 WHERE stripe_customer_id
+#     = $1`. We test this end-to-end WITHOUT touching Stripe's API: the
+#     harness sets MINISTR_STRIPE_WEBHOOK_SECRET to a known test value,
+#     UPDATEs tenant A's user row with a synthetic stripe_customer_id,
+#     constructs subscription.updated + .deleted fixture events, signs
+#     them with openssl HMAC-SHA256 mirroring Stripe's scheme, POSTs
+#     them, and polls users.plan_id for the flip. Zero Stripe API
+#     traffic, zero money risk.
+info "F-Test-4: Stripe webhook subscription flip (local fixture, no Stripe API contact)"
+STRIPE_CUSTOMER_A="cus_e2e_test_$(date +%s%N | tail -c 8)"
+# Set tenant A's stripe_customer_id + reset plan_id to free so the
+# subscription.updated → pro flip is observable (tenant A may have been
+# upgraded to pro by F-Test-5 paywall setup; that's noise for this
+# assertion).
+docker compose -f docker-compose.dev.yml exec -T postgres \
+    psql -U ministr -d ministr_dev -tA \
+    -c "UPDATE users SET stripe_customer_id = '${STRIPE_CUSTOMER_A}', plan_id = 'free' WHERE id = '${USER_A_UUID}'::uuid;" \
+    >/dev/null 2>&1
+PRE_PLAN_A=$(psql_count "SELECT plan_id FROM users WHERE id = '${USER_A_UUID}'::uuid;")
+info "  tenant A user pre-flip plan_id=${PRE_PLAN_A} stripe_customer_id=${STRIPE_CUSTOMER_A}"
+
+# Build a Stripe-Signature header for `body` signed with
+# MINISTR_STRIPE_WEBHOOK_SECRET. Scheme (Stripe v1, since 2019):
+#   header value = "t=<ts>,v1=<hex>"
+#   hex = HMAC-SHA256(secret, "<ts>.<body>")
+# Mirrors ministr-cloud's own outbound webhook signer (X-Ministr-Sig).
+stripe_sign_header() {
+    local body="$1" secret="$2" ts hex
+    ts=$(date +%s)
+    hex=$(printf '%s.%s' "${ts}" "${body}" \
+        | openssl dgst -sha256 -hmac "${secret}" 2>/dev/null \
+        | awk '{print $NF}')
+    printf 't=%s,v1=%s' "${ts}" "${hex}"
+}
+
+# subscription.updated → plan_id should become "pro"
+SUB_UPDATED_BODY='{"id":"evt_test_updated","type":"customer.subscription.updated","data":{"object":{"customer":"'"${STRIPE_CUSTOMER_A}"'","status":"active","items":{"data":[{"price":{"lookup_key":"pro"}}]}}}}'
+SUB_UPDATED_SIG=$(stripe_sign_header "${SUB_UPDATED_BODY}" "${MINISTR_STRIPE_WEBHOOK_SECRET}")
+SUB_UPDATED_STATUS=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' \
+    -X POST "${ENDPOINT}/webhooks/stripe" \
+    -H "stripe-signature: ${SUB_UPDATED_SIG}" \
+    -H 'content-type: application/json' \
+    --data "${SUB_UPDATED_BODY}")
+assert_status "${SUB_UPDATED_STATUS}" "200" "POST /webhooks/stripe (subscription.updated) → 200 (HMAC verified)"
+
+POST_PLAN_A=""
+for _ in $(seq 1 10); do
+    POST_PLAN_A=$(psql_count "SELECT plan_id FROM users WHERE id = '${USER_A_UUID}'::uuid;")
+    [[ "${POST_PLAN_A}" == "pro" ]] && break
+    sleep 0.5
+done
+if [[ "${POST_PLAN_A}" == "pro" ]]; then
+    pass "tenant A users.plan_id flipped from ${PRE_PLAN_A} → pro after subscription.updated"
+else
+    fail "tenant A users.plan_id stuck at ${POST_PLAN_A} after subscription.updated (expected pro)"
+fi
+
+# subscription.deleted → plan_id should fall back to "free"
+SUB_DELETED_BODY='{"id":"evt_test_deleted","type":"customer.subscription.deleted","data":{"object":{"customer":"'"${STRIPE_CUSTOMER_A}"'","status":"canceled"}}}'
+SUB_DELETED_SIG=$(stripe_sign_header "${SUB_DELETED_BODY}" "${MINISTR_STRIPE_WEBHOOK_SECRET}")
+SUB_DELETED_STATUS=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' \
+    -X POST "${ENDPOINT}/webhooks/stripe" \
+    -H "stripe-signature: ${SUB_DELETED_SIG}" \
+    -H 'content-type: application/json' \
+    --data "${SUB_DELETED_BODY}")
+assert_status "${SUB_DELETED_STATUS}" "200" "POST /webhooks/stripe (subscription.deleted) → 200"
+
+DOWN_PLAN_A=""
+for _ in $(seq 1 10); do
+    DOWN_PLAN_A=$(psql_count "SELECT plan_id FROM users WHERE id = '${USER_A_UUID}'::uuid;")
+    [[ "${DOWN_PLAN_A}" == "free" ]] && break
+    sleep 0.5
+done
+if [[ "${DOWN_PLAN_A}" == "free" ]]; then
+    pass "tenant A users.plan_id fell back from pro → free after subscription.deleted"
+else
+    fail "tenant A users.plan_id stuck at ${DOWN_PLAN_A} after subscription.deleted (expected free)"
+fi
+
+# Bad-signature rejection — same body, wrong secret. Must be 400.
+BAD_SIG=$(stripe_sign_header "${SUB_UPDATED_BODY}" "whsec_attacker_does_not_have_real_secret")
+BAD_STATUS=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' \
+    -X POST "${ENDPOINT}/webhooks/stripe" \
+    -H "stripe-signature: ${BAD_SIG}" \
+    -H 'content-type: application/json' \
+    --data "${SUB_UPDATED_BODY}")
+assert_status "${BAD_STATUS}" "400" "POST /webhooks/stripe with attacker-signed body → 400 (signature rejected)"
 
 # ─── summary ──────────────────────────────────────────────────────────
 
