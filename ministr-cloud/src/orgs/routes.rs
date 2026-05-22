@@ -14,7 +14,7 @@
 //! guard, same as `/api/v1/billing/usage`. The scope guard populates
 //! `Extension<Tenant>` on success; handlers read `tenant.subject` and
 //! treat it as the `users.id` UUID (matches the convention proven by
-//! `billing::endpoint::usage_handler`'s `$1::uuid` cast).
+//! `billing::endpoint::usage_handler`'s `$1::text::uuid` cast).
 //!
 //! # Why `:read` even for `POST /api/v1/orgs`
 //!
@@ -1071,10 +1071,10 @@ mod tests {
         // Cleanup — relies on FK cascades from orgs → org_members and
         // users to leave the fixture state tidy for the next run.
         let conn = pool.get().await.unwrap();
-        conn.execute("DELETE FROM orgs WHERE id = $1::uuid", &[&org.id])
+        conn.execute("DELETE FROM orgs WHERE id = $1::text::uuid", &[&org.id])
             .await
             .unwrap();
-        conn.execute("DELETE FROM users WHERE id = $1::uuid", &[&owner_id])
+        conn.execute("DELETE FROM users WHERE id = $1::text::uuid", &[&owner_id])
             .await
             .unwrap();
     }
@@ -1111,13 +1111,13 @@ mod tests {
 
         // Cleanup.
         let conn = pool.get().await.unwrap();
-        conn.execute("DELETE FROM orgs WHERE id = $1::uuid", &[&alice_org.id])
+        conn.execute("DELETE FROM orgs WHERE id = $1::text::uuid", &[&alice_org.id])
             .await
             .unwrap();
-        conn.execute("DELETE FROM users WHERE id = $1::uuid", &[&alice])
+        conn.execute("DELETE FROM users WHERE id = $1::text::uuid", &[&alice])
             .await
             .unwrap();
-        conn.execute("DELETE FROM users WHERE id = $1::uuid", &[&bob])
+        conn.execute("DELETE FROM users WHERE id = $1::text::uuid", &[&bob])
             .await
             .unwrap();
     }
@@ -1137,7 +1137,7 @@ mod tests {
 
         // Cleanup.
         let conn = pool.get().await.unwrap();
-        conn.execute("DELETE FROM users WHERE id = $1::uuid", &[&user])
+        conn.execute("DELETE FROM users WHERE id = $1::text::uuid", &[&user])
             .await
             .unwrap();
     }

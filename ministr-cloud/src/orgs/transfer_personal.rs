@@ -110,7 +110,7 @@ pub async fn transfer_personal_to_org(
 }
 
 /// Single-statement helper — `SELECT stripe_customer_id FROM users
-/// WHERE id = $1::uuid`. Returns `None` when the column is NULL
+/// WHERE id = $1::text::uuid`. Returns `None` when the column is NULL
 /// (user signed in before F1.5 wired the Customer-on-signin hook) or
 /// when the row doesn't exist (defensive; the route's auth gate
 /// guarantees the caller is a real user).
@@ -124,7 +124,7 @@ async fn lookup_user_stripe_customer_id(
         .map_err(|e| OrgError::GetConn(format!("lookup_user_stripe_customer_id: {e}")))?;
     let row = conn
         .query_opt(
-            "SELECT stripe_customer_id FROM users WHERE id = $1::uuid",
+            "SELECT stripe_customer_id FROM users WHERE id = $1::text::uuid",
             &[&user_id],
         )
         .await

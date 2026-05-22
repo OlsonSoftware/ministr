@@ -88,7 +88,7 @@ impl TenantCorpusFilter for PostgresTenantCorpusFilter {
                      JOIN org_members m ON m.org_id = a.org_id
                      WHERE a.corpus_id = $1
                        AND a.org_id IS NOT NULL
-                       AND m.user_id = $2::uuid
+                       AND m.user_id = $2::text::uuid
                      LIMIT 1",
                     &[&corpus_id, &tenant_subject],
                 )
@@ -161,13 +161,13 @@ impl TenantCorpusVisibility for PostgresTenantCorpusFilter {
                 .query(
                     "SELECT corpus_id
                      FROM cloud_corpora
-                     WHERE tenant_id = $1
+                     WHERE tenant_id = $1::text::uuid
                      UNION
                      SELECT a.corpus_id
                      FROM cloud_corpus_acl a
                      JOIN org_members m ON m.org_id = a.org_id
                      WHERE a.org_id IS NOT NULL
-                       AND m.user_id = $1::uuid",
+                       AND m.user_id = $1::text::uuid",
                     &[&tenant_subject],
                 )
                 .await

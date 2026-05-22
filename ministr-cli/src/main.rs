@@ -309,6 +309,30 @@ enum CloudAction {
         #[arg(long, allow_hyphen_values = true)]
         corpus: String,
     },
+
+    /// **Test/operator helper.** Seed a `users` row keyed on
+    /// `--github-id` (via the same `upsert_github_user` path the
+    /// real GitHub callback uses), then mint a bearer token bound
+    /// to the resulting UUID subject. Prints JSON
+    /// `{user_id, token, plan_id}` on stdout. Intended for the
+    /// `just e2e-cloud-local` harness — production tokens land via
+    /// the real GitHub OAuth dance. Requires `MINISTR_PG_URL`.
+    MintTestBearer {
+        /// Synthetic GitHub user id (any non-zero i64). The `users`
+        /// table's UPSERT key is `github_id`, so re-running with the
+        /// same value returns the same UUID — idempotent across
+        /// harness runs.
+        #[arg(long)]
+        github_id: i64,
+        /// Email address for the test user. Required by
+        /// `upsert_github_user`; any non-empty `*@*` string works.
+        #[arg(long)]
+        email: String,
+        /// Scope string for the minted token. Defaults to the
+        /// production-equivalent read+write scope set.
+        #[arg(long, default_value = "ministr:read ministr:write")]
+        scope: String,
+    },
 }
 
 /// Subcommands for `ministr hooks`.
@@ -688,6 +712,11 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
                 token,
                 corpus,
             } => cloud_demo::run_watch(endpoint, token, corpus).await,
+            CloudAction::MintTestBearer {
+                github_id,
+                email,
+                scope,
+            } => commands::cmd_cloud_mint_test_bearer(github_id, &email, &scope).await,
         },
         Command::Setup { .. } => {
             unreachable!("ministr setup is dispatched before resolve_config in main()")

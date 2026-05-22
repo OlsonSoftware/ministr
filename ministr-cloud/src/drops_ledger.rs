@@ -52,7 +52,7 @@ impl DropsLedger for PostgresDropsLedger {
                 .execute(
                     "INSERT INTO session_drops
                        (session_id, tenant_id, claim_id, evicted_at)
-                     VALUES ($1, $2::uuid, $3, $4::timestamptz)",
+                     VALUES ($1, $2::text::uuid, $3, $4::timestamptz)",
                     &[
                         &owned.session_id,
                         &owned.tenant_id,
@@ -92,7 +92,7 @@ impl DropsLedger for PostgresDropsLedger {
                          to_char(evicted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
                                           AS evicted_at_iso
                      FROM session_drops
-                     WHERE tenant_id = $1::uuid AND session_id = $2
+                     WHERE tenant_id = $1::text::uuid AND session_id = $2
                      ORDER BY id ASC",
                     &[&tenant, &id],
                 )

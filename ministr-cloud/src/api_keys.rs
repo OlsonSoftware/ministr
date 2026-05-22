@@ -273,7 +273,7 @@ pub async fn create_user_api_key(
         .query_one(
             "INSERT INTO api_keys
                (owner_user_id, name, hash, scopes, prefix)
-             VALUES ($1::uuid, $2, $3, $4, $5)
+             VALUES ($1::text::uuid, $2, $3, $4, $5)
              RETURNING
                id::text         AS id_text,
                name,
@@ -331,7 +331,7 @@ pub async fn list_user_api_keys(
                to_char(expires_at  AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
                                   AS expires_at_iso
              FROM api_keys
-             WHERE owner_user_id = $1::uuid AND revoked_at IS NULL
+             WHERE owner_user_id = $1::text::uuid AND revoked_at IS NULL
              ORDER BY created_at DESC",
             &[&owner_user_id],
         )
@@ -374,7 +374,7 @@ pub async fn revoke_user_api_key(
         .execute(
             "UPDATE api_keys
                SET revoked_at = now()
-             WHERE id = $1::uuid AND owner_user_id = $2::uuid AND revoked_at IS NULL",
+             WHERE id = $1::text::uuid AND owner_user_id = $2::text::uuid AND revoked_at IS NULL",
             &[&key_id, &owner_user_id],
         )
         .await
@@ -471,7 +471,7 @@ impl ApiKeyResolver for PostgresApiKeyResolver {
                 .map_err(|e| ApiKeyError::Storage(format!("touch get_conn: {e}")))?;
             client
                 .execute(
-                    "UPDATE api_keys SET last_used_at = now() WHERE id = $1::uuid",
+                    "UPDATE api_keys SET last_used_at = now() WHERE id = $1::text::uuid",
                     &[&key_id],
                 )
                 .await

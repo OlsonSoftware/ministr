@@ -113,7 +113,7 @@ mod tests {
             let row = client
                 .query_one(
                     "SELECT COUNT(*)::bigint AS n FROM usage_events
-                     WHERE tenant_id = $1::uuid AND kind = 'query.served'",
+                     WHERE tenant_id = $1::text::uuid AND kind = 'query.served'",
                     &[&tenant],
                 )
                 .await
