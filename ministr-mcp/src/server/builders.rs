@@ -520,6 +520,31 @@ impl MinistrServer {
         &self.active_session_id
     }
 
+    /// Resolve the calling tenant's subject — walks the tokio
+    /// task-local first, then falls back to `tenant_id_hint`.
+    ///
+    /// F-Test-3b-fix-1 + F-Test-3b-fix-2: the task-local set by the
+    /// outer `scope_tenant` axum middleware is lost across rmcp's
+    /// internal dispatch boundary, so `tenant_scope::current()`
+    /// returns `None` inside every `/mcp` tool handler. The hint is
+    /// captured in `MinistrServer::initialize` from the axum
+    /// `Tenant` extension that rmcp injects into
+    /// `RequestContext::extensions` (via `http::request::Parts`),
+    /// which DOES survive the spawn. Use this helper instead of
+    /// `tenant_scope::current()` directly so cloud /mcp callers
+    /// recover their tenant subject on every handler that needs it
+    /// (default-corpus selection, cross-corpus survey, per-tenant
+    /// audit emission, session stamping, etc.).
+    #[must_use]
+    pub(crate) fn current_tenant_subject(&self) -> Option<String> {
+        crate::tenant_scope::current().or_else(|| {
+            self.tenant_id_hint
+                .lock()
+                .ok()
+                .and_then(|g| g.clone())
+        })
+    }
+
     /// Set the coherence notification receiver for resource subscription push.
     ///
     /// The receiver carries affected section IDs from the coherence file watcher.

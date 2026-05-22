@@ -981,7 +981,7 @@ impl MinistrServer {
         Parameters(params): Parameters<SurveyParams>,
     ) -> Result<CallToolResult, McpError> {
         let top_k = params.top_k.unwrap_or(10);
-        let tenant_subject = crate::tenant_scope::current();
+        let tenant_subject = self.current_tenant_subject();
         let span = info_span!("ministr_survey", query_len = params.query.len(), top_k);
 
         async {
@@ -1267,7 +1267,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<ReadParams>,
     ) -> Result<CallToolResult, McpError> {
-        let tenant_subject = crate::tenant_scope::current();
+        let tenant_subject = self.current_tenant_subject();
         let span = info_span!("ministr_read", section_id = %params.section_id);
 
         async {
@@ -1381,7 +1381,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<ExtractParams>,
     ) -> Result<CallToolResult, McpError> {
-        let tenant_subject = crate::tenant_scope::current();
+        let tenant_subject = self.current_tenant_subject();
         let span = info_span!(
             "ministr_extract",
             section_id = %params.section_id,
@@ -1465,7 +1465,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<RelatedParams>,
     ) -> Result<CallToolResult, McpError> {
-        let tenant_subject = crate::tenant_scope::current();
+        let tenant_subject = self.current_tenant_subject();
         let span = info_span!("ministr_related", claim_id = %params.claim_id);
 
         async {
@@ -1732,7 +1732,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<CompressParams>,
     ) -> Result<CallToolResult, McpError> {
-        let tenant_subject = crate::tenant_scope::current();
+        let tenant_subject = self.current_tenant_subject();
         let span = info_span!("ministr_compress", count = params.content_ids.len());
 
         async {
@@ -1802,7 +1802,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<TocParams>,
     ) -> Result<CallToolResult, McpError> {
-        let tenant_subject = crate::tenant_scope::current();
+        let tenant_subject = self.current_tenant_subject();
         let span = info_span!("ministr_toc", document_id = ?params.document_id);
 
         async {
@@ -2204,7 +2204,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<SymbolsParams>,
     ) -> Result<CallToolResult, McpError> {
-        let tenant_subject = crate::tenant_scope::current();
+        let tenant_subject = self.current_tenant_subject();
         let span = info_span!("ministr_symbols", query = ?params.query, kind = ?params.kind);
 
         async {
@@ -2318,7 +2318,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<DefinitionParams>,
     ) -> Result<CallToolResult, McpError> {
-        let tenant_subject = crate::tenant_scope::current();
+        let tenant_subject = self.current_tenant_subject();
         let span = info_span!("ministr_definition", symbol_id = %params.symbol_id);
 
         async {
@@ -2370,7 +2370,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<ReferencesParams>,
     ) -> Result<CallToolResult, McpError> {
-        let tenant_subject = crate::tenant_scope::current();
+        let tenant_subject = self.current_tenant_subject();
         let span = info_span!("ministr_references", symbol_id = %params.symbol_id);
 
         async {
@@ -2443,7 +2443,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<ImpactParams>,
     ) -> Result<CallToolResult, McpError> {
-        let tenant_subject = crate::tenant_scope::current();
+        let tenant_subject = self.current_tenant_subject();
         let max_depth = params.max_depth.unwrap_or(3).clamp(1, 10);
         let span = info_span!("ministr_impact", symbol_id = %params.symbol_id, max_depth);
 
@@ -2502,7 +2502,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<DeadCodeParams>,
     ) -> Result<CallToolResult, McpError> {
-        let tenant_subject = crate::tenant_scope::current();
+        let tenant_subject = self.current_tenant_subject();
         let min_lines = params.min_lines.unwrap_or(1).max(1);
         let limit = params.limit.unwrap_or(50).clamp(1, 500);
         let span = info_span!("ministr_dead", kind = ?params.kind, module = ?params.module, min_lines, limit);
@@ -2574,7 +2574,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<SolidParams>,
     ) -> Result<CallToolResult, McpError> {
-        let tenant_subject = crate::tenant_scope::current();
+        let tenant_subject = self.current_tenant_subject();
         let core_params = mcp_solid_params_to_service(&params);
         let span = info_span!(
             "ministr_solid",
@@ -2641,7 +2641,7 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<BridgeParams>,
     ) -> Result<CallToolResult, McpError> {
-        let tenant_subject = crate::tenant_scope::current();
+        let tenant_subject = self.current_tenant_subject();
         let span = info_span!("ministr_bridge", query = ?params.query, kind = ?params.bridge_kind);
 
         async {

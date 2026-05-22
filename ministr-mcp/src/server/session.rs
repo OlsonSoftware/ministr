@@ -126,25 +126,19 @@ impl MinistrServer {
         // every cloud request after `validate_token_middleware` and
         // `scope_tenant`.
         //
-        // F-Test-3b-fix-1: on the cloud `/mcp` path, the task-local set
-        // by the outer `scope_tenant` middleware doesn't survive rmcp's
-        // internal request dispatcher (its spawn loses tokio task-locals).
-        // So the primary lookup `tenant_scope::current()` returns `None`
-        // here. The fallback reads from `self.tenant_id_hint`, which is
-        // captured at `initialize` time from `context.extensions`'s
-        // `axum::http::request::Parts` (the Parts extension path survives
-        // the spawn boundary). Mirrors the parent / client_name hint
-        // pattern.
-        if entry.tenant_id.is_none() {
-            let subject = crate::tenant_scope::current().or_else(|| {
-                self.tenant_id_hint
-                    .lock()
-                    .ok()
-                    .and_then(|g| g.clone())
-            });
-            if let Some(subject) = subject {
-                entry.tenant_id = Some(subject);
-            }
+        // F-Test-3b-fix-1 + fix-2: on the cloud `/mcp` path, the
+        // task-local set by the outer `scope_tenant` middleware doesn't
+        // survive rmcp's internal request dispatcher (its spawn loses
+        // tokio task-locals). `current_tenant_subject` walks the
+        // task-local first, then falls back to `self.tenant_id_hint`,
+        // which is captured at `initialize` time from
+        // `context.extensions`'s `axum::http::request::Parts` (the
+        // Parts extension path survives the spawn boundary). Mirrors
+        // the parent / client_name hint pattern.
+        if entry.tenant_id.is_none()
+            && let Some(subject) = self.current_tenant_subject()
+        {
+            entry.tenant_id = Some(subject);
         }
         entry
     }
