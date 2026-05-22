@@ -233,10 +233,19 @@ impl OAuthStore {
         raw_token: &str,
         required_scope: Option<&str>,
     ) -> Option<Tenant> {
-        let api_resolver = self.api_key_resolver.as_ref()?;
+        let Some(api_resolver) = self.api_key_resolver.as_ref() else {
+            tracing::debug!("api-key resolver not installed; bare OAuth-only validation");
+            return None;
+        };
         let key_data = match api_resolver.resolve(raw_token).await {
             Ok(Some(r)) => r,
-            Ok(None) => return None,
+            Ok(None) => {
+                tracing::debug!(
+                    token_prefix = %raw_token.chars().take(16).collect::<String>(),
+                    "api-key resolver: token not found in api_keys",
+                );
+                return None;
+            }
             Err(e) => {
                 warn!(error = %e, "api-key resolver storage error; rejecting");
                 return None;
@@ -245,6 +254,11 @@ impl OAuthStore {
         if let Some(needed) = required_scope
             && !key_data.scopes.split_whitespace().any(|s| s == needed)
         {
+            tracing::debug!(
+                needed,
+                scopes = %key_data.scopes,
+                "api-key resolver: scope check failed",
+            );
             return None;
         }
         let plan = parse_plan_id(&key_data.plan_id);
