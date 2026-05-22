@@ -64,6 +64,13 @@ export function BridgeGraphLive({ defaultData }: BridgeGraphLiveProps) {
   const api = params?.get('api') ?? null;
   const id = params?.get('id') ?? null;
   const token = params?.get('token') ?? null;
+  // F3.6-c-ii-c — bundle the URL-derived context so the side panel
+  // can fetch ministr_definition per endpoint. Memoised so a
+  // useEffect that depends on it doesn't refire on every render.
+  const apiContext = useMemo(
+    () => (api && id ? { api, id, token } : null),
+    [api, id, token],
+  );
 
   const [data, setData] = useState<{
     nodes: ReadonlyArray<LiveBridgeNode>;
@@ -146,6 +153,7 @@ export function BridgeGraphLive({ defaultData }: BridgeGraphLiveProps) {
           <BridgeGraphSidePanel
             edge={selectedEdge}
             nodesById={filteredNodesById}
+            apiContext={apiContext}
             onClose={() => setSelectedEdge(null)}
           />
         ) : null}
