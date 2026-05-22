@@ -352,15 +352,22 @@ else
     fail "tenant A corpus_id missing in response"
 fi
 
-# 4) tenant A's GET /corpora — returns 200. NOTE: the list is empty
-#    even for the owner because cloud-mode register_corpus writes
-#    only to cloud_corpora (via IndexJobSink); the in-memory daemon
-#    registry that GET reads from only fills in after the worker
-#    indexes the corpus. We assert the GET succeeds (no 500), and
-#    verify tenant-isolation at the DATA layer via psql below.
+# 4) tenant A's GET /corpora — owner sees the freshly-registered
+#    corpus immediately. The cloud-registry pending-corpus gap that
+#    previously kept this list empty (the in-memory CorpusRegistry
+#    trailed cloud_corpora until indexing completed) is closed by
+#    the daemon's list_corpora pending-merge that consults the
+#    PostgresTenantCorpusFilter's pending_corpora_for_tenant.
 curl_request GET "${ENDPOINT}/api/v1/corpora" "${TOKEN_A}"
 assert_status "${RESPONSE_STATUS}" "200" "tenant A GET /corpora"
-note "GET /corpora returns empty until worker indexes the corpus — see F-Test-1-followup findings (cloud-registry gap)"
+COUNT_A_SEES=$(printf '%s' "${RESPONSE_BODY}" | jq "[.corpora[]? | select(.id == \"${CORPUS_ID_A}\")] | length" 2>/dev/null || echo "ERR")
+if [[ "${COUNT_A_SEES}" == "1" ]]; then
+    pass "tenant A sees their own corpus in /corpora (cloud-registry gap closed)"
+elif [[ "${COUNT_A_SEES}" == "ERR" ]]; then
+    fail "tenant A /corpora parse error — body=${RESPONSE_BODY:0:200}"
+else
+    fail "tenant A does NOT see their own corpus — count=${COUNT_A_SEES} body=${RESPONSE_BODY:0:300}"
+fi
 
 # 4b) **tenant-id ownership** — verify at the data layer that the row
 #     was stamped with tenant A's UUID (closes the F2.x-d invariant).
@@ -384,7 +391,7 @@ fi
 #    real proof of isolation.
 curl_request GET "${ENDPOINT}/api/v1/corpora" "${TOKEN_B}"
 assert_status "${RESPONSE_STATUS}" "200" "tenant B GET /corpora"
-COUNT_B_SEES=$(printf '%s' "${RESPONSE_BODY}" | jq "[.corpora[]? | select(.corpus_id == \"${CORPUS_ID_A}\")] | length")
+COUNT_B_SEES=$(printf '%s' "${RESPONSE_BODY}" | jq "[.corpora[]? | select(.id == \"${CORPUS_ID_A}\")] | length")
 if [[ "${COUNT_B_SEES}" == "0" ]]; then
     pass "tenant isolation: tenant B does NOT see tenant A's corpus in /corpora"
 else

@@ -907,35 +907,92 @@ async fn list_corpora(
     // auth middleware populated a TenantId, filter the list to own +
     // ACL-granted corpora. Self-hosted serve has no filter and no
     // TenantId; the list returns every in-memory corpus.
-    let filtered = match (&state.corpus_visibility, full_tenant) {
-        (Some(filter), Some(axum::extract::Extension(tenant_id))) => {
-            match filter.visible_corpus_ids(tenant_id.as_str()).await {
-                Ok(Some(allow)) => {
-                    let allow_set: std::collections::HashSet<&str> =
-                        allow.iter().map(String::as_str).collect();
-                    all.into_iter()
-                        .filter(|c| allow_set.contains(c.id.as_str()))
-                        .collect()
-                }
-                Ok(None) => all,
-                Err(e) => {
-                    // Fail closed on storage errors: surface an empty
-                    // list rather than leak cross-tenant rows. The
-                    // tracing line above is the operator-visible
-                    // signal.
-                    tracing::warn!(
-                        error = %e,
-                        subject = %tenant_id.as_str(),
-                        "corpus visibility lookup failed — failing closed with empty list",
-                    );
-                    Vec::new()
+    let mut filtered: Vec<ministr_api::corpus::CorpusInfo> =
+        match (&state.corpus_visibility, &full_tenant) {
+            (Some(filter), Some(axum::extract::Extension(tenant_id))) => {
+                match filter.visible_corpus_ids(tenant_id.as_str()).await {
+                    Ok(Some(allow)) => {
+                        let allow_set: std::collections::HashSet<&str> =
+                            allow.iter().map(String::as_str).collect();
+                        all.into_iter()
+                            .filter(|c| allow_set.contains(c.id.as_str()))
+                            .collect()
+                    }
+                    Ok(None) => all,
+                    Err(e) => {
+                        // Fail closed on storage errors: surface an empty
+                        // list rather than leak cross-tenant rows. The
+                        // tracing line above is the operator-visible
+                        // signal.
+                        tracing::warn!(
+                            error = %e,
+                            subject = %tenant_id.as_str(),
+                            "corpus visibility lookup failed — failing closed with empty list",
+                        );
+                        Vec::new()
+                    }
                 }
             }
+            _ => all,
+        };
+
+    // Closes the F-Test-1 cloud-registry pending-corpus gap: in cloud
+    // mode `register_corpus` writes to `cloud_corpora` via
+    // `IndexJobSink` but never updates the in-memory `CorpusRegistry`
+    // until the worker indexes. Merge any direct-ownership rows the
+    // visibility filter knows about that aren't already in `filtered`,
+    // synthesising a placeholder `CorpusInfo` so the owner sees their
+    // registration immediately. Storage errors fail closed (already-
+    // filtered list is returned as-is).
+    if let (Some(filter), Some(axum::extract::Extension(tenant_id))) =
+        (&state.corpus_visibility, &full_tenant)
+    {
+        let known: std::collections::HashSet<String> =
+            filtered.iter().map(|c| c.id.clone()).collect();
+        match filter.pending_corpora_for_tenant(tenant_id.as_str()).await {
+            Ok(pending) => {
+                for entry in pending {
+                    if known.contains(&entry.id) {
+                        continue;
+                    }
+                    filtered.push(synthesize_pending_corpus_info(entry));
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    subject = %tenant_id.as_str(),
+                    "pending_corpora_for_tenant failed — pending registrations may not appear",
+                );
+            }
         }
-        _ => all,
-    };
+    }
 
     Json(ListCorporaResponse { corpora: filtered })
+}
+
+/// Build a placeholder `CorpusInfo` for a `cloud_corpora` row that
+/// isn't yet in the in-memory `CorpusRegistry`. All counts are zero;
+/// status is `Idle` because the indexing pipeline hasn't started on
+/// this pod yet (and the alternative `Indexing { files_done: 0,
+/// files_total: 0 }` would lie about progress). The owner's UI sees
+/// "the corpus exists; nothing has been indexed yet."
+fn synthesize_pending_corpus_info(
+    entry: ministr_api::CorpusRegistrationView,
+) -> ministr_api::corpus::CorpusInfo {
+    let display_name = entry.display_name.clone().unwrap_or_else(|| entry.id.clone());
+    ministr_api::corpus::CorpusInfo {
+        id: entry.id,
+        display_name,
+        paths: entry.paths,
+        status: ministr_api::corpus::IndexingStatus::Idle,
+        files_indexed: 0,
+        sections_count: 0,
+        embeddings_count: 0,
+        active_sessions: 0,
+        last_indexed: None,
+        symbols_count: 0,
+    }
 }
 
 async fn corpus_status(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
