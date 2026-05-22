@@ -593,6 +593,60 @@ pub struct BridgeResponse {
     pub links: Vec<BridgeLink>,
 }
 
+/// F3.6-a — one node in the bridge graph wire shape. Backs the
+/// `/api/v1/corpora/{id}/bridge/graph` endpoint that the F3.6-b web
+/// visualizer consumes.
+///
+/// `id` is unique within a single graph response (the daemon builds
+/// it from `{file}::{symbol}::{line}` so two same-named symbols in
+/// different files / on different lines collide-resistant).
+/// `lang` is the symbol's language slug (unconstrained string — live
+/// corpora have ~20 languages so the marketing hero's narrower union
+/// of `rust|typescript|python` widens here).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BridgeNode {
+    /// Stable id used as the `from`/`to` reference in edges.
+    pub id: String,
+    /// Display label (the symbol name).
+    pub label: String,
+    /// Source file path the symbol lives in.
+    pub file: String,
+    /// Language slug — drives the node colour in F3.6-b.
+    pub lang: String,
+    /// Line number of the symbol's definition.
+    pub line: u32,
+}
+
+/// F3.6-a — one edge in the bridge graph wire shape.
+///
+/// `from` and `to` reference [`BridgeNode::id`] values. `kind` is one
+/// of the 12 bridge detectors (`tauri_command`, `napi`, `pyo3`,
+/// `wasm_bindgen`, `uniffi`, `jni`, `cgo`, `ffi`, `grpc`,
+/// `http_route`, `flutter`, `electron`) — unconstrained string so a
+/// future detector lands without a schema migration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BridgeEdge {
+    /// Source node id (the export side).
+    pub from: String,
+    /// Target node id (the import side).
+    pub to: String,
+    /// Bridge mechanism kind.
+    pub kind: String,
+    /// Match confidence in `[0.0, 1.0]`.
+    pub confidence: f32,
+}
+
+/// F3.6-a — bridge graph wire shape returned by
+/// `GET /api/v1/corpora/{id}/bridge/graph`. Nodes are unique across
+/// the graph; an edge references exactly two nodes by id.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BridgeGraph {
+    /// All distinct symbols that participate in at least one edge.
+    pub nodes: Vec<BridgeNode>,
+    /// One entry per bridge link.
+    pub edges: Vec<BridgeEdge>,
+}
+
 // ---------------------------------------------------------------------------
 // Ask (sub-inference)
 // ---------------------------------------------------------------------------

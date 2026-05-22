@@ -389,6 +389,73 @@ pub fn bridge_link(l: ministr_core::storage::BridgeLinkDetail) -> query::BridgeL
     }
 }
 
+/// F3.6-a — pure helper that converts a flat list of bridge-link
+/// details into the `{nodes, edges}` wire shape the F3.6-b web
+/// visualizer expects.
+///
+/// # Node identity
+///
+/// `id = "{file}::{symbol}::{line}"` — two same-named symbols in
+/// different files or on different lines deliberately become
+/// different nodes (a future renamed symbol leaves a stale node
+/// behind in a long-running corpus; we want the graph to reflect
+/// the current ground truth on each query). A symbol that
+/// participates in multiple edges produces exactly one node (dedup
+/// via `HashSet` on the id).
+///
+/// # Output ordering
+///
+/// Nodes are returned in **first-encounter order** across the input
+/// links (export-side of link 0, then import-side of link 0, then
+/// export-side of link 1, …). Edges follow the input order. Stable
+/// ordering matters for the F3.6-b visualizer's layout (Cytoscape /
+/// react-flow re-run physics on identity changes — same input must
+/// produce the same node order).
+#[must_use]
+pub fn bridge_links_to_graph(
+    links: &[ministr_core::storage::BridgeLinkDetail],
+) -> query::BridgeGraph {
+    fn make_id(file: &str, symbol: &str, line: u32) -> String {
+        format!("{file}::{symbol}::{line}")
+    }
+
+    let mut nodes: Vec<query::BridgeNode> = Vec::new();
+    let mut edges: Vec<query::BridgeEdge> = Vec::with_capacity(links.len());
+    let mut seen: std::collections::HashSet<String> =
+        std::collections::HashSet::with_capacity(links.len() * 2);
+
+    for l in links {
+        let from_id = make_id(&l.export_file, &l.export_symbol, l.export_line);
+        let to_id = make_id(&l.import_file, &l.import_symbol, l.import_line);
+        if seen.insert(from_id.clone()) {
+            nodes.push(query::BridgeNode {
+                id: from_id.clone(),
+                label: l.export_symbol.clone(),
+                file: l.export_file.clone(),
+                lang: l.export_language.clone(),
+                line: l.export_line,
+            });
+        }
+        if seen.insert(to_id.clone()) {
+            nodes.push(query::BridgeNode {
+                id: to_id.clone(),
+                label: l.import_symbol.clone(),
+                file: l.import_file.clone(),
+                lang: l.import_language.clone(),
+                line: l.import_line,
+            });
+        }
+        edges.push(query::BridgeEdge {
+            from: from_id,
+            to: to_id,
+            kind: l.kind.clone(),
+            confidence: l.confidence,
+        });
+    }
+
+    query::BridgeGraph { nodes, edges }
+}
+
 #[must_use]
 pub fn compressed_item(
     c: ministr_core::service::CompressedItem,
@@ -446,5 +513,190 @@ pub fn prefetch_metrics(
         agent_plan_hits: m.agent_plan_hits,
         cache_size,
         cache_capacity,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ministr_core::storage::BridgeLinkDetail;
+
+    #[allow(clippy::too_many_arguments)] // test helper — flat positional args mirror the struct shape; a builder would just inflate the suite
+    fn link(
+        kind: &str,
+        export_file: &str,
+        export_symbol: &str,
+        export_lang: &str,
+        export_line: u32,
+        import_file: &str,
+        import_symbol: &str,
+        import_lang: &str,
+        import_line: u32,
+        confidence: f32,
+    ) -> BridgeLinkDetail {
+        BridgeLinkDetail {
+            kind: kind.into(),
+            confidence,
+            export_file: export_file.into(),
+            export_binding_key: format!("{export_symbol}@{export_file}"),
+            export_symbol: export_symbol.into(),
+            export_language: export_lang.into(),
+            export_line,
+            import_file: import_file.into(),
+            import_binding_key: format!("{import_symbol}@{import_file}"),
+            import_symbol: import_symbol.into(),
+            import_language: import_lang.into(),
+            import_line,
+        }
+    }
+
+    #[test]
+    fn empty_links_yields_empty_graph() {
+        let graph = bridge_links_to_graph(&[]);
+        assert!(graph.nodes.is_empty());
+        assert!(graph.edges.is_empty());
+    }
+
+    #[test]
+    fn single_link_emits_two_nodes_and_one_edge() {
+        let links = vec![link(
+            "tauri_command",
+            "src-tauri/src/main.rs",
+            "cloud_status",
+            "rust",
+            42,
+            "src/lib/cloudClient.ts",
+            "cloudStatus",
+            "typescript",
+            10,
+            0.95,
+        )];
+        let graph = bridge_links_to_graph(&links);
+        assert_eq!(graph.nodes.len(), 2);
+        assert_eq!(graph.edges.len(), 1);
+        // Export side first.
+        assert_eq!(graph.nodes[0].label, "cloud_status");
+        assert_eq!(graph.nodes[0].lang, "rust");
+        assert_eq!(graph.nodes[0].line, 42);
+        // Import side second.
+        assert_eq!(graph.nodes[1].label, "cloudStatus");
+        assert_eq!(graph.nodes[1].lang, "typescript");
+        // Edge wires the two by id.
+        assert_eq!(graph.edges[0].from, graph.nodes[0].id);
+        assert_eq!(graph.edges[0].to, graph.nodes[1].id);
+        assert_eq!(graph.edges[0].kind, "tauri_command");
+        assert!((graph.edges[0].confidence - 0.95).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn shared_endpoint_dedupes_to_one_node() {
+        // Two edges both originate from the same Tauri command.
+        let links = vec![
+            link(
+                "tauri_command",
+                "src-tauri/src/main.rs",
+                "shared_cmd",
+                "rust",
+                100,
+                "src/a.ts",
+                "callA",
+                "typescript",
+                1,
+                0.9,
+            ),
+            link(
+                "tauri_command",
+                "src-tauri/src/main.rs",
+                "shared_cmd",
+                "rust",
+                100,
+                "src/b.ts",
+                "callB",
+                "typescript",
+                2,
+                0.9,
+            ),
+        ];
+        let graph = bridge_links_to_graph(&links);
+        // shared_cmd node appears ONCE; callA + callB each appear once → 3 nodes.
+        assert_eq!(graph.nodes.len(), 3);
+        assert_eq!(graph.edges.len(), 2);
+        // Both edges' `from` reference the same id.
+        assert_eq!(graph.edges[0].from, graph.edges[1].from);
+    }
+
+    #[test]
+    fn same_symbol_in_different_files_is_two_distinct_nodes() {
+        let links = vec![
+            link(
+                "pyo3",
+                "src/exporter_a.rs",
+                "handle_event",
+                "rust",
+                10,
+                "pkg/__init__.py",
+                "handle_event",
+                "python",
+                5,
+                0.8,
+            ),
+            link(
+                "pyo3",
+                "src/exporter_b.rs",
+                "handle_event",
+                "rust",
+                20,
+                "pkg/other.py",
+                "handle_event",
+                "python",
+                7,
+                0.8,
+            ),
+        ];
+        let graph = bridge_links_to_graph(&links);
+        // 4 distinct nodes because the (file, symbol, line) tuples
+        // all differ even though some symbol names match.
+        assert_eq!(graph.nodes.len(), 4);
+        assert_eq!(graph.edges.len(), 2);
+        // Sanity: all node ids are unique.
+        let mut ids: Vec<&str> = graph.nodes.iter().map(|n| n.id.as_str()).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), 4);
+    }
+
+    #[test]
+    fn node_id_format_is_file_symbol_line() {
+        let links = vec![link(
+            "napi",
+            "rust-side.rs",
+            "exporter",
+            "rust",
+            7,
+            "ts-side.ts",
+            "importer",
+            "typescript",
+            3,
+            0.5,
+        )];
+        let graph = bridge_links_to_graph(&links);
+        assert_eq!(graph.nodes[0].id, "rust-side.rs::exporter::7");
+        assert_eq!(graph.nodes[1].id, "ts-side.ts::importer::3");
+    }
+
+    #[test]
+    fn nodes_appear_in_first_encounter_order() {
+        // Determinism guard: re-rendering with the same data must
+        // produce the same layout, so node order MUST be stable.
+        let links = vec![
+            link("a", "f1", "s1", "rust", 1, "g1", "t1", "typescript", 1, 0.5),
+            link("b", "f2", "s2", "python", 1, "g2", "t2", "rust", 1, 0.5),
+        ];
+        let graph = bridge_links_to_graph(&links);
+        assert_eq!(graph.nodes.len(), 4);
+        assert_eq!(graph.nodes[0].label, "s1");
+        assert_eq!(graph.nodes[1].label, "t1");
+        assert_eq!(graph.nodes[2].label, "s2");
+        assert_eq!(graph.nodes[3].label, "t2");
     }
 }
