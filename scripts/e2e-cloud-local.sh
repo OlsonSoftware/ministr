@@ -87,6 +87,11 @@ SIEM_DD_PID=""
 SIEM_DD_PORT="${SIEM_DD_PORT:-8093}"
 SIEM_DD_LOG="${SIEM_DD_LOG:-/tmp/ministr-e2e-siem-dd-${RUN_TS}.jsonl}"
 SIEM_DD_API_KEY="dd-api-key-per-org-$$"
+# F5.3-d-iii-c — fake TCP syslog/CEF collector. Different port,
+# different protocol than the HEC/Datadog receivers (TCP, not HTTP).
+SIEM_SYSLOG_PID=""
+SIEM_SYSLOG_PORT="${SIEM_SYSLOG_PORT:-8094}"
+SIEM_SYSLOG_LOG="${SIEM_SYSLOG_LOG:-/tmp/ministr-e2e-siem-syslog-${RUN_TS}.jsonl}"
 
 # Bail on missing tooling early — the failure mode otherwise is a
 # cryptic curl/jq error 200 lines into the script.
@@ -130,6 +135,11 @@ cleanup() {
         info "stopping SIEM Datadog receiver (PID ${SIEM_DD_PID})"
         kill "${SIEM_DD_PID}" 2>/dev/null || true
         wait "${SIEM_DD_PID}" 2>/dev/null || true
+    fi
+    if [[ -n "${SIEM_SYSLOG_PID}" ]] && kill -0 "${SIEM_SYSLOG_PID}" 2>/dev/null; then
+        info "stopping SIEM syslog receiver (PID ${SIEM_SYSLOG_PID})"
+        kill "${SIEM_SYSLOG_PID}" 2>/dev/null || true
+        wait "${SIEM_SYSLOG_PID}" 2>/dev/null || true
     fi
     if [[ -n "${SERVE_PID}" ]] && kill -0 "${SERVE_PID}" 2>/dev/null; then
         info "stopping serve (PID ${SERVE_PID})"
@@ -514,6 +524,27 @@ until curl -sf "http://127.0.0.1:${SIEM_DD_PORT}/" >/dev/null 2>&1; do
     sleep 0.2
 done
 info "SIEM Datadog receiver PID ${SIEM_DD_PID}; record at ${SIEM_DD_LOG}"
+
+step "step 5b''''/6 — spawn fake TCP syslog/CEF collector on :${SIEM_SYSLOG_PORT} (for F5.3-d-iii-c)"
+python3 "$(dirname "$0")/e2e-siem-syslog-receiver.py" "${SIEM_SYSLOG_PORT}" "${SIEM_SYSLOG_LOG}" \
+    > /tmp/ministr-e2e-siem-syslog-stdout.log 2>&1 &
+SIEM_SYSLOG_PID=$!
+attempts=0
+# TCP syslog has no /healthz; probe with bash's /dev/tcp open-and-close.
+until exec 5<>/dev/tcp/127.0.0.1/${SIEM_SYSLOG_PORT} 2>/dev/null && exec 5>&-; do
+    attempts=$((attempts + 1))
+    if ! kill -0 "${SIEM_SYSLOG_PID}" 2>/dev/null; then
+        echo "SIEM syslog receiver crashed during boot — log tail:" >&2
+        tail -10 /tmp/ministr-e2e-siem-syslog-stdout.log >&2
+        exit 1
+    fi
+    if [[ "${attempts}" -gt 25 ]]; then
+        echo "SIEM syslog receiver didn't reach :${SIEM_SYSLOG_PORT} in 5s" >&2
+        exit 1
+    fi
+    sleep 0.2
+done
+info "SIEM syslog receiver PID ${SIEM_SYSLOG_PID}; record at ${SIEM_SYSLOG_LOG}"
 
 step "step 5c/6 — spawn mock OIDC IdP on :${OIDC_MOCK_PORT}"
 # F5.2-c — generate an RSA-2048 keypair the mock IdP uses to sign ID
@@ -1967,8 +1998,88 @@ EOF
     else
         fail "receiver-3 body[0].org_id expected ${ORG_ID_A}, got '${DD_FIRST_ORG}'"
     fi
+
+    # 29) **F5.3-d-iii-c — syslog/CEF per-org dispatch.** Re-POST the
+    #     per-org config with kind=syslog_cef pointing at the fake
+    #     TCP collector. PerOrgSiemDispatcher must take the
+    #     syslog_cef arm and call dispatch_syslog_cef. Different
+    #     protocol than HEC/Datadog (TCP, not HTTP); wire format
+    #     is a CEF v0 line terminated by newline.
+    info "F5.3-d-iii-c: syslog/CEF per-org dispatch (TCP)"
+    SIEM_SYSLOG_BODY=$(cat <<EOF
+{"kind":"syslog_cef","endpoint_url":"tcp://127.0.0.1:${SIEM_SYSLOG_PORT}","token":"","enabled":true}
+EOF
+)
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/siem/config" "${TOKEN_A}" "${SIEM_SYSLOG_BODY}"
+    assert_status "${RESPONSE_STATUS}" "200" "POST per-org syslog_cef config (empty token, tcp:// endpoint) → 200"
+    GOT_SYSLOG_KIND=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.kind // empty')
+    if [[ "${GOT_SYSLOG_KIND}" == "syslog_cef" ]]; then
+        pass "POST returns kind=syslog_cef (CRUD admits TCP-syslog kind)"
+    else
+        fail "POST kind expected syslog_cef, got '${GOT_SYSLOG_KIND}'"
+    fi
+
+    # Snapshot receiver count before audit trigger.
+    SYSLOG_PRE=$(wc -l < "${SIEM_SYSLOG_LOG}" 2>/dev/null | tr -d ' ' || echo 0)
+
+    # Fire one org-scoped audit emission.
+    INVITE_SYSLOG='{"email":"syslog-test@e2e.test"}'
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/invites" "${TOKEN_A}" "${INVITE_SYSLOG}"
+    if [[ "${RESPONSE_STATUS}" == "201" || "${RESPONSE_STATUS}" == "200" ]]; then
+        pass "POST /invites for syslog flow fires org-scoped audit (HTTP ${RESPONSE_STATUS})"
+    else
+        fail "POST /invites for ORG_ID_A — expected 201/200, got ${RESPONSE_STATUS}"
+    fi
+
+    # Poll the syslog collector for the new line.
+    SYSLOG_WAIT=0
+    while true; do
+        SYSLOG_NOW=$(wc -l < "${SIEM_SYSLOG_LOG}" 2>/dev/null | tr -d ' ' || echo 0)
+        if [[ "${SYSLOG_NOW}" -gt "${SYSLOG_PRE}" ]]; then
+            break
+        fi
+        SYSLOG_WAIT=$((SYSLOG_WAIT + 1))
+        if [[ "${SYSLOG_WAIT}" -gt 30 ]]; then
+            break
+        fi
+        sleep 0.2
+    done
+    SYSLOG_POST=$(wc -l < "${SIEM_SYSLOG_LOG}" 2>/dev/null | tr -d ' ' || echo 0)
+    if [[ "${SYSLOG_POST}" -gt "${SYSLOG_PRE}" ]]; then
+        pass "syslog collector got ≥1 new line (pre=${SYSLOG_PRE}, post=${SYSLOG_POST})"
+    else
+        fail "no new lines at syslog collector after 6s — syslog_cef dispatch may not be wired"
+    fi
+
+    # Inspect the most-recently-arrived CEF line.
+    SYSLOG_LAST=$(tail -n1 "${SIEM_SYSLOG_LOG}" 2>/dev/null || echo '{}')
+    CEF_LINE=$(printf '%s' "${SYSLOG_LAST}" | jq -r '.line // empty')
+    if [[ "${CEF_LINE}" == "CEF:0|ministr|ministr-cloud-audit|1|"* ]]; then
+        pass "CEF line has correct v0 header (CEF:0|ministr|ministr-cloud-audit|1|…)"
+    else
+        fail "CEF header malformed: '${CEF_LINE:0:120}'"
+    fi
+    # Action field is position 4 (0-indexed) — split on `|`.
+    CEF_ACTION=$(printf '%s' "${CEF_LINE}" | awk -F'|' '{print $5}')
+    if [[ "${CEF_ACTION}" == "invite.created" ]]; then
+        pass "CEF Signature (field 5) carries the audit action (invite.created)"
+    else
+        fail "CEF action field expected 'invite.created', got '${CEF_ACTION}'"
+    fi
+    # Extension fields are after the 7th `|`. Look for orgId=ORG_ID_A.
+    if [[ "${CEF_LINE}" == *"orgId=${ORG_ID_A}"* ]]; then
+        pass "CEF extension carries orgId=ORG_ID_A (per-org routing locked)"
+    else
+        fail "CEF extension missing orgId=${ORG_ID_A}: '${CEF_LINE:0:200}'"
+    fi
+    # Extension also carries the standard CEF labels for actor.
+    if [[ "${CEF_LINE}" == *"suser="* ]]; then
+        pass "CEF extension carries suser= (standard CEF label for actor)"
+    else
+        fail "CEF extension missing suser= label: '${CEF_LINE:0:200}'"
+    fi
 else
-    note "skipped F5.3-d-ii-config + F5.3-d-ii-dispatch + F5.3-d-iii-a — ORG_ID_A not captured"
+    note "skipped F5.3-d-ii-config + F5.3-d-ii-dispatch + F5.3-d-iii-a + F5.3-d-iii-c — ORG_ID_A not captured"
 fi
 
 # ─── summary ──────────────────────────────────────────────────────────

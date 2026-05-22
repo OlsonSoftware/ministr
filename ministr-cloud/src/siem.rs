@@ -32,6 +32,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::io::AsyncWriteExt as _;
+
 use axum::Router;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
@@ -308,6 +310,152 @@ pub(crate) async fn dispatch_datadog_logs(
     }
 }
 
+/// F5.3-d-iii-c — escape a CEF extension value. CEF v0 reserves
+/// `|`, `\`, and `=`; the canonical escape is backslash. Newline
+/// inside a value is also illegal because lines end syslog messages.
+/// Returns a freshly-allocated `String` only when the input contains
+/// one of those characters — otherwise returns the input unchanged
+/// (zero-alloc fast path).
+fn cef_escape(value: &str) -> std::borrow::Cow<'_, str> {
+    if !value.contains(['|', '\\', '=', '\n', '\r']) {
+        return std::borrow::Cow::Borrowed(value);
+    }
+    let mut out = String::with_capacity(value.len() + 4);
+    for ch in value.chars() {
+        match ch {
+            '|' => out.push_str("\\|"),
+            '\\' => out.push_str("\\\\"),
+            '=' => out.push_str("\\="),
+            // Newlines collapse to spaces so a single CEF line stays a
+            // single line. ArcSight + QRadar both treat \n inside the
+            // extension as an end-of-message terminator otherwise.
+            '\n' | '\r' => out.push(' '),
+            c => out.push(c),
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
+/// F5.3-d-iii-c — format an [`AuditEntry`] as one CEF v0 line.
+/// Public-ish via `pub(crate)` so the dispatch helper + unit tests
+/// share one implementation. Header fields per the CEF spec:
+/// `CEF:Version|Vendor|Product|Version|Signature|Name|Severity|Ext`.
+fn format_cef_line(entry: &AuditEntry) -> String {
+    let action = cef_escape(entry.action.as_str());
+    let resource = cef_escape(entry.resource.as_str());
+    let header = format!(
+        "CEF:0|ministr|ministr-cloud-audit|1|{action}|{action}|5|"
+    );
+    let mut ext = String::new();
+    // Standard CEF labels first (src, suser); custom labels for the
+    // org context.
+    if let Some(ip) = entry.ip.as_deref() {
+        ext.push_str("src=");
+        ext.push_str(&cef_escape(ip));
+        ext.push(' ');
+    }
+    if let Some(actor) = entry.actor.as_deref() {
+        ext.push_str("suser=");
+        ext.push_str(&cef_escape(actor));
+        ext.push(' ');
+    }
+    if let Some(org_id) = entry.org_id.as_deref() {
+        ext.push_str("orgId=");
+        ext.push_str(&cef_escape(org_id));
+        ext.push(' ');
+    }
+    if let Some(ua) = entry.user_agent.as_deref() {
+        ext.push_str("requestClientApplication=");
+        ext.push_str(&cef_escape(ua));
+        ext.push(' ');
+    }
+    ext.push_str("resource=");
+    ext.push_str(&resource);
+    format!("{header}{ext}")
+}
+
+/// F5.3-d-iii-c — TCP-syslog dispatch helper. Opens a TCP connection
+/// to `tcp://host:port`, sends one CEF v0 line terminated by `\n`,
+/// closes. 10s connect+write timeout matching the HTTP sinks.
+///
+/// Network-layer auth (mTLS / VPN / source-IP allowlist) is the
+/// expected security model for syslog — there's no per-event bearer.
+/// Customers running an unprotected collector accept the obvious
+/// risk; ministr's CRUD validator doesn't object.
+pub(crate) async fn dispatch_syslog_cef(endpoint: &str, entry: &AuditEntry) {
+    let Some(host_port) = endpoint.strip_prefix("tcp://") else {
+        warn!(
+            endpoint = %endpoint,
+            "syslog cef dispatch: endpoint must start with tcp://"
+        );
+        return;
+    };
+    // Use `rsplit_once(':')` so an IPv6 literal like
+    // `tcp://[::1]:5514` would route the port off the trailing colon
+    // — but the validator only admits `tcp://...` and IPv6 literals
+    // aren't tested in v0; documented for the IPv6 follow-up.
+    let Some((_host, _port)) = host_port.rsplit_once(':') else {
+        warn!(
+            endpoint = %endpoint,
+            "syslog cef dispatch: endpoint missing :port suffix"
+        );
+        return;
+    };
+    let line = format_cef_line(entry);
+    let payload = format!("{line}\n");
+    let connect = tokio::net::TcpStream::connect(host_port);
+    let stream = match tokio::time::timeout(HEC_TIMEOUT, connect).await {
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => {
+            warn!(
+                action = %entry.action,
+                endpoint = %endpoint,
+                error = %e,
+                "syslog cef dispatch: connect failed"
+            );
+            return;
+        }
+        Err(_) => {
+            warn!(
+                action = %entry.action,
+                endpoint = %endpoint,
+                "syslog cef dispatch: connect timeout (>10s)"
+            );
+            return;
+        }
+    };
+    let mut stream = stream;
+    let write = stream.write_all(payload.as_bytes());
+    match tokio::time::timeout(HEC_TIMEOUT, write).await {
+        Ok(Ok(())) => {
+            // Best-effort flush so the collector sees the line before
+            // we drop the socket. Ignore flush errors — the line
+            // already went out the door.
+            let _ = stream.flush().await;
+            debug!(
+                action = %entry.action,
+                bytes = payload.len(),
+                "syslog cef dispatch ok"
+            );
+        }
+        Ok(Err(e)) => {
+            warn!(
+                action = %entry.action,
+                endpoint = %endpoint,
+                error = %e,
+                "syslog cef dispatch: write failed"
+            );
+        }
+        Err(_) => {
+            warn!(
+                action = %entry.action,
+                endpoint = %endpoint,
+                "syslog cef dispatch: write timeout (>10s)"
+            );
+        }
+    }
+}
+
 /// F5.3-d-ii-dispatch + F5.3-d-iii — per-org SIEM dispatcher. Looks
 /// up `org_siem_configs` on every audit event with `org_id IS NOT
 /// NULL` and dispatches via the right helper based on `row.kind`:
@@ -425,6 +573,13 @@ impl AuditSink for PerOrgSiemDispatcher {
                     // column, provider-specific semantics.
                     dispatch_datadog_logs(&client, &url, &token, &entry).await;
                 }
+                "syslog_cef" => {
+                    // F5.3-d-iii-c — `token` is unused (auth is at
+                    // the network layer); endpoint_url is a
+                    // `tcp://host:port` collector address.
+                    let _ = token;
+                    dispatch_syslog_cef(&url, &entry).await;
+                }
                 other => {
                     warn!(
                         org_id = %org_id,
@@ -450,11 +605,17 @@ impl AuditSink for PerOrgSiemDispatcher {
 // before the dispatcher wiring goes live.
 
 /// Allowed `kind` values for `org_siem_configs.kind`. F5.3-d-i
-/// admitted `"splunk_hec"` only; F5.3-d-iii-a adds `"datadog_logs"`.
-/// Future sub-chunks will add `"s3_jsonl"` (F5.3-d-iii-b) and
-/// `"syslog_cef"` (F5.3-d-iii-c). The `PerOrgSiemDispatcher`'s
-/// `record()` branches on this exact set.
-const ALLOWED_SIEM_KINDS: &[&str] = &["splunk_hec", "datadog_logs"];
+/// admitted `"splunk_hec"` only; F5.3-d-iii-a added
+/// `"datadog_logs"`; F5.3-d-iii-c added `"syslog_cef"`. F5.3-d-iii-b
+/// will add `"s3_jsonl"`. The `PerOrgSiemDispatcher`'s `record()`
+/// branches on this exact set.
+const ALLOWED_SIEM_KINDS: &[&str] = &["splunk_hec", "datadog_logs", "syslog_cef"];
+
+/// `kind` values where the `token` column is unused — auth happens
+/// at the network layer (mTLS / VPN / source-IP allowlist) rather
+/// than via a per-event bearer. The CRUD validator skips its
+/// empty-token check for these kinds.
+const TOKENLESS_SIEM_KINDS: &[&str] = &["syslog_cef"];
 
 /// Sentinel string returned in place of the real `token` on every
 /// HTTP read. Mirrors F5.2-d's `REDACTED_CLIENT_SECRET` exactly so
@@ -571,20 +732,35 @@ async fn assert_siem_owner_or_admin(
 fn validate_siem_upsert(body: &SiemConfigUpsertBody) -> Result<(), SiemConfigError> {
     if !ALLOWED_SIEM_KINDS.contains(&body.kind.as_str()) {
         return Err(SiemConfigError::Invalid(
-            "kind must be one of: splunk_hec, datadog_logs",
+            "kind must be one of: splunk_hec, datadog_logs, syslog_cef",
         ));
     }
     if body.endpoint_url.trim().is_empty() {
         return Err(SiemConfigError::Invalid("endpoint_url is required"));
     }
-    if !body.endpoint_url.starts_with("http://")
-        && !body.endpoint_url.starts_with("https://")
-    {
+    // syslog_cef uses tcp:// (and eventually udp://); other kinds use
+    // http(s)://. Branch the scheme check rather than admitting any
+    // scheme for any kind — keeps misconfiguration detectable at the
+    // CRUD edge.
+    let scheme_ok = match body.kind.as_str() {
+        "syslog_cef" => body.endpoint_url.starts_with("tcp://"),
+        _ => {
+            body.endpoint_url.starts_with("http://")
+                || body.endpoint_url.starts_with("https://")
+        }
+    };
+    if !scheme_ok {
         return Err(SiemConfigError::Invalid(
-            "endpoint_url must start with http:// or https://",
+            "endpoint_url scheme mismatch for kind \
+             (http/https for splunk_hec + datadog_logs; tcp:// for syslog_cef)",
         ));
     }
-    if body.token.trim().is_empty() {
+    // F5.3-d-iii-c — TOKENLESS_SIEM_KINDS skips the empty-token check
+    // because their auth happens at the network layer (mTLS / VPN /
+    // source-IP allowlist). Customers POSTing config for those kinds
+    // can leave `token` as an empty string.
+    let tokenless = TOKENLESS_SIEM_KINDS.contains(&body.kind.as_str());
+    if !tokenless && body.token.trim().is_empty() {
         return Err(SiemConfigError::Invalid("token is required"));
     }
     Ok(())
@@ -830,12 +1006,22 @@ mod tests {
     }
 
     #[test]
-    fn allowed_siem_kinds_includes_splunk_and_datadog() {
+    fn allowed_siem_kinds_includes_splunk_datadog_syslog() {
         // F5.3-d-i shipped "splunk_hec"; F5.3-d-iii-a added
-        // "datadog_logs". F5.3-d-iii-b/c will extend this list with
-        // "s3_jsonl" + "syslog_cef" and update the dispatcher's
-        // kind-branch in lockstep.
-        assert_eq!(ALLOWED_SIEM_KINDS, &["splunk_hec", "datadog_logs"]);
+        // "datadog_logs"; F5.3-d-iii-c added "syslog_cef".
+        // F5.3-d-iii-b will extend this list with "s3_jsonl".
+        assert_eq!(
+            ALLOWED_SIEM_KINDS,
+            &["splunk_hec", "datadog_logs", "syslog_cef"]
+        );
+    }
+
+    #[test]
+    fn tokenless_kinds_only_lists_syslog_cef() {
+        // Locking the tokenless-kinds set means a future provider
+        // can't accidentally claim "no token needed" — the choice
+        // is explicit per-kind.
+        assert_eq!(TOKENLESS_SIEM_KINDS, &["syslog_cef"]);
     }
 
     #[test]
@@ -846,6 +1032,74 @@ mod tests {
             "dd-api-key-xxx",
         );
         assert!(validate_siem_upsert(&b).is_ok());
+    }
+
+    #[test]
+    fn validate_siem_upsert_admits_syslog_cef_with_empty_token() {
+        // F5.3-d-iii-c — syslog/CEF uses network-layer auth, so an
+        // empty token is admitted. tcp:// scheme is required.
+        let b = body("syslog_cef", "tcp://syslog.example.com:5514", "");
+        assert!(validate_siem_upsert(&b).is_ok());
+    }
+
+    #[test]
+    fn validate_siem_upsert_rejects_syslog_cef_with_http_scheme() {
+        // Cross-kind scheme mismatch — syslog_cef requires tcp://,
+        // not http(s)://. Catches the common mistake of "reuse the
+        // Datadog URL pattern".
+        let b = body("syslog_cef", "https://syslog.example.com", "");
+        let e = validate_siem_upsert(&b).expect_err("must reject http scheme");
+        assert!(matches!(e, SiemConfigError::Invalid(msg) if msg.contains("scheme")));
+    }
+
+    #[test]
+    fn validate_siem_upsert_rejects_splunk_with_tcp_scheme() {
+        // Inverse cross-kind mismatch — Splunk HEC requires http(s)://.
+        let b = body("splunk_hec", "tcp://splunk.example.com:8088", "tok");
+        let e = validate_siem_upsert(&b).expect_err("must reject tcp scheme for HEC");
+        assert!(matches!(e, SiemConfigError::Invalid(msg) if msg.contains("scheme")));
+    }
+
+    #[test]
+    fn cef_escape_passes_through_safe_strings() {
+        // Zero-alloc fast path for strings without metachars.
+        let pass = cef_escape("oidc.login");
+        assert!(matches!(pass, std::borrow::Cow::Borrowed("oidc.login")));
+    }
+
+    #[test]
+    fn cef_escape_handles_pipe_backslash_equals() {
+        // The three CEF metachars per the spec.
+        assert_eq!(cef_escape("a|b").as_ref(), r"a\|b");
+        assert_eq!(cef_escape("a\\b").as_ref(), r"a\\b");
+        assert_eq!(cef_escape("k=v").as_ref(), r"k\=v");
+    }
+
+    #[test]
+    fn cef_escape_collapses_newlines_to_spaces() {
+        // Newlines would end the syslog message prematurely.
+        assert_eq!(cef_escape("a\nb").as_ref(), "a b");
+        assert_eq!(cef_escape("a\r\nb").as_ref(), "a  b");
+    }
+
+    #[test]
+    fn format_cef_line_has_correct_header_shape() {
+        let entry = ministr_api::AuditEntry::new("oidc.login", "user-uuid-x")
+            .with_org("org-uuid-y")
+            .with_actor("user-uuid-x");
+        let line = format_cef_line(&entry);
+        // Header — 7 fields delimited by `|` (vendor-side parsers
+        // count from CEF:0).
+        assert!(
+            line.starts_with("CEF:0|ministr|ministr-cloud-audit|1|oidc.login|oidc.login|5|"),
+            "CEF header malformed: {line}"
+        );
+        assert!(line.contains("orgId=org-uuid-y"), "orgId extension missing: {line}");
+        assert!(line.contains("suser=user-uuid-x"), "suser extension missing: {line}");
+        assert!(line.contains("resource=user-uuid-x"), "resource extension missing: {line}");
+        // No newlines inside the rendered line — it's the syslog
+        // message terminator.
+        assert!(!line.contains('\n'), "CEF line contains a newline: {line}");
     }
 
     #[test]
