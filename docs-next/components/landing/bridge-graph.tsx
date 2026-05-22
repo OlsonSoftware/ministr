@@ -34,6 +34,36 @@ export interface Edge {
   kind: 'tauri_command' | 'pyo3' | 'napi';
 }
 
+/**
+ * F3.6-b — wider node type for the live interactive visualizer. The
+ * marketing hero's narrow `Node` union (3 languages, 3 kinds) lands
+ * structurally inside this type, so `BRIDGE_GRAPH_SAMPLE` can be
+ * passed to either consumer without conversion. Live data from the
+ * F3.6-a backend endpoint speaks the wider shape (~20 languages,
+ * 12 bridge kinds).
+ *
+ * `angle`/`radius` are optional — live data won't carry polar coords;
+ * the interactive component computes a circular auto-layout in that
+ * case.
+ */
+export interface LiveBridgeNode {
+  id: string;
+  label: string;
+  /** Language slug (any string — colours fall back for unknowns). */
+  lang: string;
+  /** Optional polar layout hint. */
+  angle?: number;
+  radius?: number;
+}
+
+/** F3.6-b — wider edge type for the live interactive visualizer. */
+export interface LiveBridgeEdge {
+  from: string;
+  to: string;
+  /** Bridge mechanism kind (any of the 12 detectors). */
+  kind: string;
+}
+
 /** Marketing-hero sample. Mirrors the Tauri-heavy ministr-app pattern
  *  so a real screenshot of the F3.6 web visualizer can plausibly
  *  match this shape. */
