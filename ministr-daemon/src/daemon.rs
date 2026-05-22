@@ -63,6 +63,7 @@ pub fn corpora_read_router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/toc", post(toc))
         .route("/api/v1/corpora/{id}/related", post(related))
         .route("/api/v1/corpora/{id}/bridge", post(bridge))
+        .route("/api/v1/corpora/{id}/bridge/graph", get(bridge_graph))
         .route("/api/v1/corpora/{id}/compress", post(compress_content))
         .route("/api/v1/corpora/{id}/progress", get(ingestion_progress))
         .route("/api/v1/corpora/{id}/coherence", get(coherence_stream))
@@ -1542,6 +1543,52 @@ async fn bridge(
                 tick_session_turn(&state, &id, &sid, "bridge", response_tokens(&body)).await;
             }
             with_summary(Json(body), summary)
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
+    }
+}
+
+/// F3.6-a — query filters for the bridge graph endpoint.
+#[derive(serde::Deserialize)]
+struct BridgeGraphQuery {
+    /// Filter to links touching this file (export OR import side).
+    #[serde(default)]
+    file: Option<String>,
+    /// Filter by bridge kind (`tauri_command`, `pyo3`, `napi`, …).
+    #[serde(default)]
+    kind: Option<String>,
+    /// Filter by source language (export side language).
+    #[serde(default)]
+    language: Option<String>,
+}
+
+/// F3.6-a — `GET /api/v1/corpora/{id}/bridge/graph`.
+///
+/// Returns the cross-language bridge graph as `{nodes, edges}` for
+/// the F3.6-b web visualizer (and any other downstream renderer).
+/// Query params `file`, `kind`, `language` pass through to
+/// `query_bridges` for server-side filtering.
+async fn bridge_graph(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<BridgeGraphQuery>,
+) -> impl IntoResponse {
+    let handle = get_corpus!(&state, &id);
+    let result = handle
+        .service
+        .query_bridges(
+            None,
+            q.kind.as_deref(),
+            q.language.as_deref(),
+            q.file.as_deref(),
+        )
+        .await;
+    drop(handle);
+    match result {
+        Ok(links) => {
+            let graph = convert::bridge_links_to_graph(&links);
+            let summary = format!("{} nodes · {} edges", graph.nodes.len(), graph.edges.len());
+            with_summary(Json(graph), summary)
         }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
     }
