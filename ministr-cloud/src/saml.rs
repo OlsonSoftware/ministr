@@ -331,6 +331,7 @@ mod tests {
     use openssl::x509::{X509, X509NameBuilder};
     use samael::crypto::{Crypto, CryptoProvider};
     use samael::service_provider::ServiceProvider;
+    use samael::traits::ToXml;
 
     /// Build a self-signed RSA-2048 keypair + X509 cert. Returns
     /// `(private_key_der, x509_cert_der)` in DER form, which is what
@@ -367,59 +368,82 @@ mod tests {
         )
     }
 
-    /// Build an `AuthnRequest` via samael (it inserts the empty
-    /// `<ds:Signature>` template the xmlsec signer needs).
-    /// Returns the unsigned XML ready to be passed to
-    /// `AuthnRequest::to_signed_xml`.
-    fn build_authn_request() -> samael::schema::AuthnRequest {
+    /// Build an `AuthnRequest` with an empty `<ds:Signature>`
+    /// template attached. samael's `Crypto::sign_xml` needs the
+    /// template node to fill in; it doesn't create one. The `IdP`
+    /// `Response` builder uses the same pattern at
+    /// `samael-0.0.20/src/idp/response_builder.rs:128`.
+    fn build_authn_request_with_signature_template(
+        cert_der: &[u8],
+    ) -> samael::schema::AuthnRequest {
         let sp = ServiceProvider {
             entity_id: Some("https://sp.test/entity".to_string()),
             acs_url: Some("https://sp.test/acs".to_string()),
             ..ServiceProvider::default()
         };
-        sp.make_authentication_request("https://idp.test/sso")
-            .expect("authn request builds")
+        let mut authn = sp
+            .make_authentication_request("https://idp.test/sso")
+            .expect("authn request builds");
+        let cert = samael::crypto::CertificateDer::from(cert_der.to_vec());
+        let mut sig = samael::signature::Signature::template(&authn.id, &cert);
+        // samael's `Signature::template` hardcodes SHA-1 for the
+        // reference digest. libxmlsec1 1.3 + openssl@3 rejects SHA-1
+        // by default in `xmlSecOpenSSLEvpDigestVerify` ("data and
+        // digest do not match"). Patch the digest method to SHA-256
+        // BEFORE signing — this is also the algorithm any modern IdP
+        // would emit, so F5.1-c-acs uses the same path.
+        if let Some(reference) = sig.signed_info.reference.first_mut() {
+            reference.digest_method = samael::signature::DigestMethod {
+                algorithm: samael::signature::DigestAlgorithm::Sha256,
+            };
+        }
+        authn.signature = Some(sig);
+        authn
     }
 
-    /// Smoke test: prove samael's xmlsec init path works on this
-    /// build env. SIGSEGV here would indicate a libxmlsec1/openssl
-    /// ABI mismatch BEFORE we get to any signing operations.
+    /// Smoke test: prove the xmlsec-feature-gated `samael::crypto`
+    /// surface is in the binary. Doesn't exercise any FFI path.
     #[test]
     fn samael_xmlsec_compiles_in_with_feature() {
-        // Trivially exercise a samael type that's only present under
-        // the xmlsec feature. If the build env has the feature
-        // disabled, this fails to compile.
         let cert = samael::crypto::CertificateDer::from(vec![0u8; 4]);
         assert_eq!(cert.der_data().len(), 4);
     }
 
+    /// F5.1-c-prep — sign + verify roundtrip via libxmlsec1.
+    /// Proves the entire native-deps path works on this build env
+    /// before F5.1-c-acs depends on it for assertion verification.
+    ///
+    /// Currently `#[ignore]`'d due to F5.1-c-prep-libxmlsec-crash
+    /// (see ROADMAP). Crashes inside `Crypto::sign_xml` on macOS
+    /// with brew libxmlsec1 1.3.11 + `openssl@3`, even with the
+    /// proper `<ds:Signature>` template attached and SHA-256
+    /// digest method. Not an `OPENSSL_DIR` / ABI mismatch — the
+    /// crash persists across env-var combinations.
     #[test]
-    #[ignore = "SIGSEGVs on macOS with brew libxmlsec1 1.3.11 — F5.1-c-prep-libxmlsec-segfault discovered finding"]
+    #[ignore = "crashes inside libxmlsec1 sign_xml on macOS — F5.1-c-prep-libxmlsec-crash"]
     fn samael_xmlsec_sign_and_verify_roundtrip() {
         let (priv_der, cert_der) = generate_self_signed();
-        let authn = build_authn_request();
-
-        // `to_signed_xml` (gated on the xmlsec feature) embeds the
-        // empty `<ds:Signature>` template, then fills its digest +
-        // signature values using the private key.
-        let signed = authn
-            .to_signed_xml(&priv_der)
-            .expect("samael AuthnRequest::to_signed_xml succeeded with xmlsec feature");
+        let authn = build_authn_request_with_signature_template(&cert_der);
+        let unsigned_xml = authn.to_string().expect("authn to_string");
         assert!(
-            signed.contains("SignatureValue"),
-            "signed XML contains a SignatureValue element: {}",
+            unsigned_xml.contains("<ds:Signature"),
+            "unsigned XML has the empty signature template ready for sign_xml"
+        );
+
+        let signed = Crypto::sign_xml(unsigned_xml.as_bytes(), &priv_der)
+            .expect("samael Crypto::sign_xml fills in the template");
+        assert!(
+            signed.contains("SignatureValue") && !signed.contains("<SignatureValue></SignatureValue>"),
+            "signed XML has a non-empty SignatureValue: {}",
             &signed[..signed.len().min(400)]
         );
 
-        // `verify_signed_xml` validates the embedded signature
-        // against the matching cert. Returns Ok(()) on success.
         let cert = samael::crypto::CertificateDer::from(cert_der.clone());
         Crypto::verify_signed_xml(signed.as_bytes(), &cert, Some("ID"))
-            .expect("samael Crypto::verify_signed_xml accepted the matching cert");
+            .expect("samael Crypto::verify_signed_xml accepts the matching cert");
 
-        // Tampering with the body after signing must fail
-        // verification — this is the property F5.1-c-acs relies on
-        // to reject forged assertions.
+        // Tampering must fail verification — F5.1-c-acs relies on
+        // this property to reject forged assertions.
         let tampered = signed.replace("https://idp.test/sso", "https://attacker.test/sso");
         let tamper_result =
             Crypto::verify_signed_xml(tampered.as_bytes(), &cert, Some("ID"));
