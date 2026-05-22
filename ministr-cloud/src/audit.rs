@@ -238,6 +238,12 @@ async fn list_handler(
 /// retains forever.
 pub const DEFAULT_AUDIT_RETENTION_DAYS: u32 = 90;
 
+/// Canonical wire-shape plan id whose rows are exempt from the
+/// F3.7c prune. Mirrors `ministr_mcp::auth::store::parse_plan_id`'s
+/// "enterprise" arm — kept as a `const` here so the SQL string the
+/// pruner emits and the parser's accepted form stay in lockstep.
+const ENTERPRISE_PLAN_ID: &str = "enterprise";
+
 /// Outcome of one [`prune_audit_events`] pass.
 #[derive(Debug, Clone, Copy)]
 pub struct PruneOutcome {
@@ -255,6 +261,15 @@ pub struct PruneOutcome {
 /// F3.7c — drop `audit_events` rows older than `retention_days`. The
 /// daily Container Apps Job invokes this via the `ministr audit prune`
 /// CLI subcommand; manual local runs are equivalent.
+///
+/// **F5.3-a tier-aware retention**: rows whose `org_id` belongs to an
+/// org with `plan_id = 'enterprise'` are EXEMPT from this prune. Per
+/// §3 of ROADMAP.md the Enterprise tier ships immutable audit with
+/// unlimited retention; F3.7c's daily DELETE would otherwise clobber
+/// it after 90 days. Rows with `org_id IS NULL` (user-level actions
+/// on personal accounts — pre-org sign-up flows, API-key actions on
+/// personal accounts) DO get pruned because Enterprise's promise
+/// covers org-scoped actions only.
 ///
 /// Implemented as a single statement so Postgres can stream the
 /// delete plan without a temp result set. The partial index on `ts`
@@ -278,11 +293,27 @@ pub async fn prune_audit_events(
     // helper; using it (rather than concatenating into a literal) keeps
     // the value strictly parameterised so even a bogus retention number
     // can never inject SQL.
+    //
+    // The tier-skip clause uses a NOT EXISTS subquery rather than a
+    // LEFT JOIN so the plan can drive off audit_events' (small) row
+    // set; orgs is read once per audit row but the lookup is on the
+    // PK and PG caches it. NULL org_id rows fall through to DELETE
+    // because the subquery returns NULL → false in WHERE-context.
     let deleted = client
         .execute(
-            "DELETE FROM audit_events
-             WHERE ts < now() - make_interval(days => $1::integer)",
-            &[&i32::try_from(retention_days).unwrap_or(i32::MAX)],
+            "DELETE FROM audit_events ae
+             WHERE ae.ts < now() - make_interval(days => $1::integer)
+               AND (
+                 ae.org_id IS NULL
+                 OR NOT EXISTS (
+                   SELECT 1 FROM orgs o
+                   WHERE o.id = ae.org_id AND o.plan_id = $2
+                 )
+               )",
+            &[
+                &i32::try_from(retention_days).unwrap_or(i32::MAX),
+                &ENTERPRISE_PLAN_ID,
+            ],
         )
         .await
         .map_err(|e| AuditError::Sql(format!("prune audit_events: {e}")))?;
@@ -421,6 +452,17 @@ mod tests {
         // (which inherits the same audit_events shape) must also be
         // re-checked.
         assert_eq!(DEFAULT_AUDIT_RETENTION_DAYS, 90);
+    }
+
+    #[test]
+    fn enterprise_plan_id_matches_parse_plan_id_lowercase() {
+        // F5.3-a — the prune SQL filters on `plan_id = 'enterprise'`.
+        // If the wire-shape canonical string ever shifts (e.g. someone
+        // mixed-cases to "Enterprise"), the SQL stops matching even
+        // though `parse_plan_id` would still admit it. Lock the
+        // constant to the lowercase form `parse_plan_id` produces.
+        assert_eq!(ENTERPRISE_PLAN_ID, "enterprise");
+        assert_eq!(ENTERPRISE_PLAN_ID, ENTERPRISE_PLAN_ID.to_ascii_lowercase());
     }
 
     #[test]

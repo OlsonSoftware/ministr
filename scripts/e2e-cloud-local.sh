@@ -1397,6 +1397,93 @@ else
     note "skipped F5.2-b/c/d/f OIDC assertions — ORG_ID_A not captured"
 fi
 
+# 22) **F5.3-a — tier-aware audit retention.** The F3.7c prune
+#     DELETEs audit_events rows older than 90 days. F5.3-a's tier-
+#     aware rule preserves rows belonging to orgs with
+#     plan_id='enterprise'. Verify: seed three audit rows with
+#     ts=now()-100d (one Enterprise org, one non-Enterprise org,
+#     one org_id IS NULL), run `ministr audit prune`, assert the
+#     Enterprise row survives + the other two are gone.
+info "F5.3-a: tier-aware audit retention (Enterprise rows survive prune)"
+if [[ -n "${ORG_ID_A}" ]]; then
+    # Promote ORG_ID_A to Enterprise tier via direct DB write
+    # (the CRUD path for tier upgrade lives in F2.4 Stripe Checkout;
+    # for this assertion we bypass billing and set plan_id directly).
+    docker compose -f docker-compose.dev.yml exec -T postgres \
+        psql -U ministr -d ministr_dev -tA \
+        -c "UPDATE orgs SET plan_id='enterprise' WHERE id='${ORG_ID_A}'::uuid;" \
+        >/dev/null 2>&1
+
+    # Seed three old-ts audit rows. Use a clearly identifiable
+    # action string so the assertion can scope to exactly the rows
+    # we inserted (avoids races with the harness's own audit
+    # emissions from earlier blocks).
+    F53A_ACTION="f53a_test_$$_${RUN_TS}"
+    F53A_RES="00000000-0000-0000-0000-000000005301"
+    F53A_RES_NONENT="00000000-0000-0000-0000-000000005302"
+    F53A_RES_NULL="00000000-0000-0000-0000-000000005303"
+    # The non-Enterprise org_id is a synthetic UUID that doesn't
+    # exist in `orgs`. The pruner's NOT EXISTS subquery returns
+    # true → the row gets pruned. Avoids needing to seed a real
+    # second org (and dodges any uniqueness constraints on
+    # orgs.name from earlier harness blocks).
+    F53A_FAKE_ORG="ffffffff-ffff-ffff-ffff-fffff5301a01"
+    # Insert audit rows with ts in the past (100 days ago, well past
+    # the 90-day cutoff). `|| true` so a transient docker hiccup
+    # doesn't kill set -e.
+    docker compose -f docker-compose.dev.yml exec -T postgres \
+        psql -U ministr -d ministr_dev -tA -v ON_ERROR_STOP=1 \
+        -c "INSERT INTO audit_events (org_id, actor, action, resource, ts) VALUES
+             ('${ORG_ID_A}'::uuid, NULL, '${F53A_ACTION}', '${F53A_RES}', now() - interval '100 days'),
+             ('${F53A_FAKE_ORG}'::uuid, NULL, '${F53A_ACTION}', '${F53A_RES_NONENT}', now() - interval '100 days'),
+             (NULL, NULL, '${F53A_ACTION}', '${F53A_RES_NULL}', now() - interval '100 days');" \
+        >/dev/null 2>&1 || true
+
+    # Pre-prune count: should be 3.
+    PRE_COUNT=$(psql_count "SELECT count(*) FROM audit_events WHERE action='${F53A_ACTION}';")
+    if [[ "${PRE_COUNT}" == "3" ]]; then
+        pass "seeded 3 F5.3-a fixture audit rows (Enterprise + non-Ent + NULL)"
+    else
+        fail "F5.3-a fixture seed count expected 3, got ${PRE_COUNT}"
+    fi
+
+    # Run the prune via the CLI. MINISTR_PG_URL is already in env.
+    cargo run -q -p ministr-cli -- audit prune --retention-days 90 > /tmp/ministr-e2e-f53a-prune.log 2>&1
+    PRUNE_STATUS=$?
+    if [[ "${PRUNE_STATUS}" == "0" ]]; then
+        pass "audit prune CLI exits 0 (HTTP n/a — CLI runs to completion)"
+    else
+        fail "audit prune CLI exited ${PRUNE_STATUS} · log tail: $(tail -5 /tmp/ministr-e2e-f53a-prune.log)"
+    fi
+
+    # Enterprise row MUST survive.
+    ENT_REMAINING=$(psql_count "SELECT count(*) FROM audit_events WHERE action='${F53A_ACTION}' AND resource='${F53A_RES}';")
+    if [[ "${ENT_REMAINING}" == "1" ]]; then
+        pass "Enterprise org audit row survived 90d prune (F5.3-a tier-aware skip)"
+    else
+        fail "Enterprise audit row was pruned — expected 1, got ${ENT_REMAINING}"
+    fi
+
+    # Non-Enterprise row MUST be gone.
+    NONENT_REMAINING=$(psql_count "SELECT count(*) FROM audit_events WHERE action='${F53A_ACTION}' AND resource='${F53A_RES_NONENT}';")
+    if [[ "${NONENT_REMAINING}" == "0" ]]; then
+        pass "non-Enterprise org audit row pruned at 90d (regression-guards default tier)"
+    else
+        fail "non-Enterprise audit row NOT pruned — expected 0, got ${NONENT_REMAINING}"
+    fi
+
+    # NULL-org row MUST be gone (Enterprise promise covers org-scoped
+    # actions only; personal-account audit data isn't retained).
+    NULL_REMAINING=$(psql_count "SELECT count(*) FROM audit_events WHERE action='${F53A_ACTION}' AND resource='${F53A_RES_NULL}';")
+    if [[ "${NULL_REMAINING}" == "0" ]]; then
+        pass "NULL-org audit row pruned at 90d (no infinite retention for personal-account actions)"
+    else
+        fail "NULL-org audit row NOT pruned — expected 0, got ${NULL_REMAINING}"
+    fi
+else
+    note "skipped F5.3-a tier-aware retention assertions — ORG_ID_A not captured"
+fi
+
 # ─── summary ──────────────────────────────────────────────────────────
 
 echo
