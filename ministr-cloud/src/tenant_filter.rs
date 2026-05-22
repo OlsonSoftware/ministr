@@ -37,8 +37,14 @@ impl PostgresTenantCorpusFilter {
     }
 }
 
-fn map_err<E: std::fmt::Display>(prefix: &str) -> impl FnOnce(E) -> TenantFilterError + '_ {
-    move |e| TenantFilterError::Storage(format!("{prefix}: {e}"))
+fn map_err<E: std::fmt::Display + std::fmt::Debug>(
+    prefix: &str,
+) -> impl FnOnce(E) -> TenantFilterError + '_ {
+    // Both Display AND Debug — tokio-postgres's Display sometimes collapses to
+    // bare "db error" while the Debug form carries SQLSTATE + column-type + the
+    // source chain. Surfaced by F-Test-1: the harness's "visibility lookup
+    // failed" log was useless without the Debug form.
+    move |e| TenantFilterError::Storage(format!("{prefix}: {e} :: debug={e:?}"))
 }
 
 impl TenantCorpusFilter for PostgresTenantCorpusFilter {
@@ -157,11 +163,18 @@ impl TenantCorpusVisibility for PostgresTenantCorpusFilter {
             // friendly (cloud_corpora is PK-keyed; idx_cloud_corpus_acl_org
             // covers the ACL side; idx_org_members_user covers the
             // membership side).
+            // `cloud_corpora.tenant_id` is TEXT (migration 0003), so the
+            // first arm of the UNION compares TEXT to TEXT — NO cast.
+            // `org_members.user_id` is UUID (migration 0001), so the
+            // second arm needs `$1::text::uuid` to bridge the binding
+            // (tokio-postgres encodes &str as TEXT; the server-side
+            // ::uuid cast accepts it). Surfaced by F-Test-1's harness:
+            // an earlier sweep wrongly applied the cast to BOTH arms.
             let rows = client
                 .query(
                     "SELECT corpus_id
                      FROM cloud_corpora
-                     WHERE tenant_id = $1::text::uuid
+                     WHERE tenant_id = $1
                      UNION
                      SELECT a.corpus_id
                      FROM cloud_corpus_acl a
