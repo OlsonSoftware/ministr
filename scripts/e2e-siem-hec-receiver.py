@@ -66,9 +66,14 @@ def main() -> int:
         def do_POST(self) -> None:  # noqa: N802
             length = int(self.headers.get("Content-Length", "0") or "0")
             body = self.rfile.read(length) if length else b""
+            # F5.3-d-iii-a: Datadog Logs uses `DD-API-KEY` instead of
+            # `Authorization`. Record both so the harness can branch on
+            # whichever the dispatcher sent. Splunk HEC paths leave
+            # dd_api_key empty; Datadog paths leave auth empty.
             record = {
                 "path": self.path,
                 "auth": self.headers.get("Authorization", ""),
+                "dd_api_key": self.headers.get("DD-API-KEY", ""),
                 "body": body.decode("utf-8", errors="replace"),
             }
             with open(out_path, "a", encoding="utf-8") as f:

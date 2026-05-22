@@ -80,6 +80,13 @@ SIEM_HEC2_PID=""
 SIEM_HEC2_PORT="${SIEM_HEC2_PORT:-8092}"
 SIEM_HEC2_LOG="${SIEM_HEC2_LOG:-/tmp/ministr-e2e-siem-hec2-${RUN_TS}.jsonl}"
 SIEM_HEC2_TOKEN="hec2_per_org_$$"
+# F5.3-d-iii-a — third fake receiver for per-org Datadog Logs.
+# Reuses e2e-siem-hec-receiver.py — it accepts any JSON POST at any
+# path with any auth header, so it doubles as a Datadog Logs intake.
+SIEM_DD_PID=""
+SIEM_DD_PORT="${SIEM_DD_PORT:-8093}"
+SIEM_DD_LOG="${SIEM_DD_LOG:-/tmp/ministr-e2e-siem-dd-${RUN_TS}.jsonl}"
+SIEM_DD_API_KEY="dd-api-key-per-org-$$"
 
 # Bail on missing tooling early — the failure mode otherwise is a
 # cryptic curl/jq error 200 lines into the script.
@@ -118,6 +125,11 @@ cleanup() {
         info "stopping SIEM HEC2 receiver (PID ${SIEM_HEC2_PID})"
         kill "${SIEM_HEC2_PID}" 2>/dev/null || true
         wait "${SIEM_HEC2_PID}" 2>/dev/null || true
+    fi
+    if [[ -n "${SIEM_DD_PID}" ]] && kill -0 "${SIEM_DD_PID}" 2>/dev/null; then
+        info "stopping SIEM Datadog receiver (PID ${SIEM_DD_PID})"
+        kill "${SIEM_DD_PID}" 2>/dev/null || true
+        wait "${SIEM_DD_PID}" 2>/dev/null || true
     fi
     if [[ -n "${SERVE_PID}" ]] && kill -0 "${SERVE_PID}" 2>/dev/null; then
         info "stopping serve (PID ${SERVE_PID})"
@@ -482,6 +494,26 @@ until curl -sf "http://127.0.0.1:${SIEM_HEC2_PORT}/" >/dev/null 2>&1; do
     sleep 0.2
 done
 info "SIEM HEC2 receiver PID ${SIEM_HEC2_PID}; record at ${SIEM_HEC2_LOG}"
+
+step "step 5b'''/6 — spawn fake Datadog Logs receiver on :${SIEM_DD_PORT} (for F5.3-d-iii-a)"
+python3 "$(dirname "$0")/e2e-siem-hec-receiver.py" "${SIEM_DD_PORT}" "${SIEM_DD_LOG}" \
+    > /tmp/ministr-e2e-siem-dd-stdout.log 2>&1 &
+SIEM_DD_PID=$!
+attempts=0
+until curl -sf "http://127.0.0.1:${SIEM_DD_PORT}/" >/dev/null 2>&1; do
+    attempts=$((attempts + 1))
+    if ! kill -0 "${SIEM_DD_PID}" 2>/dev/null; then
+        echo "SIEM Datadog receiver crashed during boot — log tail:" >&2
+        tail -10 /tmp/ministr-e2e-siem-dd-stdout.log >&2
+        exit 1
+    fi
+    if [[ "${attempts}" -gt 25 ]]; then
+        echo "SIEM Datadog receiver didn't reach :${SIEM_DD_PORT} in 5s" >&2
+        exit 1
+    fi
+    sleep 0.2
+done
+info "SIEM Datadog receiver PID ${SIEM_DD_PID}; record at ${SIEM_DD_LOG}"
 
 step "step 5c/6 — spawn mock OIDC IdP on :${OIDC_MOCK_PORT}"
 # F5.2-c — generate an RSA-2048 keypair the mock IdP uses to sign ID
@@ -1853,8 +1885,90 @@ EOF
     else
         fail "receiver-2 event.org_id expected ${ORG_ID_A}, got '${HEC2_ORG}'"
     fi
+
+    # 28) **F5.3-d-iii-a — Datadog Logs per-org dispatch.** Re-POST
+    #     the per-org config with kind=datadog_logs pointing at the
+    #     third fake receiver. PerOrgSiemDispatcher must branch on
+    #     `kind` and call `dispatch_datadog_logs` instead of the
+    #     Splunk HEC helper. The wire-shape differences: DD-API-KEY
+    #     header (not "Authorization: Splunk …"); body is an array
+    #     of `{ddsource, service, message, action, …}` objects (not
+    #     a single `{sourcetype, event, time}` envelope).
+    info "F5.3-d-iii-a: Datadog Logs per-org dispatch"
+
+    SIEM_DD_BODY=$(cat <<EOF
+{"kind":"datadog_logs","endpoint_url":"http://127.0.0.1:${SIEM_DD_PORT}/api/v2/logs","token":"${SIEM_DD_API_KEY}","enabled":true}
+EOF
+)
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/siem/config" "${TOKEN_A}" "${SIEM_DD_BODY}"
+    assert_status "${RESPONSE_STATUS}" "200" "POST per-org Datadog config → 200"
+    GOT_DD_KIND=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.kind // empty')
+    if [[ "${GOT_DD_KIND}" == "datadog_logs" ]]; then
+        pass "POST returns kind=datadog_logs (CRUD admits new kind)"
+    else
+        fail "POST kind expected datadog_logs, got '${GOT_DD_KIND}'"
+    fi
+
+    # Snapshot receiver-3's count before the audit trigger.
+    DD_PRE=$(wc -l < "${SIEM_DD_LOG}" 2>/dev/null | tr -d ' ' || echo 0)
+
+    # Fire one fresh org-scoped audit emission. Same trigger as
+    # F5.3-d-ii-dispatch (POST another invite for ORG_ID_A) — the
+    # invite.created audit fires with org_id=ORG_ID_A.
+    INVITE_DD='{"email":"dd-test@e2e.test"}'
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/invites" "${TOKEN_A}" "${INVITE_DD}"
+    if [[ "${RESPONSE_STATUS}" == "201" || "${RESPONSE_STATUS}" == "200" ]]; then
+        pass "POST /invites for Datadog flow fires org-scoped audit (HTTP ${RESPONSE_STATUS})"
+    else
+        fail "POST /invites for ORG_ID_A — expected 201/200, got ${RESPONSE_STATUS}"
+    fi
+
+    # Poll receiver-3 for the new event.
+    DD_WAIT=0
+    while true; do
+        DD_NOW=$(wc -l < "${SIEM_DD_LOG}" 2>/dev/null | tr -d ' ' || echo 0)
+        if [[ "${DD_NOW}" -gt "${DD_PRE}" ]]; then
+            break
+        fi
+        DD_WAIT=$((DD_WAIT + 1))
+        if [[ "${DD_WAIT}" -gt 30 ]]; then
+            break
+        fi
+        sleep 0.2
+    done
+    DD_POST=$(wc -l < "${SIEM_DD_LOG}" 2>/dev/null | tr -d ' ' || echo 0)
+    if [[ "${DD_POST}" -gt "${DD_PRE}" ]]; then
+        pass "receiver-3 (Datadog) got ≥1 new event (pre=${DD_PRE}, post=${DD_POST})"
+    else
+        fail "no new events at receiver-3 after 6s — Datadog dispatch may not be wired"
+    fi
+
+    # Inspect the most-recent row: DD-API-KEY header must echo the
+    # configured key exactly (proving the dispatcher built from the
+    # row's token); body must be an array shape with ddsource.
+    DD_LAST=$(tail -n1 "${SIEM_DD_LOG}" 2>/dev/null || echo '{}')
+    DD_API_KEY_HEADER=$(printf '%s' "${DD_LAST}" | jq -r '.dd_api_key // empty')
+    if [[ "${DD_API_KEY_HEADER}" == "${SIEM_DD_API_KEY}" ]]; then
+        pass "receiver-3 DD-API-KEY header echoes the configured key exactly"
+    else
+        fail "receiver-3 DD-API-KEY expected '${SIEM_DD_API_KEY}', got '${DD_API_KEY_HEADER:0:80}'"
+    fi
+    # Datadog body shape: top-level is a JSON array of log objects;
+    # each has ddsource = "ministr".
+    DD_FIRST_DDSOURCE=$(printf '%s' "${DD_LAST}" | jq -r '.body | fromjson | .[0].ddsource // empty' 2>/dev/null)
+    if [[ "${DD_FIRST_DDSOURCE}" == "ministr" ]]; then
+        pass "receiver-3 body[0].ddsource == 'ministr' (Datadog Logs envelope)"
+    else
+        fail "receiver-3 body shape mismatch — expected .[0].ddsource=ministr, got '${DD_FIRST_DDSOURCE}' · body=${DD_LAST:0:200}"
+    fi
+    DD_FIRST_ORG=$(printf '%s' "${DD_LAST}" | jq -r '.body | fromjson | .[0].org_id // empty' 2>/dev/null)
+    if [[ "${DD_FIRST_ORG}" == "${ORG_ID_A}" ]]; then
+        pass "receiver-3 body[0].org_id == ORG_ID_A (Datadog routing locked to caller's org)"
+    else
+        fail "receiver-3 body[0].org_id expected ${ORG_ID_A}, got '${DD_FIRST_ORG}'"
+    fi
 else
-    note "skipped F5.3-d-ii-config + F5.3-d-ii-dispatch — ORG_ID_A not captured"
+    note "skipped F5.3-d-ii-config + F5.3-d-ii-dispatch + F5.3-d-iii-a — ORG_ID_A not captured"
 fi
 
 # ─── summary ──────────────────────────────────────────────────────────

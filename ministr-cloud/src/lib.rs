@@ -68,7 +68,7 @@ pub mod webhooks;
 pub use oidc::{OidcState, REDACTED_CLIENT_SECRET, oidc_config_routes, oidc_routes};
 pub use saml::{SamlState, saml_config_routes, saml_routes};
 pub use siem::{
-    PerOrgSplunkHecDispatcher, REDACTED_TOKEN, SiemConfigState, SplunkHecSink,
+    PerOrgSiemDispatcher, REDACTED_TOKEN, SiemConfigState, SplunkHecSink,
     siem_config_routes,
 };
 
