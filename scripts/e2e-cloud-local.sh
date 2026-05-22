@@ -901,6 +901,63 @@ BAD_STATUS=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' \
     --data "${SUB_UPDATED_BODY}")
 assert_status "${BAD_STATUS}" "400" "POST /webhooks/stripe with attacker-signed body → 400 (signature rejected)"
 
+# 14) **F5.1-b — SAML SP browser-facing endpoints.** Two per-org
+#     routes mount at /orgs/{id}/saml/{metadata.xml,login}. Both
+#     require an `org_saml_configs` row for the org; missing row
+#     returns 404. The login endpoint redirects (302) to the IdP
+#     SSO URL with a DEFLATE+base64-encoded SAMLRequest query
+#     parameter (HTTP-Redirect binding). No assertion verification
+#     yet (that's F5.1-c).
+info "F5.1-b: SAML SP metadata + login redirect endpoints"
+if [[ -n "${ORG_ID_A}" ]]; then
+    # First, assert 404 for an org with no SAML config row.
+    NO_CFG_STATUS=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' \
+        "${ENDPOINT}/orgs/${ORG_ID_A}/saml/metadata.xml")
+    assert_status "${NO_CFG_STATUS}" "404" "GET /orgs/{id}/saml/metadata.xml without config row → 404"
+
+    # Insert a SAML config row for tenant A's org. Use known fixture
+    # values so the assertions can match them in the response body.
+    SAML_IDP_ENTITY="https://idp.fixture.test/entity"
+    SAML_IDP_SSO="https://idp.fixture.test/sso"
+    SAML_IDP_CERT="-----BEGIN CERTIFICATE-----\nMIIBfixture\n-----END CERTIFICATE-----"
+    SAML_SP_ENTITY="http://localhost:8088/orgs/${ORG_ID_A}/saml"
+    SAML_SP_ACS="http://localhost:8088/orgs/${ORG_ID_A}/saml/acs"
+    docker compose -f docker-compose.dev.yml exec -T postgres \
+        psql -U ministr -d ministr_dev -tA \
+        -c "INSERT INTO org_saml_configs (org_id, idp_entity_id, idp_sso_url, idp_x509_cert, sp_entity_id, sp_acs_url) VALUES ('${ORG_ID_A}', '${SAML_IDP_ENTITY}', '${SAML_IDP_SSO}', '${SAML_IDP_CERT}', '${SAML_SP_ENTITY}', '${SAML_SP_ACS}');" \
+        >/dev/null 2>&1
+
+    # GET metadata.xml with row → 200 + XML body with our entityID.
+    META_TMP=$(mktemp)
+    META_STATUS=$(curl -sS --max-time 5 -o "${META_TMP}" -w '%{http_code}' \
+        "${ENDPOINT}/orgs/${ORG_ID_A}/saml/metadata.xml")
+    assert_status "${META_STATUS}" "200" "GET /orgs/{id}/saml/metadata.xml with config → 200"
+    META_BODY=$(cat "${META_TMP}")
+    rm -f "${META_TMP}"
+    if [[ "${META_BODY}" == *"EntityDescriptor"* ]] \
+        && [[ "${META_BODY}" == *"${SAML_SP_ENTITY}"* ]]; then
+        pass "metadata.xml body contains EntityDescriptor with our SP entity_id"
+    else
+        fail "metadata.xml body missing EntityDescriptor or SP entity_id (got first 200 bytes: ${META_BODY:0:200})"
+    fi
+
+    # GET login → 302 to IdP SSO URL with SAMLRequest query param.
+    # curl -i prints headers; pipe through awk to grab Location.
+    LOGIN_HEADERS=$(curl -sS --max-time 5 -D - -o /dev/null \
+        "${ENDPOINT}/orgs/${ORG_ID_A}/saml/login")
+    LOGIN_STATUS=$(printf '%s' "${LOGIN_HEADERS}" | awk 'NR==1 {print $2}')
+    LOGIN_LOC=$(printf '%s' "${LOGIN_HEADERS}" | awk 'BEGIN{IGNORECASE=1}/^location:/ {sub(/^[^:]+: /,""); print; exit}' | tr -d '\r\n')
+    assert_status "${LOGIN_STATUS}" "302" "GET /orgs/{id}/saml/login → 302"
+    if [[ "${LOGIN_LOC}" == "${SAML_IDP_SSO}?SAMLRequest="* ]] \
+        && [[ "${LOGIN_LOC}" == *"&RelayState="* ]]; then
+        pass "login Location header redirects to IdP with SAMLRequest + RelayState params"
+    else
+        fail "login Location header malformed: '${LOGIN_LOC}'"
+    fi
+else
+    note "skipped F5.1-b SAML assertions — ORG_ID_A not captured"
+fi
+
 # ─── summary ──────────────────────────────────────────────────────────
 
 echo

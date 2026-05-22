@@ -88,6 +88,19 @@ getrandom = "0.3"
 # standard 2026 Rust JWT crate (no transitive openssl, pure-Rust
 # ring/rustls under the hood).
 jsonwebtoken = "9"
+# F5.1-b — SAML 2.0 service-provider primitives. Pinned to 0.0.20
+# (Mar 2026, the latest release as of /roadmap research). The
+# `xmlsec` feature pulls in libxml2 + xmlsec1 native libraries and
+# is needed for assertion-signature verification (lands in F5.1-c);
+# kept off here so F5.1-b's metadata + AuthnRequest generation
+# stays pure-Rust + dep-light.
+samael = { version = "0.0.20", default-features = false }
+# F5.1-b — SAML HTTP-Redirect binding requires DEFLATE-compressed
+# + base64-encoded `SAMLRequest` query parameter per SAML Bindings
+# §3.4.4. samael doesn't expose a helper for unsigned redirects,
+# so we deflate + base64 the XML ourselves.
+base64 = "0.22.1"
+flate2 = "1.1.9"
 
 [dev-dependencies]
 # F2.2 — rate-limit tests drive the axum middleware via
