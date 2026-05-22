@@ -33,6 +33,7 @@ import {
 } from './bridge-filters';
 import { BridgeGraphFilters } from './bridge-graph-filters';
 import { BridgeGraphInteractive } from './bridge-graph-interactive';
+import { BridgeGraphSidePanel } from './bridge-graph-side-panel';
 
 interface BridgeGraphLiveProps {
   defaultData: { nodes: ReadonlyArray<LiveBridgeNode>; edges: ReadonlyArray<LiveBridgeEdge> };
@@ -74,6 +75,21 @@ export function BridgeGraphLive({ defaultData }: BridgeGraphLiveProps) {
   const availableLanguages = useMemo(() => distinctLanguages(data), [data]);
   const availableKinds = useMemo(() => distinctKinds(data), [data]);
   const filteredData = useMemo(() => applyBridgeFilters(data, filters), [data, filters]);
+  // F3.6-c-ii-a — selected edge for the side panel.
+  const [selectedEdge, setSelectedEdge] = useState<LiveBridgeEdge | null>(null);
+  const filteredNodesById = useMemo(
+    () => new Map(filteredData.nodes.map((n) => [n.id, n])),
+    [filteredData],
+  );
+  // If the filter pipeline removed the currently-selected edge, clear
+  // the selection so the side panel doesn't pin a stale reference.
+  useEffect(() => {
+    if (!selectedEdge) return;
+    const stillPresent = filteredData.edges.some(
+      (e) => e.from === selectedEdge.from && e.to === selectedEdge.to && e.kind === selectedEdge.kind,
+    );
+    if (!stillPresent) setSelectedEdge(null);
+  }, [filteredData, selectedEdge]);
 
   useEffect(() => {
     if (!api || !id) {
@@ -124,7 +140,16 @@ export function BridgeGraphLive({ defaultData }: BridgeGraphLiveProps) {
         availableLanguages={availableLanguages}
         availableKinds={availableKinds}
       />
-      <BridgeGraphInteractive data={filteredData} />
+      <div className="grid gap-4 lg:grid-cols-[1fr_22rem]">
+        <BridgeGraphInteractive data={filteredData} onEdgeClick={setSelectedEdge} />
+        {selectedEdge ? (
+          <BridgeGraphSidePanel
+            edge={selectedEdge}
+            nodesById={filteredNodesById}
+            onClose={() => setSelectedEdge(null)}
+          />
+        ) : null}
+      </div>
     </>
   );
 }
