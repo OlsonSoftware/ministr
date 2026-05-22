@@ -220,40 +220,134 @@ pub(crate) async fn dispatch_splunk_hec(
     }
 }
 
-/// F5.3-d-ii-dispatch — per-org SIEM dispatcher. Looks up
-/// `org_siem_configs` on every audit event with `org_id IS NOT NULL`
-/// and dispatches via [`dispatch_splunk_hec`] when a matching enabled
-/// row exists. Personal-account events (`org_id IS NULL`) are skipped
-/// — the per-org promise covers org-scoped actions only, same policy
-/// as F5.3-a's tier-aware retention.
+/// F5.3-d-iii-a — Datadog Logs payload. The HTTP intake at
+/// `https://http-intake.logs.datadoghq.com/api/v2/logs` accepts
+/// either a single object or an array; we always send a singleton
+/// array because Datadog's client SDKs assume the array shape and
+/// search filters key off `ddsource` + `service`.
+#[derive(Debug, Serialize)]
+struct DdLogEvent<'a> {
+    /// Conventional tag for "where did this come from"; Datadog UI
+    /// surfaces it as a top-level filter chip.
+    ddsource: &'static str,
+    /// Conventional tag for "which service emitted this".
+    service: &'static str,
+    /// Free-text message; we use the audit action so a Datadog
+    /// "search action=oidc.login" maps cleanly.
+    message: &'a str,
+    /// Flattened audit fields for search.
+    action: &'a str,
+    resource: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    org_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ip: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_agent: Option<&'a str>,
+}
+
+/// F5.3-d-iii-a — POST helper for Datadog Logs HTTP intake. Shape
+/// mirrors [`dispatch_splunk_hec`]: caller's responsibility to spawn
+/// the tokio task; this helper does the POST + logs the outcome at
+/// `debug` (2xx) / `warn` (non-2xx or connect/read error). Datadog
+/// returns `202 Accepted` on success; `reqwest::Response::is_success`
+/// admits both 200 and 202 so the branch is uniform.
+pub(crate) async fn dispatch_datadog_logs(
+    client: &Client,
+    url: &str,
+    api_key: &str,
+    entry: &AuditEntry,
+) {
+    let log = DdLogEvent {
+        ddsource: "ministr",
+        service: "ministr-audit",
+        message: entry.action.as_str(),
+        action: entry.action.as_str(),
+        resource: entry.resource.as_str(),
+        org_id: entry.org_id.as_deref(),
+        actor: entry.actor.as_deref(),
+        ip: entry.ip.as_deref(),
+        user_agent: entry.user_agent.as_deref(),
+    };
+    let payload = [log];
+    let req = client
+        .post(url)
+        .header("DD-API-KEY", api_key)
+        .header("Content-Type", "application/json")
+        .json(&payload);
+    match req.send().await {
+        Ok(resp) if resp.status().is_success() => {
+            debug!(
+                action = %entry.action,
+                status = resp.status().as_u16(),
+                "datadog logs dispatch ok"
+            );
+        }
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unreadable>".to_string());
+            warn!(
+                action = %entry.action,
+                status = status.as_u16(),
+                body = %body.chars().take(200).collect::<String>(),
+                "datadog logs dispatch failed; row stays in Postgres audit_events"
+            );
+        }
+        Err(e) => {
+            warn!(
+                action = %entry.action,
+                error = %e,
+                "datadog logs dispatch error; row stays in Postgres audit_events"
+            );
+        }
+    }
+}
+
+/// F5.3-d-ii-dispatch + F5.3-d-iii — per-org SIEM dispatcher. Looks
+/// up `org_siem_configs` on every audit event with `org_id IS NOT
+/// NULL` and dispatches via the right helper based on `row.kind`:
+/// `"splunk_hec"` → [`dispatch_splunk_hec`], `"datadog_logs"` →
+/// [`dispatch_datadog_logs`]. Unknown kinds log warn and skip
+/// (defensive against a row written outside the CRUD path).
+///
+/// Personal-account events (`org_id IS NULL`) are skipped — the
+/// per-org promise covers org-scoped actions only, same policy as
+/// F5.3-a's tier-aware retention.
 ///
 /// No cache in v0 — the lookup is one indexed query per audit event,
 /// well under the audit volume threshold where caching would pay off.
-/// A `Arc<RwLock<HashMap<org_id, (url, token, enabled)>>>` cache layer
-/// can land in a follow-up chunk if volume grows.
+/// A `Arc<RwLock<HashMap<org_id, (kind, url, token, enabled)>>>`
+/// cache layer can land in a follow-up chunk if volume grows.
 ///
 /// Fires IN ADDITION to the global env-var sink (operator's central
 /// SIEM still receives every event; customers' per-org endpoints
 /// receive their org's slice).
 #[derive(Clone)]
-pub struct PerOrgSplunkHecDispatcher {
+pub struct PerOrgSiemDispatcher {
     pool: Arc<Pool>,
     client: Client,
 }
 
-impl std::fmt::Debug for PerOrgSplunkHecDispatcher {
+impl std::fmt::Debug for PerOrgSiemDispatcher {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PerOrgSplunkHecDispatcher")
+        f.debug_struct("PerOrgSiemDispatcher")
             .field("pool", &"<Pool>")
             .finish()
     }
 }
 
-impl PerOrgSplunkHecDispatcher {
+impl PerOrgSiemDispatcher {
     /// Construct from a shared pool. The internal `reqwest::Client`
     /// is built once with the same 10s timeout as
     /// [`SplunkHecSink`] so a slow customer endpoint can't back up
-    /// the audit pipeline.
+    /// the audit pipeline. The same client is reused for every
+    /// provider (Splunk HEC, Datadog Logs, etc) — `reqwest` pools
+    /// connections per origin host.
     #[must_use]
     pub fn new(pool: Arc<Pool>) -> Self {
         let client = Client::builder()
@@ -264,7 +358,7 @@ impl PerOrgSplunkHecDispatcher {
     }
 }
 
-impl AuditSink for PerOrgSplunkHecDispatcher {
+impl AuditSink for PerOrgSiemDispatcher {
     fn record(&self, entry: AuditEntry) {
         // Skip personal-account events — per-org dispatch only
         // covers org-scoped actions.
@@ -285,17 +379,19 @@ impl AuditSink for PerOrgSplunkHecDispatcher {
                     return;
                 }
             };
-            // Single query: WHERE org_id = $1 AND enabled = TRUE AND
-            // kind = 'splunk_hec'. The partial index from migration
-            // 0014 on (org_id) WHERE enabled = TRUE makes this an
-            // index lookup; the `kind` filter happens after.
+            // Single query: WHERE org_id = $1 AND enabled = TRUE.
+            // The partial index from migration 0014 on (org_id)
+            // WHERE enabled = TRUE makes this an index lookup. The
+            // `kind` value drives the dispatch branch below; the
+            // CRUD validator (ALLOWED_SIEM_KINDS) keeps invalid
+            // values out of the table, but we still defensively
+            // handle the "unknown kind" arm.
             let row = match conn
                 .query_opt(
-                    "SELECT endpoint_url, token \
+                    "SELECT kind, endpoint_url, token \
                      FROM org_siem_configs \
                      WHERE org_id = $1::text::uuid \
-                       AND enabled = TRUE \
-                       AND kind = 'splunk_hec'",
+                       AND enabled = TRUE",
                     &[&org_id],
                 )
                 .await
@@ -316,9 +412,27 @@ impl AuditSink for PerOrgSplunkHecDispatcher {
                 // still receives the event.
                 return;
             };
-            let url: String = row.get(0);
-            let token: String = row.get(1);
-            dispatch_splunk_hec(&client, &url, &token, &entry).await;
+            let kind: String = row.get(0);
+            let url: String = row.get(1);
+            let token: String = row.get(2);
+            match kind.as_str() {
+                "splunk_hec" => {
+                    dispatch_splunk_hec(&client, &url, &token, &entry).await;
+                }
+                "datadog_logs" => {
+                    // F5.3-d-iii-a — `token` column carries the
+                    // `DD-API-KEY` value for this provider. Same
+                    // column, provider-specific semantics.
+                    dispatch_datadog_logs(&client, &url, &token, &entry).await;
+                }
+                other => {
+                    warn!(
+                        org_id = %org_id,
+                        kind = %other,
+                        "per-org SIEM lookup: unknown kind; row written outside the CRUD path"
+                    );
+                }
+            }
         });
     }
 }
@@ -335,10 +449,12 @@ impl AuditSink for PerOrgSplunkHecDispatcher {
 // config. With the schema seeded customers can pre-configure
 // before the dispatcher wiring goes live.
 
-/// Allowed `kind` values v0 admits. F5.3-d-iii will add
-/// `"datadog_logs"`, `"s3_jsonl"`, `"syslog_cef"` here AND switch the
-/// dispatch path on the value.
-const ALLOWED_SIEM_KINDS: &[&str] = &["splunk_hec"];
+/// Allowed `kind` values for `org_siem_configs.kind`. F5.3-d-i
+/// admitted `"splunk_hec"` only; F5.3-d-iii-a adds `"datadog_logs"`.
+/// Future sub-chunks will add `"s3_jsonl"` (F5.3-d-iii-b) and
+/// `"syslog_cef"` (F5.3-d-iii-c). The `PerOrgSiemDispatcher`'s
+/// `record()` branches on this exact set.
+const ALLOWED_SIEM_KINDS: &[&str] = &["splunk_hec", "datadog_logs"];
 
 /// Sentinel string returned in place of the real `token` on every
 /// HTTP read. Mirrors F5.2-d's `REDACTED_CLIENT_SECRET` exactly so
@@ -455,7 +571,7 @@ async fn assert_siem_owner_or_admin(
 fn validate_siem_upsert(body: &SiemConfigUpsertBody) -> Result<(), SiemConfigError> {
     if !ALLOWED_SIEM_KINDS.contains(&body.kind.as_str()) {
         return Err(SiemConfigError::Invalid(
-            "kind must be one of: splunk_hec",
+            "kind must be one of: splunk_hec, datadog_logs",
         ));
     }
     if body.endpoint_url.trim().is_empty() {
@@ -714,10 +830,22 @@ mod tests {
     }
 
     #[test]
-    fn allowed_siem_kinds_locks_v0_to_splunk_hec_only() {
-        // F5.3-d-iii will extend this list; the regression-guard
-        // makes the schema-vs-validator contract visible.
-        assert_eq!(ALLOWED_SIEM_KINDS, &["splunk_hec"]);
+    fn allowed_siem_kinds_includes_splunk_and_datadog() {
+        // F5.3-d-i shipped "splunk_hec"; F5.3-d-iii-a added
+        // "datadog_logs". F5.3-d-iii-b/c will extend this list with
+        // "s3_jsonl" + "syslog_cef" and update the dispatcher's
+        // kind-branch in lockstep.
+        assert_eq!(ALLOWED_SIEM_KINDS, &["splunk_hec", "datadog_logs"]);
+    }
+
+    #[test]
+    fn validate_siem_upsert_admits_datadog_logs() {
+        let b = body(
+            "datadog_logs",
+            "https://http-intake.logs.datadoghq.com/api/v2/logs",
+            "dd-api-key-xxx",
+        );
+        assert!(validate_siem_upsert(&b).is_ok());
     }
 
     #[test]
