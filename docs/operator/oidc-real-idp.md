@@ -22,7 +22,8 @@ console.
 | `issuer_url` | yes | Must serve a valid OIDC discovery doc at `${issuer_url}/.well-known/openid-configuration`. The `issuer` value inside that document MUST byte-match `issuer_url` — OIDC Discovery 1.0 §4.3. |
 | `client_id` | yes | Public identifier the `IdP` assigns to your OIDC application. |
 | `client_secret` | yes | Confidential string the `IdP` issues alongside the `client_id`. ministr stores it in `org_oidc_configs.client_secret`; every HTTP read returns the sentinel `[REDACTED]`. |
-| `groups_claim` | no | JSON claim name the `IdP` uses for group membership. Default `groups`. Reserved for the future group→role mapping chunk; currently unused. |
+| `groups_claim` | no | JSON claim name the `IdP` uses for group membership. Default `groups`. Read at callback by F5.2-f's role-mapping path. |
+| `group_role_map` | no | JSON object mapping `IdP` group name → ministr role (`"owner"` / `"admin"` / `"member"`). Default `{}` (no role inference). The callback intersects this with the user's groups claim; highest-power role wins. Bootstrap-safe: an existing org owner is never downgraded by a less-privileged group mapping. |
 | `email_claim` | no | JSON claim name carrying the user's email. Default `email`. |
 | `name_claim` | no | JSON claim name carrying the display name. Default `name`. |
 | `enforce_email_verified` | no | When `true` (default), reject sign-in if the ID token's `email_verified` claim is anything other than `true`. Flip to `false` only if your `IdP` doesn't ship a verified-email signal AND you trust the `IdP` to vet emails. |
@@ -43,7 +44,10 @@ Scopes requested at `/oidc/login`: `openid email profile`. Your
 `IdP` must admit all three.
 
 Claims read at callback: `email` (required — sign-in rejects without
-it), `email_verified` (consulted when `enforce_email_verified=true`).
+it), `email_verified` (consulted when `enforce_email_verified=true`),
+and the configured `groups_claim` (consulted by F5.2-f's role mapping
+when `group_role_map` is non-empty; missing or non-array values fall
+through to the no-role-inference path without erroring).
 
 ## Prerequisites
 

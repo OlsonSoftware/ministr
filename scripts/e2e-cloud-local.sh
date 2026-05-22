@@ -440,6 +440,11 @@ export OIDC_JWK_KID="e2e-key"
 export OIDC_FIXED_EMAIL="oidc-test@e2e.test"
 export OIDC_FIXED_SUBJECT="e2e-subject-1"
 export OIDC_FIXED_CLIENT_ID="e2e-client"
+# F5.2-f — synthetic IdP-side groups the user belongs to. The JWT's
+# `groups` claim carries this list. The F5.2-f harness POSTs a
+# group_role_map referencing "acme-engineers" → "admin"; after the
+# callback runs, org_members has a row at role=admin.
+export OIDC_FIXED_GROUPS="acme-engineers,acme-other-group"
 info "OIDC RSA keypair at ${OIDC_KEY_DIR}; JWK n len=${#OIDC_JWK_N}"
 python3 "$(dirname "$0")/e2e-oidc-mock-idp.py" "${OIDC_MOCK_PORT}" \
     > /tmp/ministr-e2e-oidc-mock.log 2>&1 &
@@ -1264,8 +1269,132 @@ EOF
     # GET after DELETE → 404.
     curl_request GET "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/oidc/config" "${TOKEN_A}"
     assert_status "${RESPONSE_STATUS}" "404" "GET /oidc/config after DELETE → 404"
+
+    # 19) **F5.2-f — group_role_map → org_members upsert.** Re-POST
+    #     the OIDC config WITH a `group_role_map` that names one of
+    #     the IdP's user groups (OIDC_FIXED_GROUPS). Drive a fresh
+    #     auth-code grant. After the callback, `org_members` should
+    #     have a row for the OIDC user at the mapped role.
+    info "F5.2-f: group_role_map → org_members upsert via OIDC callback"
+
+    OIDC_F_CRUD_BODY=$(cat <<EOF
+{"issuer_url":"http://127.0.0.1:${OIDC_MOCK_PORT}","client_id":"e2e-client","client_secret":"f-secret-${RUN_TS}","group_role_map":{"acme-engineers":"admin"}}
+EOF
+)
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/oidc/config" "${TOKEN_A}" "${OIDC_F_CRUD_BODY}"
+    assert_status "${RESPONSE_STATUS}" "200" "owner POST /oidc/config with group_role_map → 200"
+    GOT_MAP=$(printf '%s' "${RESPONSE_BODY}" | jq -c '.group_role_map')
+    if [[ "${GOT_MAP}" == '{"acme-engineers":"admin"}' ]]; then
+        pass "POST /oidc/config returns the saved group_role_map"
+    else
+        fail "POST /oidc/config group_role_map mismatch (got: ${GOT_MAP})"
+    fi
+
+    # Drive the full grant + callback again to land a new
+    # org_members row. Re-uses the OIDC_FIXED_GROUPS / fixed_email
+    # the mock IdP was launched with.
+    OIDC_F_AUTHZ_LOC=$(curl -sS --max-time 5 -D - -o /dev/null \
+        "${ENDPOINT}/orgs/${ORG_ID_A}/oidc/login" \
+        | awk 'tolower($1)=="location:" {sub(/^[^:]+: /,""); print; exit}' \
+        | tr -d '\r\n')
+    if [[ -z "${OIDC_F_AUTHZ_LOC}" ]]; then
+        fail "F5.2-f: no Location from /oidc/login on the second flow"
+    else
+        OIDC_F_AUTHZ_HEADERS=$(curl -sS --max-time 5 -D - -o /dev/null "${OIDC_F_AUTHZ_LOC}")
+        OIDC_F_CALLBACK_LOC=$(printf '%s' "${OIDC_F_AUTHZ_HEADERS}" | awk 'tolower($1)=="location:" {sub(/^[^:]+: /,""); print; exit}' | tr -d '\r\n')
+        OIDC_F_CB_OUT=$(curl -sS --max-time 10 -w '\n%{http_code}' "${OIDC_F_CALLBACK_LOC}")
+        OIDC_F_CB_STATUS=$(printf '%s' "${OIDC_F_CB_OUT}" | tail -n1)
+        OIDC_F_CB_BODY=$(printf '%s' "${OIDC_F_CB_OUT}" | sed '$d')
+        if [[ "${OIDC_F_CB_STATUS}" == "200" ]]; then
+            pass "F5.2-f callback → 200 (HTTP 200)"
+        else
+            fail "F5.2-f callback — expected 200, got ${OIDC_F_CB_STATUS} · body=${OIDC_F_CB_BODY:0:300}"
+        fi
+        # The OIDC user's UUID is in the callback response.
+        OIDC_F_USER=$(printf '%s' "${OIDC_F_CB_BODY}" | jq -r '.user_id // empty')
+
+        # Direct psql check: org_members has a row for this user at
+        # the mapped role. The bootstrap-safe rule means a pre-
+        # existing owner of ORG_ID_A (tenant A) is unaffected; the
+        # OIDC user is a different uuid, so they get a fresh row.
+        OIDC_F_ROLE=$(docker compose -f docker-compose.dev.yml exec -T postgres \
+            psql -U ministr -d ministr_dev -tA \
+            -c "SELECT role FROM org_members WHERE org_id = '${ORG_ID_A}'::uuid AND user_id = '${OIDC_F_USER}'::uuid;" \
+            2>/dev/null | tr -d ' \r\n')
+        if [[ "${OIDC_F_ROLE}" == "admin" ]]; then
+            pass "org_members has OIDC user at role=admin (group_role_map applied)"
+        else
+            fail "org_members role for OIDC user — expected admin, got '${OIDC_F_ROLE}'"
+        fi
+
+        # Audit trail: member.added row should have fired for the
+        # OIDC user (the user was newly added to the org via the
+        # group claim, not via an invite).
+        MA_COUNT=$(psql_count "SELECT count(*) FROM audit_events WHERE action='member.added' AND actor::text = '${OIDC_F_USER}';")
+        if [[ "${MA_COUNT}" -ge "1" ]]; then
+            pass "audit_events has member.added for OIDC user (count=${MA_COUNT})"
+        else
+            fail "no member.added audit row for OIDC user (count=${MA_COUNT})"
+        fi
+    fi
+
+    # 20) **F5.2-f bootstrap safety** — POST a group_role_map that
+    #     maps acme-engineers to "member" (a DOWNGRADE attempt). A
+    #     subsequent sign-in MUST NOT downgrade an existing owner.
+    #     To exercise this we'd need an OIDC user who was already
+    #     an owner of ORG_ID_A; the simplest reliable setup is to
+    #     directly UPDATE org_members to set the OIDC user to
+    #     owner, then re-run the flow with a member-mapping. Skip
+    #     this assertion if the prior step didn't capture
+    #     OIDC_F_USER.
+    if [[ -n "${OIDC_F_USER}" ]]; then
+        # Promote the OIDC user to owner via direct DB write
+        # (simulates a manual admin action).
+        docker compose -f docker-compose.dev.yml exec -T postgres \
+            psql -U ministr -d ministr_dev -tA \
+            -c "UPDATE org_members SET role='owner' WHERE org_id='${ORG_ID_A}'::uuid AND user_id='${OIDC_F_USER}'::uuid;" \
+            >/dev/null 2>&1
+
+        # POST a downgrade-attempting mapping.
+        OIDC_F_DOWNGRADE=$(cat <<EOF
+{"issuer_url":"http://127.0.0.1:${OIDC_MOCK_PORT}","client_id":"e2e-client","client_secret":"f-secret-${RUN_TS}","group_role_map":{"acme-engineers":"member"}}
+EOF
+)
+        curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/oidc/config" "${TOKEN_A}" "${OIDC_F_DOWNGRADE}"
+        assert_status "${RESPONSE_STATUS}" "200" "POST downgrade-attempting group_role_map → 200"
+
+        # Drive a fresh flow.
+        OIDC_F2_LOC=$(curl -sS --max-time 5 -D - -o /dev/null \
+            "${ENDPOINT}/orgs/${ORG_ID_A}/oidc/login" \
+            | awk 'tolower($1)=="location:" {sub(/^[^:]+: /,""); print; exit}' \
+            | tr -d '\r\n')
+        OIDC_F2_HEADERS=$(curl -sS --max-time 5 -D - -o /dev/null "${OIDC_F2_LOC}")
+        OIDC_F2_CALLBACK_LOC=$(printf '%s' "${OIDC_F2_HEADERS}" | awk 'tolower($1)=="location:" {sub(/^[^:]+: /,""); print; exit}' | tr -d '\r\n')
+        curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "${OIDC_F2_CALLBACK_LOC}" >/dev/null 2>&1
+
+        # The OIDC user MUST still be owner — never downgraded.
+        OIDC_F2_ROLE=$(docker compose -f docker-compose.dev.yml exec -T postgres \
+            psql -U ministr -d ministr_dev -tA \
+            -c "SELECT role FROM org_members WHERE org_id='${ORG_ID_A}'::uuid AND user_id='${OIDC_F_USER}'::uuid;" \
+            2>/dev/null | tr -d ' \r\n')
+        if [[ "${OIDC_F2_ROLE}" == "owner" ]]; then
+            pass "bootstrap-safe: OIDC owner NOT downgraded by member-mapping"
+        else
+            fail "OIDC owner WAS downgraded — expected owner, got '${OIDC_F2_ROLE}'"
+        fi
+    fi
+
+    # 21) **F5.2-f validation — reject malformed group_role_map.**
+    #     The CRUD POST must reject non-object payloads + invalid
+    #     role values up-front so the callback never sees garbage.
+    OIDC_BAD_ARRAY='{"issuer_url":"http://127.0.0.1:'${OIDC_MOCK_PORT}'","client_id":"e2e-client","client_secret":"x","group_role_map":["not","an","object"]}'
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/oidc/config" "${TOKEN_A}" "${OIDC_BAD_ARRAY}"
+    assert_status "${RESPONSE_STATUS}" "400" "POST group_role_map=array → 400 (rejected)"
+    OIDC_BAD_ROLE='{"issuer_url":"http://127.0.0.1:'${OIDC_MOCK_PORT}'","client_id":"e2e-client","client_secret":"x","group_role_map":{"acme-engineers":"superuser"}}'
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/oidc/config" "${TOKEN_A}" "${OIDC_BAD_ROLE}"
+    assert_status "${RESPONSE_STATUS}" "400" "POST group_role_map with invalid role → 400"
 else
-    note "skipped F5.2-b/c/d OIDC assertions — ORG_ID_A not captured"
+    note "skipped F5.2-b/c/d/f OIDC assertions — ORG_ID_A not captured"
 fi
 
 # ─── summary ──────────────────────────────────────────────────────────

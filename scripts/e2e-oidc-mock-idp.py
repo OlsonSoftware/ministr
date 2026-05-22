@@ -34,6 +34,12 @@ Env vars (all set by `scripts/e2e-cloud-local.sh`):
   OIDC_FIXED_SUBJECT     — sub claim minted into every ID token
   OIDC_FIXED_CLIENT_ID   — aud claim minted into every ID token
                            (must match `org_oidc_configs.client_id`)
+  OIDC_FIXED_GROUPS      — F5.2-f. Comma-separated list of group
+                           names to include in the JWT's `groups`
+                           claim. Empty / unset emits no groups
+                           claim so the callback's group-role-map
+                           extraction sees an empty user-group set
+                           (and the no-mapping path stays valid).
 
 Usage:
     python3 scripts/e2e-oidc-mock-idp.py <port>
@@ -97,6 +103,10 @@ def main() -> int:
     fixed_email = os.environ.get("OIDC_FIXED_EMAIL", "oidc-test@e2e.test")
     fixed_subject = os.environ.get("OIDC_FIXED_SUBJECT", "e2e-subject-1")
     fixed_client_id = os.environ.get("OIDC_FIXED_CLIENT_ID", "e2e-client")
+    fixed_groups_raw = os.environ.get("OIDC_FIXED_GROUPS", "")
+    fixed_groups: list[str] = [
+        g.strip() for g in fixed_groups_raw.split(",") if g.strip()
+    ]
 
     if private_key_path and not os.path.exists(private_key_path):
         print(
@@ -227,6 +237,13 @@ def main() -> int:
                 "email": fixed_email,
                 "email_verified": True,
             }
+            # F5.2-f — include the groups claim only when at least
+            # one group is configured. Empty/unset → no claim, so
+            # the callback's group-role-map extraction sees an empty
+            # array and falls through to the no-mapping path. Lets
+            # the existing F5.2-b/c/d assertions stay valid.
+            if fixed_groups:
+                payload["groups"] = list(fixed_groups)
             header_b64 = b64url(json.dumps(header, separators=(",", ":")).encode())
             payload_b64 = b64url(
                 json.dumps(payload, separators=(",", ":")).encode()
