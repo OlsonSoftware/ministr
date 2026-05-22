@@ -156,6 +156,7 @@ async fn cross_corpus_survey(
     backend: &crate::backend::Backend,
     tenant_subject: Option<&str>,
     corpus_ids: &[String],
+    corpus_boost: Option<&std::collections::HashMap<String, f32>>,
     query: &str,
     top_k: usize,
     exclude_ids: &std::collections::HashSet<String>,
@@ -194,24 +195,65 @@ async fn cross_corpus_survey(
         // but return empty defensively.
         return Ok((Vec::new(), 0));
     }
-    Ok(merge_cross_corpus_results(per_corpus, top_k))
+    Ok(merge_cross_corpus_results(per_corpus, corpus_boost, top_k))
 }
+
+/// F6.3-b — clamp / sanitise a single user-supplied boost multiplier.
+///
+/// Non-finite values (NaN, ±∞) fall back to the unboosted default of
+/// 1.0 so a malformed map entry can't silently zero a corpus.
+/// Negative values clamp to 0.0; values above [`MAX_CORPUS_BOOST`]
+/// clamp to that ceiling so a runaway boost can't overflow the
+/// score multiplication.
+#[must_use]
+fn sanitise_boost(raw: f32) -> f32 {
+    if !raw.is_finite() {
+        return 1.0;
+    }
+    raw.clamp(0.0, MAX_CORPUS_BOOST)
+}
+
+/// Cap on the F6.3-b per-corpus boost multiplier. Picked to be a
+/// generous-but-bounded "10× weight" ceiling; an agent that wants
+/// to suppress other corpora should set their boost to 0.0 rather
+/// than crank one above 10.0.
+const MAX_CORPUS_BOOST: f32 = 10.0;
 
 /// Pure merge-sort-truncate helper extracted so the cross-corpus
 /// fan-out semantics can be unit-tested without spinning up a real
 /// [`crate::backend::Backend`]. Tags each result with its source
-/// corpus, sorts by score descending (stable), and truncates to
-/// `top_k`. Sums `deduplicated_count` across all per-corpus calls.
+/// corpus, applies the F6.3-b `corpus_boost` multiplier (when set)
+/// to the per-hit score, sorts by score descending (stable), and
+/// truncates to `top_k`. Sums `deduplicated_count` across all
+/// per-corpus calls.
+///
+/// # F6.3-b boost semantics
+///
+/// - Map keys match per-corpus `corpus_id`; absent keys → 1.0
+///   (unboosted).
+/// - Values are clamped to `[0.0, MAX_CORPUS_BOOST]` via
+///   [`sanitise_boost`]; NaN / ±∞ fall back to 1.0.
+/// - The boosted score REPLACES the raw score in the returned
+///   [`ministr_core::service::SurveyResult`] — agents read the
+///   boosted score directly. The `source_corpus` field is the
+///   audit trail for which boost applied to which hit.
 #[must_use]
 fn merge_cross_corpus_results(
     per_corpus: Vec<(String, Vec<ministr_core::service::SurveyResult>, usize)>,
+    corpus_boost: Option<&std::collections::HashMap<String, f32>>,
     top_k: usize,
 ) -> (Vec<ministr_core::service::SurveyResult>, usize) {
     let mut merged: Vec<ministr_core::service::SurveyResult> = Vec::new();
     let mut total_dedup: usize = 0;
     for (corpus_id, mut results, dedup) in per_corpus {
+        let boost = corpus_boost
+            .and_then(|m| m.get(&corpus_id).copied())
+            .map_or(1.0, sanitise_boost);
         for r in &mut results {
             r.source_corpus = Some(corpus_id.clone());
+            // Apply the multiplier in-place; even when boost == 1.0
+            // the write is a no-op cost-wise.
+            r.score *= boost;
         }
         merged.extend(results);
         total_dedup += dedup;
@@ -945,6 +987,7 @@ impl MinistrServer {
                     &self.backend,
                     tenant_subject.as_deref(),
                     corpus_ids,
+                    params.corpus_boost.as_ref(),
                     &params.query,
                     top_k,
                     &exclude_ids,
@@ -2986,7 +3029,7 @@ mod tests {
                 0,
             ),
         ];
-        let (merged, dedup) = merge_cross_corpus_results(per_corpus, 10);
+        let (merged, dedup) = merge_cross_corpus_results(per_corpus, None, 10);
         assert_eq!(dedup, 0);
         assert_eq!(merged.len(), 3);
         // All hits carry a source_corpus.
@@ -3017,7 +3060,7 @@ mod tests {
                 0,
             ),
         ];
-        let (merged, _) = merge_cross_corpus_results(per_corpus, 10);
+        let (merged, _) = merge_cross_corpus_results(per_corpus, None, 10);
         let ids: Vec<&str> = merged.iter().map(|r| r.content_id.as_str()).collect();
         assert_eq!(ids, vec!["b-top", "a-mid", "b-mid", "a-low"]);
     }
@@ -3036,7 +3079,7 @@ mod tests {
                 0,
             ),
         ];
-        let (merged, _) = merge_cross_corpus_results(per_corpus, 3);
+        let (merged, _) = merge_cross_corpus_results(per_corpus, None, 3);
         let ids: Vec<&str> = merged.iter().map(|r| r.content_id.as_str()).collect();
         // After cross-corpus sort: a1(0.9), b1(0.8), a2(0.7), b2(0.6), a3(0.5), b3(0.4)
         // top_k=3 → first three.
@@ -3050,13 +3093,13 @@ mod tests {
             ("beta".to_string(), vec![make_sr("b1", 0.8)], 2),
             ("gamma".to_string(), vec![], 5),
         ];
-        let (_, dedup) = merge_cross_corpus_results(per_corpus, 10);
+        let (_, dedup) = merge_cross_corpus_results(per_corpus, None, 10);
         assert_eq!(dedup, 10, "deduplicated_count sums across all per-corpus calls");
     }
 
     #[test]
     fn merge_handles_empty_per_corpus_vec() {
-        let (merged, dedup) = merge_cross_corpus_results(Vec::new(), 10);
+        let (merged, dedup) = merge_cross_corpus_results(Vec::new(), None, 10);
         assert!(merged.is_empty());
         assert_eq!(dedup, 0);
     }
@@ -3072,9 +3115,142 @@ mod tests {
         let mut pre_tagged = make_sr("a1", 0.9);
         pre_tagged.source_corpus = Some("stale-tag".to_string());
         let per_corpus = vec![("alpha".to_string(), vec![pre_tagged], 0)];
-        let (merged, _) = merge_cross_corpus_results(per_corpus, 10);
+        let (merged, _) = merge_cross_corpus_results(per_corpus, None, 10);
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].source_corpus.as_deref(), Some("alpha"));
+    }
+
+    // ── F6.3-b corpus_boost tests ─────────────────────────────────────
+
+    fn boost_map(entries: &[(&str, f32)]) -> std::collections::HashMap<String, f32> {
+        entries
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), *v))
+            .collect()
+    }
+
+    #[test]
+    fn boost_above_one_floats_corpus_above_higher_raw_scores() {
+        // Without boost: react's a1(0.7) beats my-app's b1(0.6).
+        // With my-app boosted 2.0×: b1 → 1.2 should win.
+        let per_corpus = vec![
+            ("atlas/react".to_string(), vec![make_sr("a1", 0.7)], 0),
+            ("my-app".to_string(), vec![make_sr("b1", 0.6)], 0),
+        ];
+        let boost = boost_map(&[("my-app", 2.0)]);
+        let (merged, _) = merge_cross_corpus_results(per_corpus, Some(&boost), 10);
+        let ids: Vec<&str> = merged.iter().map(|r| r.content_id.as_str()).collect();
+        assert_eq!(ids, vec!["b1", "a1"]);
+        // The boosted score is what the agent sees.
+        assert!((merged[0].score - 1.2).abs() < 1e-5);
+        assert!((merged[1].score - 0.7).abs() < 1e-5);
+    }
+
+    #[test]
+    fn boost_of_zero_suppresses_the_corpus() {
+        // Without boost: atlas's a1(0.9) beats my-app's b1(0.5).
+        // With atlas boosted 0.0×: a1 → 0.0, b1 wins.
+        let per_corpus = vec![
+            ("atlas/react".to_string(), vec![make_sr("a1", 0.9)], 0),
+            ("my-app".to_string(), vec![make_sr("b1", 0.5)], 0),
+        ];
+        let boost = boost_map(&[("atlas/react", 0.0)]);
+        let (merged, _) = merge_cross_corpus_results(per_corpus, Some(&boost), 10);
+        let ids: Vec<&str> = merged.iter().map(|r| r.content_id.as_str()).collect();
+        assert_eq!(ids, vec!["b1", "a1"]);
+        assert!((merged[0].score - 0.5).abs() < 1e-5);
+        assert!((merged[1].score - 0.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn boost_absent_corpus_defaults_to_one() {
+        // Boost map covers only 'my-app'. atlas/react gets the default 1.0×.
+        let per_corpus = vec![
+            ("atlas/react".to_string(), vec![make_sr("a1", 0.8)], 0),
+            ("my-app".to_string(), vec![make_sr("b1", 0.5)], 0),
+        ];
+        let boost = boost_map(&[("my-app", 1.0)]);
+        let (merged, _) = merge_cross_corpus_results(per_corpus, Some(&boost), 10);
+        let ids: Vec<&str> = merged.iter().map(|r| r.content_id.as_str()).collect();
+        // No effective change — same scores → same order as F6.3-a default.
+        assert_eq!(ids, vec!["a1", "b1"]);
+    }
+
+    #[test]
+    fn boost_negative_clamps_to_zero() {
+        let per_corpus = vec![("atlas".to_string(), vec![make_sr("a1", 0.9)], 0)];
+        let boost = boost_map(&[("atlas", -5.0)]);
+        let (merged, _) = merge_cross_corpus_results(per_corpus, Some(&boost), 10);
+        assert_eq!(merged.len(), 1);
+        // Score clamped to 0 (negative boost ≡ suppression).
+        assert!((merged[0].score - 0.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn boost_above_max_clamps_to_ceiling() {
+        let per_corpus = vec![("atlas".to_string(), vec![make_sr("a1", 0.5)], 0)];
+        let boost = boost_map(&[("atlas", 1_000.0)]);
+        let (merged, _) = merge_cross_corpus_results(per_corpus, Some(&boost), 10);
+        assert_eq!(merged.len(), 1);
+        // 0.5 × MAX_CORPUS_BOOST (10.0) = 5.0; runaway boost can't overflow.
+        assert!((merged[0].score - 0.5 * MAX_CORPUS_BOOST).abs() < 1e-5);
+    }
+
+    #[test]
+    fn boost_nan_falls_back_to_one() {
+        let per_corpus = vec![("atlas".to_string(), vec![make_sr("a1", 0.9)], 0)];
+        let boost = boost_map(&[("atlas", f32::NAN)]);
+        let (merged, _) = merge_cross_corpus_results(per_corpus, Some(&boost), 10);
+        // NaN sanitised to 1.0 — score unchanged. A malformed boost
+        // entry MUST NOT silently zero a corpus.
+        assert!((merged[0].score - 0.9).abs() < 1e-5);
+    }
+
+    #[test]
+    fn boost_infinity_falls_back_to_one() {
+        let per_corpus = vec![("atlas".to_string(), vec![make_sr("a1", 0.5)], 0)];
+        let boost = boost_map(&[("atlas", f32::INFINITY)]);
+        let (merged, _) = merge_cross_corpus_results(per_corpus, Some(&boost), 10);
+        // INF sanitised to 1.0 — score unchanged.
+        assert!((merged[0].score - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn boost_none_means_no_change_from_f63a_behavior() {
+        // Regression guard: passing None for the boost map must produce
+        // byte-identical output to the F6.3-a path.
+        let per_corpus = vec![
+            ("alpha".to_string(), vec![make_sr("a1", 0.9), make_sr("a2", 0.6)], 0),
+            ("beta".to_string(), vec![make_sr("b1", 0.7)], 0),
+        ];
+        let per_corpus_clone = vec![
+            ("alpha".to_string(), vec![make_sr("a1", 0.9), make_sr("a2", 0.6)], 0),
+            ("beta".to_string(), vec![make_sr("b1", 0.7)], 0),
+        ];
+        let (a, _) = merge_cross_corpus_results(per_corpus, None, 10);
+        let (b, _) = merge_cross_corpus_results(per_corpus_clone, None, 10);
+        let a_ids: Vec<&str> = a.iter().map(|r| r.content_id.as_str()).collect();
+        let b_ids: Vec<&str> = b.iter().map(|r| r.content_id.as_str()).collect();
+        assert_eq!(a_ids, b_ids);
+        for (ar, br) in a.iter().zip(b.iter()) {
+            assert!((ar.score - br.score).abs() < f32::EPSILON);
+        }
+    }
+
+    #[test]
+    fn sanitise_boost_matrix() {
+        // Pure-function regression guard for the clamp + NaN policy.
+        assert!((sanitise_boost(1.0) - 1.0).abs() < f32::EPSILON);
+        assert!((sanitise_boost(0.5) - 0.5).abs() < f32::EPSILON);
+        assert!((sanitise_boost(0.0) - 0.0).abs() < f32::EPSILON);
+        assert!((sanitise_boost(-1.0) - 0.0).abs() < f32::EPSILON, "negative clamps to 0");
+        assert!(
+            (sanitise_boost(MAX_CORPUS_BOOST + 5.0) - MAX_CORPUS_BOOST).abs() < f32::EPSILON,
+            "above ceiling clamps to MAX"
+        );
+        assert!((sanitise_boost(f32::NAN) - 1.0).abs() < f32::EPSILON);
+        assert!((sanitise_boost(f32::INFINITY) - 1.0).abs() < f32::EPSILON);
+        assert!((sanitise_boost(f32::NEG_INFINITY) - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -3530,6 +3706,7 @@ mod tests {
             top_k: Some(5),
             project: None,
             corpus_ids: None,
+            corpus_boost: None,
         };
         let result = server.survey(Parameters(params)).await.unwrap();
 
@@ -3620,6 +3797,7 @@ mod tests {
                 top_k: Some(10),
                 project: None,
                 corpus_ids: None,
+                corpus_boost: None,
             }))
             .await
             .unwrap();
@@ -3635,6 +3813,7 @@ mod tests {
                 top_k: Some(10),
                 project: None,
                 corpus_ids: None,
+                corpus_boost: None,
             }))
             .await
             .unwrap();
@@ -3707,6 +3886,7 @@ mod tests {
             top_k: Some(5),
             project: None,
             corpus_ids: None,
+            corpus_boost: None,
         };
         let result = server.survey(Parameters(params)).await.unwrap();
 
@@ -4630,6 +4810,7 @@ mod tests {
                 top_k: Some(5),
                 project: None,
                 corpus_ids: None,
+                corpus_boost: None,
             }))
             .await
             .unwrap();
