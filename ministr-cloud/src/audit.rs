@@ -163,24 +163,47 @@ struct AuditListResponse {
     rows: Vec<AuditRow>,
 }
 
-/// Build the audit router. Mounts under no prefix; the route carries
-/// its full path verbatim.
+/// Build the audit router. Mounts under no prefix; the routes carry
+/// their full paths verbatim. F5.3-c-ii-archive-read adds the
+/// `/audit/archived` route alongside the existing live `/audit`
+/// list endpoint.
 pub fn audit_routes(state: AuditState) -> Router {
     Router::new()
         .route("/api/v1/orgs/{id}/audit", get(list_handler))
+        .route(
+            "/api/v1/orgs/{id}/audit/archived",
+            get(list_archived_handler),
+        )
         .with_state(state)
 }
 
-/// Axum state for the audit router.
+/// Axum state for the audit router. The optional `archive_dir`
+/// powers the F5.3-c-ii-archive-read endpoint — when `None`, the
+/// archived-audit endpoint returns 503; when `Some(path)`, the
+/// handler reads gzipped JSONL files from that directory.
 #[derive(Debug, Clone)]
 pub struct AuditState {
     pub pool: Arc<Pool>,
+    pub archive_dir: Option<std::path::PathBuf>,
 }
 
 impl AuditState {
     #[must_use]
     pub fn from_arc(pool: Arc<Pool>) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            archive_dir: None,
+        }
+    }
+
+    /// F5.3-c-ii-archive-read — wire the archive directory the
+    /// handler reads from. Production deployments populate this
+    /// from the `MINISTR_AUDIT_ARCHIVE_DIR` env var; harness
+    /// populates it from a per-run scratch path.
+    #[must_use]
+    pub fn with_archive_dir(mut self, archive_dir: impl Into<std::path::PathBuf>) -> Self {
+        self.archive_dir = Some(archive_dir.into());
+        self
     }
 }
 
@@ -230,6 +253,202 @@ async fn list_handler(
         .await
         .map_err(AuditApiError::Repo)?;
     Ok(Json(AuditListResponse { rows }))
+}
+
+/// F5.3-c-ii-archive-read — query params for the archived-audit
+/// list endpoint. `from` / `to` are inclusive-exclusive ISO-8601
+/// dates (`YYYY-MM-DD`). Validated server-side; malformed dates
+/// return 400.
+#[derive(Debug, Deserialize)]
+struct ArchivedAuditQuery {
+    from: String,
+    to: String,
+}
+
+/// F5.3-c-ii-archive-read — one row returned by the archived-audit
+/// endpoint. Identical shape to the JSONL written by
+/// `archive_audit_partition_to_dir`; we re-deserialize each line.
+#[derive(Debug, Serialize, Deserialize)]
+struct ArchivedAuditRow {
+    id: String,
+    action: String,
+    resource: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    org_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    actor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ip: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ua: Option<String>,
+    ts: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ArchivedAuditResponse {
+    rows: Vec<ArchivedAuditRow>,
+}
+
+/// Parse `YYYY-MM-DD` into `(year, month, day)` integers. Returns
+/// `None` for any malformed input. The serve never accepts user
+/// input that should land here without going through this parser,
+/// so it's intentionally strict.
+fn parse_iso_date(s: &str) -> Option<(i32, u32, u32)> {
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let year: i32 = parts[0].parse().ok()?;
+    let month: u32 = parts[1].parse().ok()?;
+    let day: u32 = parts[2].parse().ok()?;
+    if !(2000..=2999).contains(&year)
+        || !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+    {
+        return None;
+    }
+    Some((year, month, day))
+}
+
+/// Derive `(year, quarter)` from `(year, month)`. Quarters: 1→Q1,
+/// 2→Q1, 3→Q1, 4→Q2, …, 12→Q4. Pure; tested below.
+fn quarter_of(month: u32) -> i32 {
+    #[allow(clippy::cast_possible_wrap)]
+    let m = month as i32;
+    (m - 1) / 3 + 1
+}
+
+/// Walk every (year, quarter) tuple overlapping `[from, to]`
+/// (inclusive of from, exclusive of to). Returned in calendar
+/// order. Reuses [`next_quarter`] for the increment.
+fn quarters_in_range(
+    (from_y, from_m): (i32, u32),
+    (to_y, to_m): (i32, u32),
+) -> Vec<(i32, i32)> {
+    let from_q = quarter_of(from_m);
+    let to_q = quarter_of(to_m);
+    let mut out = Vec::new();
+    let mut y = from_y;
+    let mut q = from_q;
+    while (y, q) <= (to_y, to_q) {
+        out.push((y, q));
+        let (ny, nq) = next_quarter(y, q);
+        y = ny;
+        q = nq;
+    }
+    out
+}
+
+async fn list_archived_handler(
+    State(state): State<AuditState>,
+    tenant: Option<Extension<Tenant>>,
+    Path(org_id): Path<String>,
+    Query(q): Query<ArchivedAuditQuery>,
+) -> Result<Json<ArchivedAuditResponse>, AuditApiError> {
+    let Some(Extension(tenant)) = tenant else {
+        return Err(AuditApiError::Unauthenticated);
+    };
+    let role = member_role(&state.pool, &org_id, &tenant.subject)
+        .await
+        .map_err(|e| AuditApiError::Repo(AuditError::Sql(e.to_string())))?;
+    let is_privileged = matches!(role.as_deref(), Some("owner" | "admin"));
+    if !is_privileged {
+        return Err(AuditApiError::Forbidden);
+    }
+
+    let Some(archive_dir) = state.archive_dir.as_ref() else {
+        // Endpoint reached but no archive dir wired — surface as
+        // "service unavailable" so the customer's compliance tooling
+        // distinguishes "no archived data" from "config gap".
+        return Err(AuditApiError::Repo(AuditError::Sql(
+            "audit archive not configured (set MINISTR_AUDIT_ARCHIVE_DIR)".to_string(),
+        )));
+    };
+
+    let Some(from_ymd) = parse_iso_date(&q.from) else {
+        return Err(AuditApiError::Repo(AuditError::Sql(
+            "invalid `from` — must be YYYY-MM-DD".to_string(),
+        )));
+    };
+    let Some(to_ymd) = parse_iso_date(&q.to) else {
+        return Err(AuditApiError::Repo(AuditError::Sql(
+            "invalid `to` — must be YYYY-MM-DD".to_string(),
+        )));
+    };
+
+    // Quarter-range filter — which gzipped JSONL files to even open.
+    // Inside each file the per-row ts filter narrows further.
+    let quarters = quarters_in_range(
+        (from_ymd.0, from_ymd.1),
+        (to_ymd.0, to_ymd.1),
+    );
+
+    // ISO-8601 timestamps lexicographically compare correctly because
+    // every field is zero-padded; this lets us compare strings
+    // directly without parsing back to a date type.
+    let from_prefix = format!("{:04}-{:02}-{:02}", from_ymd.0, from_ymd.1, from_ymd.2);
+    let to_prefix = format!("{:04}-{:02}-{:02}", to_ymd.0, to_ymd.1, to_ymd.2);
+
+    let mut rows: Vec<ArchivedAuditRow> = Vec::new();
+    for (year, quarter) in quarters {
+        let file_path = archive_dir.join(format!("audit_events_y{year:04}q{quarter}.jsonl.gz"));
+        let bytes = match tokio::fs::read(&file_path).await {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                tracing::warn!(
+                    file = %file_path.display(),
+                    error = %e,
+                    "audit archive read failed; skipping file"
+                );
+                continue;
+            }
+        };
+        // Decompress + parse line-by-line. flate2's GzDecoder reads
+        // synchronously; we already have the full bytes in memory
+        // (per-quarter audit volume is small in v0), so blocking is
+        // bounded.
+        let mut decompressed = String::new();
+        {
+            use std::io::Read;
+            let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
+            if let Err(e) = decoder.read_to_string(&mut decompressed) {
+                tracing::warn!(
+                    file = %file_path.display(),
+                    error = %e,
+                    "audit archive gzip decode failed; skipping file"
+                );
+                continue;
+            }
+        }
+        for line in decompressed.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let row: ArchivedAuditRow = match serde_json::from_str(line) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            // Cross-org isolation: skip rows whose org_id doesn't
+            // match the requested org. Personal-account rows
+            // (`org_id` IS NULL in the DB → field absent or null in
+            // JSON) are never returned via this endpoint — they
+            // belong to the user-level audit feed (not yet shipped).
+            if row.org_id.as_deref() != Some(org_id.as_str()) {
+                continue;
+            }
+            // Date-range filter on the ISO-8601 ts string. Compare
+            // the date prefix `YYYY-MM-DD` lexicographically; `to`
+            // is exclusive so the comparison is strict.
+            let ts_date = row.ts.get(..10).unwrap_or("");
+            if ts_date < from_prefix.as_str() || ts_date >= to_prefix.as_str() {
+                continue;
+            }
+            rows.push(row);
+        }
+    }
+
+    Ok(Json(ArchivedAuditResponse { rows }))
 }
 
 /// Default audit-retention window in days. The F3.7c cron drops

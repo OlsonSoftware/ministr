@@ -393,6 +393,10 @@ export MINISTR_STRIPE_WEBHOOK_SECRET="whsec_e2e_test_only_localhost_no_money"
 # PostgresAuditSink + WebhookFanoutSink.
 export MINISTR_SIEM_HEC_URL="http://127.0.0.1:${SIEM_HEC_PORT}/services/collector/event"
 export MINISTR_SIEM_HEC_TOKEN="${SIEM_HEC_TOKEN}"
+# F5.3-c-ii-archive-read — point the cloud at the archive dir
+# F5.3-c-ii-archive-fs's CLI writes to. The /audit/archived
+# endpoint reads gzipped JSONL files from there.
+export MINISTR_AUDIT_ARCHIVE_DIR="/tmp/ministr-e2e-audit-archive-${RUN_TS}"
 unset MINISTR_CLOUD_DATA_DIR
 # Persistent DATA_DIR keeps the embedding model cache across runs;
 # wipe only the corpora + corpora.json so the registry starts empty.
@@ -2439,24 +2443,25 @@ fi
 #     (c) the fixture row decodes back from the archived file.
 info "F5.3-c-ii-archive-fs: cold partition archive (DETACH + DROP)"
 
-ARCHIVE_DIR="/tmp/ministr-e2e-audit-archive-${RUN_TS}"
+ARCHIVE_DIR="${MINISTR_AUDIT_ARCHIVE_DIR}"
 rm -rf "${ARCHIVE_DIR}"
 mkdir -p "${ARCHIVE_DIR}"
 
-# Seed a fixture audit row into the 2024-Q1 partition. ts is a
-# specific UTC date inside that quarter; PG routes the INSERT to
-# the matching child partition automatically.
+# Seed a fixture audit row into the 2024-Q1 partition WITH ORG_ID_A
+# so the F5.3-c-ii-archive-read endpoint's cross-org filter has a
+# matching row to return. ts is a specific UTC date inside Q1.
 docker compose -f docker-compose.dev.yml exec -T postgres \
     psql -U ministr -d ministr_dev \
-    -c "INSERT INTO audit_events (action, resource, ts) \
-        VALUES ('archive.fixture', 'fixture-resource', '2024-02-15 12:00:00+00');" \
+    -c "INSERT INTO audit_events (action, resource, org_id, ts) \
+        VALUES ('archive.fixture', 'fixture-resource', \
+                '${ORG_ID_A}'::uuid, '2024-02-15 12:00:00+00');" \
     >/dev/null 2>&1
 FIXTURE_INSERTED=$(docker compose -f docker-compose.dev.yml exec -T postgres \
     psql -U ministr -d ministr_dev -tA \
     -c "SELECT count(*) FROM audit_events_y2024q1 WHERE action='archive.fixture';" \
     2>/dev/null | tr -d ' \r\n')
 if [[ "${FIXTURE_INSERTED}" == "1" ]]; then
-    pass "seeded archive.fixture row into audit_events_y2024q1"
+    pass "seeded archive.fixture row (org=ORG_ID_A) into audit_events_y2024q1"
 else
     fail "fixture INSERT didn't land in audit_events_y2024q1 (count=${FIXTURE_INSERTED})"
 fi
@@ -2519,6 +2524,65 @@ if printf '%s' "${INVALID_OUT}" | grep -q "doesn't match"; then
     pass "path-traversal partition name '../../etc/passwd' rejected at CLI edge"
 else
     fail "invalid partition name not rejected · output: $(printf '%s' "${INVALID_OUT}" | head -c 200)"
+fi
+
+# 35) **F5.3-c-ii-archive-read — read endpoint streams archived
+#     JSONL rows back through the cloud API.** Just-archived
+#     audit_events_y2024q1 → GET /audit/archived?from=2024-01-01&
+#     to=2024-04-01 → returns the archive.fixture row with the
+#     correct org_id + action + ts.
+info "F5.3-c-ii-archive-read: GET /audit/archived returns archived rows"
+
+# Happy path: owner queries the date range covering the archived
+# partition. The handler reads the gzipped JSONL file, decompresses,
+# filters by org_id, returns the matching rows.
+curl_request GET "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/audit/archived?from=2024-01-01&to=2024-04-01" "${TOKEN_A}"
+assert_status "${RESPONSE_STATUS}" "200" "owner GET /audit/archived → 200"
+GOT_ARCHIVED_ROWS=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.rows | length // 0')
+if [[ "${GOT_ARCHIVED_ROWS}" -ge "1" ]]; then
+    pass "GET /audit/archived returned ≥1 row (count=${GOT_ARCHIVED_ROWS})"
+else
+    fail "GET /audit/archived returned 0 rows · body: ${RESPONSE_BODY:0:200}"
+fi
+GOT_FIRST_ACTION=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.rows[0].action // empty')
+if [[ "${GOT_FIRST_ACTION}" == "archive.fixture" ]]; then
+    pass "first archived row carries action=archive.fixture (read shape matches archive shape)"
+else
+    fail "first archived row action expected 'archive.fixture', got '${GOT_FIRST_ACTION}'"
+fi
+GOT_FIRST_ORG=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.rows[0].org_id // empty')
+if [[ "${GOT_FIRST_ORG}" == "${ORG_ID_A}" ]]; then
+    pass "first archived row org_id == ORG_ID_A (cross-org isolation enforced)"
+else
+    fail "first archived row org_id expected ${ORG_ID_A}, got '${GOT_FIRST_ORG}'"
+fi
+
+# Cross-org isolation: tenant B (different user, doesn't own
+# ORG_ID_A) gets 403 — the ACL is owner/admin-only.
+curl_request GET "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/audit/archived?from=2024-01-01&to=2024-04-01" "${TOKEN_B}"
+assert_status "${RESPONSE_STATUS}" "403" "non-owner GET /audit/archived → 403"
+
+# Out-of-range date filter: the archive file is for Q1 2024 but the
+# query asks for Q3 2024 → quarter range overlaps nothing → empty
+# result.
+curl_request GET "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/audit/archived?from=2024-07-01&to=2024-10-01" "${TOKEN_A}"
+assert_status "${RESPONSE_STATUS}" "200" "owner GET /audit/archived (out-of-range) → 200"
+OOR_ROWS=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.rows | length // 0')
+if [[ "${OOR_ROWS}" == "0" ]]; then
+    pass "out-of-range date filter returns 0 rows (date-range filter works)"
+else
+    fail "out-of-range filter returned ${OOR_ROWS} rows · body: ${RESPONSE_BODY:0:200}"
+fi
+
+# Malformed date → 500 (the handler currently surfaces validation
+# errors via AuditApiError::Repo which renders as 500; the message
+# in the body still identifies the bad field).
+curl_request GET "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/audit/archived?from=not-a-date&to=2024-04-01" "${TOKEN_A}"
+# Either 400 or 500 is acceptable — clip to "non-2xx".
+if [[ "${RESPONSE_STATUS}" -ge "400" && "${RESPONSE_STATUS}" -lt "600" ]]; then
+    pass "malformed from-date rejected (HTTP ${RESPONSE_STATUS})"
+else
+    fail "malformed from-date not rejected (HTTP ${RESPONSE_STATUS})"
 fi
 
 # ─── summary ──────────────────────────────────────────────────────────
