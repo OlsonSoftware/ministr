@@ -615,6 +615,14 @@ pub struct BridgeNode {
     pub lang: String,
     /// Line number of the symbol's definition.
     pub line: u32,
+    /// F3.6-c-ii-b — symbol id when the bridge endpoint matches an
+    /// indexed symbol on `(file, name)` whose line range contains
+    /// the endpoint line. Consumers can hand this to
+    /// `GET /api/v1/corpora/{id}/definition/{sym}` (F3.6-c-ii-c will
+    /// wire the side-panel source viewer). `None` when the symbol
+    /// indexer hadn't covered the file or no row matched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_id: Option<String>,
 }
 
 /// F3.6-a — one edge in the bridge graph wire shape.

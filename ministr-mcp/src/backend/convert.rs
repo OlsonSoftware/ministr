@@ -405,11 +405,13 @@ pub(super) fn api_bridge_to_storage(l: ministr_api::query::BridgeLink) -> Bridge
         export_symbol: l.source,
         export_language: l.source_language,
         export_line: 0,
+        export_symbol_id: None,
         import_file: String::new(),
         import_binding_key: String::new(),
         import_symbol: l.target,
         import_language: l.target_language,
         import_line: 0,
+        import_symbol_id: None,
     }
 }
 
