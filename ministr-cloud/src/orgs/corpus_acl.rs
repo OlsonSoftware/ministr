@@ -62,7 +62,7 @@ pub async fn share_with_org(
         .query_one(
             "INSERT INTO cloud_corpus_acl
                (corpus_id, org_id, scope, granted_by)
-             VALUES ($1, $2::uuid, $3, $4::uuid)
+             VALUES ($1, $2::text::uuid, $3, $4::text::uuid)
              ON CONFLICT (corpus_id, org_id) WHERE org_id IS NOT NULL DO UPDATE
                SET scope = EXCLUDED.scope, granted_by = EXCLUDED.granted_by
              RETURNING
@@ -106,7 +106,7 @@ pub async fn revoke_org_share(
     let affected = conn
         .execute(
             "DELETE FROM cloud_corpus_acl
-             WHERE corpus_id = $1 AND org_id = $2::uuid",
+             WHERE corpus_id = $1 AND org_id = $2::text::uuid",
             &[&corpus_id, &org_id],
         )
         .await
@@ -299,7 +299,7 @@ pub async fn transfer_corpus_to_org(
     // upserts (F2.x-d) leaves this stable across boot-time
     // `restore()` calls.
     tx.execute(
-        "UPDATE cloud_corpora SET tenant_id = $1::uuid WHERE corpus_id = $2",
+        "UPDATE cloud_corpora SET tenant_id = $1::text::uuid WHERE corpus_id = $2",
         &[&target_org_id, &corpus_id],
     )
     .await
@@ -313,7 +313,7 @@ pub async fn transfer_corpus_to_org(
     tx.execute(
         "INSERT INTO cloud_corpus_acl
            (corpus_id, org_id, scope, granted_by)
-         VALUES ($1, $2::uuid, 'write', $3::uuid)
+         VALUES ($1, $2::text::uuid, 'write', $3::text::uuid)
          ON CONFLICT (corpus_id, org_id) WHERE org_id IS NOT NULL DO UPDATE
            SET scope = 'write', granted_by = EXCLUDED.granted_by",
         &[&corpus_id, &target_org_id, &caller_user_id],
@@ -361,7 +361,7 @@ pub async fn acl_grants_access(
              JOIN org_members m ON m.org_id = a.org_id
              WHERE a.corpus_id = $1
                AND a.org_id IS NOT NULL
-               AND m.user_id = $2::uuid
+               AND m.user_id = $2::text::uuid
              LIMIT 1",
             &[&corpus_id, &tenant_subject],
         )

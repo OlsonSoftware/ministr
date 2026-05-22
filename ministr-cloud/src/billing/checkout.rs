@@ -228,7 +228,7 @@ async fn lookup_stripe_customer_id(pool: &Pool, user_id: &str) -> Result<String,
         .map_err(|e| CheckoutError::Database(format!("get conn: {e}")))?;
     let row = conn
         .query_opt(
-            "SELECT stripe_customer_id FROM users WHERE id = $1::uuid",
+            "SELECT stripe_customer_id FROM users WHERE id = $1::text::uuid",
             &[&user_id],
         )
         .await

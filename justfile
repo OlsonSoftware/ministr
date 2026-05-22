@@ -171,6 +171,16 @@ dev-cloud-check:
 demo-local *args:
     ./scripts/demo-local.sh {{args}}
 
+# F-Test-1 — multi-tenant local cloud e2e harness. Spawns serve,
+# mints TWO bearer tokens via the OAuth self-issuer (two DCR
+# registrations → two distinct tenant subjects), runs a battery of
+# PASS/FAIL assertions covering tenant isolation, org isolation, API
+# key authn parity, atlas reachability, and session-list scoping.
+# Returns non-zero exit code on any FAIL so CI can gate on it.
+# KEEP=1 leaves the stack running; PORT=… overrides the default 8088.
+e2e-cloud-local *args:
+    ./scripts/e2e-cloud-local.sh {{args}}
+
 # Watch the deployed Azure cloud index a real repo. Reads the public URL
 # from `pulumi -C deploy/azure stack output publicBaseUrl` (override with
 # MINISTR_CLOUD_BASE_URL=…), runs `cloud check` against it, then runs

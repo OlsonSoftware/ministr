@@ -137,7 +137,7 @@ pub async fn create_subscription(
         .query_one(
             "INSERT INTO webhook_subscriptions
                (org_id, url, secret, event_filter, created_by)
-             VALUES ($1::uuid, $2, $3, $4, $5::uuid)
+             VALUES ($1::text::uuid, $2, $3, $4, $5::text::uuid)
              RETURNING
                id::text          AS id_text,
                org_id::text      AS org_id_text,
@@ -193,7 +193,7 @@ pub async fn list_subscriptions(
                to_char(last_delivered_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')
                                   AS last_delivered_at_iso
              FROM webhook_subscriptions
-             WHERE org_id = $1::uuid
+             WHERE org_id = $1::text::uuid
              ORDER BY created_at DESC",
             &[&org_id],
         )
@@ -232,7 +232,7 @@ pub async fn delete_subscription(
     let rows = client
         .execute(
             "DELETE FROM webhook_subscriptions
-             WHERE id = $1::uuid AND org_id = $2::uuid",
+             WHERE id = $1::text::uuid AND org_id = $2::text::uuid",
             &[&subscription_id, &org_id],
         )
         .await
@@ -257,7 +257,7 @@ pub async fn subscription_secret(
         .map_err(|e| WebhookError::GetConn(format!("subscription_secret: {e}")))?;
     let row = client
         .query_opt(
-            "SELECT url, secret FROM webhook_subscriptions WHERE id = $1::uuid",
+            "SELECT url, secret FROM webhook_subscriptions WHERE id = $1::text::uuid",
             &[&subscription_id],
         )
         .await
@@ -295,7 +295,7 @@ pub async fn list_for_fanout(
         .query(
             "SELECT id::text AS id_text, url, secret, event_filter
              FROM webhook_subscriptions
-             WHERE org_id = $1::uuid",
+             WHERE org_id = $1::text::uuid",
             &[&org_id],
         )
         .await
@@ -323,7 +323,7 @@ pub async fn mark_delivered(pool: &Pool, subscription_id: &str) -> Result<(), We
         .map_err(|e| WebhookError::GetConn(format!("mark_delivered: {e}")))?;
     client
         .execute(
-            "UPDATE webhook_subscriptions SET last_delivered_at = now() WHERE id = $1::uuid",
+            "UPDATE webhook_subscriptions SET last_delivered_at = now() WHERE id = $1::text::uuid",
             &[&subscription_id],
         )
         .await

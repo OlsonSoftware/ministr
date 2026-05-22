@@ -115,8 +115,8 @@ pub async fn create_invite(
             "INSERT INTO org_invites
                (org_id, email, token_hash, role, invited_by, expires_at)
              VALUES (
-                 $1::uuid, $2, $3, $4,
-                 $5::uuid,
+                 $1::text::uuid, $2, $3, $4,
+                 $5::text::uuid,
                  now() + make_interval(secs => $6::double precision)
              )
              RETURNING
@@ -253,7 +253,7 @@ pub async fn consume_invite(
     // closes — accepting an "extra" link should be idempotent.
     tx.execute(
         "INSERT INTO org_members (org_id, user_id, role)
-         VALUES ($1::uuid, $2::uuid, $3)
+         VALUES ($1::text::uuid, $2::text::uuid, $3)
          ON CONFLICT (org_id, user_id) DO NOTHING",
         &[&org_id, &user_id, &role],
     )
@@ -261,7 +261,7 @@ pub async fn consume_invite(
     .map_err(|e| OrgError::Sql(format!("insert membership: {e}")))?;
 
     tx.execute(
-        "UPDATE org_invites SET accepted_at = now() WHERE id = $1::uuid",
+        "UPDATE org_invites SET accepted_at = now() WHERE id = $1::text::uuid",
         &[&invite_id],
     )
     .await

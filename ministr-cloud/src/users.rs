@@ -175,7 +175,7 @@ pub async fn set_stripe_customer_id(
         .await
         .map_err(|e| UserError::GetConn(format!("set_stripe_customer_id: {e}")))?;
     conn.execute(
-        "UPDATE users SET stripe_customer_id = $1 WHERE id = $2::uuid",
+        "UPDATE users SET stripe_customer_id = $1 WHERE id = $2::text::uuid",
         &[&stripe_customer_id, &user_id],
     )
     .await
@@ -265,7 +265,7 @@ mod tests {
         let conn = pool.get().await.unwrap();
         let cust_row = conn
             .query_one(
-                "SELECT stripe_customer_id FROM users WHERE id = $1::uuid",
+                "SELECT stripe_customer_id FROM users WHERE id = $1::text::uuid",
                 &[&first.id],
             )
             .await
@@ -277,7 +277,7 @@ mod tests {
         // text-form back to the column type for the WHERE comparison.
         let conn = pool.get().await.unwrap();
         conn.execute(
-            "DELETE FROM users WHERE id = $1::uuid",
+            "DELETE FROM users WHERE id = $1::text::uuid",
             &[&first.id],
         )
         .await

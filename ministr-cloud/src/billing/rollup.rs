@@ -94,7 +94,7 @@ mod tests {
         client
             .query_opt(
                 "SELECT total FROM usage_rollups
-                 WHERE day = CURRENT_DATE AND tenant_id = $1::uuid AND kind = $2",
+                 WHERE day = CURRENT_DATE AND tenant_id = $1::text::uuid AND kind = $2",
                 &[&tenant, &kind],
             )
             .await
@@ -167,7 +167,7 @@ mod tests {
         let count: i64 = client
             .query_one(
                 "SELECT COUNT(*)::bigint AS n FROM usage_rollups
-                 WHERE day = CURRENT_DATE AND tenant_id = $1::uuid AND kind = 'query.served'",
+                 WHERE day = CURRENT_DATE AND tenant_id = $1::text::uuid AND kind = 'query.served'",
                 &[&tenant],
             )
             .await

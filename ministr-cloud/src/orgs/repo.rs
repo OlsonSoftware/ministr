@@ -148,9 +148,16 @@ pub async fn create_org(pool: &Pool, owner_user_id: &str, name: &str) -> Result<
         .try_get("billing_email")
         .map_err(|e| OrgError::Sql(format!("read org billing_email: {e}")))?;
 
+    // `$X::text::uuid` (mirrors the audit_sink pattern in audit.rs) —
+    // the leading `::text` forces tokio-postgres to infer the bind
+    // type as TEXT during Prepare; the trailing `::uuid` server-side
+    // cast accepts the TEXT value. With the bare `$X::uuid` form, PG
+    // infers the parameter as UUID directly and tokio-postgres rejects
+    // `&String` → UUID at bind time with "error serializing parameter
+    // 0". Surfaced by F-Test-1's e2e harness.
     tx.execute(
         "INSERT INTO org_members (org_id, user_id, role)
-         VALUES ($1::uuid, $2::uuid, 'owner')",
+         VALUES ($1::text::uuid, $2::text::uuid, 'owner')",
         &[&id, &owner_user_id],
     )
     .await
@@ -191,7 +198,7 @@ pub async fn list_orgs_for_user(pool: &Pool, user_id: &str) -> Result<Vec<OrgWit
             "SELECT o.id::text AS id_text, o.name, o.plan_id, m.role
              FROM orgs o
              JOIN org_members m ON m.org_id = o.id
-             WHERE m.user_id = $1::uuid
+             WHERE m.user_id = $1::text::uuid
              ORDER BY o.created_at ASC, o.id ASC",
             &[&user_id],
         )
@@ -230,7 +237,7 @@ pub async fn member_role(
         .query_opt(
             "SELECT role
              FROM org_members
-             WHERE org_id = $1::uuid AND user_id = $2::uuid",
+             WHERE org_id = $1::text::uuid AND user_id = $2::text::uuid",
             &[&org_id, &user_id],
         )
         .await
@@ -259,7 +266,7 @@ pub async fn set_org_stripe_customer_id(
         .await
         .map_err(|e| OrgError::GetConn(format!("set_org_stripe_customer_id: {e}")))?;
     conn.execute(
-        "UPDATE orgs SET stripe_customer_id = $1 WHERE id = $2::uuid",
+        "UPDATE orgs SET stripe_customer_id = $1 WHERE id = $2::text::uuid",
         &[&stripe_customer_id, &org_id],
     )
     .await
@@ -285,7 +292,7 @@ pub async fn user_email(pool: &Pool, user_id: &str) -> Result<Option<String>, Or
         .map_err(|e| OrgError::GetConn(format!("user_email: {e}")))?;
     let row = conn
         .query_opt(
-            "SELECT email FROM users WHERE id = $1::uuid",
+            "SELECT email FROM users WHERE id = $1::text::uuid",
             &[&user_id],
         )
         .await
@@ -310,7 +317,7 @@ pub async fn org_name(pool: &Pool, org_id: &str) -> Result<Option<String>, OrgEr
         .map_err(|e| OrgError::GetConn(format!("org_name: {e}")))?;
     let row = conn
         .query_opt(
-            "SELECT name FROM orgs WHERE id = $1::uuid",
+            "SELECT name FROM orgs WHERE id = $1::text::uuid",
             &[&org_id],
         )
         .await
@@ -336,7 +343,7 @@ pub async fn list_org_members(pool: &Pool, org_id: &str) -> Result<Vec<MemberRow
             "SELECT m.user_id::text AS user_id_text, u.email, m.role
              FROM org_members m
              JOIN users u ON u.id = m.user_id
-             WHERE m.org_id = $1::uuid
+             WHERE m.org_id = $1::text::uuid
              ORDER BY CASE m.role
                           WHEN 'owner' THEN 0
                           WHEN 'admin' THEN 1

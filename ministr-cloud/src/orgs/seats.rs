@@ -43,7 +43,7 @@ pub async fn count_org_members(pool: &Pool, org_id: &str) -> Result<u64, OrgErro
         .map_err(|e| OrgError::GetConn(format!("count_org_members: {e}")))?;
     let row = conn
         .query_one(
-            "SELECT COUNT(*)::bigint AS n FROM org_members WHERE org_id = $1::uuid",
+            "SELECT COUNT(*)::bigint AS n FROM org_members WHERE org_id = $1::text::uuid",
             &[&org_id],
         )
         .await
@@ -80,7 +80,7 @@ pub async fn sync_org_seats(
         .map_err(|e| SeatsSyncError::Repo(OrgError::GetConn(format!("sync_org_seats: {e}"))))?;
     let row = conn
         .query_one(
-            "SELECT stripe_customer_id FROM orgs WHERE id = $1::uuid",
+            "SELECT stripe_customer_id FROM orgs WHERE id = $1::text::uuid",
             &[&org_id],
         )
         .await

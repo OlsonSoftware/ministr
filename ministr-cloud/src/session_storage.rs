@@ -63,7 +63,7 @@ impl SessionStorage for PostgresSessionStorage {
                     "INSERT INTO agent_sessions
                        (id, tenant_id, corpus_id, opened_at, last_seen_at,
                         budget_used, coherence_score)
-                     VALUES ($1, $2::uuid, $3, $4::timestamptz, $5::timestamptz, $6, $7)
+                     VALUES ($1, $2::text::uuid, $3, $4::timestamptz, $5::timestamptz, $6, $7)
                      ON CONFLICT (tenant_id, id) DO UPDATE
                        SET corpus_id       = EXCLUDED.corpus_id,
                            last_seen_at    = EXCLUDED.last_seen_at,
@@ -115,7 +115,7 @@ impl SessionStorage for PostgresSessionStorage {
                          budget_used,
                          coherence_score
                      FROM agent_sessions
-                     WHERE tenant_id = $1::uuid AND id = $2",
+                     WHERE tenant_id = $1::text::uuid AND id = $2",
                     &[&tenant, &id],
                 )
                 .await
@@ -149,7 +149,7 @@ impl SessionStorage for PostgresSessionStorage {
                 .execute(
                     "UPDATE agent_sessions
                      SET last_seen_at = now()
-                     WHERE tenant_id = $1::uuid AND id = $2",
+                     WHERE tenant_id = $1::text::uuid AND id = $2",
                     &[&tenant, &id],
                 )
                 .await
@@ -174,7 +174,7 @@ impl SessionStorage for PostgresSessionStorage {
             client
                 .execute(
                     "DELETE FROM agent_sessions
-                     WHERE tenant_id = $1::uuid AND id = $2",
+                     WHERE tenant_id = $1::text::uuid AND id = $2",
                     &[&tenant, &id],
                 )
                 .await

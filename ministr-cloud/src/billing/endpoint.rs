@@ -139,7 +139,7 @@ async fn fetch_usage(
                     kind,
                     total
              FROM usage_rollups
-             WHERE tenant_id = $1::uuid
+             WHERE tenant_id = $1::text::uuid
                AND day >= CURRENT_DATE - ($2::int - 1)
              ORDER BY day DESC, kind ASC",
             &[&tenant.as_str(), &DEFAULT_ROLLUP_DAYS],
@@ -159,7 +159,7 @@ async fn fetch_usage(
         .query(
             "SELECT kind, COALESCE(SUM(count), 0)::bigint AS total
              FROM usage_events
-             WHERE tenant_id = $1::uuid
+             WHERE tenant_id = $1::text::uuid
                AND ts >= CURRENT_DATE::timestamptz
              GROUP BY kind
              ORDER BY kind ASC",

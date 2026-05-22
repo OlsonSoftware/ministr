@@ -313,7 +313,7 @@ pub async fn fetch_org_usage(
              FROM org_members m
              JOIN users u ON u.id = m.user_id
              JOIN usage_rollups r ON r.tenant_id = m.user_id
-             WHERE m.org_id = $1::uuid
+             WHERE m.org_id = $1::text::uuid
                AND r.day >= CURRENT_DATE - ($2::int - 1)
              ORDER BY u.email ASC, r.day DESC, r.kind ASC",
             &[&org_id, &days],
@@ -342,7 +342,7 @@ pub async fn fetch_org_usage(
              FROM org_members m
              JOIN users u ON u.id = m.user_id
              JOIN usage_events e ON e.tenant_id = m.user_id
-             WHERE m.org_id = $1::uuid
+             WHERE m.org_id = $1::text::uuid
                AND e.ts >= CURRENT_DATE::timestamptz
              GROUP BY m.user_id, u.email, e.kind
              ORDER BY u.email ASC, e.kind ASC",

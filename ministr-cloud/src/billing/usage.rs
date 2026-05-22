@@ -108,7 +108,7 @@ pub async fn record_usage(
     client
         .execute(
             "INSERT INTO usage_events (tenant_id, kind, count)
-             VALUES ($1::uuid, $2, $3)",
+             VALUES ($1::text::uuid, $2, $3)",
             &[&tenant_id, &kind.as_str(), &count],
         )
         .await
@@ -189,7 +189,7 @@ mod tests {
                      COALESCE(SUM(count) FILTER (WHERE kind = 'query.served'), 0) AS q,
                      COALESCE(SUM(count) FILTER (WHERE kind = 'index.minutes'), 0) AS m
                  FROM usage_events
-                 WHERE tenant_id = $1::uuid",
+                 WHERE tenant_id = $1::text::uuid",
                 &[&tenant_id],
             )
             .await
