@@ -579,18 +579,44 @@ else
     fail "11th corpus NOT blocked — got HTTP ${RESPONSE_STATUS} · body=${RESPONSE_BODY:0:200}"
 fi
 
-# 9) tenant A's GET /api/v1/sessions returns an empty list (no MCP
-#    tool calls were issued via /mcp in this run, so the session
-#    registry on the contacted pod has nothing for this tenant). The
-#    F6.2-e tenant filter still admits the empty-tenant-scope case.
+# 9) **F-Test-3 — session tenant isolation.** The daemon's serve
+#    process boots with a deterministic bootstrap session id
+#    `ministr-<hash>` (derived from config corpus_paths in
+#    `infra.rs::generate_session_id`). It carries NO tenant_id. F6.2-e-
+#    followup-ii says scoped callers should NOT see unstamped legacy
+#    entries — but the harness's earlier "count=1 NOTE" surfaced a
+#    real leak: `scope_tenant` middleware was missing from the
+#    session_export_router, so `tenant_scope::current()` returned None
+#    inside `handle_list` and admit_session_for_scope admitted every
+#    entry. Layer added in this chunk; both tenants now see 0.
 curl_request GET "${ENDPOINT}/api/v1/sessions" "${TOKEN_A}"
 assert_status "${RESPONSE_STATUS}" "200" "tenant A GET /sessions"
-SESSIONS_COUNT=$(printf '%s' "${RESPONSE_BODY}" | jq 'length' 2>/dev/null || echo "ERR")
-if [[ "${SESSIONS_COUNT}" == "0" ]]; then
-    pass "tenant A /sessions is empty (no MCP calls yet)"
+SESSIONS_A_COUNT=$(printf '%s' "${RESPONSE_BODY}" | jq 'length' 2>/dev/null || echo "ERR")
+if [[ "${SESSIONS_A_COUNT}" == "0" ]]; then
+    pass "tenant A /sessions is empty (scope_tenant layer mounted)"
 else
-    note "tenant A /sessions count=${SESSIONS_COUNT} (non-zero is unexpected for a fresh server but not a hard FAIL)"
+    fail "tenant A /sessions count=${SESSIONS_A_COUNT} — likely the bootstrap session is leaking · body=${RESPONSE_BODY:0:200}"
 fi
+
+curl_request GET "${ENDPOINT}/api/v1/sessions" "${TOKEN_B}"
+assert_status "${RESPONSE_STATUS}" "200" "tenant B GET /sessions"
+SESSIONS_B_COUNT=$(printf '%s' "${RESPONSE_BODY}" | jq 'length' 2>/dev/null || echo "ERR")
+if [[ "${SESSIONS_B_COUNT}" == "0" ]]; then
+    pass "tenant B /sessions is empty (isolation)"
+else
+    fail "tenant B /sessions count=${SESSIONS_B_COUNT} — cross-tenant leak"
+fi
+
+# 10) **F-Test-3 — cross-tenant 404 on /sessions/{id}/export.**
+#     Validates F6.2-e-followup-ii's existence-resistance design: a
+#     nonexistent session id returns 404 (not 200, not 403); the same
+#     id returns 404 for both tenants — neither side can probe the
+#     other's session id-space by observing response codes.
+SYNTH_ID="00000000-0000-0000-0000-000000000000"
+curl_request POST "${ENDPOINT}/api/v1/sessions/${SYNTH_ID}/export" "${TOKEN_A}"
+assert_status "${RESPONSE_STATUS}" "404" "tenant A /sessions/{synthetic}/export → 404"
+curl_request POST "${ENDPOINT}/api/v1/sessions/${SYNTH_ID}/export" "${TOKEN_B}"
+assert_status "${RESPONSE_STATUS}" "404" "tenant B /sessions/{synthetic}/export → 404 (existence-resistant)"
 
 # ─── summary ──────────────────────────────────────────────────────────
 
