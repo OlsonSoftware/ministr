@@ -31,6 +31,7 @@ import '@xyflow/react/dist/style.css';
 import type { CSSProperties } from 'react';
 
 import type { LiveBridgeEdge, LiveBridgeNode } from '../landing/bridge-graph';
+import { BridgeGraphExport } from './bridge-graph-export';
 
 interface BridgeGraphInteractiveProps {
   data: { nodes: ReadonlyArray<LiveBridgeNode>; edges: ReadonlyArray<LiveBridgeEdge> };
@@ -175,6 +176,7 @@ export function BridgeGraphInteractive({
         >
           <Background gap={24} size={1} />
           <Controls showInteractive={false} />
+          <BridgeGraphExport />
         </ReactFlow>
       </div>
       {caption ? (
