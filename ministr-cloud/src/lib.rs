@@ -55,6 +55,7 @@ pub mod index_job_sink;
 pub mod mail;
 pub mod orgs;
 pub mod quota;
+pub mod oidc;
 pub mod ratelimit;
 pub mod saml;
 pub mod session_bundle_store;
@@ -63,6 +64,7 @@ pub mod tenant_filter;
 pub mod users;
 pub mod webhooks;
 
+pub use oidc::{OidcState, oidc_routes};
 pub use saml::{SamlState, saml_config_routes, saml_routes};
 
 pub use api_keys::{

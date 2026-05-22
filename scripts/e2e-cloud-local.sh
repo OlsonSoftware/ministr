@@ -66,6 +66,8 @@ PASS_COUNT=0
 FAIL_COUNT=0
 SERVE_PID=""
 RECEIVER_PID=""
+OIDC_MOCK_PID=""
+OIDC_MOCK_PORT=8090
 
 # Bail on missing tooling early — the failure mode otherwise is a
 # cryptic curl/jq error 200 lines into the script.
@@ -89,6 +91,11 @@ cleanup() {
         info "stopping webhook receiver (PID ${RECEIVER_PID})"
         kill "${RECEIVER_PID}" 2>/dev/null || true
         wait "${RECEIVER_PID}" 2>/dev/null || true
+    fi
+    if [[ -n "${OIDC_MOCK_PID}" ]] && kill -0 "${OIDC_MOCK_PID}" 2>/dev/null; then
+        info "stopping OIDC mock IdP (PID ${OIDC_MOCK_PID})"
+        kill "${OIDC_MOCK_PID}" 2>/dev/null || true
+        wait "${OIDC_MOCK_PID}" 2>/dev/null || true
     fi
     if [[ -n "${SERVE_PID}" ]] && kill -0 "${SERVE_PID}" 2>/dev/null; then
         info "stopping serve (PID ${SERVE_PID})"
@@ -385,6 +392,26 @@ until curl -sf "http://127.0.0.1:${RECEIVER_PORT}/" >/dev/null 2>&1; do
     sleep 0.2
 done
 info "receiver PID ${RECEIVER_PID}; record at ${RECEIVER_LOG}"
+
+step "step 5c/6 — spawn mock OIDC IdP on :${OIDC_MOCK_PORT}"
+python3 "$(dirname "$0")/e2e-oidc-mock-idp.py" "${OIDC_MOCK_PORT}" \
+    > /tmp/ministr-e2e-oidc-mock.log 2>&1 &
+OIDC_MOCK_PID=$!
+attempts=0
+until curl -sf "http://127.0.0.1:${OIDC_MOCK_PORT}/.well-known/openid-configuration" >/dev/null 2>&1; do
+    attempts=$((attempts + 1))
+    if ! kill -0 "${OIDC_MOCK_PID}" 2>/dev/null; then
+        echo "oidc mock crashed during boot — log tail:" >&2
+        tail -10 /tmp/ministr-e2e-oidc-mock.log >&2
+        exit 1
+    fi
+    if [[ "${attempts}" -gt 25 ]]; then
+        echo "oidc mock didn't reach :${OIDC_MOCK_PORT} in 5s" >&2
+        exit 1
+    fi
+    sleep 0.2
+done
+info "oidc mock IdP PID ${OIDC_MOCK_PID}; discovery at http://127.0.0.1:${OIDC_MOCK_PORT}"
 
 # ─── assertions ───────────────────────────────────────────────────────
 
@@ -1008,6 +1035,41 @@ if [[ -n "${ORG_ID_A}" ]]; then
     assert_status "${RESPONSE_STATUS}" "404" "GET /saml/config after DELETE → 404"
 else
     note "skipped F5.1-d SAML CRUD assertions — ORG_ID_A not captured"
+fi
+
+# 16) **F5.2-b — OIDC RP login redirect.** Mock IdP serves discovery
+#     at http://127.0.0.1:${OIDC_MOCK_PORT}. Without a config row the
+#     /oidc/login endpoint returns 404; with a row pointing at the
+#     mock IdP it fetches discovery and returns 302 to
+#     ${mock_authorize_endpoint}?response_type=code&state=&nonce=
+#     &code_challenge=&code_challenge_method=S256&...
+info "F5.2-b: OIDC RP login redirect"
+if [[ -n "${ORG_ID_A}" ]]; then
+    NO_OIDC_STATUS=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' \
+        "${ENDPOINT}/orgs/${ORG_ID_A}/oidc/login")
+    assert_status "${NO_OIDC_STATUS}" "404" "GET /orgs/{id}/oidc/login without config → 404"
+
+    docker compose -f docker-compose.dev.yml exec -T postgres \
+        psql -U ministr -d ministr_dev -tA \
+        -c "INSERT INTO org_oidc_configs (org_id, issuer_url, client_id, client_secret) VALUES ('${ORG_ID_A}', 'http://127.0.0.1:${OIDC_MOCK_PORT}', 'e2e-client', 'e2e-secret');" \
+        >/dev/null 2>&1
+
+    OIDC_HEADERS=$(curl -sS --max-time 10 -D - -o /dev/null \
+        "${ENDPOINT}/orgs/${ORG_ID_A}/oidc/login")
+    OIDC_LOGIN_STATUS=$(printf '%s' "${OIDC_HEADERS}" | awk 'NR==1 {print $2}')
+    OIDC_LOC=$(printf '%s' "${OIDC_HEADERS}" | awk 'BEGIN{IGNORECASE=1}/^location:/ {sub(/^[^:]+: /,""); print; exit}' | tr -d '\r\n')
+    assert_status "${OIDC_LOGIN_STATUS}" "302" "GET /orgs/{id}/oidc/login with config → 302"
+    if [[ "${OIDC_LOC}" == "http://127.0.0.1:${OIDC_MOCK_PORT}/authorize?"* ]] \
+        && [[ "${OIDC_LOC}" == *"state="* ]] \
+        && [[ "${OIDC_LOC}" == *"nonce="* ]] \
+        && [[ "${OIDC_LOC}" == *"code_challenge="* ]] \
+        && [[ "${OIDC_LOC}" == *"code_challenge_method=S256"* ]]; then
+        pass "login Location redirects to IdP authorize endpoint with state + nonce + PKCE S256"
+    else
+        fail "login Location malformed: '${OIDC_LOC:0:200}'"
+    fi
+else
+    note "skipped F5.2-b OIDC assertions — ORG_ID_A not captured"
 fi
 
 # ─── summary ──────────────────────────────────────────────────────────
