@@ -540,6 +540,18 @@ pub struct MinistrServer {
     /// registry's tokio mutex hold — the lock is brief and never held
     /// across an `.await`.
     client_name_hint: Arc<std::sync::Mutex<Option<String>>>,
+    /// Tenant subject captured during the `initialize` handshake from
+    /// the axum `Tenant` extension that rmcp's `StreamableHttpService`
+    /// injects into `RequestContext::extensions` as
+    /// `http::request::Parts`. F-Test-3b-blocker workaround: rmcp's
+    /// internal request dispatcher loses the tokio task-local set by
+    /// the outer `scope_tenant` middleware, so `tenant_scope::current()`
+    /// returns `None` inside handlers. The Parts extension survives the
+    /// spawn boundary, so capturing once on initialize and storing here
+    /// lets `ensure_session_mut` and other handlers recover the tenant.
+    /// Reset per-fork in `fork_for_new_session` so concurrent connections
+    /// from different tenants don't race on the hint.
+    pub(crate) tenant_id_hint: Arc<std::sync::Mutex<Option<String>>>,
     /// Bridge to the daemon's multi-corpus registry. `Some` when
     /// `cmd_serve_http` wires the same `Arc<CorpusRegistry>` into both
     /// the MCP server *and* the daemon's REST router so the two surfaces
@@ -605,6 +617,22 @@ impl ServerHandler for MinistrServer {
             && let Ok(mut guard) = self.client_name_hint.lock()
         {
             *guard = Some(client_name);
+        }
+
+        // F-Test-3b-fix-1 — capture tenant via `context.extensions`.
+        // rmcp's `StreamableHttpService` injects `axum::http::request::Parts`
+        // into `RequestContext::extensions` (rmcp 0.14
+        // streamable_http_server/tower.rs:326), and the Parts include
+        // the axum request's `extensions` field where
+        // `validate_scope_middleware` set the `Tenant`. The earlier
+        // task-local path (via `tenant_scope::current()`) is silently
+        // lost across rmcp's spawn boundary; the Parts extension path
+        // survives.
+        if let Some(parts) = context.extensions.get::<axum::http::request::Parts>()
+            && let Some(tenant) = parts.extensions.get::<crate::auth::tenant::Tenant>()
+            && let Ok(mut guard) = self.tenant_id_hint.lock()
+        {
+            *guard = Some(tenant.subject.clone());
         }
 
         // Preserve the default rmcp behavior: store peer info for later access.
