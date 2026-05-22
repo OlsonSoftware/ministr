@@ -1157,6 +1157,18 @@ pub(crate) async fn cmd_serve_http(
                     "saml SP routes mounted — GET /orgs/{{id}}/saml/metadata.xml + /login"
                 );
             }
+            // F5.2-b — OIDC RP login endpoint. Public route
+            // (browser-initiated; IdP doesn't carry bearer tokens).
+            // F5.2-c will add the matching /oidc/callback handler.
+            {
+                let oidc_router = ministr_cloud::oidc_routes(
+                    ministr_cloud::OidcState::new(Arc::clone(pool)),
+                );
+                composed = composed.merge(oidc_router);
+                tracing::info!(
+                    "oidc RP routes mounted — GET /orgs/{{id}}/oidc/login"
+                );
+            }
             // F1.3 sub-bullet — GitHub sign-in flow. Mounted when the
             // cloud Postgres pool, the GitHub OAuth App credentials,
             // and a public base URL are ALL present. Public routes

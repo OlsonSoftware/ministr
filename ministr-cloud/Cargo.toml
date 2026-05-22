@@ -105,6 +105,11 @@ samael = "0.0.20"
 # so we deflate + base64 the XML ourselves.
 base64 = "0.22.1"
 flate2 = "1.1.9"
+# F5.2-b — OIDC client library. Provides Discovery 1.0 + JWKS fetch
+# + ID-token validation via jsonwebtoken under the hood. `reqwest`
+# + `rustls-tls` features pull in an async reqwest-backed HTTP
+# client without native-tls / OpenSSL.
+openidconnect = { version = "4.0.1", default-features = false, features = ["reqwest", "rustls-tls"] }
 
 [dev-dependencies]
 # F2.2 — rate-limit tests drive the axum middleware via
