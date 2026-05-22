@@ -187,12 +187,21 @@ pub fn oidc_routes(state: OidcState) -> Router {
 }
 
 /// One row from `org_oidc_configs`. Mirrors the schema in
-/// migration 0011 with the subset of columns these handlers need.
+/// migration 0011 / 0012 with the subset of columns these handlers
+/// need.
 struct OrgOidcConfig {
     issuer_url: String,
     client_id: String,
     client_secret: String,
     enforce_email_verified: bool,
+    /// F5.2-c. JSON claim name carrying the user's group list.
+    /// Default `groups`; nothing else reads it today but the
+    /// callback's group-role-map extraction (F5.2-f) does.
+    groups_claim: String,
+    /// F5.2-f. JSON object mapping `IdP` group name → ministr role.
+    /// Empty when no role inference is configured; the callback
+    /// no-ops the membership upsert in that case.
+    group_role_map: serde_json::Value,
 }
 
 async fn handle_login(
@@ -414,6 +423,38 @@ async fn handle_callback(
         Err(e) => return internal_error("upsert_oidc_user", &e.to_string()),
     };
 
+    // F5.2-f — apply group → role mapping. The library has already
+    // verified the ID token's signature + iss + aud + nonce; we
+    // re-parse the payload only to access the configured groups
+    // claim (the openidconnect-rs surface only exposes the
+    // standard email/sub/name/etc accessors without a custom
+    // AdditionalClaims type parameter, which would force a wider
+    // type cascade through every Client / Verifier instantiation).
+    let group_membership = match apply_group_role_map(
+        &state.pool,
+        &org_id,
+        &user.id,
+        &cfg,
+        &id_token.to_string(),
+    )
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(e) => {
+            // Group-role mapping failures must NOT break sign-in —
+            // the customer can fall back to manual org_members
+            // management while we debug. Audit emission below will
+            // still record the login attempt.
+            tracing::warn!(
+                error = %e,
+                user_id = %user.id,
+                org_id = %org_id,
+                "group role mapping failed; sign-in proceeds without membership update"
+            );
+            GroupRoleOutcome::Skipped
+        }
+    };
+
     let token = match oauth_store
         .issue_bearer_token(&user.id, DEFAULT_OIDC_SIGNIN_SCOPE)
         .await
@@ -430,6 +471,55 @@ async fn handle_callback(
                 .with_org(&org_id)
                 .with_actor(&user.id),
         );
+        // F5.2-f — additional audit event when the group-role
+        // mapping actually changed the user's membership. Mirrors
+        // the F3.7b `member.added` shape so the audit feed stays
+        // uniform; downstream consumers branch on `action`. The
+        // role itself is reconstructable from the next-step
+        // `org_members` read; AuditEntry's schema is intentionally
+        // metadata-free (resource = user_id, no role payload).
+        match &group_membership {
+            GroupRoleOutcome::Added { .. } => {
+                audit.record(
+                    ministr_api::AuditEntry::new("member.added", &user.id)
+                        .with_org(&org_id)
+                        .with_actor(&user.id),
+                );
+            }
+            GroupRoleOutcome::RoleUpdated { .. } => {
+                audit.record(
+                    ministr_api::AuditEntry::new("member.role_updated", &user.id)
+                        .with_org(&org_id)
+                        .with_actor(&user.id),
+                );
+            }
+            GroupRoleOutcome::Unchanged | GroupRoleOutcome::Skipped => {}
+        }
+    }
+
+    // F5.2-f — log the role mapping outcome at debug so operators can
+    // correlate sign-in events with `org_members` row changes without
+    // grep-joining tables. The enum fields read here are also what
+    // satisfies rustc's dead-code analysis for the variants.
+    match &group_membership {
+        GroupRoleOutcome::Added { role } => {
+            tracing::debug!(
+                user_id = %user.id,
+                org_id = %org_id,
+                role = %role,
+                "oidc group-role mapping inserted org_members row"
+            );
+        }
+        GroupRoleOutcome::RoleUpdated { from, to } => {
+            tracing::debug!(
+                user_id = %user.id,
+                org_id = %org_id,
+                from = %from,
+                to = %to,
+                "oidc group-role mapping updated org_members.role"
+            );
+        }
+        GroupRoleOutcome::Unchanged | GroupRoleOutcome::Skipped => {}
     }
 
     tracing::info!(
@@ -467,7 +557,8 @@ async fn load_config(
         .map_err(|e| format!("pool get: {e}"))?;
     let row = client
         .query_opt(
-            "SELECT issuer_url, client_id, client_secret, enforce_email_verified \
+            "SELECT issuer_url, client_id, client_secret, enforce_email_verified, \
+                    groups_claim, group_role_map \
              FROM org_oidc_configs WHERE org_id = $1::text::uuid",
             &[&org_id.to_string()],
         )
@@ -478,6 +569,8 @@ async fn load_config(
         client_id: r.get(1),
         client_secret: r.get(2),
         enforce_email_verified: r.get(3),
+        groups_claim: r.get(4),
+        group_role_map: r.get(5),
     }))
 }
 
@@ -552,6 +645,269 @@ fn redirect_to(url: &str) -> Response {
         headers.insert(header::LOCATION, v);
     }
     (StatusCode::FOUND, headers, "").into_response()
+}
+
+/// F5.2-f — outcome of `apply_group_role_map`. The callback uses
+/// this to decide which audit event (if any) to fire and gives the
+/// operator log a single structured field to grep on.
+#[derive(Debug)]
+enum GroupRoleOutcome {
+    /// No `group_role_map` configured, or no user groups matched
+    /// any mapping entry. No membership write occurred.
+    Skipped,
+    /// User was already in the org at the same role; no write.
+    Unchanged,
+    /// New `org_members` row inserted.
+    Added { role: String },
+    /// Existing `org_members` row's role changed (e.g. promoted
+    /// admin → owner from a new group claim). The bootstrap-safe
+    /// rule below prevents `owner → anything-else` downgrades.
+    RoleUpdated { from: String, to: String },
+}
+
+/// F5.2-f — re-parse the validated ID token's payload to extract
+/// the configured groups claim. Returns the list of group-name
+/// strings the user belongs to, or empty when the claim is absent,
+/// non-array, or non-string-valued.
+///
+/// **Safety**: the signature + iss + aud + nonce + exp have ALREADY
+/// been verified by `id_token.claims(&id_token_verifier, &nonce)`
+/// up-thread. Re-parsing the payload from the JWT string is safe
+/// because the bytes between validation and re-parse never leave
+/// our process. The openidconnect-rs surface only exposes the
+/// standard claims via accessors without a custom `AdditionalClaims`
+/// type parameter, which would force a wider type cascade through
+/// every Client / Verifier instantiation — re-parsing avoids that
+/// cascade.
+fn extract_groups_from_jwt(jwt: &str, claim_name: &str) -> Vec<String> {
+    use base64::Engine;
+    let Some(payload_b64) = jwt.split('.').nth(1) else {
+        return Vec::new();
+    };
+    let Ok(payload_bytes) =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload_b64)
+    else {
+        return Vec::new();
+    };
+    let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&payload_bytes)
+    else {
+        return Vec::new();
+    };
+    let Some(arr) = payload.get(claim_name).and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect()
+}
+
+/// F5.2-f — role ordering. Higher is more powerful.
+fn role_rank(role: &str) -> i32 {
+    match role {
+        "owner" => 3,
+        "admin" => 2,
+        "member" => 1,
+        _ => 0,
+    }
+}
+
+/// F5.2-f — pick the highest-power role from the user's group set
+/// against the `group_role_map`. Returns `None` when no group
+/// matches.
+fn pick_role_from_groups(
+    user_groups: &[String],
+    group_role_map: &serde_json::Value,
+) -> Option<String> {
+    let map = group_role_map.as_object()?;
+    let mut best: Option<&str> = None;
+    for group in user_groups {
+        if let Some(role) = map.get(group).and_then(|v| v.as_str())
+            && (best.is_none()
+                || role_rank(role) > role_rank(best.expect("checked is_some")))
+        {
+            best = Some(role);
+        }
+    }
+    best.map(str::to_string)
+}
+
+/// F5.2-f — orchestrates groups extraction → role pick → membership
+/// upsert. Bootstrap-safe: never downgrades an existing owner.
+async fn apply_group_role_map(
+    pool: &Pool,
+    org_id: &str,
+    user_id: &str,
+    cfg: &OrgOidcConfig,
+    jwt: &str,
+) -> Result<GroupRoleOutcome, String> {
+    // Skip immediately when no mapping is configured.
+    if cfg
+        .group_role_map
+        .as_object()
+        .is_none_or(serde_json::Map::is_empty)
+    {
+        return Ok(GroupRoleOutcome::Skipped);
+    }
+    let user_groups = extract_groups_from_jwt(jwt, &cfg.groups_claim);
+    let Some(target_role) = pick_role_from_groups(&user_groups, &cfg.group_role_map)
+    else {
+        return Ok(GroupRoleOutcome::Skipped);
+    };
+
+    let client = pool
+        .get()
+        .await
+        .map_err(|e| format!("pool get: {e}"))?;
+    // Look up existing membership first so we can honour the
+    // owner-never-downgraded rule and emit the right audit action.
+    let existing: Option<String> = client
+        .query_opt(
+            "SELECT role FROM org_members \
+             WHERE org_id = $1::text::uuid AND user_id = $2::text::uuid",
+            &[&org_id, &user_id],
+        )
+        .await
+        .map_err(|e| format!("select org_members: {e:?}"))?
+        .map(|r| r.get::<_, String>(0));
+
+    if let Some(existing_role) = existing.as_deref() {
+        if existing_role == "owner" && target_role != "owner" {
+            // Bootstrap-safe: don't downgrade an owner. v1 may add
+            // an explicit "force-downgrade" CRUD path; v0 trusts
+            // that owner-by-membership is a higher-ground state
+            // than what the IdP currently says.
+            return Ok(GroupRoleOutcome::Unchanged);
+        }
+        if existing_role == target_role {
+            return Ok(GroupRoleOutcome::Unchanged);
+        }
+        client
+            .execute(
+                "UPDATE org_members SET role = $3 \
+                 WHERE org_id = $1::text::uuid AND user_id = $2::text::uuid",
+                &[&org_id, &user_id, &target_role],
+            )
+            .await
+            .map_err(|e| format!("update org_members: {e:?}"))?;
+        return Ok(GroupRoleOutcome::RoleUpdated {
+            from: existing_role.to_string(),
+            to: target_role,
+        });
+    }
+
+    client
+        .execute(
+            "INSERT INTO org_members (org_id, user_id, role) \
+             VALUES ($1::text::uuid, $2::text::uuid, $3)",
+            &[&org_id, &user_id, &target_role],
+        )
+        .await
+        .map_err(|e| format!("insert org_members: {e:?}"))?;
+    Ok(GroupRoleOutcome::Added { role: target_role })
+}
+
+#[cfg(test)]
+mod group_role_tests {
+    //! Pure unit tests for the F5.2-f helpers. Postgres-integration
+    //! coverage is exercised via the harness's `just e2e-cloud-local`.
+    use super::*;
+
+    #[test]
+    fn extract_groups_returns_empty_for_malformed_jwt() {
+        assert!(extract_groups_from_jwt("not.a.jwt-payload", "groups").is_empty());
+        assert!(extract_groups_from_jwt("", "groups").is_empty());
+        assert!(extract_groups_from_jwt("single-part", "groups").is_empty());
+    }
+
+    #[test]
+    fn extract_groups_finds_string_array_under_configured_claim() {
+        // header.payload.sig (base64url, no padding). payload =
+        // {"groups": ["engineers", "admins"], "other": "ignored"}
+        use base64::Engine;
+        let payload = serde_json::json!({
+            "groups": ["engineers", "admins"],
+            "other": "ignored",
+        });
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&payload).unwrap());
+        let jwt = format!("header.{b64}.sig");
+        let groups = extract_groups_from_jwt(&jwt, "groups");
+        assert_eq!(groups, vec!["engineers".to_string(), "admins".to_string()]);
+    }
+
+    #[test]
+    fn extract_groups_honours_custom_claim_name() {
+        use base64::Engine;
+        let payload = serde_json::json!({
+            "roles": ["leadership"],
+        });
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&payload).unwrap());
+        let jwt = format!("header.{b64}.sig");
+        assert_eq!(
+            extract_groups_from_jwt(&jwt, "roles"),
+            vec!["leadership".to_string()],
+        );
+        // Wrong claim name → empty.
+        assert!(extract_groups_from_jwt(&jwt, "groups").is_empty());
+    }
+
+    #[test]
+    fn pick_role_picks_highest_power() {
+        let map = serde_json::json!({
+            "g_member": "member",
+            "g_admin": "admin",
+            "g_owner": "owner",
+        });
+        // Member-only.
+        let pick = pick_role_from_groups(&["g_member".to_string()], &map);
+        assert_eq!(pick.as_deref(), Some("member"));
+        // Member + admin → admin wins.
+        let pick = pick_role_from_groups(
+            &["g_member".to_string(), "g_admin".to_string()],
+            &map,
+        );
+        assert_eq!(pick.as_deref(), Some("admin"));
+        // All three → owner wins.
+        let pick = pick_role_from_groups(
+            &[
+                "g_member".to_string(),
+                "g_admin".to_string(),
+                "g_owner".to_string(),
+            ],
+            &map,
+        );
+        assert_eq!(pick.as_deref(), Some("owner"));
+        // No match → None.
+        let pick =
+            pick_role_from_groups(&["unmapped-group".to_string()], &map);
+        assert_eq!(pick, None);
+    }
+
+    #[test]
+    fn pick_role_handles_empty_or_non_object_map() {
+        // Empty object.
+        let pick = pick_role_from_groups(
+            &["any".to_string()],
+            &serde_json::json!({}),
+        );
+        assert_eq!(pick, None);
+        // Non-object (defensive — the CRUD path rejects this but
+        // direct-DB writes could insert it). Should return None,
+        // not panic.
+        let pick = pick_role_from_groups(
+            &["any".to_string()],
+            &serde_json::json!(["not", "an", "object"]),
+        );
+        assert_eq!(pick, None);
+    }
+
+    #[test]
+    fn role_rank_orders_owner_admin_member() {
+        assert!(role_rank("owner") > role_rank("admin"));
+        assert!(role_rank("admin") > role_rank("member"));
+        assert!(role_rank("member") > role_rank("garbage"));
+    }
 }
 
 fn not_found_response() -> Response {
@@ -635,7 +991,8 @@ impl axum::response::IntoResponse for OidcConfigError {
 /// `client_id`, and `client_secret` are required; the three claim-
 /// mapping fields + `enforce_email_verified` are optional and fall
 /// back to the table defaults (`groups` / `email` / `name` / true)
-/// when absent.
+/// when absent. `group_role_map` (F5.2-f) is optional — absent or
+/// `{}` means the callback skips role inference entirely.
 #[derive(serde::Deserialize)]
 struct OidcConfigUpsertBody {
     issuer_url: String,
@@ -649,6 +1006,10 @@ struct OidcConfigUpsertBody {
     name_claim: Option<String>,
     #[serde(default)]
     enforce_email_verified: Option<bool>,
+    /// JSON object mapping `IdP` group name → ministr role. See
+    /// migration 0012 for the wire-shape contract.
+    #[serde(default)]
+    group_role_map: Option<serde_json::Value>,
 }
 
 /// GET / upsert response shape. `client_secret` is always
@@ -665,6 +1026,9 @@ struct OidcConfigView {
     email_claim: String,
     name_claim: String,
     enforce_email_verified: bool,
+    /// F5.2-f. JSON object mapping group name → ministr role.
+    /// `{}` (the column default) when no role inference is wired.
+    group_role_map: serde_json::Value,
     created_at: String,
     updated_at: String,
 }
@@ -726,6 +1090,31 @@ async fn handle_oidc_config_upsert(
     let email_claim = body.email_claim.as_deref().unwrap_or("email");
     let name_claim = body.name_claim.as_deref().unwrap_or("name");
     let enforce = body.enforce_email_verified.unwrap_or(true);
+    // F5.2-f — group_role_map default is `{}`. Reject anything that
+    // isn't a JSON object up-front so we never store an array or
+    // scalar that the callback can't interpret.
+    let group_role_map = body
+        .group_role_map
+        .clone()
+        .unwrap_or_else(|| serde_json::json!({}));
+    if !group_role_map.is_object() {
+        return Err(OidcConfigError::Invalid(
+            "group_role_map must be a JSON object",
+        ));
+    }
+    // Each value MUST be one of owner|admin|member.
+    if let Some(obj) = group_role_map.as_object() {
+        for (_k, v) in obj {
+            match v.as_str() {
+                Some("owner" | "admin" | "member") => {}
+                _ => {
+                    return Err(OidcConfigError::Invalid(
+                        "group_role_map values must be \"owner\", \"admin\", or \"member\"",
+                    ));
+                }
+            }
+        }
+    }
 
     let client = state
         .pool
@@ -736,8 +1125,9 @@ async fn handle_oidc_config_upsert(
         .query_one(
             "INSERT INTO org_oidc_configs (\
                 org_id, issuer_url, client_id, client_secret, \
-                groups_claim, email_claim, name_claim, enforce_email_verified) \
-             VALUES ($1::text::uuid, $2, $3, $4, $5, $6, $7, $8) \
+                groups_claim, email_claim, name_claim, enforce_email_verified, \
+                group_role_map) \
+             VALUES ($1::text::uuid, $2, $3, $4, $5, $6, $7, $8, $9) \
              ON CONFLICT (org_id) DO UPDATE SET \
                 issuer_url = EXCLUDED.issuer_url, \
                 client_id = EXCLUDED.client_id, \
@@ -746,9 +1136,10 @@ async fn handle_oidc_config_upsert(
                 email_claim = EXCLUDED.email_claim, \
                 name_claim = EXCLUDED.name_claim, \
                 enforce_email_verified = EXCLUDED.enforce_email_verified, \
+                group_role_map = EXCLUDED.group_role_map, \
                 updated_at = NOW() \
              RETURNING issuer_url, client_id, groups_claim, email_claim, \
-                       name_claim, enforce_email_verified, \
+                       name_claim, enforce_email_verified, group_role_map, \
                        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
                        to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
             &[
@@ -760,6 +1151,7 @@ async fn handle_oidc_config_upsert(
                 &email_claim,
                 &name_claim,
                 &enforce,
+                &group_role_map,
             ],
         )
         .await
@@ -778,8 +1170,9 @@ async fn handle_oidc_config_upsert(
         email_claim: row.get(3),
         name_claim: row.get(4),
         enforce_email_verified: row.get(5),
-        created_at: row.get(6),
-        updated_at: row.get(7),
+        group_role_map: row.get(6),
+        created_at: row.get(7),
+        updated_at: row.get(8),
     };
 
     // Bust the per-org pending-login cache so the next /oidc/login
@@ -813,7 +1206,7 @@ async fn handle_oidc_config_get(
     let row = client
         .query_opt(
             "SELECT issuer_url, client_id, groups_claim, email_claim, \
-                    name_claim, enforce_email_verified, \
+                    name_claim, enforce_email_verified, group_role_map, \
                     to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
                     to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') \
              FROM org_oidc_configs WHERE org_id = $1::text::uuid",
@@ -832,8 +1225,9 @@ async fn handle_oidc_config_get(
         email_claim: row.get(3),
         name_claim: row.get(4),
         enforce_email_verified: row.get(5),
-        created_at: row.get(6),
-        updated_at: row.get(7),
+        group_role_map: row.get(6),
+        created_at: row.get(7),
+        updated_at: row.get(8),
     }))
 }
 

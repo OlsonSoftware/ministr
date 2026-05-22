@@ -46,6 +46,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (9, include_str!("../migrations/0009_session_drops.sql")),
     (10, include_str!("../migrations/0010_org_saml_configs.sql")),
     (11, include_str!("../migrations/0011_org_oidc_configs.sql")),
+    (12, include_str!("../migrations/0012_org_oidc_group_role_map.sql")),
 ];
 
 /// Errors surfaced by [`connect`] and [`run_migrations`].
