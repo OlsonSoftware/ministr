@@ -253,6 +253,19 @@ enum AuditAction {
         #[arg(long, default_value_t = ministr_cloud::DEFAULT_AUDIT_RETENTION_DAYS)]
         retention_days: u32,
     },
+    /// F5.3-c-ii — extend the `audit_events` quarterly partition
+    /// surface forward to `now() + --lookahead-quarters * 3 months`.
+    /// `cmd_serve_http` already invokes this at every pod boot;
+    /// the CLI form exists for operator-driven catch-up + cron
+    /// jobs that don't want to restart the serve to extend the
+    /// forward edge.
+    EnsurePartitions {
+        /// Quarters of runway past the current calendar quarter.
+        /// Defaults to `ministr_cloud::DEFAULT_PARTITION_LOOKAHEAD_QUARTERS`
+        /// (8 = 2 years).
+        #[arg(long, default_value_t = ministr_cloud::DEFAULT_PARTITION_LOOKAHEAD_QUARTERS)]
+        lookahead_quarters: u32,
+    },
 }
 
 /// Subcommands for `ministr cloud` — operator diagnostics + future
@@ -685,6 +698,9 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
         Command::Audit { action } => match action {
             AuditAction::Prune { retention_days } => {
                 commands::cmd_audit_prune(retention_days).await
+            }
+            AuditAction::EnsurePartitions { lookahead_quarters } => {
+                commands::cmd_audit_ensure_partitions(lookahead_quarters).await
             }
         },
         Command::ApiKeys { action } => match action {

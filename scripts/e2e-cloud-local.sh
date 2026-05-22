@@ -1493,10 +1493,14 @@ fi
 #     can't silently un-partition the table.
 info "F5.3-c-i: audit_events partitioned by quarter (16 partitions seeded)"
 PART_COUNT=$(psql_count "SELECT count(*) FROM pg_inherits WHERE inhparent = 'audit_events'::regclass;")
-if [[ "${PART_COUNT}" == "16" ]]; then
-    pass "audit_events has 16 quarterly partitions (2024-Q1 .. 2027-Q4)"
+# Migration 0013 seeds exactly 16 partitions; the F5.3-c-ii boot
+# helper extends the forward edge dynamically at every serve start,
+# so the live count is >= 16 (today: 16 seeded + 2 boot-helper-added
+# for 2028-Q1/Q2 = 18). Assert the floor rather than equality.
+if [[ "${PART_COUNT}" -ge "16" ]]; then
+    pass "audit_events has ≥16 quarterly partitions (live count=${PART_COUNT})"
 else
-    fail "audit_events partition count — expected 16, got ${PART_COUNT}"
+    fail "audit_events partition count — expected ≥16, got ${PART_COUNT}"
 fi
 RELKIND=$(docker compose -f docker-compose.dev.yml exec -T postgres \
     psql -U ministr -d ministr_dev -tA \
@@ -1506,6 +1510,69 @@ if [[ "${RELKIND}" == "p" ]]; then
     pass "audit_events relkind == 'p' (partitioned table)"
 else
     fail "audit_events relkind expected 'p', got '${RELKIND}'"
+fi
+
+# 24) **F5.3-c-ii — boot-time ensure_audit_partitions extends the
+#     forward edge.** Migration 0013 ships partitions only out to
+#     2027-Q4. The boot helper auto-creates new partitions through
+#     `now() + DEFAULT_PARTITION_LOOKAHEAD_QUARTERS` (8 quarters).
+#     Today (2026-05-22 is Q2 2026) + 8 quarters = Q2 2028, so the
+#     helper should create 2028-Q1 + 2028-Q2 on top of the seeded
+#     16 = 18 partitions total. Idempotent: a second run is a
+#     no-op (created=0).
+info "F5.3-c-ii: ensure_audit_partitions auto-extends forward edge"
+# Capture pre-drop count (whatever the boot helper landed at).
+# Using a captured baseline rather than a hardcoded number means
+# this assertion stays stable as the calendar advances forward.
+PRE_DROP=$(psql_count "SELECT count(*) FROM pg_inherits WHERE inhparent = 'audit_events'::regclass;")
+# Drop one forward partition to simulate a state where the helper
+# has work to do. Using 2027_q4 ensures the helper has to fill
+# back a gap (not just extend the forward edge).
+docker compose -f docker-compose.dev.yml exec -T postgres \
+    psql -U ministr -d ministr_dev -tA \
+    -c "DROP TABLE audit_events_y2027q4;" >/dev/null 2>&1 || true
+COUNT_AFTER_DROP=$(psql_count "SELECT count(*) FROM pg_inherits WHERE inhparent = 'audit_events'::regclass;")
+DROP_EXPECT=$((PRE_DROP - 1))
+if [[ "${COUNT_AFTER_DROP}" == "${DROP_EXPECT}" ]]; then
+    pass "fixture DROP TABLE audit_events_y2027q4 → ${DROP_EXPECT} partitions (was ${PRE_DROP})"
+else
+    fail "fixture DROP count expected ${DROP_EXPECT}, got ${COUNT_AFTER_DROP}"
+fi
+
+# Run the CLI helper. It should fill the 2027_q4 gap, restoring
+# the count to the pre-drop value.
+cargo run -q -p ministr-cli -- audit ensure-partitions --lookahead-quarters 8 \
+    > /tmp/ministr-e2e-ensure.log 2>&1
+ENSURE_STATUS=$?
+if [[ "${ENSURE_STATUS}" == "0" ]]; then
+    pass "ministr audit ensure-partitions CLI exits 0"
+else
+    fail "ensure-partitions exited ${ENSURE_STATUS} · log: $(tail -5 /tmp/ministr-e2e-ensure.log)"
+fi
+
+COUNT_AFTER_ENSURE=$(psql_count "SELECT count(*) FROM pg_inherits WHERE inhparent = 'audit_events'::regclass;")
+if [[ "${COUNT_AFTER_ENSURE}" == "${PRE_DROP}" ]]; then
+    pass "audit_events partitions restored to ${PRE_DROP} (gap-fill semantics work)"
+else
+    fail "post-ensure count expected ${PRE_DROP}, got ${COUNT_AFTER_ENSURE}"
+fi
+
+# 2027_q4 is back.
+RECREATED=$(psql_count "SELECT count(*) FROM pg_class WHERE relname = 'audit_events_y2027q4';")
+if [[ "${RECREATED}" == "1" ]]; then
+    pass "ensure-partitions re-created audit_events_y2027q4"
+else
+    fail "audit_events_y2027q4 NOT re-created (count=${RECREATED})"
+fi
+
+# Idempotency: second call creates 0 new.
+cargo run -q -p ministr-cli -- audit ensure-partitions --lookahead-quarters 8 \
+    > /tmp/ministr-e2e-ensure2.log 2>&1
+COUNT_AFTER_2ND=$(psql_count "SELECT count(*) FROM pg_inherits WHERE inhparent = 'audit_events'::regclass;")
+if [[ "${COUNT_AFTER_2ND}" == "${PRE_DROP}" ]]; then
+    pass "second ensure-partitions call is a no-op (count still ${PRE_DROP})"
+else
+    fail "second-call count expected ${PRE_DROP}, got ${COUNT_AFTER_2ND}"
 fi
 
 # ─── summary ──────────────────────────────────────────────────────────
