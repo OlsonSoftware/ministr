@@ -92,6 +92,12 @@ SIEM_DD_API_KEY="dd-api-key-per-org-$$"
 SIEM_SYSLOG_PID=""
 SIEM_SYSLOG_PORT="${SIEM_SYSLOG_PORT:-8094}"
 SIEM_SYSLOG_LOG="${SIEM_SYSLOG_LOG:-/tmp/ministr-e2e-siem-syslog-${RUN_TS}.jsonl}"
+# F5.3-d-iii-c-udp — fake UDP syslog/CEF collector for the parallel
+# UDP transport path. Separate port from the TCP collector so the
+# harness can route both flavors through the same syslog_cef kind.
+SIEM_SYSLOG_UDP_PID=""
+SIEM_SYSLOG_UDP_PORT="${SIEM_SYSLOG_UDP_PORT:-8095}"
+SIEM_SYSLOG_UDP_LOG="${SIEM_SYSLOG_UDP_LOG:-/tmp/ministr-e2e-siem-syslog-udp-${RUN_TS}.jsonl}"
 
 # Bail on missing tooling early — the failure mode otherwise is a
 # cryptic curl/jq error 200 lines into the script.
@@ -140,6 +146,11 @@ cleanup() {
         info "stopping SIEM syslog receiver (PID ${SIEM_SYSLOG_PID})"
         kill "${SIEM_SYSLOG_PID}" 2>/dev/null || true
         wait "${SIEM_SYSLOG_PID}" 2>/dev/null || true
+    fi
+    if [[ -n "${SIEM_SYSLOG_UDP_PID}" ]] && kill -0 "${SIEM_SYSLOG_UDP_PID}" 2>/dev/null; then
+        info "stopping SIEM syslog UDP receiver (PID ${SIEM_SYSLOG_UDP_PID})"
+        kill "${SIEM_SYSLOG_UDP_PID}" 2>/dev/null || true
+        wait "${SIEM_SYSLOG_UDP_PID}" 2>/dev/null || true
     fi
     if [[ -n "${SERVE_PID}" ]] && kill -0 "${SERVE_PID}" 2>/dev/null; then
         info "stopping serve (PID ${SERVE_PID})"
@@ -545,6 +556,22 @@ until exec 5<>/dev/tcp/127.0.0.1/${SIEM_SYSLOG_PORT} 2>/dev/null && exec 5>&-; d
     sleep 0.2
 done
 info "SIEM syslog receiver PID ${SIEM_SYSLOG_PID}; record at ${SIEM_SYSLOG_LOG}"
+
+step "step 5b'''''/6 — spawn fake UDP syslog/CEF collector on :${SIEM_SYSLOG_UDP_PORT} (for F5.3-d-iii-c-udp)"
+python3 "$(dirname "$0")/e2e-siem-syslog-udp-receiver.py" "${SIEM_SYSLOG_UDP_PORT}" "${SIEM_SYSLOG_UDP_LOG}" \
+    > /tmp/ministr-e2e-siem-syslog-udp-stdout.log 2>&1 &
+SIEM_SYSLOG_UDP_PID=$!
+# UDP has no connection handshake to probe; verify the process is
+# alive after a short bind delay. The receiver binds and starts
+# serving immediately on socketserver.ThreadingUDPServer; 200ms is
+# generous.
+sleep 0.3
+if ! kill -0 "${SIEM_SYSLOG_UDP_PID}" 2>/dev/null; then
+    echo "SIEM syslog UDP receiver crashed during boot — log tail:" >&2
+    tail -10 /tmp/ministr-e2e-siem-syslog-udp-stdout.log >&2
+    exit 1
+fi
+info "SIEM syslog UDP receiver PID ${SIEM_SYSLOG_UDP_PID}; record at ${SIEM_SYSLOG_UDP_LOG}"
 
 step "step 5c/6 — spawn mock OIDC IdP on :${OIDC_MOCK_PORT}"
 # F5.2-c — generate an RSA-2048 keypair the mock IdP uses to sign ID
@@ -2078,8 +2105,73 @@ EOF
     else
         fail "CEF extension missing suser= label: '${CEF_LINE:0:200}'"
     fi
+
+    # 30) **F5.3-d-iii-c-udp — UDP syslog fallback for syslog_cef.**
+    #     Re-POST the per-org config with udp:// endpoint pointing at
+    #     the parallel UDP collector. PerOrgSiemDispatcher → kind=syslog_cef
+    #     branch → dispatch_syslog_cef (scheme router) → udp helper.
+    #     UDP is fire-and-forget; the harness sees the datagram arrive
+    #     at the receiver but has no ack-side signal.
+    info "F5.3-d-iii-c-udp: UDP transport for syslog/CEF"
+    SIEM_SYSLOG_UDP_BODY=$(cat <<EOF
+{"kind":"syslog_cef","endpoint_url":"udp://127.0.0.1:${SIEM_SYSLOG_UDP_PORT}","token":"","enabled":true}
+EOF
+)
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/siem/config" "${TOKEN_A}" "${SIEM_SYSLOG_UDP_BODY}"
+    assert_status "${RESPONSE_STATUS}" "200" "POST per-org syslog_cef config (udp:// endpoint) → 200"
+
+    # Snapshot UDP collector count before the audit trigger.
+    SYSLOG_UDP_PRE=$(wc -l < "${SIEM_SYSLOG_UDP_LOG}" 2>/dev/null | tr -d ' ' || echo 0)
+
+    # Fire one org-scoped audit emission.
+    INVITE_UDP='{"email":"udp-syslog-test@e2e.test"}'
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/invites" "${TOKEN_A}" "${INVITE_UDP}"
+    if [[ "${RESPONSE_STATUS}" == "201" || "${RESPONSE_STATUS}" == "200" ]]; then
+        pass "POST /invites for UDP syslog flow fires org-scoped audit (HTTP ${RESPONSE_STATUS})"
+    else
+        fail "POST /invites for ORG_ID_A — expected 201/200, got ${RESPONSE_STATUS}"
+    fi
+
+    # Poll the UDP collector for the datagram. UDP delivery on
+    # 127.0.0.1 is effectively zero-loss for sub-100-byte payloads;
+    # the only timing factor is the tokio::spawn schedule.
+    SYSLOG_UDP_WAIT=0
+    while true; do
+        SYSLOG_UDP_NOW=$(wc -l < "${SIEM_SYSLOG_UDP_LOG}" 2>/dev/null | tr -d ' ' || echo 0)
+        if [[ "${SYSLOG_UDP_NOW}" -gt "${SYSLOG_UDP_PRE}" ]]; then
+            break
+        fi
+        SYSLOG_UDP_WAIT=$((SYSLOG_UDP_WAIT + 1))
+        if [[ "${SYSLOG_UDP_WAIT}" -gt 30 ]]; then
+            break
+        fi
+        sleep 0.2
+    done
+    SYSLOG_UDP_POST=$(wc -l < "${SIEM_SYSLOG_UDP_LOG}" 2>/dev/null | tr -d ' ' || echo 0)
+    if [[ "${SYSLOG_UDP_POST}" -gt "${SYSLOG_UDP_PRE}" ]]; then
+        pass "UDP collector got ≥1 datagram (pre=${SYSLOG_UDP_PRE}, post=${SYSLOG_UDP_POST})"
+    else
+        fail "no new datagrams at UDP collector after 6s — udp:// dispatch may not be wired"
+    fi
+
+    # Inspect the most-recent datagram. Same CEF v0 shape as TCP;
+    # no trailing newline per RFC 3164/5424 (one datagram = one
+    # message). The receiver's rstrip already collapsed any stray
+    # CR/LF if present.
+    UDP_LAST=$(tail -n1 "${SIEM_SYSLOG_UDP_LOG}" 2>/dev/null || echo '{}')
+    UDP_CEF_LINE=$(printf '%s' "${UDP_LAST}" | jq -r '.line // empty')
+    if [[ "${UDP_CEF_LINE}" == "CEF:0|ministr|ministr-cloud-audit|1|"* ]]; then
+        pass "UDP datagram carries a CEF v0 line (header matches)"
+    else
+        fail "UDP datagram CEF header malformed: '${UDP_CEF_LINE:0:120}'"
+    fi
+    if [[ "${UDP_CEF_LINE}" == *"orgId=${ORG_ID_A}"* ]]; then
+        pass "UDP CEF extension carries orgId=ORG_ID_A (UDP routing locked)"
+    else
+        fail "UDP CEF extension missing orgId=${ORG_ID_A}: '${UDP_CEF_LINE:0:200}'"
+    fi
 else
-    note "skipped F5.3-d-ii-config + F5.3-d-ii-dispatch + F5.3-d-iii-a + F5.3-d-iii-c — ORG_ID_A not captured"
+    note "skipped F5.3-d-ii-config + F5.3-d-ii-dispatch + F5.3-d-iii-a + F5.3-d-iii-c + F5.3-d-iii-c-udp — ORG_ID_A not captured"
 fi
 
 # ─── summary ──────────────────────────────────────────────────────────
