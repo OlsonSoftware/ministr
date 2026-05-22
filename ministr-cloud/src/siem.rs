@@ -382,25 +382,45 @@ fn format_cef_line(entry: &AuditEntry) -> String {
 /// expected security model for syslog — there's no per-event bearer.
 /// Customers running an unprotected collector accept the obvious
 /// risk; ministr's CRUD validator doesn't object.
+/// F5.3-d-iii-c + F5.3-d-iii-c-udp — scheme-routing entrypoint.
+/// Parses the endpoint prefix and dispatches to the right transport
+/// helper. Unknown scheme → warn log + skip (validator should have
+/// rejected at CRUD POST time; defensive against a row written
+/// outside the CRUD path).
 pub(crate) async fn dispatch_syslog_cef(endpoint: &str, entry: &AuditEntry) {
-    let Some(host_port) = endpoint.strip_prefix("tcp://") else {
+    if let Some(host_port) = endpoint.strip_prefix("tcp://") {
+        dispatch_syslog_cef_tcp(host_port, endpoint, entry).await;
+    } else if let Some(host_port) = endpoint.strip_prefix("udp://") {
+        dispatch_syslog_cef_udp(host_port, endpoint, entry).await;
+    } else {
         warn!(
             endpoint = %endpoint,
-            "syslog cef dispatch: endpoint must start with tcp://"
+            "syslog cef dispatch: endpoint must start with tcp:// or udp://"
         );
-        return;
-    };
-    // Use `rsplit_once(':')` so an IPv6 literal like
-    // `tcp://[::1]:5514` would route the port off the trailing colon
-    // — but the validator only admits `tcp://...` and IPv6 literals
-    // aren't tested in v0; documented for the IPv6 follow-up.
-    let Some((_host, _port)) = host_port.rsplit_once(':') else {
+    }
+}
+
+/// TCP variant — opens a connection, writes one newline-terminated
+/// CEF v0 line, flushes, drops. 10s connect + write timeout. Used
+/// when the customer's collector speaks TCP syslog (RFC 6587 octet-
+/// stuffing isn't implemented yet — one connection per message is
+/// the simplest interop pattern with most production collectors).
+async fn dispatch_syslog_cef_tcp(
+    host_port: &str,
+    endpoint: &str,
+    entry: &AuditEntry,
+) {
+    // `rsplit_once(':')` would route the port off the trailing colon
+    // for an IPv6 literal like `tcp://[::1]:5514`, but the validator
+    // doesn't normalize bracketed-IPv6 yet — documented for the IPv6
+    // follow-up.
+    if host_port.rsplit_once(':').is_none() {
         warn!(
             endpoint = %endpoint,
-            "syslog cef dispatch: endpoint missing :port suffix"
+            "syslog cef dispatch (tcp): endpoint missing :port suffix"
         );
         return;
-    };
+    }
     let line = format_cef_line(entry);
     let payload = format!("{line}\n");
     let connect = tokio::net::TcpStream::connect(host_port);
@@ -411,7 +431,7 @@ pub(crate) async fn dispatch_syslog_cef(endpoint: &str, entry: &AuditEntry) {
                 action = %entry.action,
                 endpoint = %endpoint,
                 error = %e,
-                "syslog cef dispatch: connect failed"
+                "syslog cef dispatch (tcp): connect failed"
             );
             return;
         }
@@ -419,7 +439,7 @@ pub(crate) async fn dispatch_syslog_cef(endpoint: &str, entry: &AuditEntry) {
             warn!(
                 action = %entry.action,
                 endpoint = %endpoint,
-                "syslog cef dispatch: connect timeout (>10s)"
+                "syslog cef dispatch (tcp): connect timeout (>10s)"
             );
             return;
         }
@@ -429,13 +449,13 @@ pub(crate) async fn dispatch_syslog_cef(endpoint: &str, entry: &AuditEntry) {
     match tokio::time::timeout(HEC_TIMEOUT, write).await {
         Ok(Ok(())) => {
             // Best-effort flush so the collector sees the line before
-            // we drop the socket. Ignore flush errors — the line
+            // we drop the socket. Ignore flush errors — the bytes
             // already went out the door.
             let _ = stream.flush().await;
             debug!(
                 action = %entry.action,
                 bytes = payload.len(),
-                "syslog cef dispatch ok"
+                "syslog cef dispatch (tcp) ok"
             );
         }
         Ok(Err(e)) => {
@@ -443,14 +463,88 @@ pub(crate) async fn dispatch_syslog_cef(endpoint: &str, entry: &AuditEntry) {
                 action = %entry.action,
                 endpoint = %endpoint,
                 error = %e,
-                "syslog cef dispatch: write failed"
+                "syslog cef dispatch (tcp): write failed"
             );
         }
         Err(_) => {
             warn!(
                 action = %entry.action,
                 endpoint = %endpoint,
-                "syslog cef dispatch: write timeout (>10s)"
+                "syslog cef dispatch (tcp): write timeout (>10s)"
+            );
+        }
+    }
+}
+
+/// F5.3-d-iii-c-udp — UDP variant. Binds an ephemeral local
+/// socket, sends one datagram containing the CEF v0 line, drops.
+/// UDP is fire-and-forget: there's no connect or ack handshake;
+/// `send_to` returns `Ok(n_bytes)` if the local kernel accepted
+/// the packet for transmission. Packet loss on the wire is
+/// documented as the trade-off for UDP-syslog deployments (BSD
+/// historical default; RFC 5424 §A.2 reaffirms acceptable).
+///
+/// No trailing newline on the payload — each UDP datagram IS one
+/// syslog message per RFC 3164 / 5424.
+async fn dispatch_syslog_cef_udp(
+    host_port: &str,
+    endpoint: &str,
+    entry: &AuditEntry,
+) {
+    if host_port.rsplit_once(':').is_none() {
+        warn!(
+            endpoint = %endpoint,
+            "syslog cef dispatch (udp): endpoint missing :port suffix"
+        );
+        return;
+    }
+    let line = format_cef_line(entry);
+    let bind = tokio::net::UdpSocket::bind("0.0.0.0:0");
+    let sock = match tokio::time::timeout(HEC_TIMEOUT, bind).await {
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => {
+            warn!(
+                action = %entry.action,
+                endpoint = %endpoint,
+                error = %e,
+                "syslog cef dispatch (udp): local bind failed"
+            );
+            return;
+        }
+        Err(_) => {
+            warn!(
+                action = %entry.action,
+                endpoint = %endpoint,
+                "syslog cef dispatch (udp): local bind timeout (>10s)"
+            );
+            return;
+        }
+    };
+    // `send_to` requires a resolved addr. tokio resolves a `&str`
+    // via `ToSocketAddrs::to_socket_addrs`, so passing host_port
+    // directly is fine for IPv4 numeric + DNS hostnames.
+    let send = sock.send_to(line.as_bytes(), host_port);
+    match tokio::time::timeout(HEC_TIMEOUT, send).await {
+        Ok(Ok(n)) => {
+            debug!(
+                action = %entry.action,
+                bytes = n,
+                "syslog cef dispatch (udp) ok"
+            );
+        }
+        Ok(Err(e)) => {
+            warn!(
+                action = %entry.action,
+                endpoint = %endpoint,
+                error = %e,
+                "syslog cef dispatch (udp): send failed"
+            );
+        }
+        Err(_) => {
+            warn!(
+                action = %entry.action,
+                endpoint = %endpoint,
+                "syslog cef dispatch (udp): send timeout (>10s)"
             );
         }
     }
@@ -738,12 +832,15 @@ fn validate_siem_upsert(body: &SiemConfigUpsertBody) -> Result<(), SiemConfigErr
     if body.endpoint_url.trim().is_empty() {
         return Err(SiemConfigError::Invalid("endpoint_url is required"));
     }
-    // syslog_cef uses tcp:// (and eventually udp://); other kinds use
-    // http(s)://. Branch the scheme check rather than admitting any
-    // scheme for any kind — keeps misconfiguration detectable at the
-    // CRUD edge.
+    // syslog_cef admits tcp:// or udp:// (F5.3-d-iii-c TCP + -c-udp
+    // UDP fallback); other kinds use http(s)://. Branch the scheme
+    // check rather than admitting any scheme for any kind — keeps
+    // misconfiguration detectable at the CRUD edge.
     let scheme_ok = match body.kind.as_str() {
-        "syslog_cef" => body.endpoint_url.starts_with("tcp://"),
+        "syslog_cef" => {
+            body.endpoint_url.starts_with("tcp://")
+                || body.endpoint_url.starts_with("udp://")
+        }
         _ => {
             body.endpoint_url.starts_with("http://")
                 || body.endpoint_url.starts_with("https://")
@@ -752,7 +849,7 @@ fn validate_siem_upsert(body: &SiemConfigUpsertBody) -> Result<(), SiemConfigErr
     if !scheme_ok {
         return Err(SiemConfigError::Invalid(
             "endpoint_url scheme mismatch for kind \
-             (http/https for splunk_hec + datadog_logs; tcp:// for syslog_cef)",
+             (http/https for splunk_hec + datadog_logs; tcp:// or udp:// for syslog_cef)",
         ));
     }
     // F5.3-d-iii-c — TOKENLESS_SIEM_KINDS skips the empty-token check
@@ -1040,6 +1137,22 @@ mod tests {
         // empty token is admitted. tcp:// scheme is required.
         let b = body("syslog_cef", "tcp://syslog.example.com:5514", "");
         assert!(validate_siem_upsert(&b).is_ok());
+    }
+
+    #[test]
+    fn validate_siem_upsert_admits_syslog_cef_with_udp_scheme() {
+        // F5.3-d-iii-c-udp — UDP fallback. Default syslog port is
+        // 514; some legacy collectors only listen UDP.
+        let b = body("syslog_cef", "udp://syslog.example.com:514", "");
+        assert!(validate_siem_upsert(&b).is_ok());
+    }
+
+    #[test]
+    fn validate_siem_upsert_rejects_udp_for_splunk() {
+        // Inverse cross-kind mismatch — Splunk HEC is HTTP, not UDP.
+        let b = body("splunk_hec", "udp://splunk.example.com:8088", "tok");
+        let e = validate_siem_upsert(&b).expect_err("must reject udp scheme for HEC");
+        assert!(matches!(e, SiemConfigError::Invalid(msg) if msg.contains("scheme")));
     }
 
     #[test]
