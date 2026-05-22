@@ -1017,6 +1017,18 @@ pub(crate) async fn cmd_serve_http(
                 audit_sinks.push(Arc::new(hec));
                 chain_desc.push_str(" → SplunkHecSink");
             }
+            // F5.3-d-ii-dispatch — per-org SIEM dispatcher. Looks up
+            // `org_siem_configs` on every audit event with org_id =
+            // Some, fires alongside the global env-var sink so events
+            // hit BOTH the operator's central SIEM AND the customer's
+            // configured endpoint.
+            {
+                let per_org = ministr_cloud::PerOrgSplunkHecDispatcher::new(
+                    Arc::clone(pool),
+                );
+                audit_sinks.push(Arc::new(per_org));
+                chain_desc.push_str(" → PerOrgSplunkHecDispatcher");
+            }
             let audit_sink: Arc<dyn ministr_api::AuditSink> = if audit_sinks.len() == 1 {
                 tracing::info!(chain = %chain_desc, "audit pipeline wired");
                 postgres_audit

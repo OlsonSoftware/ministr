@@ -26,7 +26,6 @@ Usage:
 from __future__ import annotations
 
 import json
-import os
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -37,10 +36,12 @@ def main() -> int:
         return 2
     port = int(sys.argv[1])
     out_path = sys.argv[2]
-    # Truncate-on-startup so a previous run's records don't carry over.
-    try:
-        os.unlink(out_path)
-    except FileNotFoundError:
+    # Truncate-on-startup so a previous run's records don't carry
+    # over. Use `open(... "w")` rather than unlink so callers that
+    # snapshot the file via `wc -l` BEFORE the first POST don't hit
+    # a "No such file or directory" — the empty file is the
+    # well-defined zero baseline.
+    with open(out_path, "w", encoding="utf-8"):
         pass
 
     class Handler(BaseHTTPRequestHandler):

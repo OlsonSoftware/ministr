@@ -72,6 +72,14 @@ SIEM_HEC_PID=""
 SIEM_HEC_PORT="${SIEM_HEC_PORT:-8091}"
 SIEM_HEC_LOG="${SIEM_HEC_LOG:-/tmp/ministr-e2e-siem-hec-${RUN_TS}.jsonl}"
 SIEM_HEC_TOKEN="hec_e2e_test_$$"
+# F5.3-d-ii-dispatch — second fake HEC receiver wired via the
+# F5.3-d-ii-config CRUD endpoint, so the harness can prove per-org
+# dispatch routes ORG_ID_A's events to a different endpoint than the
+# global env-var sink.
+SIEM_HEC2_PID=""
+SIEM_HEC2_PORT="${SIEM_HEC2_PORT:-8092}"
+SIEM_HEC2_LOG="${SIEM_HEC2_LOG:-/tmp/ministr-e2e-siem-hec2-${RUN_TS}.jsonl}"
+SIEM_HEC2_TOKEN="hec2_per_org_$$"
 
 # Bail on missing tooling early — the failure mode otherwise is a
 # cryptic curl/jq error 200 lines into the script.
@@ -105,6 +113,11 @@ cleanup() {
         info "stopping SIEM HEC receiver (PID ${SIEM_HEC_PID})"
         kill "${SIEM_HEC_PID}" 2>/dev/null || true
         wait "${SIEM_HEC_PID}" 2>/dev/null || true
+    fi
+    if [[ -n "${SIEM_HEC2_PID}" ]] && kill -0 "${SIEM_HEC2_PID}" 2>/dev/null; then
+        info "stopping SIEM HEC2 receiver (PID ${SIEM_HEC2_PID})"
+        kill "${SIEM_HEC2_PID}" 2>/dev/null || true
+        wait "${SIEM_HEC2_PID}" 2>/dev/null || true
     fi
     if [[ -n "${SERVE_PID}" ]] && kill -0 "${SERVE_PID}" 2>/dev/null; then
         info "stopping serve (PID ${SERVE_PID})"
@@ -443,6 +456,32 @@ until curl -sf "http://127.0.0.1:${SIEM_HEC_PORT}/" >/dev/null 2>&1; do
     sleep 0.2
 done
 info "SIEM HEC receiver PID ${SIEM_HEC_PID}; record at ${SIEM_HEC_LOG}"
+
+step "step 5b''/6 — spawn second SIEM HEC receiver on :${SIEM_HEC2_PORT} (for F5.3-d-ii-dispatch)"
+rm -f "${SIEM_HEC2_LOG}"
+# Pre-touch the JSONL so the harness's `wc -l < $log` snapshot
+# doesn't emit a "No such file or directory" before the first POST
+# lands. The receiver appends on every event; an empty file is the
+# correct zero baseline.
+: > "${SIEM_HEC2_LOG}"
+python3 "$(dirname "$0")/e2e-siem-hec-receiver.py" "${SIEM_HEC2_PORT}" "${SIEM_HEC2_LOG}" \
+    > /tmp/ministr-e2e-siem-hec2-stdout.log 2>&1 &
+SIEM_HEC2_PID=$!
+attempts=0
+until curl -sf "http://127.0.0.1:${SIEM_HEC2_PORT}/" >/dev/null 2>&1; do
+    attempts=$((attempts + 1))
+    if ! kill -0 "${SIEM_HEC2_PID}" 2>/dev/null; then
+        echo "SIEM HEC2 receiver crashed during boot — log tail:" >&2
+        tail -10 /tmp/ministr-e2e-siem-hec2-stdout.log >&2
+        exit 1
+    fi
+    if [[ "${attempts}" -gt 25 ]]; then
+        echo "SIEM HEC2 receiver didn't reach :${SIEM_HEC2_PORT} in 5s" >&2
+        exit 1
+    fi
+    sleep 0.2
+done
+info "SIEM HEC2 receiver PID ${SIEM_HEC2_PID}; record at ${SIEM_HEC2_LOG}"
 
 step "step 5c/6 — spawn mock OIDC IdP on :${OIDC_MOCK_PORT}"
 # F5.2-c — generate an RSA-2048 keypair the mock IdP uses to sign ID
@@ -1741,8 +1780,81 @@ EOF
     # GET after DELETE → 404.
     curl_request GET "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/siem/config" "${TOKEN_A}"
     assert_status "${RESPONSE_STATUS}" "404" "GET /siem/config after DELETE → 404"
+
+    # 27) **F5.3-d-ii-dispatch — per-org SIEM dispatcher routes
+    #     ORG_ID_A's events to a different HEC endpoint.** The F5.3-d-i
+    #     global sink fires for every event (receiver-1 on :${SIEM_HEC_PORT});
+    #     the F5.3-d-ii-dispatch per-org sink also fires when the org
+    #     has a config row in org_siem_configs. Wire the second
+    #     receiver via the F5.3-d-ii-config CRUD, trigger one fresh
+    #     org-scoped audit emission, verify the second receiver lands ≥1
+    #     event with the per-org token.
+    info "F5.3-d-ii-dispatch: per-org SIEM dispatcher routes ORG_ID_A events"
+    # Re-create the row via the CRUD endpoint pointing at receiver-2.
+    SIEM_PERORG_BODY=$(cat <<EOF
+{"kind":"splunk_hec","endpoint_url":"http://127.0.0.1:${SIEM_HEC2_PORT}/services/collector/event","token":"${SIEM_HEC2_TOKEN}","enabled":true}
+EOF
+)
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/siem/config" "${TOKEN_A}" "${SIEM_PERORG_BODY}"
+    assert_status "${RESPONSE_STATUS}" "200" "POST per-org SIEM config (HEC2 endpoint) → 200"
+
+    # Snapshot receiver-2's current line count BEFORE the audit trigger
+    # so we can detect the delta even if anything leaked through earlier.
+    HEC2_PRE=$(wc -l < "${SIEM_HEC2_LOG}" 2>/dev/null | tr -d ' ' || echo 0)
+
+    # Trigger one fresh org-scoped audit emission. POSTing an invite
+    # for ORG_ID_A fires `invite.created` audit (F3.7a sub-bullet) with
+    # `with_org(ORG_ID_A)` — so the per-org dispatcher sees org_id =
+    # ORG_ID_A and routes to receiver-2.
+    INVITE_PERORG='{"email":"perorg-test@e2e.test"}'
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/invites" "${TOKEN_A}" "${INVITE_PERORG}"
+    # 201 expected (matches F3.7a's create-invite response code).
+    if [[ "${RESPONSE_STATUS}" == "201" || "${RESPONSE_STATUS}" == "200" ]]; then
+        pass "POST /invites fires org-scoped audit (HTTP ${RESPONSE_STATUS})"
+    else
+        fail "POST /invites for ORG_ID_A — expected 201/200, got ${RESPONSE_STATUS}"
+    fi
+
+    # Poll receiver-2 for the new event. Fire-and-forget spawn means
+    # the delivery races the assertion; allow up to 6s.
+    HEC2_WAIT=0
+    while true; do
+        HEC2_NOW=$(wc -l < "${SIEM_HEC2_LOG}" 2>/dev/null | tr -d ' ' || echo 0)
+        if [[ "${HEC2_NOW}" -gt "${HEC2_PRE}" ]]; then
+            break
+        fi
+        HEC2_WAIT=$((HEC2_WAIT + 1))
+        if [[ "${HEC2_WAIT}" -gt 30 ]]; then
+            break
+        fi
+        sleep 0.2
+    done
+    HEC2_POST=$(wc -l < "${SIEM_HEC2_LOG}" 2>/dev/null | tr -d ' ' || echo 0)
+    if [[ "${HEC2_POST}" -gt "${HEC2_PRE}" ]]; then
+        pass "receiver-2 got ≥1 new event (pre=${HEC2_PRE}, post=${HEC2_POST})"
+    else
+        fail "no new events at receiver-2 after 6s (pre=${HEC2_PRE}, post=${HEC2_POST}) — per-org dispatch may not be wired"
+    fi
+
+    # Inspect the most-recently-arrived row at receiver-2: token must
+    # match the per-org one (proving the dispatch built a fresh
+    # SplunkHecSink from the configured row, not the global env-var
+    # sink).
+    HEC2_LAST=$(tail -n1 "${SIEM_HEC2_LOG}" 2>/dev/null || echo '{}')
+    HEC2_AUTH=$(printf '%s' "${HEC2_LAST}" | jq -r '.auth // empty')
+    if [[ "${HEC2_AUTH}" == "Splunk ${SIEM_HEC2_TOKEN}" ]]; then
+        pass "receiver-2 Authorization carries the per-org token (not the global env-var token)"
+    else
+        fail "receiver-2 auth header expected 'Splunk ${SIEM_HEC2_TOKEN}', got '${HEC2_AUTH:0:80}'"
+    fi
+    HEC2_ORG=$(printf '%s' "${HEC2_LAST}" | jq -r '.body | fromjson | .event.org_id // empty' 2>/dev/null)
+    if [[ "${HEC2_ORG}" == "${ORG_ID_A}" ]]; then
+        pass "receiver-2 event.org_id == ORG_ID_A (per-org routing locked to caller's org)"
+    else
+        fail "receiver-2 event.org_id expected ${ORG_ID_A}, got '${HEC2_ORG}'"
+    fi
 else
-    note "skipped F5.3-d-ii-config CRUD assertions — ORG_ID_A not captured"
+    note "skipped F5.3-d-ii-config + F5.3-d-ii-dispatch — ORG_ID_A not captured"
 fi
 
 # ─── summary ──────────────────────────────────────────────────────────
