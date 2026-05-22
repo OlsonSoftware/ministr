@@ -2345,6 +2345,92 @@ else
     note "skipped F5.3-d-ii-config + F5.3-d-ii-dispatch + F5.3-d-iii-a + F5.3-d-iii-c + F5.3-d-iii-c-udp + F5.3-d-iii-b-shim + F5.3-d-iii-b-dispatch — ORG_ID_A not captured"
 fi
 
+# 33) **F5.3-b — REVOKE for audit_events immutability.** The
+#     `ministr_audit_runtime` role created by migration 0015 has
+#     INSERT+SELECT only on audit_events (parent + children). Under
+#     `SET LOCAL ROLE ministr_audit_runtime` a DELETE returns
+#     "permission denied for table audit_events", while INSERT +
+#     SELECT continue to work. Production cutover (cloud serve
+#     connects as this role) lands in F5.3-b-deploy via Pulumi.
+info "F5.3-b: REVOKE locks DELETE/UPDATE under ministr_audit_runtime"
+
+# Verify the role exists (sanity check; the migration runs at every
+# serve boot, so failure here would mean the migration itself
+# regressed).
+ROLE_EXISTS=$(docker compose -f docker-compose.dev.yml exec -T postgres \
+    psql -U ministr -d ministr_dev -tA \
+    -c "SELECT 1 FROM pg_roles WHERE rolname='ministr_audit_runtime';" \
+    2>/dev/null | tr -d ' \r\n')
+if [[ "${ROLE_EXISTS}" == "1" ]]; then
+    pass "ministr_audit_runtime role exists (migration 0015 applied)"
+else
+    fail "ministr_audit_runtime role missing — migration 0015 didn't apply"
+fi
+
+# DELETE under the constrained role should fail.
+# Note: psql exits non-zero on any per-statement error even with
+# ON_ERROR_STOP=0 (the flag controls processing continuation, not
+# exit status). The harness runs under `set -e`, so we trail with
+# `|| true` to capture-and-inspect rather than abort the script.
+DELETE_OUT=$(docker compose -f docker-compose.dev.yml exec -T postgres \
+    psql -U ministr -d ministr_dev \
+    -c "BEGIN; SET LOCAL ROLE ministr_audit_runtime; DELETE FROM audit_events; ROLLBACK;" \
+    2>&1 || true)
+if printf '%s' "${DELETE_OUT}" | grep -q "permission denied for table audit_events"; then
+    pass "DELETE under SET ROLE ministr_audit_runtime → permission denied (immutability locked)"
+else
+    fail "DELETE under SET ROLE didn't get permission denied; output: $(printf '%s' "${DELETE_OUT}" | head -c 200)"
+fi
+
+# UPDATE under the constrained role should also fail.
+UPDATE_OUT=$(docker compose -f docker-compose.dev.yml exec -T postgres \
+    psql -U ministr -d ministr_dev \
+    -c "BEGIN; SET LOCAL ROLE ministr_audit_runtime; UPDATE audit_events SET action='hacked' WHERE id IN (SELECT id FROM audit_events LIMIT 1); ROLLBACK;" \
+    2>&1 || true)
+if printf '%s' "${UPDATE_OUT}" | grep -q "permission denied for table audit_events"; then
+    pass "UPDATE under SET ROLE ministr_audit_runtime → permission denied"
+else
+    fail "UPDATE under SET ROLE didn't get permission denied; output: $(printf '%s' "${UPDATE_OUT}" | head -c 200)"
+fi
+
+# SELECT under the constrained role must still succeed (otherwise
+# the cloud serve's audit-list endpoint would 500 once it connects
+# as the constrained role in production).
+SELECT_OUT=$(docker compose -f docker-compose.dev.yml exec -T postgres \
+    psql -U ministr -d ministr_dev -tA \
+    -c "BEGIN; SET LOCAL ROLE ministr_audit_runtime; SELECT count(*) FROM audit_events; ROLLBACK;" \
+    2>&1 || true)
+# Extract the numeric count line — between BEGIN/SET/COMMIT noise
+# the SELECT result is a single numeric line. Grep for it.
+SELECT_COUNT=$(printf '%s' "${SELECT_OUT}" | grep -E '^[0-9]+$' | head -n1)
+if [[ -n "${SELECT_COUNT}" ]]; then
+    pass "SELECT under SET ROLE ministr_audit_runtime → succeeds (count=${SELECT_COUNT})"
+else
+    fail "SELECT under SET ROLE failed; output: $(printf '%s' "${SELECT_OUT}" | head -c 200)"
+fi
+
+# Verify a child partition has the same REVOKE/GRANT shape (parent
+# grants do NOT cascade to existing children in PG; the migration
+# walked pg_inherits to apply grants explicitly).
+CHILD_DELETE_PRIV=$(docker compose -f docker-compose.dev.yml exec -T postgres \
+    psql -U ministr -d ministr_dev -tA \
+    -c "SELECT has_table_privilege('ministr_audit_runtime', 'audit_events_y2026q2', 'DELETE');" \
+    2>/dev/null | tr -d ' \r\n')
+if [[ "${CHILD_DELETE_PRIV}" == "f" ]]; then
+    pass "child partition audit_events_y2026q2 also has DELETE revoked (migration walked pg_inherits)"
+else
+    fail "child partition unexpectedly has DELETE privilege: '${CHILD_DELETE_PRIV}'"
+fi
+CHILD_INSERT_PRIV=$(docker compose -f docker-compose.dev.yml exec -T postgres \
+    psql -U ministr -d ministr_dev -tA \
+    -c "SELECT has_table_privilege('ministr_audit_runtime', 'audit_events_y2026q2', 'INSERT');" \
+    2>/dev/null | tr -d ' \r\n')
+if [[ "${CHILD_INSERT_PRIV}" == "t" ]]; then
+    pass "child partition audit_events_y2026q2 has INSERT granted"
+else
+    fail "child partition unexpectedly missing INSERT privilege: '${CHILD_INSERT_PRIV}'"
+fi
+
 # ─── summary ──────────────────────────────────────────────────────────
 
 echo
