@@ -409,6 +409,38 @@ done
 info "receiver PID ${RECEIVER_PID}; record at ${RECEIVER_LOG}"
 
 step "step 5c/6 — spawn mock OIDC IdP on :${OIDC_MOCK_PORT}"
+# F5.2-c — generate an RSA-2048 keypair the mock IdP uses to sign ID
+# tokens. The cloud's /oidc/callback fetches JWKS from the IdP and
+# uses the public key to verify the JWT signature. Regenerated on
+# every harness run (no need to persist; the cache is in-process on
+# the openidconnect side).
+OIDC_KEY_DIR="${OIDC_KEY_DIR:-/tmp/ministr-e2e-oidc-keys-${RUN_TS}}"
+mkdir -p "${OIDC_KEY_DIR}"
+openssl genrsa -out "${OIDC_KEY_DIR}/private.pem" 2048 2>/dev/null
+openssl rsa -in "${OIDC_KEY_DIR}/private.pem" -pubout -out "${OIDC_KEY_DIR}/public.pem" 2>/dev/null
+# JWKS requires the modulus + exponent as base64url-encoded big-endian
+# integers without padding. openssl emits the modulus as hex prefixed
+# by "Modulus=" and the exponent as a separate line; for RSA-2048 with
+# the OpenSSL default `e=0x010001` (65537) the JWK exponent is "AQAB".
+OIDC_MODULUS_HEX=$(openssl rsa -pubin -in "${OIDC_KEY_DIR}/public.pem" -modulus -noout 2>/dev/null | sed 's/^Modulus=//')
+OIDC_JWK_N=$(python3 -c "
+import base64, sys
+hex_s = sys.argv[1]
+# Strip any leading 0x00 the way openssl sometimes emits for
+# top-bit-set moduli — the JWK spec wants no leading zero bytes.
+b = bytes.fromhex(hex_s)
+if b[:1] == b'\\x00':
+    b = b[1:]
+print(base64.urlsafe_b64encode(b).rstrip(b'=').decode())
+" "${OIDC_MODULUS_HEX}")
+export OIDC_PRIVATE_KEY_PATH="${OIDC_KEY_DIR}/private.pem"
+export OIDC_JWK_N
+export OIDC_JWK_E="AQAB"
+export OIDC_JWK_KID="e2e-key"
+export OIDC_FIXED_EMAIL="oidc-test@e2e.test"
+export OIDC_FIXED_SUBJECT="e2e-subject-1"
+export OIDC_FIXED_CLIENT_ID="e2e-client"
+info "OIDC RSA keypair at ${OIDC_KEY_DIR}; JWK n len=${#OIDC_JWK_N}"
 python3 "$(dirname "$0")/e2e-oidc-mock-idp.py" "${OIDC_MOCK_PORT}" \
     > /tmp/ministr-e2e-oidc-mock.log 2>&1 &
 OIDC_MOCK_PID=$!
@@ -1083,8 +1115,89 @@ if [[ -n "${ORG_ID_A}" ]]; then
     else
         fail "login Location malformed: '${OIDC_LOC:0:200}'"
     fi
+
+    # 17) **F5.2-c — OIDC callback exchanges code → bearer.** Drive
+    #     the full auth-code grant:
+    #       (a) follow the /oidc/login redirect to the mock IdP
+    #           /authorize — it auto-approves and 302s back to the
+    #           cloud's /oidc/callback?code=&state= with the same
+    #           state we minted at /oidc/login.
+    #       (b) follow that callback — the cloud exchanges the code
+    #           at the mock IdP's /token (using the saved PKCE
+    #           verifier), validates the ID token's signature against
+    #           the mock IdP's JWKS, upserts a users row keyed on
+    #           OIDC_FIXED_EMAIL, mints a bearer via OAuthStore, and
+    #           returns JSON {token, user_id, plan_id}.
+    #       (c) the returned bearer authenticates against the real
+    #           tenant-scoped /api/v1/corpora endpoint — proves the
+    #           OIDC bearer is indistinguishable from a GitHub one.
+    info "F5.2-c: OIDC auth-code grant → bearer mint → tenant-scoped API access"
+    # Step (a): drive /oidc/login to mint a fresh pending-login
+    # state, capture the IdP /authorize URL the cloud redirects to.
+    # The earlier F5.2-b assertions already consumed previous states
+    # so we start fresh here.
+    # macOS BSD awk ignores `BEGIN{IGNORECASE=1}`, so use the
+    # tolower($1)=="location:" form everywhere the upstream header
+    # case may vary. axum (cloud) emits lowercase; Python's
+    # BaseHTTPRequestHandler (mock IdP) emits "Location:".
+    OIDC_AUTHZ_LOC=$(curl -sS --max-time 5 -D - -o /dev/null \
+        "${ENDPOINT}/orgs/${ORG_ID_A}/oidc/login" \
+        | awk 'tolower($1)=="location:" {sub(/^[^:]+: /,""); print; exit}' \
+        | tr -d '\r\n')
+    if [[ -z "${OIDC_AUTHZ_LOC}" ]]; then
+        fail "F5.2-c: no Location returned from /oidc/login (refreshed flow)"
+    else
+        # Step (b): hit the mock IdP /authorize. It immediately
+        # 302s back to the cloud's /oidc/callback with `code` + the
+        # original `state`. Use -G with --data-urlencode to avoid
+        # bash double-escaping the URL params.
+        OIDC_AUTHZ_HEADERS=$(curl -sS --max-time 5 -D - -o /tmp/ministr-e2e-oidc-authz.body \
+            "${OIDC_AUTHZ_LOC}")
+        OIDC_AUTHZ_STATUS=$(printf '%s' "${OIDC_AUTHZ_HEADERS}" | awk 'NR==1 {print $2}')
+        OIDC_CALLBACK_LOC=$(printf '%s' "${OIDC_AUTHZ_HEADERS}" | awk 'tolower($1)=="location:" {sub(/^[^:]+: /,""); print; exit}' | tr -d '\r\n')
+        if [[ "${OIDC_CALLBACK_LOC}" == "${ENDPOINT}/orgs/${ORG_ID_A}/oidc/callback?"* ]]; then
+            pass "mock IdP /authorize redirects to cloud /oidc/callback with code+state"
+        else
+            fail "mock IdP /authorize redirect malformed (HTTP ${OIDC_AUTHZ_STATUS}): '${OIDC_CALLBACK_LOC:0:200}'"
+            info "  /authorize URL was: ${OIDC_AUTHZ_LOC:0:200}…"
+            info "  /authorize headers tail: $(printf '%s' "${OIDC_AUTHZ_HEADERS}" | tail -5)"
+        fi
+        # Step (b): hit the cloud's callback. JSON body carries the
+        # bearer.
+        OIDC_CB_OUT=$(curl -sS --max-time 10 -w '\n%{http_code}' "${OIDC_CALLBACK_LOC}")
+        OIDC_CB_STATUS=$(printf '%s' "${OIDC_CB_OUT}" | tail -n1)
+        OIDC_CB_BODY=$(printf '%s' "${OIDC_CB_OUT}" | sed '$d')
+        if [[ "${OIDC_CB_STATUS}" == "200" ]]; then
+            pass "GET /orgs/{id}/oidc/callback → 200 (HTTP 200)"
+        else
+            fail "GET /orgs/{id}/oidc/callback — expected 200, got ${OIDC_CB_STATUS} · body=${OIDC_CB_BODY:0:300}"
+        fi
+        OIDC_BEARER=$(printf '%s' "${OIDC_CB_BODY}" | jq -r '.token // empty')
+        OIDC_USER_ID=$(printf '%s' "${OIDC_CB_BODY}" | jq -r '.user_id // empty')
+        OIDC_PLAN_ID=$(printf '%s' "${OIDC_CB_BODY}" | jq -r '.plan_id // empty')
+        if [[ -n "${OIDC_BEARER}" && -n "${OIDC_USER_ID}" ]]; then
+            pass "callback JSON carries non-empty token + user_id (plan=${OIDC_PLAN_ID})"
+        else
+            fail "callback JSON missing token or user_id: '${OIDC_CB_BODY:0:300}'"
+        fi
+        # Step (c): use the OIDC-minted bearer against /api/v1/corpora.
+        # 200 = bearer authenticates; the empty corpora list for this
+        # fresh OIDC user is expected.
+        if [[ -n "${OIDC_BEARER}" ]]; then
+            curl_request GET "${ENDPOINT}/api/v1/corpora" "${OIDC_BEARER}"
+            assert_status "${RESPONSE_STATUS}" "200" "OIDC-minted bearer authenticates against /api/v1/corpora"
+        fi
+        # Audit trail: F5.2-c emits an `oidc.login` row. Query
+        # audit_events to prove the audit pipeline fired.
+        AUDIT_COUNT=$(psql_count "SELECT count(*) FROM audit_events WHERE action='oidc.login';")
+        if [[ "${AUDIT_COUNT}" -ge "1" ]]; then
+            pass "audit_events contains an oidc.login row (count=${AUDIT_COUNT})"
+        else
+            fail "no oidc.login row in audit_events (count=${AUDIT_COUNT}) — audit sink may not be wired"
+        fi
+    fi
 else
-    note "skipped F5.2-b OIDC assertions — ORG_ID_A not captured"
+    note "skipped F5.2-b/c OIDC assertions — ORG_ID_A not captured"
 fi
 
 # ─── summary ──────────────────────────────────────────────────────────

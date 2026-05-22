@@ -183,6 +183,96 @@ pub async fn set_stripe_customer_id(
     Ok(())
 }
 
+/// Default plan assigned to brand-new OIDC sign-ins. Mirrors the GitHub
+/// default for the same reason: cloud has no free tier, so every first-
+/// time user lands on `pro`. F5.2-d will add a `group_role_map` column
+/// that lets the OIDC callback override this from the `IdP`'s `groups`
+/// claim; until then the default holds.
+pub const DEFAULT_OIDC_SIGNIN_PLAN: &str = "pro";
+
+/// Insert-or-update the `users` row for an OIDC sign-in, keyed by
+/// `email`. Returns the persisted row.
+///
+/// **v0 limitation — email-keyed federation.** The users table predates
+/// OIDC and has no `(issuer, subject)` column; the only stable unique
+/// key shared between `IdPs` is `email`. Two different `IdPs` claiming
+/// the same email federate into one ministr user — acceptable for v0
+/// because (a) enterprise customers typically run ONE `IdP` for a given
+/// org, and (b) per-org SAML/OIDC config rows (F5.1, F5.2) anchor the
+/// trust boundary to the org, not the user. A future schema migration
+/// can introduce `(issuer, subject)` as a stronger key and migrate
+/// existing rows by setting `(github.com, github_id)` for the
+/// GitHub-`IdP` path. Until then, an email collision across `IdPs` is
+/// the documented behaviour.
+///
+/// On first INSERT the row is seeded with [`DEFAULT_OIDC_SIGNIN_PLAN`]
+/// and `github_id = NULL` (the row has no GitHub identity even if a
+/// future GitHub sign-in with the same email could exist).
+/// On UPDATE neither `plan_id` nor `github_id` is touched — billing is
+/// the authoritative writer for `plan_id`, and an existing GitHub-side
+/// `github_id` must not be unset by an OIDC sign-in for the same email.
+///
+/// # Errors
+///
+/// - [`UserError::MissingField`] when `email` is empty (the OIDC `IdP`
+///   didn't return a verified email — caller should surface a clearer
+///   error to the user rather than auto-creating a row with `""`).
+/// - [`UserError::GetConn`] / [`UserError::Sql`] when Postgres is
+///   unreachable or rejects the statement.
+pub async fn upsert_oidc_user(pool: &Pool, email: &str) -> Result<UserRow, UserError> {
+    if email.is_empty() {
+        return Err(UserError::MissingField("email"));
+    }
+    let conn = pool
+        .get()
+        .await
+        .map_err(|e| UserError::GetConn(format!("upsert_oidc_user: {e}")))?;
+
+    // `ON CONFLICT (email) DO UPDATE` is a self-assignment dance: we
+    // need to RETURNING the row regardless of insert-vs-update, and
+    // `DO NOTHING` would return zero rows on conflict. The self-
+    // assignments preserve both `plan_id` (billing's territory) and
+    // `github_id` (GitHub-side identity not unset by OIDC). `xmax = 0`
+    // discriminates fresh INSERT (true) vs conflict-UPDATE (false).
+    let row = conn
+        .query_one(
+            "INSERT INTO users (email, plan_id)
+             VALUES ($1, $2)
+             ON CONFLICT (email) DO UPDATE
+                 SET plan_id = users.plan_id,
+                     github_id = users.github_id
+             RETURNING id::text AS id_text, email, github_id, plan_id,
+                       (xmax = 0) AS inserted",
+            &[&email, &DEFAULT_OIDC_SIGNIN_PLAN],
+        )
+        .await
+        .map_err(|e| UserError::Sql(format!("upsert_oidc_user: {e}")))?;
+
+    let id: String = row
+        .try_get("id_text")
+        .map_err(|e| UserError::Sql(format!("read id: {e}")))?;
+    let email_out: String = row
+        .try_get("email")
+        .map_err(|e| UserError::Sql(format!("read email: {e}")))?;
+    let github_id_out: Option<i64> = row
+        .try_get("github_id")
+        .map_err(|e| UserError::Sql(format!("read github_id: {e}")))?;
+    let plan_id: String = row
+        .try_get("plan_id")
+        .map_err(|e| UserError::Sql(format!("read plan_id: {e}")))?;
+    let inserted: bool = row
+        .try_get("inserted")
+        .map_err(|e| UserError::Sql(format!("read inserted: {e}")))?;
+
+    Ok(UserRow {
+        id,
+        email: email_out,
+        github_id: github_id_out,
+        plan_id,
+        inserted,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     //! Integration tests require a real Postgres at `MINISTR_TEST_PG_URL`
