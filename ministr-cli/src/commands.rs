@@ -1023,11 +1023,11 @@ pub(crate) async fn cmd_serve_http(
             // hit BOTH the operator's central SIEM AND the customer's
             // configured endpoint.
             {
-                let per_org = ministr_cloud::PerOrgSplunkHecDispatcher::new(
+                let per_org = ministr_cloud::PerOrgSiemDispatcher::new(
                     Arc::clone(pool),
                 );
                 audit_sinks.push(Arc::new(per_org));
-                chain_desc.push_str(" → PerOrgSplunkHecDispatcher");
+                chain_desc.push_str(" → PerOrgSiemDispatcher");
             }
             let audit_sink: Arc<dyn ministr_api::AuditSink> = if audit_sinks.len() == 1 {
                 tracing::info!(chain = %chain_desc, "audit pipeline wired");
