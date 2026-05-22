@@ -1157,16 +1157,27 @@ pub(crate) async fn cmd_serve_http(
                     "saml SP routes mounted — GET /orgs/{{id}}/saml/metadata.xml + /login"
                 );
             }
-            // F5.2-b — OIDC RP login endpoint. Public route
-            // (browser-initiated; IdP doesn't carry bearer tokens).
-            // F5.2-c will add the matching /oidc/callback handler.
+            // F5.2-b/c — OIDC RP login + callback endpoints. Public
+            // routes (browser-initiated; IdP doesn't carry bearer
+            // tokens). The callback handler is wired to the same
+            // `OAuthStore` the GitHub flow uses (bearer tokens
+            // indistinguishable downstream), the cloud base URL (so
+            // the `redirect_uri` the IdP sees matches what's
+            // registered for the Relying Party), and the audit sink
+            // (so `oidc.login` events flow through the same pipeline
+            // as `member.added` / `share.granted`).
             {
-                let oidc_router = ministr_cloud::oidc_routes(
-                    ministr_cloud::OidcState::new(Arc::clone(pool)),
-                );
+                let mut oidc_state = ministr_cloud::OidcState::new(Arc::clone(pool))
+                    .with_oauth_store(store.clone())
+                    .with_audit(Arc::clone(&audit_sink));
+                if let Some(base_url) = cloud_env.cloud_base_url.as_ref() {
+                    oidc_state = oidc_state.with_cloud_base_url(base_url.clone());
+                }
+                let oidc_router = ministr_cloud::oidc_routes(oidc_state);
                 composed = composed.merge(oidc_router);
                 tracing::info!(
-                    "oidc RP routes mounted — GET /orgs/{{id}}/oidc/login"
+                    cloud_base_url_set = cloud_env.cloud_base_url.is_some(),
+                    "oidc RP routes mounted — GET /orgs/{{id}}/oidc/{{login,callback}}"
                 );
             }
             // F1.3 sub-bullet — GitHub sign-in flow. Mounted when the
