@@ -295,11 +295,13 @@ pub async fn transfer_corpus_to_org(
         return Ok(TransferOutcome::NotOwner);
     }
 
-    // Re-stamp tenant_id to the org's UUID. The COALESCE on later
-    // upserts (F2.x-d) leaves this stable across boot-time
-    // `restore()` calls.
+    // Re-stamp tenant_id to the org's UUID string. `cloud_corpora.tenant_id`
+    // is TEXT (migration 0003), so the assignment is TEXT = TEXT — no
+    // cast needed. An earlier sweep wrongly applied `::text::uuid` here
+    // (and broke this UPDATE because the column rejects UUID values).
+    // Surfaced by F-Test-1.
     tx.execute(
-        "UPDATE cloud_corpora SET tenant_id = $1::text::uuid WHERE corpus_id = $2",
+        "UPDATE cloud_corpora SET tenant_id = $1 WHERE corpus_id = $2",
         &[&target_org_id, &corpus_id],
     )
     .await
