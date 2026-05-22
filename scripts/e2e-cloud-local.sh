@@ -42,6 +42,11 @@ CONFIG_PATH="${CONFIG_PATH:-/tmp/ministr-e2e-config-${RUN_TS}.toml}"
 BLOB_ROOT="${BLOB_ROOT:-/tmp/ministr-e2e-blobs-${RUN_TS}}"
 SERVE_LOG="${SERVE_LOG:-/tmp/ministr-e2e-serve.log}"
 KEEP="${KEEP:-0}"
+# F-Test-2 — webhook fan-out receiver. Spawned as a sidecar; records
+# every incoming POST (headers + body) to RECEIVER_LOG so the harness
+# can assert delivery + verify the HMAC signature.
+RECEIVER_PORT="${RECEIVER_PORT:-8089}"
+RECEIVER_LOG="${RECEIVER_LOG:-/tmp/ministr-e2e-webhook-receiver-${RUN_TS}.jsonl}"
 
 C_BOLD='\033[1m'
 C_CYAN='\033[36m'
@@ -60,10 +65,11 @@ note() { printf "  ${C_YELLOW}!${C_RESET}  %s\n" "$*"; }
 PASS_COUNT=0
 FAIL_COUNT=0
 SERVE_PID=""
+RECEIVER_PID=""
 
 # Bail on missing tooling early — the failure mode otherwise is a
 # cryptic curl/jq error 200 lines into the script.
-for cmd in docker curl jq openssl cargo; do
+for cmd in docker curl jq openssl cargo python3; do
     if ! command -v "${cmd}" >/dev/null 2>&1; then
         echo "ERROR: required tool '${cmd}' not on PATH" >&2
         exit 2
@@ -73,12 +79,17 @@ done
 cleanup() {
     if [[ "${KEEP}" == "1" ]]; then
         echo
-        info "KEEP=1 — leaving Postgres + serve (PID ${SERVE_PID:-?}) running."
-        info "  kill ${SERVE_PID:-?}; just dev-cloud-down"
+        info "KEEP=1 — leaving Postgres + serve (PID ${SERVE_PID:-?}) + receiver (PID ${RECEIVER_PID:-?}) running."
+        info "  kill ${SERVE_PID:-?} ${RECEIVER_PID:-?}; just dev-cloud-down"
         return
     fi
     echo
     step "cleanup"
+    if [[ -n "${RECEIVER_PID}" ]] && kill -0 "${RECEIVER_PID}" 2>/dev/null; then
+        info "stopping webhook receiver (PID ${RECEIVER_PID})"
+        kill "${RECEIVER_PID}" 2>/dev/null || true
+        wait "${RECEIVER_PID}" 2>/dev/null || true
+    fi
     if [[ -n "${SERVE_PID}" ]] && kill -0 "${SERVE_PID}" 2>/dev/null; then
         info "stopping serve (PID ${SERVE_PID})"
         kill "${SERVE_PID}" 2>/dev/null || true
@@ -88,7 +99,7 @@ cleanup() {
     docker compose -f docker-compose.dev.yml down >/dev/null 2>&1 || true
     info "wiping per-run scratch (preserving model cache at ${DATA_DIR}/models)"
     rm -rf "${SAMPLE_DIR}" "${DATA_DIR}/corpora" "${DATA_DIR}/corpora.json" \
-        "${BLOB_ROOT}" "${CONFIG_PATH}" || true
+        "${BLOB_ROOT}" "${CONFIG_PATH}" "${RECEIVER_LOG}" || true
 }
 trap cleanup EXIT INT TERM
 
@@ -288,6 +299,28 @@ fi
 info "TOKEN_A=${TOKEN_A:0:12}…"
 info "TOKEN_B=${TOKEN_B:0:12}…"
 
+step "step 5b/6 — spawn webhook receiver on :${RECEIVER_PORT}"
+rm -f "${RECEIVER_LOG}"
+python3 "$(dirname "$0")/e2e-webhook-receiver.py" "${RECEIVER_PORT}" "${RECEIVER_LOG}" \
+    > /tmp/ministr-e2e-receiver.log 2>&1 &
+RECEIVER_PID=$!
+# Wait for the receiver to be listening (max 5s).
+attempts=0
+until curl -sf "http://127.0.0.1:${RECEIVER_PORT}/" >/dev/null 2>&1; do
+    attempts=$((attempts + 1))
+    if ! kill -0 "${RECEIVER_PID}" 2>/dev/null; then
+        echo "receiver crashed during boot — log tail:" >&2
+        tail -10 /tmp/ministr-e2e-receiver.log >&2
+        exit 1
+    fi
+    if [[ "${attempts}" -gt 25 ]]; then
+        echo "receiver didn't reach :${RECEIVER_PORT} in 5s" >&2
+        exit 1
+    fi
+    sleep 0.2
+done
+info "receiver PID ${RECEIVER_PID}; record at ${RECEIVER_LOG}"
+
 # ─── assertions ───────────────────────────────────────────────────────
 
 step "step 6/6 — assertions"
@@ -369,6 +402,78 @@ if [[ -n "${ORG_ID_A}" ]]; then
     assert_jq "${RESPONSE_BODY}" '.role' "owner" "tenant A is owner of new org"
 else
     fail "tenant A org id missing in response"
+fi
+
+# 6b) **F-Test-2 — webhook fan-out e2e.** Tenant A subscribes the
+#     local Python receiver to their org. Triggering an `invite.created`
+#     audit event fires the F3.5b-i ChainedAuditSink which posts the
+#     event to the receiver with an `X-Ministr-Signature: sha256=<hex>`
+#     header. The harness recomputes HMAC-SHA256(secret, ts + "." + body)
+#     and asserts equality.
+if [[ -n "${ORG_ID_A}" ]]; then
+    RECEIVER_URL="http://127.0.0.1:${RECEIVER_PORT}/hook"
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/webhooks" "${TOKEN_A}" \
+        "$(printf '{"url":"%s","event_filter":"*"}' "${RECEIVER_URL}")"
+    if [[ "${RESPONSE_STATUS}" == "200" || "${RESPONSE_STATUS}" == "201" ]]; then
+        pass "tenant A POST /orgs/{id}/webhooks (HTTP ${RESPONSE_STATUS})"
+    else
+        fail "tenant A POST /webhooks — expected 200/201, got ${RESPONSE_STATUS} · body=${RESPONSE_BODY:0:200}"
+    fi
+    WEBHOOK_SECRET=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.secret // empty')
+    if [[ -n "${WEBHOOK_SECRET}" ]]; then
+        pass "webhook secret returned by create endpoint"
+    else
+        fail "webhook secret missing — body=${RESPONSE_BODY:0:200}"
+    fi
+
+    # Trigger an audit event with org_id set. invite.created hits the
+    # F3.5b-i fan-out (skips events with org_id IS NULL).
+    INVITE_BODY='{"email":"e2e-invitee@e2e.test","role":"member"}'
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/invites" "${TOKEN_A}" "${INVITE_BODY}"
+    if [[ "${RESPONSE_STATUS}" == "200" || "${RESPONSE_STATUS}" == "201" ]]; then
+        pass "tenant A POST /orgs/{id}/invites (HTTP ${RESPONSE_STATUS}) — triggers invite.created"
+    else
+        fail "tenant A POST /invites — got ${RESPONSE_STATUS} · body=${RESPONSE_BODY:0:200}"
+    fi
+
+    # Poll the receiver's record file for an invite.created delivery
+    # (max ~6s — fan-out is spawn-tokio + 1 HTTP round-trip). Each
+    # record's `.body` is a JSON-encoded string containing the actual
+    # webhook payload; `fromjson` walks back into it to read `.event`.
+    DELIVERED=""
+    attempts=0
+    while [[ "${attempts}" -lt 30 && -z "${DELIVERED}" ]]; do
+        if [[ -s "${RECEIVER_LOG}" ]]; then
+            DELIVERED=$(jq -c \
+                'select((.body | fromjson | .event) == "invite.created")' \
+                "${RECEIVER_LOG}" 2>/dev/null | head -1 || true)
+        fi
+        attempts=$((attempts + 1))
+        sleep 0.2
+    done
+    if [[ -n "${DELIVERED}" && -n "${WEBHOOK_SECRET}" ]]; then
+        pass "receiver got invite.created delivery within 6s"
+
+        # Verify HMAC: openssl dgst with the captured secret should
+        # produce the same hex that landed in X-Ministr-Signature.
+        RECV_BODY=$(printf '%s' "${DELIVERED}" | jq -r '.body')
+        RECV_TS=$(printf '%s' "${DELIVERED}" | jq -r '.headers["x-ministr-timestamp"]')
+        RECV_SIG=$(printf '%s' "${DELIVERED}" | jq -r '.headers["x-ministr-signature"]')
+        # Sig header is `sha256=<hex>`; strip the prefix.
+        RECV_HEX="${RECV_SIG#sha256=}"
+        EXPECT_HEX=$(printf '%s.%s' "${RECV_TS}" "${RECV_BODY}" \
+            | openssl dgst -sha256 -hmac "${WEBHOOK_SECRET}" 2>/dev/null \
+            | awk '{print $NF}')
+        if [[ -n "${EXPECT_HEX}" && "${RECV_HEX}" == "${EXPECT_HEX}" ]]; then
+            pass "HMAC signature verifies (sha256(secret, ts + '.' + body) matches)"
+        else
+            fail "HMAC mismatch — expected=${EXPECT_HEX} got=${RECV_HEX} ts=${RECV_TS}"
+        fi
+    elif [[ -z "${DELIVERED}" ]]; then
+        fail "no invite.created delivery within 6s · receiver_log=$(wc -l < "${RECEIVER_LOG}" 2>/dev/null || echo 0) lines"
+    fi
+else
+    note "skipped F-Test-2 webhook scenario — ORG_ID_A not captured"
 fi
 
 # 7) tenant B's GET /orgs does NOT see A's org
