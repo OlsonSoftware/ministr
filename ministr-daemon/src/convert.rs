@@ -434,6 +434,7 @@ pub fn bridge_links_to_graph(
                 file: l.export_file.clone(),
                 lang: l.export_language.clone(),
                 line: l.export_line,
+                symbol_id: l.export_symbol_id.clone(),
             });
         }
         if seen.insert(to_id.clone()) {
@@ -443,6 +444,7 @@ pub fn bridge_links_to_graph(
                 file: l.import_file.clone(),
                 lang: l.import_language.clone(),
                 line: l.import_line,
+                symbol_id: l.import_symbol_id.clone(),
             });
         }
         edges.push(query::BridgeEdge {
@@ -534,6 +536,37 @@ mod tests {
         import_line: u32,
         confidence: f32,
     ) -> BridgeLinkDetail {
+        link_with_symbol_ids(
+            kind,
+            export_file,
+            export_symbol,
+            export_lang,
+            export_line,
+            None,
+            import_file,
+            import_symbol,
+            import_lang,
+            import_line,
+            None,
+            confidence,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)] // test helper — extended variant carrying optional symbol_ids for F3.6-c-ii-b assertions
+    fn link_with_symbol_ids(
+        kind: &str,
+        export_file: &str,
+        export_symbol: &str,
+        export_lang: &str,
+        export_line: u32,
+        export_symbol_id: Option<&str>,
+        import_file: &str,
+        import_symbol: &str,
+        import_lang: &str,
+        import_line: u32,
+        import_symbol_id: Option<&str>,
+        confidence: f32,
+    ) -> BridgeLinkDetail {
         BridgeLinkDetail {
             kind: kind.into(),
             confidence,
@@ -542,11 +575,13 @@ mod tests {
             export_symbol: export_symbol.into(),
             export_language: export_lang.into(),
             export_line,
+            export_symbol_id: export_symbol_id.map(str::to_owned),
             import_file: import_file.into(),
             import_binding_key: format!("{import_symbol}@{import_file}"),
             import_symbol: import_symbol.into(),
             import_language: import_lang.into(),
             import_line,
+            import_symbol_id: import_symbol_id.map(str::to_owned),
         }
     }
 
@@ -698,5 +733,79 @@ mod tests {
         assert_eq!(graph.nodes[1].label, "t1");
         assert_eq!(graph.nodes[2].label, "s2");
         assert_eq!(graph.nodes[3].label, "t2");
+    }
+
+    // ── F3.6-c-ii-b symbol_id flow ─────────────────────────────────
+
+    #[test]
+    fn symbol_id_flows_through_to_node_when_present() {
+        let links = vec![link_with_symbol_ids(
+            "tauri_command",
+            "src-tauri/src/main.rs",
+            "cloud_status",
+            "rust",
+            42,
+            Some("sym-src-tauri-main-cloud_status"),
+            "src/lib/cloudClient.ts",
+            "cloudStatus",
+            "typescript",
+            10,
+            Some("sym-src-lib-cloudClient-cloudStatus"),
+            0.95,
+        )];
+        let graph = bridge_links_to_graph(&links);
+        assert_eq!(graph.nodes.len(), 2);
+        assert_eq!(
+            graph.nodes[0].symbol_id.as_deref(),
+            Some("sym-src-tauri-main-cloud_status"),
+        );
+        assert_eq!(
+            graph.nodes[1].symbol_id.as_deref(),
+            Some("sym-src-lib-cloudClient-cloudStatus"),
+        );
+    }
+
+    #[test]
+    fn symbol_id_stays_none_when_link_lacks_resolution() {
+        // When the symbol indexer hadn't run on the file, the
+        // correlated subquery returns NULL → None on the Rust side
+        // → None on the wire shape. The graph still ships the node;
+        // F3.6-c-ii-c renders a "no source available" hint when
+        // symbol_id is missing.
+        let links = vec![link(
+            "pyo3", "src/exporter.rs", "handle_event", "rust", 10,
+            "pkg/__init__.py", "handle_event", "python", 5, 0.8,
+        )];
+        let graph = bridge_links_to_graph(&links);
+        assert_eq!(graph.nodes.len(), 2);
+        assert!(graph.nodes[0].symbol_id.is_none());
+        assert!(graph.nodes[1].symbol_id.is_none());
+    }
+
+    #[test]
+    fn one_side_resolved_other_side_unresolved() {
+        // Common in practice when one side is in a language the
+        // symbol indexer covers and the other isn't.
+        let links = vec![link_with_symbol_ids(
+            "ffi",
+            "rust-side.rs",
+            "exporter",
+            "rust",
+            7,
+            Some("sym-rust-side-exporter"),
+            "c-side.c",
+            "importer",
+            "c",
+            3,
+            None,
+            0.5,
+        )];
+        let graph = bridge_links_to_graph(&links);
+        assert_eq!(graph.nodes.len(), 2);
+        assert_eq!(
+            graph.nodes[0].symbol_id.as_deref(),
+            Some("sym-rust-side-exporter"),
+        );
+        assert!(graph.nodes[1].symbol_id.is_none());
     }
 }

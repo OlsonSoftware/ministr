@@ -60,6 +60,14 @@ export interface LiveBridgeNode {
    * uses it for the file substring filter.
    */
   file?: string;
+  /**
+   * F3.6-c-ii-b — symbol id when the bridge endpoint resolved to an
+   * indexed symbol. F3.6-c-ii-c hands this to `ministr_definition`
+   * to render the source code in the side panel. `undefined` when the
+   * symbol indexer hadn't covered the file (the side panel falls
+   * back to metadata-only display).
+   */
+  symbol_id?: string;
 }
 
 /** F3.6-b — wider edge type for the live interactive visualizer. */

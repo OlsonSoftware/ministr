@@ -2282,11 +2282,27 @@ impl Storage for SqliteStorage {
         let file_path = file_path.map(ToString::to_string);
         let kind = kind.map(ToString::to_string);
         self.with_conn(move |conn| {
+            // F3.6-c-ii-b — correlated subqueries resolve each
+            // endpoint to a matching `symbols.id` when one exists.
+            // Subqueries (rather than LEFT JOIN) avoid Cartesian
+            // duplication when multiple symbols share `(file, name)`
+            // (overloaded methods etc.); `LIMIT 1` picks one
+            // deterministically.
             let base = "
                 SELECT
                     bl.kind, bl.confidence,
                     ex.file_path, ex.binding_key, ex.symbol_name, ex.language, ex.line,
-                    im.file_path, im.binding_key, im.symbol_name, im.language, im.line
+                    (SELECT s.id FROM symbols s
+                       WHERE s.file_path = ex.file_path
+                         AND s.name = ex.symbol_name
+                         AND ex.line BETWEEN s.line_start AND s.line_end
+                       LIMIT 1) AS export_symbol_id,
+                    im.file_path, im.binding_key, im.symbol_name, im.language, im.line,
+                    (SELECT s.id FROM symbols s
+                       WHERE s.file_path = im.file_path
+                         AND s.name = im.symbol_name
+                         AND im.line BETWEEN s.line_start AND s.line_end
+                       LIMIT 1) AS import_symbol_id
                 FROM bridge_links bl
                 JOIN bridge_endpoints ex ON bl.export_ep_id = ex.id
                 JOIN bridge_endpoints im ON bl.import_ep_id = im.id
@@ -2336,11 +2352,13 @@ impl Storage for SqliteStorage {
                         export_symbol: row.get(4)?,
                         export_language: row.get(5)?,
                         export_line: row.get(6)?,
-                        import_file: row.get(7)?,
-                        import_binding_key: row.get(8)?,
-                        import_symbol: row.get(9)?,
-                        import_language: row.get(10)?,
-                        import_line: row.get(11)?,
+                        export_symbol_id: row.get(7)?,
+                        import_file: row.get(8)?,
+                        import_binding_key: row.get(9)?,
+                        import_symbol: row.get(10)?,
+                        import_language: row.get(11)?,
+                        import_line: row.get(12)?,
+                        import_symbol_id: row.get(13)?,
                     })
                 })
                 .map_err(|e| StorageError::Database {
