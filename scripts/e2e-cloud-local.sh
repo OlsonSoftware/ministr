@@ -1196,8 +1196,76 @@ if [[ -n "${ORG_ID_A}" ]]; then
             fail "no oidc.login row in audit_events (count=${AUDIT_COUNT}) — audit sink may not be wired"
         fi
     fi
+
+    # 18) **F5.2-d — per-org OIDC config CRUD.** Mirrors the F5.1-d
+    #     SAML config block exactly. The F5.2-b/c flow above inserted
+    #     a row directly via psql; this block first DROPs it so the
+    #     CRUD POST exercises the INSERT branch of the upsert (not
+    #     just UPDATE on the existing row).
+    info "F5.2-d: per-org OIDC config CRUD endpoints"
+    docker compose -f docker-compose.dev.yml exec -T postgres \
+        psql -U ministr -d ministr_dev -tA \
+        -c "DELETE FROM org_oidc_configs WHERE org_id = '${ORG_ID_A}'::uuid;" >/dev/null 2>&1
+
+    OIDC_CRUD_BODY=$(cat <<EOF
+{"issuer_url":"https://idp.crud.test/oidc","client_id":"crud-client","client_secret":"super-secret-${RUN_TS}","groups_claim":"roles","email_claim":"email","name_claim":"display_name","enforce_email_verified":false}
+EOF
+)
+
+    # Owner POST → 200 with the row JSON. client_secret in response
+    # is the REDACTED sentinel.
+    curl_request POST "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/oidc/config" "${TOKEN_A}" "${OIDC_CRUD_BODY}"
+    assert_status "${RESPONSE_STATUS}" "200" "owner POST /oidc/config → 200 (upsert)"
+    GOT_ISSUER=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.issuer_url // empty')
+    if [[ "${GOT_ISSUER}" == "https://idp.crud.test/oidc" ]]; then
+        pass "POST /oidc/config returns the saved row"
+    else
+        fail "POST /oidc/config response missing issuer_url (got: ${RESPONSE_BODY:0:200})"
+    fi
+    GOT_SECRET=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.client_secret // empty')
+    if [[ "${GOT_SECRET}" == "[REDACTED]" ]]; then
+        pass "POST /oidc/config redacts client_secret in response"
+    else
+        fail "POST /oidc/config leaked client_secret: '${GOT_SECRET:0:50}'"
+    fi
+
+    # Owner GET → 200 + same row + REDACTED client_secret.
+    curl_request GET "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/oidc/config" "${TOKEN_A}"
+    assert_status "${RESPONSE_STATUS}" "200" "owner GET /oidc/config → 200"
+    GOT_GET_SECRET=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.client_secret // empty')
+    if [[ "${GOT_GET_SECRET}" == "[REDACTED]" ]]; then
+        pass "GET /oidc/config redacts client_secret"
+    else
+        fail "GET /oidc/config leaked client_secret: '${GOT_GET_SECRET:0:50}'"
+    fi
+    # Confirm raw secret never reached the wire by re-querying psql
+    # — it should be in the DB (the upsert stored it) but only the
+    # sentinel hit the HTTP response.
+    DB_SECRET=$(docker compose -f docker-compose.dev.yml exec -T postgres \
+        psql -U ministr -d ministr_dev -tA \
+        -c "SELECT client_secret FROM org_oidc_configs WHERE org_id = '${ORG_ID_A}'::uuid;" \
+        2>/dev/null | tr -d ' \r\n')
+    if [[ "${DB_SECRET}" == "super-secret-${RUN_TS}" ]]; then
+        pass "DB still has the real client_secret (redaction is HTTP-only)"
+    else
+        fail "DB client_secret mismatch — expected 'super-secret-${RUN_TS}', got '${DB_SECRET:0:40}'"
+    fi
+
+    # Non-owner (tenant B) GET → 403 (member_role returns None →
+    # assert_oidc_owner_or_admin maps to Forbidden — same shape as
+    # the SAML CRUD).
+    curl_request GET "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/oidc/config" "${TOKEN_B}"
+    assert_status "${RESPONSE_STATUS}" "403" "non-owner GET /oidc/config → 403"
+
+    # Owner DELETE → 204 (no body).
+    curl_request DELETE "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/oidc/config" "${TOKEN_A}"
+    assert_status "${RESPONSE_STATUS}" "204" "owner DELETE /oidc/config → 204"
+
+    # GET after DELETE → 404.
+    curl_request GET "${ENDPOINT}/api/v1/orgs/${ORG_ID_A}/oidc/config" "${TOKEN_A}"
+    assert_status "${RESPONSE_STATUS}" "404" "GET /oidc/config after DELETE → 404"
 else
-    note "skipped F5.2-b/c OIDC assertions — ORG_ID_A not captured"
+    note "skipped F5.2-b/c/d OIDC assertions — ORG_ID_A not captured"
 fi
 
 # ─── summary ──────────────────────────────────────────────────────────

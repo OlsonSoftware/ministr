@@ -570,3 +570,298 @@ fn internal_error(context: &str, e: &str) -> Response {
     tracing::warn!(context = %context, error = %e, "oidc endpoint error");
     (StatusCode::INTERNAL_SERVER_ERROR, "oidc internal error").into_response()
 }
+
+// ─── F5.2-d — per-org OIDC config CRUD ────────────────────────────────
+//
+// Three routes mounted at `/api/v1/orgs/{id}/oidc/config`. Same
+// shape as the F5.1-d SAML config CRUD: owner-only via
+// `assert_owner_or_admin`, upsert via `ON CONFLICT (org_id)`, GET
+// returns the row but redacts the `client_secret` (OIDC's only
+// bearer-grade material), DELETE removes the row + returns 204.
+//
+// The route handlers reuse [`OidcState`]'s `pool` field; no new
+// state struct needed. Mount with `scope_protected_router` behind
+// `ministr:read` so the [`ministr_mcp::auth::tenant::Tenant`]
+// extension is present when the ACL fires.
+
+/// Sentinel string returned in place of the real `client_secret` on
+/// every GET response. Choosing a sentinel rather than omitting the
+/// field keeps the wire shape stable so frontend code can detect
+/// "config exists" without a separate HEAD call.
+pub const REDACTED_CLIENT_SECRET: &str = "[REDACTED]";
+
+/// F5.2-d — per-org OIDC config CRUD router. Mount under the
+/// `OAuth`-protected branch in `cmd_serve_http`; owner-only ACL is
+/// enforced by each handler via [`assert_oidc_owner_or_admin`].
+pub fn oidc_config_routes(state: OidcState) -> Router {
+    use axum::routing::post;
+    Router::new()
+        .route(
+            "/api/v1/orgs/{id}/oidc/config",
+            post(handle_oidc_config_upsert)
+                .get(handle_oidc_config_get)
+                .delete(handle_oidc_config_delete),
+        )
+        .with_state(state)
+}
+
+#[derive(Debug)]
+enum OidcConfigError {
+    Unauthenticated,
+    Forbidden,
+    NotFound,
+    Invalid(&'static str),
+    Db(String),
+}
+
+impl axum::response::IntoResponse for OidcConfigError {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Unauthenticated => {
+                (StatusCode::UNAUTHORIZED, "unauthenticated").into_response()
+            }
+            Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden").into_response(),
+            Self::NotFound => (StatusCode::NOT_FOUND, "not_found").into_response(),
+            Self::Invalid(msg) => (StatusCode::BAD_REQUEST, msg).into_response(),
+            Self::Db(msg) => {
+                tracing::warn!(error = %msg, "oidc config db error");
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal").into_response()
+            }
+        }
+    }
+}
+
+/// POST body for `/api/v1/orgs/{id}/oidc/config`. `issuer_url`,
+/// `client_id`, and `client_secret` are required; the three claim-
+/// mapping fields + `enforce_email_verified` are optional and fall
+/// back to the table defaults (`groups` / `email` / `name` / true)
+/// when absent.
+#[derive(serde::Deserialize)]
+struct OidcConfigUpsertBody {
+    issuer_url: String,
+    client_id: String,
+    client_secret: String,
+    #[serde(default)]
+    groups_claim: Option<String>,
+    #[serde(default)]
+    email_claim: Option<String>,
+    #[serde(default)]
+    name_claim: Option<String>,
+    #[serde(default)]
+    enforce_email_verified: Option<bool>,
+}
+
+/// GET / upsert response shape. `client_secret` is always
+/// [`REDACTED_CLIENT_SECRET`] — the only writer is the upsert
+/// handler and the harness's direct INSERT path; reads never expose
+/// it.
+#[derive(serde::Serialize)]
+struct OidcConfigView {
+    org_id: String,
+    issuer_url: String,
+    client_id: String,
+    client_secret: String,
+    groups_claim: String,
+    email_claim: String,
+    name_claim: String,
+    enforce_email_verified: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+/// Owner / admin ACL, identical shape to [`crate::saml`]'s helper.
+/// Duplicated rather than shared because both modules want their own
+/// `*ConfigError` variants; the helper's body is two lines.
+async fn assert_oidc_owner_or_admin(
+    pool: &Pool,
+    org_id: &str,
+    user_id: &str,
+) -> Result<(), OidcConfigError> {
+    let role = crate::orgs::repo::member_role(pool, org_id, user_id)
+        .await
+        .map_err(|e| OidcConfigError::Db(format!("member_role: {e}")))?;
+    if !matches!(role.as_deref(), Some("owner" | "admin")) {
+        return Err(OidcConfigError::Forbidden);
+    }
+    Ok(())
+}
+
+fn validate_oidc_upsert(body: &OidcConfigUpsertBody) -> Result<(), OidcConfigError> {
+    if body.issuer_url.trim().is_empty() {
+        return Err(OidcConfigError::Invalid("issuer_url is required"));
+    }
+    if body.client_id.trim().is_empty() {
+        return Err(OidcConfigError::Invalid("client_id is required"));
+    }
+    if body.client_secret.trim().is_empty() {
+        return Err(OidcConfigError::Invalid("client_secret is required"));
+    }
+    // Cheap sanity check on the issuer URL — full OIDC discovery
+    // validates the URL when /oidc/login runs. Reject obvious
+    // misconfiguration (missing scheme) here so the owner sees the
+    // error at config-time rather than at first-sign-in.
+    if !body.issuer_url.starts_with("http://") && !body.issuer_url.starts_with("https://") {
+        return Err(OidcConfigError::Invalid(
+            "issuer_url must start with http:// or https://",
+        ));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_lines)]
+async fn handle_oidc_config_upsert(
+    State(state): State<OidcState>,
+    tenant: Option<axum::Extension<ministr_mcp::auth::tenant::Tenant>>,
+    Path(org_id): Path<String>,
+    axum::Json(body): axum::Json<OidcConfigUpsertBody>,
+) -> Result<(StatusCode, axum::Json<OidcConfigView>), OidcConfigError> {
+    let tenant = tenant.ok_or(OidcConfigError::Unauthenticated)?;
+    if parse_uuid(&org_id).is_none() {
+        return Err(OidcConfigError::Invalid("invalid org id"));
+    }
+    assert_oidc_owner_or_admin(&state.pool, &org_id, &tenant.0.subject).await?;
+    validate_oidc_upsert(&body)?;
+
+    let groups_claim = body.groups_claim.as_deref().unwrap_or("groups");
+    let email_claim = body.email_claim.as_deref().unwrap_or("email");
+    let name_claim = body.name_claim.as_deref().unwrap_or("name");
+    let enforce = body.enforce_email_verified.unwrap_or(true);
+
+    let client = state
+        .pool
+        .get()
+        .await
+        .map_err(|e| OidcConfigError::Db(format!("pool get: {e}")))?;
+    let row = client
+        .query_one(
+            "INSERT INTO org_oidc_configs (\
+                org_id, issuer_url, client_id, client_secret, \
+                groups_claim, email_claim, name_claim, enforce_email_verified) \
+             VALUES ($1::text::uuid, $2, $3, $4, $5, $6, $7, $8) \
+             ON CONFLICT (org_id) DO UPDATE SET \
+                issuer_url = EXCLUDED.issuer_url, \
+                client_id = EXCLUDED.client_id, \
+                client_secret = EXCLUDED.client_secret, \
+                groups_claim = EXCLUDED.groups_claim, \
+                email_claim = EXCLUDED.email_claim, \
+                name_claim = EXCLUDED.name_claim, \
+                enforce_email_verified = EXCLUDED.enforce_email_verified, \
+                updated_at = NOW() \
+             RETURNING issuer_url, client_id, groups_claim, email_claim, \
+                       name_claim, enforce_email_verified, \
+                       to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
+                       to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
+            &[
+                &org_id,
+                &body.issuer_url,
+                &body.client_id,
+                &body.client_secret,
+                &groups_claim,
+                &email_claim,
+                &name_claim,
+                &enforce,
+            ],
+        )
+        .await
+        .map_err(|e| OidcConfigError::Db(format!("upsert: {e:?}")))?;
+
+    // `client_secret` is intentionally NOT in the RETURNING clause —
+    // even an inadvertent log of `row` can't leak it. Hardcoding the
+    // sentinel in the view here makes the redaction visible at the
+    // handler site.
+    let view = OidcConfigView {
+        org_id: org_id.clone(),
+        issuer_url: row.get(0),
+        client_id: row.get(1),
+        client_secret: REDACTED_CLIENT_SECRET.to_string(),
+        groups_claim: row.get(2),
+        email_claim: row.get(3),
+        name_claim: row.get(4),
+        enforce_email_verified: row.get(5),
+        created_at: row.get(6),
+        updated_at: row.get(7),
+    };
+
+    // Bust the per-org pending-login cache so the next /oidc/login
+    // call rebuilds discovery against the new issuer (rather than
+    // surfacing the old IdP that the operator just rotated away).
+    // The discovery cache is keyed by issuer_url so changing
+    // issuer_url already misses; the pending_logins map TTL-evicts
+    // on its own. Both are conservative — no explicit invalidation
+    // needed here.
+    let _ = state;
+
+    Ok((StatusCode::OK, axum::Json(view)))
+}
+
+async fn handle_oidc_config_get(
+    State(state): State<OidcState>,
+    tenant: Option<axum::Extension<ministr_mcp::auth::tenant::Tenant>>,
+    Path(org_id): Path<String>,
+) -> Result<axum::Json<OidcConfigView>, OidcConfigError> {
+    let tenant = tenant.ok_or(OidcConfigError::Unauthenticated)?;
+    if parse_uuid(&org_id).is_none() {
+        return Err(OidcConfigError::Invalid("invalid org id"));
+    }
+    assert_oidc_owner_or_admin(&state.pool, &org_id, &tenant.0.subject).await?;
+
+    let client = state
+        .pool
+        .get()
+        .await
+        .map_err(|e| OidcConfigError::Db(format!("pool get: {e}")))?;
+    let row = client
+        .query_opt(
+            "SELECT issuer_url, client_id, groups_claim, email_claim, \
+                    name_claim, enforce_email_verified, \
+                    to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
+                    to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') \
+             FROM org_oidc_configs WHERE org_id = $1::text::uuid",
+            &[&org_id],
+        )
+        .await
+        .map_err(|e| OidcConfigError::Db(format!("select: {e:?}")))?
+        .ok_or(OidcConfigError::NotFound)?;
+
+    Ok(axum::Json(OidcConfigView {
+        org_id: org_id.clone(),
+        issuer_url: row.get(0),
+        client_id: row.get(1),
+        client_secret: REDACTED_CLIENT_SECRET.to_string(),
+        groups_claim: row.get(2),
+        email_claim: row.get(3),
+        name_claim: row.get(4),
+        enforce_email_verified: row.get(5),
+        created_at: row.get(6),
+        updated_at: row.get(7),
+    }))
+}
+
+async fn handle_oidc_config_delete(
+    State(state): State<OidcState>,
+    tenant: Option<axum::Extension<ministr_mcp::auth::tenant::Tenant>>,
+    Path(org_id): Path<String>,
+) -> Result<StatusCode, OidcConfigError> {
+    let tenant = tenant.ok_or(OidcConfigError::Unauthenticated)?;
+    if parse_uuid(&org_id).is_none() {
+        return Err(OidcConfigError::Invalid("invalid org id"));
+    }
+    assert_oidc_owner_or_admin(&state.pool, &org_id, &tenant.0.subject).await?;
+
+    let client = state
+        .pool
+        .get()
+        .await
+        .map_err(|e| OidcConfigError::Db(format!("pool get: {e}")))?;
+    let deleted = client
+        .execute(
+            "DELETE FROM org_oidc_configs WHERE org_id = $1::text::uuid",
+            &[&org_id],
+        )
+        .await
+        .map_err(|e| OidcConfigError::Db(format!("delete: {e:?}")))?;
+    if deleted == 0 {
+        return Err(OidcConfigError::NotFound);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
