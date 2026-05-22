@@ -1094,6 +1094,24 @@ pub(crate) async fn cmd_serve_http(
                 );
             }
 
+            // F5.1-d — per-org SAML config CRUD. Owner-only ACL
+            // enforced inside each handler via assert_owner_or_admin;
+            // the scope_protected_router wrapper supplies the Tenant
+            // extension that the ACL reads.
+            {
+                let saml_config_state = ministr_cloud::SamlState::new(Arc::clone(pool));
+                let saml_config_router = ministr_cloud::saml_config_routes(saml_config_state);
+                let saml_config_protected = ministr_mcp::auth::scope_protected_router(
+                    saml_config_router,
+                    store.clone(),
+                    "ministr:read",
+                );
+                composed = composed.merge(saml_config_protected);
+                tracing::info!(
+                    "saml config CRUD mounted — POST/GET/DELETE /api/v1/orgs/{{id}}/saml/config"
+                );
+            }
+
             // F2.6 — Atlas v0 pilot. Manifest + per-slug query stubs.
             // Mounted behind `ministr:read` so any paid-tier token
             // admits; the F2.3 `AtlasAccessRule` runs higher up in the
