@@ -20,6 +20,7 @@
 //! actions (`org_id IS NULL`) are not surfaced — they live in the
 //! user-level audit feed that will land later.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use axum::Json;
@@ -324,6 +325,189 @@ pub async fn prune_audit_events(
     })
 }
 
+// ─── F5.3-c-ii — boot-time partition extension ─────────────────────
+//
+// Migration 0013 seeded 16 quarterly partitions covering 2024-Q1
+// through 2027-Q4. Without an extender, the system silently fails
+// `INSERT INTO audit_events` once `now()` crosses into Q1 2028.
+// `ensure_audit_partitions` runs at pod boot, finds the highest
+// existing partition, and CREATEs new quarterly partitions out to
+// `now() + lookahead_quarters` so the forward edge stays ahead of
+// real time.
+
+/// Default lookahead — 8 quarters = 2 years of runway from the
+/// current quarter. Picked so a pod that boots once and doesn't
+/// reboot for 18 months still has ≥6 months of headroom.
+pub const DEFAULT_PARTITION_LOOKAHEAD_QUARTERS: u32 = 8;
+
+/// Outcome of one [`ensure_audit_partitions`] call. Reports both
+/// what existed and what was just created so the boot log can
+/// distinguish "warm start, nothing to do" from "cold start, just
+/// created N quarters of headroom".
+#[derive(Debug, Clone, Copy)]
+pub struct EnsurePartitionsOutcome {
+    /// Total partitions on `audit_events` BEFORE this call.
+    pub existing: u32,
+    /// New partitions created by this call.
+    pub created: u32,
+    /// Target end-of-runway: roughly `quarter_start(now()) +
+    /// lookahead_quarters * 3 months`. Echoed back so the caller's
+    /// structured log can record "covered through Y-MM-DD".
+    pub target_end_year: i32,
+    pub target_end_quarter: i32,
+}
+
+/// Parse an audit-events partition name back into `(year, quarter)`.
+/// Returns `None` for names that don't match the
+/// `audit_events_y{YYYY}q{N}` pattern from migration 0013. Pure —
+/// pulled out for unit-testability without spinning up Postgres.
+#[must_use]
+pub fn parse_audit_partition_name(relname: &str) -> Option<(i32, i32)> {
+    let rest = relname.strip_prefix("audit_events_y")?;
+    let (year_s, rest) = rest.split_once('q')?;
+    let year: i32 = year_s.parse().ok()?;
+    let quarter: i32 = rest.parse().ok()?;
+    if !(1..=4).contains(&quarter) {
+        return None;
+    }
+    if !(2000..=2999).contains(&year) {
+        return None;
+    }
+    Some((year, quarter))
+}
+
+/// Walk one quarter forward from `(year, quarter)`. Q4 → next year's Q1.
+#[must_use]
+pub fn next_quarter(year: i32, quarter: i32) -> (i32, i32) {
+    if quarter >= 4 {
+        (year + 1, 1)
+    } else {
+        (year, quarter + 1)
+    }
+}
+
+/// First day of a quarter, in UTC, as a Postgres `timestamptz`
+/// literal. Q1 starts in January, Q2 in April, Q3 in July, Q4 in
+/// October.
+#[must_use]
+pub fn quarter_start_literal(year: i32, quarter: i32) -> String {
+    let month = match quarter {
+        1 => 1,
+        2 => 4,
+        3 => 7,
+        _ => 10,
+    };
+    format!("{year:04}-{month:02}-01 00:00:00+00")
+}
+
+/// F5.3-c-ii — ensure `audit_events` has partitions covering up to
+/// `lookahead_quarters` past the current calendar quarter. Walks
+/// `pg_inherits` to find existing partitions, parses their names to
+/// determine the highest existing `(year, quarter)`, then issues
+/// `CREATE TABLE … PARTITION OF audit_events` for each missing
+/// quarter through the target.
+///
+/// Idempotent: a second call with the same lookahead is a no-op
+/// (returns `created = 0`). Cheap on warm starts (one `pg_inherits`
+/// query + one `now()` query).
+///
+/// # Errors
+///
+/// [`AuditError::GetConn`] when the pool refuses a connection;
+/// [`AuditError::Sql`] when any of the DDL statements fail.
+pub async fn ensure_audit_partitions(
+    pool: &Pool,
+    lookahead_quarters: u32,
+) -> Result<EnsurePartitionsOutcome, AuditError> {
+    let client = pool
+        .get()
+        .await
+        .map_err(|e| AuditError::GetConn(format!("ensure_audit_partitions: {e}")))?;
+
+    // 1. List existing partitions of audit_events.
+    let rows = client
+        .query(
+            "SELECT c.relname
+             FROM pg_inherits i
+             JOIN pg_class c ON c.oid = i.inhrelid
+             WHERE i.inhparent = 'audit_events'::regclass",
+            &[],
+        )
+        .await
+        .map_err(|e| AuditError::Sql(format!("list partitions: {e}")))?;
+
+    let existing_set: HashSet<(i32, i32)> = rows
+        .iter()
+        .filter_map(|r| parse_audit_partition_name(r.get::<_, &str>(0)))
+        .collect();
+    let existing = u32::try_from(existing_set.len()).unwrap_or(u32::MAX);
+
+    // 2. Get current (year, quarter) from Postgres so timezone /
+    // calendar arithmetic stays consistent with the partitioning
+    // bounds (PG returns UTC quarter on a timestamptz).
+    let now_row = client
+        .query_one(
+            "SELECT extract(year FROM now() AT TIME ZONE 'UTC')::int AS y,
+                    extract(quarter FROM now() AT TIME ZONE 'UTC')::int AS q",
+            &[],
+        )
+        .await
+        .map_err(|e| AuditError::Sql(format!("now-quarter: {e}")))?;
+    let cur_y: i32 = now_row.get("y");
+    let cur_q: i32 = now_row.get("q");
+
+    // 3. Target quarter = current + lookahead. Walk forward
+    // lookahead_quarters times.
+    let lookahead_i32 = i32::try_from(lookahead_quarters).unwrap_or(i32::MAX);
+    let mut target_y = cur_y;
+    let mut target_q = cur_q;
+    for _ in 0..lookahead_i32 {
+        let (ny, nq) = next_quarter(target_y, target_q);
+        target_y = ny;
+        target_q = nq;
+    }
+
+    // 4. Walk the FULL range [current quarter .. target quarter]
+    // inclusive. Skip any quarter that already exists; CREATE the
+    // rest. This fills gaps left by a manual DROP TABLE on a future
+    // partition AND extends the forward edge in the same pass —
+    // strictly more robust than "next_quarter(highest)" which can
+    // skip gaps when a future partition exists past a hole.
+    let mut walk_y = cur_y;
+    let mut walk_q = cur_q;
+    let mut created: u32 = 0;
+    while (walk_y, walk_q) <= (target_y, target_q) {
+        if !existing_set.contains(&(walk_y, walk_q)) {
+            let (end_y, end_q) = next_quarter(walk_y, walk_q);
+            let from_lit = quarter_start_literal(walk_y, walk_q);
+            let to_lit = quarter_start_literal(end_y, end_q);
+            let pname = format!("audit_events_y{walk_y}q{walk_q}");
+            // `IF NOT EXISTS` defensive against a concurrent pod
+            // racing to create the same partition. PG 11+ supports
+            // it on `CREATE TABLE … PARTITION OF`.
+            let sql = format!(
+                "CREATE TABLE IF NOT EXISTS {pname} PARTITION OF audit_events \
+                 FOR VALUES FROM ('{from_lit}') TO ('{to_lit}')"
+            );
+            client
+                .batch_execute(&sql)
+                .await
+                .map_err(|e| AuditError::Sql(format!("create {pname}: {e}")))?;
+            created = created.saturating_add(1);
+        }
+        let (ny, nq) = next_quarter(walk_y, walk_q);
+        walk_y = ny;
+        walk_q = nq;
+    }
+
+    Ok(EnsurePartitionsOutcome {
+        existing,
+        created,
+        target_end_year: target_y,
+        target_end_quarter: target_q,
+    })
+}
+
 /// Direct read used by the list handler. Exposed `pub` for the
 /// eventual /orgs/{slug}/audit web page to call from the same crate.
 ///
@@ -452,6 +636,52 @@ mod tests {
         // (which inherits the same audit_events shape) must also be
         // re-checked.
         assert_eq!(DEFAULT_AUDIT_RETENTION_DAYS, 90);
+    }
+
+    #[test]
+    fn parse_audit_partition_name_extracts_year_quarter() {
+        assert_eq!(parse_audit_partition_name("audit_events_y2024q1"), Some((2024, 1)));
+        assert_eq!(parse_audit_partition_name("audit_events_y2026q3"), Some((2026, 3)));
+        assert_eq!(parse_audit_partition_name("audit_events_y2027q4"), Some((2027, 4)));
+    }
+
+    #[test]
+    fn parse_audit_partition_name_rejects_garbage() {
+        assert_eq!(parse_audit_partition_name("audit_events"), None);
+        assert_eq!(parse_audit_partition_name("audit_events_y2026"), None);
+        assert_eq!(parse_audit_partition_name("audit_events_y2026q5"), None);
+        assert_eq!(parse_audit_partition_name("audit_events_y2026q0"), None);
+        assert_eq!(parse_audit_partition_name("audit_events_yfooq1"), None);
+        assert_eq!(parse_audit_partition_name("audit_events_y1999q1"), None);
+        assert_eq!(parse_audit_partition_name("audit_events_y3000q1"), None);
+        assert_eq!(parse_audit_partition_name("something_else"), None);
+    }
+
+    #[test]
+    fn next_quarter_wraps_q4_to_next_year_q1() {
+        assert_eq!(next_quarter(2026, 1), (2026, 2));
+        assert_eq!(next_quarter(2026, 2), (2026, 3));
+        assert_eq!(next_quarter(2026, 3), (2026, 4));
+        assert_eq!(next_quarter(2026, 4), (2027, 1));
+        assert_eq!(next_quarter(2099, 4), (2100, 1));
+    }
+
+    #[test]
+    fn quarter_start_literal_matches_migration_bounds() {
+        // These four strings must match migration 0013's bounds
+        // byte-for-byte so a partition created by the helper sits
+        // adjacent to the seeded ones with no gap or overlap.
+        assert_eq!(quarter_start_literal(2026, 1), "2026-01-01 00:00:00+00");
+        assert_eq!(quarter_start_literal(2026, 2), "2026-04-01 00:00:00+00");
+        assert_eq!(quarter_start_literal(2026, 3), "2026-07-01 00:00:00+00");
+        assert_eq!(quarter_start_literal(2026, 4), "2026-10-01 00:00:00+00");
+        assert_eq!(quarter_start_literal(2028, 1), "2028-01-01 00:00:00+00");
+    }
+
+    #[test]
+    fn default_partition_lookahead_is_two_years() {
+        // Doc comment promises "8 quarters = 2 years of runway".
+        assert_eq!(DEFAULT_PARTITION_LOOKAHEAD_QUARTERS, 8);
     }
 
     #[test]
