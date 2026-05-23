@@ -2875,6 +2875,24 @@ pub(crate) async fn cmd_audit_ensure_partitions(
 ///
 /// Requires `MINISTR_PG_URL`. Idempotent: re-running with the same
 /// `github_id` returns the same UUID (the `users.github_id` UNIQUE key
+/// F5.4-e-mint shared helper — encode a `LicenseClaims` body as an
+/// RS256 JWT using a PKCS#8-PEM private key. Pulled out so both the
+/// harness mint (`mint-test-license`, fresh keypair per call) and
+/// the operator mint (`mint-license`, persistent on-disk key) share
+/// one signing path.
+fn sign_license_jwt(
+    priv_pem: &[u8],
+    claims: &ministr_cloud::LicenseClaims,
+) -> miette::Result<String> {
+    let enc_key = jsonwebtoken::EncodingKey::from_rsa_pem(priv_pem)
+        .into_diagnostic()
+        .wrap_err("encoding key from PEM")?;
+    let header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
+    jsonwebtoken::encode(&header, claims, &enc_key)
+        .into_diagnostic()
+        .wrap_err("encode JWT")
+}
+
 /// F5.4-b harness helper — generate a fresh RSA-2048 keypair via
 /// the `openssl` dev-dep, sign a license JWT with the supplied
 /// claims, and print `{jwt, public_key_pem}` JSON on stdout. The
@@ -2928,13 +2946,7 @@ pub(crate) fn cmd_cloud_mint_test_license(
         .public_key_to_pem()
         .into_diagnostic()
         .wrap_err("public key to PEM")?;
-    let enc_key = jsonwebtoken::EncodingKey::from_rsa_pem(&priv_pem)
-        .into_diagnostic()
-        .wrap_err("encoding key from PEM")?;
-    let header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
-    let jwt = jsonwebtoken::encode(&header, &claims, &enc_key)
-        .into_diagnostic()
-        .wrap_err("encode JWT")?;
+    let jwt = sign_license_jwt(&priv_pem, &claims)?;
     let pub_pem_str =
         String::from_utf8(pub_pem).into_diagnostic().wrap_err("public PEM utf-8")?;
     let out = serde_json::json!({
@@ -2948,6 +2960,150 @@ pub(crate) fn cmd_cloud_mint_test_license(
         "{}",
         serde_json::to_string_pretty(&out).into_diagnostic()?
     );
+    Ok(())
+}
+
+/// F5.4-e-mint operator setup — generate a persistent RSA keypair
+/// for license signing. Writes the PKCS#8 private key with 0600
+/// perms (POSIX) + the SPKI public key with default perms.
+/// Run ONCE per ministr deployment; stash the private key in your
+/// secrets manager.
+///
+/// # Errors
+///
+/// Surfaces RSA generation, PEM serialization, and FS-write errors.
+pub(crate) fn cmd_cloud_generate_license_keypair(
+    private_key: &std::path::Path,
+    public_key: &std::path::Path,
+    bits: u32,
+) -> miette::Result<()> {
+    if !(2048..=4096).contains(&bits) {
+        return Err(miette::miette!(
+            "license keypair: --bits must be in [2048, 4096]; got {bits}"
+        ));
+    }
+    if private_key.exists() {
+        return Err(miette::miette!(
+            "license keypair: private-key path '{}' already exists — refusing to overwrite (move the existing key out of the way first)",
+            private_key.display()
+        ));
+    }
+    if public_key.exists() {
+        return Err(miette::miette!(
+            "license keypair: public-key path '{}' already exists — refusing to overwrite",
+            public_key.display()
+        ));
+    }
+    let rsa = openssl::rsa::Rsa::generate(bits)
+        .into_diagnostic()
+        .wrap_err(format!("generate RSA-{bits}"))?;
+    let pkey = openssl::pkey::PKey::from_rsa(rsa)
+        .into_diagnostic()
+        .wrap_err("wrap PKey")?;
+    let priv_pem = pkey
+        .private_key_to_pem_pkcs8()
+        .into_diagnostic()
+        .wrap_err("private key to PEM")?;
+    let pub_pem = pkey
+        .public_key_to_pem()
+        .into_diagnostic()
+        .wrap_err("public key to PEM")?;
+
+    std::fs::write(private_key, &priv_pem)
+        .into_diagnostic()
+        .wrap_err(format!("write private key to {}", private_key.display()))?;
+    // Best-effort chmod 0600 for the private key on POSIX. On Windows
+    // the call silently no-ops (compiles out via cfg); operators are
+    // expected to rely on directory ACLs there.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        std::fs::set_permissions(private_key, perms)
+            .into_diagnostic()
+            .wrap_err(format!(
+                "chmod 0600 on {}",
+                private_key.display()
+            ))?;
+    }
+    std::fs::write(public_key, &pub_pem)
+        .into_diagnostic()
+        .wrap_err(format!("write public key to {}", public_key.display()))?;
+
+    tracing::info!(
+        bits,
+        private_key = %private_key.display(),
+        public_key = %public_key.display(),
+        "license keypair generated; stash the private key in your secrets manager and ship the public key to every Enterprise customer"
+    );
+    Ok(())
+}
+
+/// F5.4-e-mint operator JWT issuance — sign a license JWT against
+/// the persistent private key from `generate-license-keypair`.
+/// Prints the JWT to stdout (or writes to `--out`) for distribution
+/// to the customer.
+///
+/// # Errors
+///
+/// Surfaces file-read, JWT-encode, and FS-write errors.
+pub(crate) fn cmd_cloud_mint_license(
+    private_key: &std::path::Path,
+    enterprise_id: &str,
+    seat_count: u32,
+    valid_days: u32,
+    out: Option<&std::path::Path>,
+) -> miette::Result<()> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    if valid_days == 0 {
+        return Err(miette::miette!(
+            "mint-license: --valid-days must be > 0 (use `mint-test-license --valid-days -1` if you need an expired-license fixture)"
+        ));
+    }
+    if enterprise_id.trim().is_empty() {
+        return Err(miette::miette!(
+            "mint-license: --enterprise-id must be non-empty"
+        ));
+    }
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let exp = now_secs.saturating_add(u64::from(valid_days).saturating_mul(86_400));
+    let claims = ministr_cloud::LicenseClaims {
+        enterprise_id: enterprise_id.to_string(),
+        seat_count,
+        exp,
+        enabled_features: vec![],
+    };
+    let priv_pem = std::fs::read(private_key)
+        .into_diagnostic()
+        .wrap_err(format!(
+            "read private key from {}",
+            private_key.display()
+        ))?;
+    let jwt = sign_license_jwt(&priv_pem, &claims)?;
+    if let Some(out_path) = out {
+        std::fs::write(out_path, &jwt)
+            .into_diagnostic()
+            .wrap_err(format!("write JWT to {}", out_path.display()))?;
+        tracing::info!(
+            enterprise_id,
+            seat_count,
+            valid_days,
+            exp,
+            out = %out_path.display(),
+            "license minted"
+        );
+    } else {
+        println!("{jwt}");
+        tracing::info!(
+            enterprise_id,
+            seat_count,
+            valid_days,
+            exp,
+            "license minted (JWT printed to stdout)"
+        );
+    }
     Ok(())
 }
 
