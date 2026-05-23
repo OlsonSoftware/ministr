@@ -2873,6 +2873,55 @@ fi
 # Cleanup harness fixtures.
 rm -f "${REVOKE_JWT_FILE}" "${REVOKE_LIST}"
 
+# 38c) **F5.4-e-revoke-api-fetch — URL-based revocation refuses boot.**
+#      Mint a fresh license, write its hash into a JSONL file the
+#      main test_serve already serves via
+#      MINISTR_LICENSE_REVOCATIONS_SERVE_PATH (line ~437), then boot
+#      a test-serve with MINISTR_LICENSE_REVOCATIONS_URL pointing
+#      at the main serve's /api/v1/license-revocations.jsonl. The
+#      boot validator should fetch the URL, find the hash, and
+#      refuse to start.
+info "F5.4-e-revoke-api-fetch: URL-based revocation refuses boot"
+URLFETCH_JSON=$(cargo run -q -p ministr-cli -- cloud mint-test-license \
+    --enterprise-id "e2e-urlfetch-test" --seat-count 3 --valid-days 1 2>/dev/null || echo '{}')
+URLFETCH_JWT=$(printf '%s' "${URLFETCH_JSON}" | jq -r '.jwt // empty')
+URLFETCH_PUB=$(printf '%s' "${URLFETCH_JSON}" | jq -r '.public_key_pem // empty')
+URLFETCH_HASH=$(cargo run -q -p ministr-cli -- cloud revoke-license \
+    --jwt-id-hash $(printf '%s' "${URLFETCH_JWT}" | shasum -a 256 | awk '{print substr($1,1,16)}') \
+    --enterprise-id "e2e-urlfetch-test" \
+    --reason "F5.4-e-revoke-api-fetch harness fixture" \
+    --revocation-list "${REVOKE_API_FIXTURE}" 2>&1 | tail -1 || true)
+# The serve reads MINISTR_LICENSE_REVOCATIONS_SERVE_PATH at request
+# time, so the new line in the fixture file is visible to GET /api/v1/...
+# immediately without bouncing the main serve.
+URLFETCH_CACHE=$(mktemp -t ministr-e2e-urlfetch-cache.XXXXXX)
+rm -f "${URLFETCH_CACHE}" # ensure no stale cache before the test
+URLFETCH_BOOT_STATUS=0
+URLFETCH_BOOT_OUT=$(MINISTR_LICENSE_KEY="${URLFETCH_JWT}" \
+    MINISTR_LICENSE_PUBLIC_KEY="${URLFETCH_PUB}" \
+    MINISTR_LICENSE_REVOCATIONS_URL="${ENDPOINT}/api/v1/license-revocations.jsonl" \
+    MINISTR_LICENSE_REVOCATIONS_CACHE_PATH="${URLFETCH_CACHE}" \
+    cargo run -q -p ministr-cli -- --config "${CONFIG_PATH}" \
+        serve --transport http --host 127.0.0.1 --port 18096 \
+    2>&1 < /dev/null) || URLFETCH_BOOT_STATUS=$?
+if [[ "${URLFETCH_BOOT_STATUS}" != "0" ]]; then
+    pass "URL-fetched revocation refused boot (status=${URLFETCH_BOOT_STATUS})"
+else
+    fail "URL-fetched revocation did NOT refuse boot · output: $(printf '%s' "${URLFETCH_BOOT_OUT}" | tail -c 200)"
+fi
+if printf '%s' "${URLFETCH_BOOT_OUT}" | grep -qi "revoked"; then
+    pass "URL-fetch boot error message identifies revocation"
+else
+    fail "URL-fetch boot error didn't mention revocation · output: $(printf '%s' "${URLFETCH_BOOT_OUT}" | tail -c 200)"
+fi
+# Verify cache file was populated by the boot-time fetch.
+if [[ -s "${URLFETCH_CACHE}" ]]; then
+    pass "cache file populated by the fetcher (operator's grace-window source)"
+else
+    fail "cache file empty/missing after boot fetch — path=${URLFETCH_CACHE}"
+fi
+rm -f "${URLFETCH_CACHE}"
+
 # 38b) **F5.5-b-sla-skeleton — /sla endpoint returns uptime envelope.**
 #      Foundation for the eventual status.ministr.ai dashboard + richer
 #      load-balancer probes. /healthz today returns only status/corpus_count/
