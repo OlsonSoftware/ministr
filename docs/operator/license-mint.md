@@ -90,12 +90,50 @@ There's no separate renewal command — issue a fresh JWT against
 the same keypair with a new `--valid-days`. The customer
 overwrites `MINISTR_LICENSE_KEY` and restarts their pods.
 
-## Honest gaps in this chunk
+## Audit log (F5.4-e-audit)
 
-- **No audit log** — F5.4-e-mint doesn't record issuances anywhere.
-  F5.4-e-audit will add `license_issuances` table (or a JSONL audit
-  file) tracking who minted what when. Until then: keep your own
-  CRM record.
+Pass `--audit-log PATH` to `mint-license` and a JSONL line is
+appended per successful mint:
+
+```bash
+ministr cloud mint-license \
+  --private-key /secure/ministr-license-private.pem \
+  --enterprise-id "acme-corp" \
+  --seat-count 50 --valid-days 365 \
+  --audit-log /secure/ministr-license-issuances.jsonl \
+  --out /tmp/acme-corp-license.jwt
+```
+
+Each line records: `ts_iso`, `ts_unix`, `enterprise_id`, `seat_count`,
+`valid_days`, `exp`, and `jwt_id_hash` (first 16 hex chars of
+`sha256(jwt)`). **The bearer material is NOT stored** — only its
+hash, sufficient to disambiguate human-readable list output.
+
+Append-only on POSIX (atomic for writes ≤ 4 KB; each line is well
+under). Concurrent multi-host writes would interleave half-lines —
+documented as a single-operator-host limitation. The audit-log
+write happens BEFORE the JWT is printed/written, so a crash between
+mint and audit-write doesn't leave an orphan issuance the operator
+can't trace.
+
+Read back via `list-licenses`:
+
+```bash
+# Table view (default), sorted most-recent first.
+ministr cloud list-licenses --audit-log /secure/ministr-license-issuances.jsonl
+
+# JSON view for piping into jq / further processing.
+ministr cloud list-licenses --audit-log /secure/ministr-license-issuances.jsonl --format json
+```
+
+Malformed lines from a partial write are skipped with a `warn` log.
+
+Stash the audit log alongside your license private key — both are
+operationally-sensitive (the audit log reveals who-bought-what; the
+private key signs JWTs). Customer's secrets manager handles
+disk-level encryption.
+
+## Honest gaps in this chunk
 
 - **No revocation** — once a JWT is issued it's valid until `exp`
   even if the customer's contract terminates. F5.4-e-revoke will
