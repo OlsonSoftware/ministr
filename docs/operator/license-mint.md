@@ -194,6 +194,60 @@ log — all three are operationally sensitive (private key signs JWTs,
 audit log reveals who-bought-what, revocation list reveals contract
 churn). Customer's secrets manager handles disk-level encryption.
 
+## Serving the revocation list via HTTP (F5.4-e-revoke-api-serve)
+
+Customers' on-prem serves can fetch the revocation list dynamically
+instead of mounting the JSONL file directly. Two opt-ins:
+
+1. **Operator side** — point the public-facing serve at the
+   revocation list file:
+
+   ```bash
+   export MINISTR_LICENSE_REVOCATIONS_SERVE_PATH=/secure/ministr-license-revocations.jsonl
+   ministr serve --transport http ...
+   ```
+
+   The serve now exposes `GET /api/v1/license-revocations.jsonl` as
+   an **unauthenticated** public endpoint. The revocation list is
+   non-secret — a `jwt_id_hash` reveals "this hash is revoked" but
+   nothing about the bearer, customer, or original mint context.
+   `Cache-Control: public, max-age=300` is set so polling consumers
+   don't hammer.
+
+   Read at request time, so updating the file (via
+   `revoke-license --revocation-list PATH`) takes effect on the
+   next HTTP request without bouncing the serve.
+
+2. **Customer side** *(F5.4-e-revoke-api-fetch, deferred)* — once
+   that chunk lands, customers will set
+   `MINISTR_LICENSE_REVOCATIONS_URL=https://mcp.ministr.ai/api/v1/license-revocations.jsonl`
+   and the boot validator will fetch + cache + grace-window-fall-back.
+   Today, the customer-side fetcher hasn't shipped; customers still
+   use the file-based `MINISTR_LICENSE_REVOCATIONS=/path` flow.
+
+Response states:
+
+| State | Status | Body |
+|-------|--------|------|
+| `MINISTR_LICENSE_REVOCATIONS_SERVE_PATH` unset | 404 | "operator hasn't opted in" |
+| Set + file readable | 200 | JSONL body, `application/x-ndjson` |
+| Set + file unreadable | 503 | "revocation list unreadable: …" |
+
+Operator workflow:
+
+```bash
+# Add a revocation to the operator's list
+ministr cloud revoke-license \
+  --jwt /tmp/acme-corp-license.jwt \
+  --enterprise-id "acme-corp" \
+  --reason "contract terminated 2026-12-01" \
+  --revocation-list /secure/ministr-license-revocations.jsonl
+
+# Customer's serve (when F5.4-e-revoke-api-fetch lands) polls the URL,
+# pulls the updated list, and refuses to boot under the revoked hash
+# on next restart. Until then, distribute the file by hand.
+```
+
 ## Multi-operator setup (F5.4-e-audit-db)
 
 When several operators issue licenses from different machines, each
