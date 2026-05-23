@@ -424,6 +424,10 @@ corpus_paths = []
 EOF
 info "compiling ministr-cli (cached after first run)"
 cargo build -q -p ministr-cli
+# F5.5-b-persist-write: MINISTR_SLA_FLUSH_SECS=2 makes the periodic
+# SLA snapshot flush tick fast enough to land at least one row
+# within the harness's runtime (default is 60s — too slow for e2e).
+MINISTR_SLA_FLUSH_SECS=2 \
 cargo run -q -p ministr-cli -- \
     --config "${CONFIG_PATH}" \
     serve --transport http --oauth \
@@ -3013,6 +3017,36 @@ fi
 
 # Cleanup.
 rm -rf "${ROT_WORK}"
+
+# 40) **F5.5-b-persist-write — periodic flush of LatencyTracker to PG.**
+#     With MINISTR_SLA_FLUSH_SECS=2 set on test_serve startup and many
+#     requests already in flight, request_latency_snapshots should hold
+#     ≥1 row by now. The serve has been up ≥10s in this harness run;
+#     the first flush fires after one tick interval (2s) so multiple
+#     rows are expected.
+info "F5.5-b-persist-write: periodic LatencyTracker → request_latency_snapshots flush"
+SLA_SNAP_COUNT=$(psql_count "SELECT count(*) FROM request_latency_snapshots WHERE ts_unix > extract(epoch FROM (NOW() - INTERVAL '60 seconds'))::bigint;")
+if [[ "${SLA_SNAP_COUNT}" =~ ^[0-9]+$ ]] && [[ "${SLA_SNAP_COUNT}" -ge 1 ]]; then
+    pass "request_latency_snapshots has ≥1 recent row (count=${SLA_SNAP_COUNT}; flush task is running)"
+else
+    fail "request_latency_snapshots empty after harness run — count='${SLA_SNAP_COUNT}'"
+fi
+# Verify the most recent row carries non-zero percentile values
+# (the LatencyTracker had real samples, not a 0-only snapshot).
+SLA_LATEST_P95=$(psql_count "SELECT p95_us FROM request_latency_snapshots ORDER BY ts_unix DESC LIMIT 1;")
+if [[ "${SLA_LATEST_P95}" =~ ^[0-9]+$ ]] && [[ "${SLA_LATEST_P95}" -gt 0 ]]; then
+    pass "most-recent snapshot p95_us > 0 (${SLA_LATEST_P95}µs ≈ $((SLA_LATEST_P95 / 1000))ms)"
+else
+    fail "most-recent snapshot p95_us missing or zero — got '${SLA_LATEST_P95}'"
+fi
+# Sanity: monotonicity should hold on the persisted row too.
+SLA_LATEST_P50=$(psql_count "SELECT p50_us FROM request_latency_snapshots ORDER BY ts_unix DESC LIMIT 1;")
+SLA_LATEST_P99=$(psql_count "SELECT p99_us FROM request_latency_snapshots ORDER BY ts_unix DESC LIMIT 1;")
+if [[ "${SLA_LATEST_P50}" -le "${SLA_LATEST_P95}" ]] && [[ "${SLA_LATEST_P95}" -le "${SLA_LATEST_P99}" ]]; then
+    pass "persisted row percentile monotonicity holds (p50=${SLA_LATEST_P50}µs ≤ p95=${SLA_LATEST_P95}µs ≤ p99=${SLA_LATEST_P99}µs)"
+else
+    fail "persisted row monotonicity broken — p50=${SLA_LATEST_P50} p95=${SLA_LATEST_P95} p99=${SLA_LATEST_P99}"
+fi
 
 # ─── summary ──────────────────────────────────────────────────────────
 
