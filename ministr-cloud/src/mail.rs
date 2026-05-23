@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 
-use ministr_api::{InviteMessage, MailSender};
+use ministr_api::{InviteMessage, MailSender, StaleKeyDigestMessage};
 use tracing::{info, warn};
 
 /// Safe-default mailer that logs each would-be send at info level
@@ -48,6 +48,15 @@ impl MailSender for LogOnlyMailSender {
             inviter = %message.inviter_name.as_deref().unwrap_or("(unknown)"),
             // URL deliberately NOT logged — it's a bearer credential.
             "mail:log-only — would send invite (no provider configured)",
+        );
+    }
+
+    fn send_stale_key_digest(&self, message: StaleKeyDigestMessage) {
+        info!(
+            recipient = %message.to_email,
+            stale_key_count = message.keys.len(),
+            threshold_days = message.threshold_days,
+            "mail:log-only — would send stale-key digest (no provider configured)",
         );
     }
 }
@@ -114,6 +123,36 @@ fn html_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+impl ResendMailSender {
+    fn render_digest_html(msg: &StaleKeyDigestMessage) -> String {
+        use std::fmt::Write;
+        let mut rows = String::new();
+        for key in &msg.keys {
+            let _ = write!(
+                rows,
+                "<tr><td style=\"padding:4px 8px\">{name}</td>\
+                 <td style=\"padding:4px 8px;font-family:monospace\">{prefix}…</td></tr>",
+                name = html_escape(&key.name),
+                prefix = html_escape(&key.prefix),
+            );
+        }
+        format!(
+            "<p>You have <strong>{count}</strong> API key{s} that \
+             {have} not been used in the last {days} days:</p>\
+             <table border=\"1\" cellspacing=\"0\" style=\"border-collapse:collapse\">\
+             <tr><th style=\"padding:4px 8px\">Name</th>\
+             <th style=\"padding:4px 8px\">Prefix</th></tr>\
+             {rows}\
+             </table>\
+             <p>Consider revoking keys you no longer need.</p>",
+            count = msg.keys.len(),
+            s = if msg.keys.len() == 1 { "" } else { "s" },
+            have = if msg.keys.len() == 1 { "has" } else { "have" },
+            days = msg.threshold_days,
+        )
+    }
+}
+
 impl MailSender for ResendMailSender {
     fn send_invite(&self, message: InviteMessage) {
         let client = self.client.clone();
@@ -162,6 +201,61 @@ impl MailSender for ResendMailSender {
                         recipient = %to,
                         error = %e,
                         "mail:resend — failed to send invite email"
+                    );
+                }
+            }
+        });
+    }
+
+    fn send_stale_key_digest(&self, message: StaleKeyDigestMessage) {
+        let client = self.client.clone();
+        let api_key = self.api_key.clone();
+        let from = self.from_address.clone();
+        let to = message.to_email.clone();
+        let count = message.keys.len();
+        let subject = format!(
+            "{count} stale API key{s} on ministr",
+            s = if count == 1 { "" } else { "s" },
+        );
+        let html = Self::render_digest_html(&message);
+
+        tokio::spawn(async move {
+            let body = serde_json::json!({
+                "from": from,
+                "to": [to],
+                "subject": subject,
+                "html": html,
+            });
+            match client
+                .post(RESEND_API_URL)
+                .header("Authorization", format!("Bearer {api_key}"))
+                .json(&body)
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    info!(
+                        recipient = %to,
+                        stale_key_count = count,
+                        "mail:resend — stale-key digest sent"
+                    );
+                }
+                Ok(resp) => {
+                    let status = resp.status();
+                    let body_text = resp.text().await.unwrap_or_default();
+                    warn!(
+                        recipient = %to,
+                        %status,
+                        body = %body_text,
+                        "mail:resend — stale-key digest API returned non-success"
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        recipient = %to,
+                        error = %e,
+                        "mail:resend — failed to send stale-key digest"
                     );
                 }
             }
@@ -297,5 +391,67 @@ mod tests {
     #[test]
     fn html_escape_passthrough_on_clean_string() {
         assert_eq!(html_escape("hello world"), "hello world");
+    }
+
+    #[test]
+    fn render_digest_html_contains_key_count_and_names() {
+        let msg = StaleKeyDigestMessage {
+            to_email: "alice@example.com".into(),
+            keys: vec![
+                ministr_api::StaleKeyEntry {
+                    name: "CI runner".into(),
+                    prefix: "mst_pk_A".into(),
+                },
+                ministr_api::StaleKeyEntry {
+                    name: "staging".into(),
+                    prefix: "mst_pk_B".into(),
+                },
+            ],
+            threshold_days: 90,
+        };
+        let html = ResendMailSender::render_digest_html(&msg);
+        assert!(html.contains("<strong>2</strong>"));
+        assert!(html.contains("CI runner"));
+        assert!(html.contains("mst_pk_B"));
+        assert!(html.contains("90 days"));
+    }
+
+    #[test]
+    fn render_digest_html_singular_for_one_key() {
+        let msg = StaleKeyDigestMessage {
+            to_email: "a@b.com".into(),
+            keys: vec![ministr_api::StaleKeyEntry {
+                name: "lone".into(),
+                prefix: "mst_pk_X".into(),
+            }],
+            threshold_days: 30,
+        };
+        let html = ResendMailSender::render_digest_html(&msg);
+        assert!(html.contains("1</strong> API key that has"));
+    }
+
+    #[test]
+    fn render_digest_html_escapes_key_name() {
+        let msg = StaleKeyDigestMessage {
+            to_email: "a@b.com".into(),
+            keys: vec![ministr_api::StaleKeyEntry {
+                name: "<b>evil</b>".into(),
+                prefix: "mst_pk_Z".into(),
+            }],
+            threshold_days: 90,
+        };
+        let html = ResendMailSender::render_digest_html(&msg);
+        assert!(!html.contains("<b>evil</b>"));
+        assert!(html.contains("&lt;b&gt;evil&lt;/b&gt;"));
+    }
+
+    #[test]
+    fn log_only_sender_send_digest_does_not_panic() {
+        let sender = LogOnlyMailSender::new();
+        sender.send_stale_key_digest(StaleKeyDigestMessage {
+            to_email: "a@b.com".into(),
+            keys: vec![],
+            threshold_days: 90,
+        });
     }
 }

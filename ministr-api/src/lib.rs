@@ -51,7 +51,7 @@ pub use index_job_sink::{
     IndexJobError, IndexJobFuture, IndexJobSink, IndexJobSnapshot, IndexJobStatus,
 };
 pub use iso8601::format_unix_secs_iso;
-pub use mail::{InviteMessage, MailSender};
+pub use mail::{InviteMessage, MailSender, StaleKeyDigestMessage, StaleKeyEntry};
 pub use plan_resolver::{PlanResolver, PlanResolverError, ResolvePlanFuture};
 pub use sla_window_store::{MaxP95Future, SlaWindowStore, SlaWindowStoreError};
 pub use session_bundle_store::{
