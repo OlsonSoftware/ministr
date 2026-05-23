@@ -594,6 +594,17 @@ pub(crate) async fn cmd_serve_http(
     // tracker is Arc-backed so the middleware mounted at the outer
     // layer below sees the same buffer the /sla handler reads.
     let latency_tracker = admin_state.latency_tracker();
+    // F5.5-b-persist-read — wire the PostgresSlaWindowStore so /sla
+    // emits latency.window_30d_max_p95_ms. Cloud-only: self-hosted
+    // serve (no cloud_pool) leaves the field unwired and the JSON
+    // renders the historical field as null.
+    let admin_state = if let Some(pool) = cloud_pool.as_ref() {
+        admin_state.with_sla_window_store(
+            ministr_cloud::PostgresSlaWindowStore::new((**pool).clone()).into_dyn(),
+        )
+    } else {
+        admin_state
+    };
     let admin_public = ministr_mcp::admin::admin_public_routes(admin_state.clone());
     let admin_protected = ministr_mcp::admin::admin_protected_routes(admin_state);
 
