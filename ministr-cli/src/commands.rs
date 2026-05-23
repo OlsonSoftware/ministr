@@ -813,12 +813,27 @@ pub(crate) async fn cmd_serve_http(
         // Postgres pool to consult `api_keys`. Self-hosted serve
         // leaves the store untouched and only OAuth tokens
         // authenticate there.
+        //
+        // F5.5-a-plan-lookup — also wire the plan resolver so the
+        // OAuth-path resolve_tenant builds a Tenant whose `plan`
+        // reflects the user's real `users.plan_id` instead of
+        // defaulting to Plan::Pro. Same cloud-only gate; the resolver
+        // is wasted on self-hosted serve (where validate_token returns
+        // OAuth client_ids, not user UUIDs).
         let store = if let Some(pool) = cloud_pool.as_ref() {
-            let resolver = ministr_cloud::PostgresApiKeyResolver::new((**pool).clone()).into_dyn();
+            let api_key_resolver =
+                ministr_cloud::PostgresApiKeyResolver::new((**pool).clone()).into_dyn();
+            let plan_resolver =
+                ministr_cloud::PostgresPlanResolver::new((**pool).clone()).into_dyn();
             tracing::info!(
                 "PostgresApiKeyResolver wired — `mst_pk_…` tokens authenticate via api_keys table"
             );
-            store.with_api_key_resolver(resolver)
+            tracing::info!(
+                "PostgresPlanResolver wired — OAuth tenants resolve `Tenant.plan` from users.plan_id (F5.5-a-plan-lookup)"
+            );
+            store
+                .with_api_key_resolver(api_key_resolver)
+                .with_plan_resolver(plan_resolver)
         } else {
             store
         };

@@ -11,8 +11,16 @@
 //! NOTHING` so that an email change on the GitHub profile is reflected
 //! immediately. The user's chosen plan is *not* touched on subsequent
 //! sign-ins — only the very first INSERT seeds `plan_id`.
+//!
+//! F5.5-a-plan-lookup also lands [`PostgresPlanResolver`] here — a
+//! tiny `users.plan_id` lookup wired into `OAuthStore` so the OAuth
+//! token-validation path reflects the real billing tier instead of
+//! defaulting to `Plan::Pro`.
+
+use std::sync::Arc;
 
 use deadpool_postgres::Pool;
+use ministr_api::{PlanResolver, PlanResolverError, ResolvePlanFuture};
 
 use crate::idp::ResolvedIdentity;
 
@@ -271,6 +279,91 @@ pub async fn upsert_oidc_user(pool: &Pool, email: &str) -> Result<UserRow, UserE
         plan_id,
         inserted,
     })
+}
+
+// ── PlanResolver ───────────────────────────────────────────────────────────
+
+/// F5.5-a-plan-lookup — Postgres-backed implementation of
+/// [`PlanResolver`].
+///
+/// Maps an OAuth subject (a `users.id` UUID minted at GitHub / OIDC /
+/// SAML sign-in) to that user's wire-shape `plan_id`. Wired into
+/// `OAuthStore::with_plan_resolver` at cloud-serve startup so
+/// `resolve_tenant` builds a `Tenant` whose `plan` reflects the real
+/// tier — closes the F5.5-a-priority caveat that the Enterprise=4 lane
+/// was unreachable through OAuth because `Tenant::local()` always
+/// defaulted to `Plan::Pro`.
+///
+/// The single-statement SELECT runs on the same `users (id)` primary-
+/// key index every authenticated cloud request already hits via the
+/// owner lookup paths, so this resolver adds one index probe per
+/// request rather than a fresh table scan.
+#[derive(Debug, Clone)]
+pub struct PostgresPlanResolver {
+    pool: Pool,
+}
+
+impl PostgresPlanResolver {
+    /// Build a resolver bound to a Postgres pool. Shares the pool with
+    /// every other cloud-side reader.
+    #[must_use]
+    pub fn new(pool: Pool) -> Self {
+        Self { pool }
+    }
+
+    /// Convenience: wrap as an `Arc<dyn PlanResolver>` for
+    /// `OAuthStore::with_plan_resolver`.
+    #[must_use]
+    pub fn into_dyn(self) -> Arc<dyn PlanResolver> {
+        Arc::new(self)
+    }
+}
+
+impl PlanResolver for PostgresPlanResolver {
+    fn resolve<'a>(&'a self, subject: &'a str) -> ResolvePlanFuture<'a> {
+        Box::pin(async move {
+            // `$1::text::uuid` reuses the cast pattern set_stripe_customer_id
+            // and the F3.4a touch_last_used path already rely on. A
+            // subject that doesn't parse as UUID (self-hosted client_ids
+            // like "ministr-tauri") raises a Postgres invalid-uuid
+            // error, which we swallow as Ok(None) so OAuthStore falls
+            // back cleanly to Tenant::local() rather than rejecting the
+            // request. Genuine backend failures (connection drops,
+            // schema drift) still surface as Storage errors so the
+            // operator sees them at warn level.
+            let conn = self
+                .pool
+                .get()
+                .await
+                .map_err(|e| PlanResolverError::Storage(format!("plan get_conn: {e}")))?;
+            match conn
+                .query_opt(
+                    "SELECT plan_id FROM users WHERE id = $1::text::uuid",
+                    &[&subject],
+                )
+                .await
+            {
+                Ok(Some(row)) => Ok(row.try_get::<_, String>("plan_id").ok()),
+                Ok(None) => Ok(None),
+                Err(e) => {
+                    // Postgres reports invalid-uuid input as a 22P02
+                    // syntax-error class — distinguishable from genuine
+                    // connectivity/storage errors. Treat as Ok(None) so
+                    // non-UUID subjects (self-hosted / future
+                    // non-cloud OAuth client_ids) round-trip to
+                    // Tenant::local() without noise in the operator
+                    // log.
+                    if e.code().map(tokio_postgres::error::SqlState::code)
+                        == Some("22P02")
+                    {
+                        Ok(None)
+                    } else {
+                        Err(PlanResolverError::Storage(format!("plan query: {e}")))
+                    }
+                }
+            }
+        })
+    }
 }
 
 #[cfg(test)]

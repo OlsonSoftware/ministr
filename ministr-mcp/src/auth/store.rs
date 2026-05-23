@@ -9,7 +9,7 @@ use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
-use ministr_api::ApiKeyResolver;
+use ministr_api::{ApiKeyResolver, PlanResolver};
 use tracing::warn;
 
 use super::OAuthConfig;
@@ -32,6 +32,13 @@ pub struct OAuthStore {
     /// and falls back to this resolver on miss. Self-hosted serve
     /// leaves it `None`; only OAuth tokens authenticate there.
     api_key_resolver: Option<Arc<dyn ApiKeyResolver>>,
+    /// F5.5-a-plan-lookup — optional plan resolver. When `Some`, the
+    /// OAuth-path [`Self::resolve_tenant`] looks up the validated
+    /// subject's `users.plan_id` so the constructed `Tenant.plan`
+    /// reflects the real billing tier instead of `Tenant::local()`'s
+    /// `Plan::Pro` default. Self-hosted serve leaves it `None` and the
+    /// existing local-tenant shape is preserved.
+    plan_resolver: Option<Arc<dyn PlanResolver>>,
 }
 
 impl OAuthStore {
@@ -42,6 +49,7 @@ impl OAuthStore {
             config,
             backend: OAuthBackend::InMemory(InMemoryStorage::new()),
             api_key_resolver: None,
+            plan_resolver: None,
         }
     }
 
@@ -52,6 +60,20 @@ impl OAuthStore {
     #[must_use]
     pub fn with_api_key_resolver(mut self, resolver: Arc<dyn ApiKeyResolver>) -> Self {
         self.api_key_resolver = Some(resolver);
+        self
+    }
+
+    /// F5.5-a-plan-lookup — install a [`PlanResolver`] so the OAuth
+    /// path resolves the real `users.plan_id` instead of defaulting
+    /// every OAuth-authenticated request to `Plan::Pro`. Cloud
+    /// deployments call this with a `PostgresPlanResolver` from
+    /// `ministr-cloud`; self-hosted serve leaves the field `None` and
+    /// the existing `Tenant::local()` shape is preserved (the
+    /// resolver isn't useful there — `validate_token` returns OAuth
+    /// `client_ids`, not user UUIDs).
+    #[must_use]
+    pub fn with_plan_resolver(mut self, resolver: Arc<dyn PlanResolver>) -> Self {
+        self.plan_resolver = Some(resolver);
         self
     }
 
@@ -71,6 +93,7 @@ impl OAuthStore {
             config,
             backend,
             api_key_resolver: None,
+            plan_resolver: None,
         })
     }
 
@@ -98,6 +121,7 @@ impl OAuthStore {
             config,
             backend,
             api_key_resolver: None,
+            plan_resolver: None,
         })
     }
 
@@ -203,7 +227,7 @@ impl OAuthStore {
     /// there.
     pub(crate) async fn resolve_tenant(&self, token: &str) -> Option<Tenant> {
         if let Some(client_id) = self.validate_token(token).await {
-            return Some(Tenant::local(client_id));
+            return Some(self.tenant_from_oauth_subject(client_id).await);
         }
         self.resolve_api_key(token, None).await
     }
@@ -217,9 +241,39 @@ impl OAuthStore {
         required_scope: &str,
     ) -> Option<Tenant> {
         if let Some(client_id) = self.validate_token_with_scope(token, required_scope).await {
-            return Some(Tenant::local(client_id));
+            return Some(self.tenant_from_oauth_subject(client_id).await);
         }
         self.resolve_api_key(token, Some(required_scope)).await
+    }
+
+    /// F5.5-a-plan-lookup — build a [`Tenant`] from an OAuth-validated
+    /// subject. When a [`PlanResolver`] is wired (cloud mode), looks up
+    /// the subject's `users.plan_id` and constructs a `Tenant` whose
+    /// `plan` reflects the real billing tier; otherwise falls back to
+    /// [`Tenant::local`] (`Plan::Pro` default — self-hosted shape).
+    ///
+    /// Resolver errors are logged at warn and treated as "no plan
+    /// known" → fall back to Pro. Returning Pro on a transient
+    /// backend blip is the right closed-loop posture: the worst case
+    /// is admitting a higher tier at a lower quota lane, not letting
+    /// an unauthenticated request through (the OAuth validation
+    /// already passed).
+    async fn tenant_from_oauth_subject(&self, subject: String) -> Tenant {
+        let Some(resolver) = self.plan_resolver.as_ref() else {
+            return Tenant::local(subject);
+        };
+        match resolver.resolve(&subject).await {
+            Ok(Some(plan_id)) => Tenant {
+                subject,
+                org_id: None,
+                plan: parse_plan_id(&plan_id),
+            },
+            Ok(None) => Tenant::local(subject),
+            Err(e) => {
+                warn!(error = %e, "plan resolver storage error; falling back to Plan::Pro");
+                Tenant::local(subject)
+            }
+        }
     }
 
     /// F3.4a — fall-through resolver: hash the candidate token, look it
@@ -333,8 +387,84 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    use ministr_api::{PlanResolverError, ResolvePlanFuture};
+
     fn store() -> OAuthStore {
         OAuthStore::new(OAuthConfig::default())
+    }
+
+    /// F5.5-a-plan-lookup — stub resolver that returns a fixed value
+    /// for one subject and Ok(None) for everything else, plus a synth
+    /// error path so the resolver-error fallback can be exercised.
+    #[derive(Debug)]
+    struct StubPlanResolver {
+        known: (String, String),
+        boom_subject: Option<String>,
+    }
+
+    impl PlanResolver for StubPlanResolver {
+        fn resolve<'a>(&'a self, subject: &'a str) -> ResolvePlanFuture<'a> {
+            let known = self.known.clone();
+            let boom = self.boom_subject.clone();
+            Box::pin(async move {
+                if Some(subject) == boom.as_deref() {
+                    return Err(PlanResolverError::Storage("synthetic".into()));
+                }
+                if subject == known.0 {
+                    return Ok(Some(known.1));
+                }
+                Ok(None)
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn tenant_from_oauth_subject_without_resolver_is_local() {
+        let store = store();
+        let tenant = store.tenant_from_oauth_subject("alice".into()).await;
+        assert_eq!(tenant.subject, "alice");
+        assert!(tenant.org_id.is_none());
+        assert_eq!(tenant.plan, Plan::Pro);
+    }
+
+    #[tokio::test]
+    async fn tenant_from_oauth_subject_with_resolver_yields_real_plan() {
+        let resolver = Arc::new(StubPlanResolver {
+            known: ("enterprise-user".into(), "enterprise".into()),
+            boom_subject: None,
+        });
+        let store = store().with_plan_resolver(resolver);
+        let tenant = store
+            .tenant_from_oauth_subject("enterprise-user".into())
+            .await;
+        assert_eq!(tenant.subject, "enterprise-user");
+        assert_eq!(tenant.plan, Plan::Enterprise);
+    }
+
+    #[tokio::test]
+    async fn tenant_from_oauth_subject_falls_back_when_resolver_misses() {
+        let resolver = Arc::new(StubPlanResolver {
+            known: ("known".into(), "team".into()),
+            boom_subject: None,
+        });
+        let store = store().with_plan_resolver(resolver);
+        // Subject the resolver doesn't recognise (e.g. a self-hosted
+        // client_id) round-trips to the Tenant::local default.
+        let tenant = store.tenant_from_oauth_subject("nobody".into()).await;
+        assert_eq!(tenant.plan, Plan::Pro);
+    }
+
+    #[tokio::test]
+    async fn tenant_from_oauth_subject_swallows_resolver_error() {
+        let resolver = Arc::new(StubPlanResolver {
+            known: (String::new(), String::new()),
+            boom_subject: Some("blowup".into()),
+        });
+        let store = store().with_plan_resolver(resolver);
+        // Resolver error must not reject the request — already-validated
+        // OAuth token stays good; tenant falls back to Pro.
+        let tenant = store.tenant_from_oauth_subject("blowup".into()).await;
+        assert_eq!(tenant.plan, Plan::Pro);
     }
 
     fn token(name: &str, scope: &str, ttl_secs: u64, expired: bool) -> AccessToken {
