@@ -464,47 +464,16 @@ impl SessionRegistry {
 }
 
 /// F6.1-d-b — capture wall-clock as an ISO-8601 UTC string for
-/// drop-ledger entries. Mirrors `ministr_mcp::task::iso8601_now`'s
-/// civil-calendar math so the format matches what
-/// `PostgresSessionStorage`'s `to_char` returns.
+/// drop-ledger entries. Delegates to the workspace-shared formatter
+/// in `ministr_api::iso8601` so the format matches what
+/// `PostgresSessionStorage`'s `to_char`, the F5.5-b `/sla` endpoint,
+/// and the F5.4-e mint-audit log all emit.
 fn iso8601_now() -> String {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    format_iso8601(secs)
-}
-
-fn format_iso8601(secs: u64) -> String {
-    const SECONDS_PER_DAY: u64 = 86400;
-    const DAYS_PER_400Y: u64 = 146_097;
-    const DAYS_PER_100Y: u64 = 36_524;
-    const DAYS_PER_4Y: u64 = 1461;
-    const DAYS_PER_Y: u64 = 365;
-
-    let time_of_day = secs % SECONDS_PER_DAY;
-    let hours = time_of_day / 3600;
-    let minutes = (time_of_day % 3600) / 60;
-    let seconds = time_of_day % 60;
-
-    let mut days = secs / SECONDS_PER_DAY;
-    days += 719_468;
-
-    let era = days / DAYS_PER_400Y;
-    let day_of_era = days % DAYS_PER_400Y;
-    let year_of_era = (day_of_era - day_of_era / (DAYS_PER_4Y - 1) + day_of_era / DAYS_PER_100Y
-        - day_of_era / (DAYS_PER_400Y - 1))
-        / DAYS_PER_Y;
-    let mut year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (DAYS_PER_Y * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let mp = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    if month <= 2 {
-        year += 1;
-    }
-
-    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z")
+    ministr_api::format_unix_secs_iso(secs)
 }
 
 #[cfg(test)]
