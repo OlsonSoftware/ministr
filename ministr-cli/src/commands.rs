@@ -3042,7 +3042,10 @@ pub(crate) fn cmd_cloud_generate_license_keypair(
 /// F5.4-e-mint operator JWT issuance — sign a license JWT against
 /// the persistent private key from `generate-license-keypair`.
 /// Prints the JWT to stdout (or writes to `--out`) for distribution
-/// to the customer.
+/// to the customer. F5.4-e-audit-extension: when `--audit-log` is
+/// supplied, appends one JSONL line per successful mint
+/// (timestamp + claims + SHA-256 hash of the JWT — no bearer
+/// material).
 ///
 /// # Errors
 ///
@@ -3053,6 +3056,7 @@ pub(crate) fn cmd_cloud_mint_license(
     seat_count: u32,
     valid_days: u32,
     out: Option<&std::path::Path>,
+    audit_log: Option<&std::path::Path>,
 ) -> miette::Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
     if valid_days == 0 {
@@ -3082,6 +3086,15 @@ pub(crate) fn cmd_cloud_mint_license(
             private_key.display()
         ))?;
     let jwt = sign_license_jwt(&priv_pem, &claims)?;
+
+    // F5.4-e-audit — append before printing/writing the JWT so a
+    // crash between mint + audit-write doesn't leave an orphan
+    // issuance the operator can't trace. JWT hash only — never the
+    // bearer material.
+    if let Some(audit_path) = audit_log {
+        append_license_audit_line(audit_path, &claims, &jwt, valid_days)?;
+    }
+
     if let Some(out_path) = out {
         std::fs::write(out_path, &jwt)
             .into_diagnostic()
@@ -3092,6 +3105,7 @@ pub(crate) fn cmd_cloud_mint_license(
             valid_days,
             exp,
             out = %out_path.display(),
+            audit_log = audit_log.map(|p| p.display().to_string()).unwrap_or_default(),
             "license minted"
         );
     } else {
@@ -3101,8 +3115,185 @@ pub(crate) fn cmd_cloud_mint_license(
             seat_count,
             valid_days,
             exp,
+            audit_log = audit_log.map(|p| p.display().to_string()).unwrap_or_default(),
             "license minted (JWT printed to stdout)"
         );
+    }
+    Ok(())
+}
+
+/// F5.4-e-audit — compute a short unique identifier for the JWT
+/// without storing the bearer material. First 16 hex chars of
+/// SHA-256(jwt). Sufficient to disambiguate human-readable list
+/// output (16 hex = 64 bits = collision-free in practice for any
+/// realistic operator issuance volume).
+fn license_jwt_id_hash(jwt: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(jwt.as_bytes());
+    let digest = hasher.finalize();
+    // 8 bytes = 16 hex chars; ample collision resistance for ops use.
+    let bytes = &digest[..8];
+    let mut s = String::with_capacity(16);
+    for b in bytes {
+        use std::fmt::Write;
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
+/// F5.4-e-audit — append one JSONL line to the audit log. JSONL is
+/// append-safe on POSIX for writes ≤ `PIPE_BUF` (4 KB); each line is
+/// well under that. Concurrent multi-host writes would interleave
+/// half-lines; documented as a single-operator-host limitation.
+fn append_license_audit_line(
+    audit_path: &std::path::Path,
+    claims: &ministr_cloud::LicenseClaims,
+    jwt: &str,
+    valid_days: u32,
+) -> miette::Result<()> {
+    use std::io::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    // ISO-8601 string for human-readable display. Re-derive from
+    // unix epoch via the existing audit_events partition civil-from-
+    // unix-secs helper would be nice but it's not re-exported. Format
+    // by hand: YYYY-MM-DDTHH:MM:SSZ.
+    let ts_iso = format_unix_secs_iso(now_secs);
+    let jwt_id_hash = license_jwt_id_hash(jwt);
+    let line = serde_json::json!({
+        "ts_iso": ts_iso,
+        "ts_unix": now_secs,
+        "enterprise_id": claims.enterprise_id,
+        "seat_count": claims.seat_count,
+        "valid_days": valid_days,
+        "exp": claims.exp,
+        "jwt_id_hash": jwt_id_hash,
+    });
+    let serialized = serde_json::to_string(&line)
+        .into_diagnostic()
+        .wrap_err("serialize audit line")?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(audit_path)
+        .into_diagnostic()
+        .wrap_err(format!(
+            "open audit log {} for append",
+            audit_path.display()
+        ))?;
+    writeln!(file, "{serialized}")
+        .into_diagnostic()
+        .wrap_err(format!(
+            "append to audit log {}",
+            audit_path.display()
+        ))?;
+    Ok(())
+}
+
+/// Format Unix-seconds as ISO-8601 UTC (YYYY-MM-DDTHH:MM:SSZ).
+/// Reuses the time-since-epoch civil-calendar arithmetic that
+/// `ministr-cloud::audit::civil_from_unix_secs` implements, but
+/// inlined here because that helper isn't re-exported. Small;
+/// duplication is two functions.
+fn format_unix_secs_iso(secs: u64) -> String {
+    let (year, month, day) = civil_from_unix_secs_cli(secs);
+    let secs_of_day = secs % 86_400;
+    let hour = secs_of_day / 3_600;
+    let minute = (secs_of_day % 3_600) / 60;
+    let second = secs_of_day % 60;
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+/// Howard Hinnant's `civil_from_days` — same as `ministr-cloud`'s
+/// `audit::civil_from_unix_secs` but duplicated here because that
+/// helper is private to the audit module. Pure integer arithmetic;
+/// no chrono / time dep needed.
+#[allow(
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation,
+    clippy::bool_to_int_with_if
+)]
+fn civil_from_unix_secs_cli(secs: u64) -> (i32, u32, u32) {
+    let z_signed: i64 = (secs / 86_400) as i64 + 719_468;
+    let era = if z_signed >= 0 { z_signed } else { z_signed - 146_096 } / 146_097;
+    let doe = (z_signed - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    let y = (y + if m <= 2 { 1 } else { 0 }) as i32;
+    (y, m, d)
+}
+
+/// F5.4-e-audit — print the issuance audit log. Reads JSONL line by
+/// line, skips malformed lines with a warn (handles partial writes),
+/// sorts by `ts_unix` descending (most recent first).
+///
+/// # Errors
+///
+/// Surfaces file-read errors.
+pub(crate) fn cmd_cloud_list_licenses(
+    audit_log: &std::path::Path,
+    format: &str,
+) -> miette::Result<()> {
+    let bytes = std::fs::read_to_string(audit_log)
+        .into_diagnostic()
+        .wrap_err(format!("read audit log {}", audit_log.display()))?;
+
+    let mut entries: Vec<serde_json::Value> = bytes
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| match serde_json::from_str::<serde_json::Value>(l) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!(error = %e, "skipping malformed audit line");
+                None
+            }
+        })
+        .collect();
+    // Sort by ts_unix descending; missing field sorts to the end.
+    entries.sort_by(|a, b| {
+        let ts_a = a.get("ts_unix").and_then(serde_json::Value::as_u64).unwrap_or(0);
+        let ts_b = b.get("ts_unix").and_then(serde_json::Value::as_u64).unwrap_or(0);
+        ts_b.cmp(&ts_a)
+    });
+
+    if format == "json" {
+        for entry in &entries {
+            println!(
+                "{}",
+                serde_json::to_string(entry)
+                    .into_diagnostic()
+                    .wrap_err("serialize entry")?
+            );
+        }
+    } else {
+        // Treat any non-"json" format as the default `table` view.
+        if entries.is_empty() {
+            println!("(no licenses in {})", audit_log.display());
+            return Ok(());
+        }
+            println!(
+                "{:<22}  {:<20}  {:>5}  {:>11}  {:<16}",
+                "issued (UTC)", "enterprise_id", "seats", "expires (d)", "jwt_id_hash"
+            );
+            println!("{:-<22}  {:-<20}  {:->5}  {:->11}  {:-<16}", "", "", "", "", "");
+            for entry in &entries {
+                let ts = entry.get("ts_iso").and_then(serde_json::Value::as_str).unwrap_or("?");
+                let eid = entry.get("enterprise_id").and_then(serde_json::Value::as_str).unwrap_or("?");
+                let seats = entry.get("seat_count").and_then(serde_json::Value::as_u64).unwrap_or(0);
+                let valid_days = entry.get("valid_days").and_then(serde_json::Value::as_u64).unwrap_or(0);
+                let hash = entry.get("jwt_id_hash").and_then(serde_json::Value::as_str).unwrap_or("?");
+                println!(
+                    "{ts:<22}  {eid:<20}  {seats:>5}  {valid_days:>11}  {hash:<16}"
+                );
+            }
     }
     Ok(())
 }
