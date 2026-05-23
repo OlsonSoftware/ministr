@@ -30,6 +30,7 @@ use std::time::Instant;
 
 use jobs::{InMemoryJobQueue, SqliteJobQueue};
 pub use latency::{LatencySnapshot, LatencyTracker, record_latency_middleware};
+use ministr_api::SlaWindowStore;
 
 pub use jobs::JobQueueBackend;
 pub use router::{admin_protected_routes, admin_public_routes};
@@ -55,6 +56,14 @@ pub struct AdminState {
     /// `/sla` handler reads percentiles via [`LatencyTracker::snapshot`].
     /// Cheap to clone (Arc-backed).
     latency: LatencyTracker,
+    /// F5.5-b-persist-read — optional historical SLA-window query.
+    /// `Some` in cloud mode (wired via [`Self::with_sla_window_store`]
+    /// with a [`ministr_cloud::PostgresSlaWindowStore`]); `None` on
+    /// self-hosted serve where the `request_latency_snapshots` table
+    /// doesn't exist. The `/sla` handler renders
+    /// `latency.window_30d_max_p95_ms` as `null` when this is `None`
+    /// or the store returns `Ok(None)`.
+    sla_window_store: Option<Arc<dyn SlaWindowStore>>,
 }
 
 impl AdminState {
@@ -69,7 +78,19 @@ impl AdminState {
             corpus_count: Arc::new(AtomicUsize::new(0)),
             boot_started_at: Instant::now(),
             latency: LatencyTracker::new(),
+            sla_window_store: None,
         }
+    }
+
+    /// F5.5-b-persist-read — install a `SlaWindowStore` so the
+    /// `/sla` handler can render historical `window_30d_max_p95_ms`.
+    /// Cloud serve calls this with a `PostgresSlaWindowStore` from
+    /// `ministr-cloud`; self-hosted serve leaves the field `None`
+    /// and the JSON field renders as `null`.
+    #[must_use]
+    pub fn with_sla_window_store(mut self, store: Arc<dyn SlaWindowStore>) -> Self {
+        self.sla_window_store = Some(store);
+        self
     }
 
     /// Construct an `AdminState` backed by `SQLite` at `jobs_db_path`. Jobs
@@ -90,6 +111,7 @@ impl AdminState {
             corpus_count: Arc::new(AtomicUsize::new(0)),
             boot_started_at: Instant::now(),
             latency: LatencyTracker::new(),
+            sla_window_store: None,
         })
     }
 
@@ -118,6 +140,12 @@ impl AdminState {
     #[must_use]
     pub fn latency_tracker(&self) -> LatencyTracker {
         self.latency.clone()
+    }
+
+    /// F5.5-b-persist-read — borrow the optional `SlaWindowStore`.
+    /// Read by the `/sla` handler. `None` on self-hosted serve.
+    pub(super) fn sla_window_store(&self) -> Option<&Arc<dyn SlaWindowStore>> {
+        self.sla_window_store.as_ref()
     }
 
     fn webhook_secret(&self) -> Option<&str> {

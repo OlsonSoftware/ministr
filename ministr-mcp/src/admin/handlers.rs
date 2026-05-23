@@ -64,24 +64,33 @@ pub(super) struct SlaResponse {
 /// dashboards) read the SLA contract's native unit directly. `count`
 /// is the rolling-window sample count for callers that want to
 /// understand how warmed-up the percentiles are.
+///
+/// F5.5-b-persist-read — `window_30d_max_p95_ms` carries the
+/// historical worst p95 over the last 30 days from
+/// `request_latency_snapshots`. `None` in self-hosted (no DB-backed
+/// store wired) or when the rolling window happens to be empty.
 #[derive(Debug, Serialize)]
 struct LatencyEmission {
     count: usize,
     p50_ms: u64,
     p95_ms: u64,
     p99_ms: u64,
+    window_30d_max_p95_ms: Option<u64>,
 }
 
-impl From<crate::admin::LatencySnapshot> for LatencyEmission {
-    fn from(s: crate::admin::LatencySnapshot) -> Self {
-        // Microseconds → milliseconds at the seam. u32 max micros is
-        // ~71 minutes ⇒ never overflows the u64 ms field.
-        Self {
-            count: s.count,
-            p50_ms: u64::from(s.p50_us) / 1_000,
-            p95_ms: u64::from(s.p95_us) / 1_000,
-            p99_ms: u64::from(s.p99_us) / 1_000,
-        }
+/// Construct a [`LatencyEmission`] from the in-memory snapshot and the
+/// optional historical max. Kept out of `From` because of the two-arg
+/// shape.
+fn latency_emission(
+    s: crate::admin::LatencySnapshot,
+    window_30d_max_p95_us: Option<u32>,
+) -> LatencyEmission {
+    LatencyEmission {
+        count: s.count,
+        p50_ms: u64::from(s.p50_us) / 1_000,
+        p95_ms: u64::from(s.p95_us) / 1_000,
+        p99_ms: u64::from(s.p99_us) / 1_000,
+        window_30d_max_p95_ms: window_30d_max_p95_us.map(|us| u64::from(us) / 1_000),
     }
 }
 
@@ -100,7 +109,27 @@ pub(super) async fn sla_status(State(state): State<AdminState>) -> Json<SlaRespo
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
     let started_at = now_secs.saturating_sub(uptime_secs);
-    let latency = state.latency_tracker().snapshot().map(LatencyEmission::from);
+    // F5.5-b-persist-read — pull the historical 30d max p95 from the
+    // wired store (cloud mode only). 30 days = 30 × 86_400 secs.
+    // i64 fits centuries of unix-epoch comfortably; saturating_sub
+    // defends against the unlikely sub-30d-old epoch boundary.
+    let window_30d_max_p95_us = if let Some(store) = state.sla_window_store() {
+        let since = i64::try_from(now_secs).unwrap_or(i64::MAX)
+            .saturating_sub(30 * 86_400);
+        match store.max_p95_since(since).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(error = %e, "sla window store query failed; rendering null");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let latency = state
+        .latency_tracker()
+        .snapshot()
+        .map(|s| latency_emission(s, window_30d_max_p95_us));
     Json(SlaResponse {
         status: "ready",
         version: env!("CARGO_PKG_VERSION"),

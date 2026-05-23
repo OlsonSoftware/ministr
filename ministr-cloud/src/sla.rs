@@ -19,7 +19,10 @@
 //! - No tenant or org scoping — latency is fleet-wide signal, not a
 //!   per-customer measurement.
 
+use std::sync::Arc;
+
 use deadpool_postgres::Pool;
+use ministr_api::{MaxP95Future, SlaWindowStore, SlaWindowStoreError};
 
 /// Errors surfaced by [`persist_snapshot`]. Both arms are treated as
 /// non-fatal by the calling tokio task — the loop logs at warn and
@@ -76,6 +79,65 @@ pub async fn persist_snapshot(
     .await
     .map_err(|e| SlaError::Insert(e.to_string()))?;
     Ok(())
+}
+
+/// F5.5-b-persist-read — Postgres-backed implementation of
+/// [`SlaWindowStore`]. Wires `request_latency_snapshots` into the
+/// `/sla` handler so it can render `latency.window_30d_max_p95_ms`.
+///
+/// SELECT MAX hits the `idx_request_latency_snapshots_ts` DESC
+/// index for a single page scan; even at the projected 30-day-per-pod
+/// row count (~43K rows) the query is sub-millisecond. A future
+/// caching layer (`F5.5-b-persist-cache`) could memoize the result
+/// with a 60s TTL if `/sla` polling cadence ever justifies it.
+#[derive(Debug, Clone)]
+pub struct PostgresSlaWindowStore {
+    pool: Pool,
+}
+
+impl PostgresSlaWindowStore {
+    /// Build a store bound to a Postgres pool. Shares the pool with
+    /// every other cloud-side reader.
+    #[must_use]
+    pub fn new(pool: Pool) -> Self {
+        Self { pool }
+    }
+
+    /// Convenience: wrap as an `Arc<dyn SlaWindowStore>` for
+    /// `AdminState::with_sla_window_store`.
+    #[must_use]
+    pub fn into_dyn(self) -> Arc<dyn SlaWindowStore> {
+        Arc::new(self)
+    }
+}
+
+impl SlaWindowStore for PostgresSlaWindowStore {
+    fn max_p95_since(&self, since_ts_unix: i64) -> MaxP95Future<'_> {
+        Box::pin(async move {
+            let conn = self
+                .pool
+                .get()
+                .await
+                .map_err(|e| SlaWindowStoreError::Storage(format!("get_conn: {e}")))?;
+            // MAX(p95_us) over the window — single index scan via
+            // idx_request_latency_snapshots_ts. Returns NULL when the
+            // window is empty, which try_get surfaces as Option::None
+            // through the explicit nullable cast.
+            let row = conn
+                .query_one(
+                    "SELECT MAX(p95_us) AS max_p95 FROM request_latency_snapshots WHERE ts_unix >= $1",
+                    &[&since_ts_unix],
+                )
+                .await
+                .map_err(|e| SlaWindowStoreError::Storage(format!("query: {e}")))?;
+            let max_i32: Option<i32> = row
+                .try_get("max_p95")
+                .map_err(|e| SlaWindowStoreError::Storage(format!("read max_p95: {e}")))?;
+            // Negative values would violate the table's CHECK
+            // constraint, so a clamp at 0 is purely defensive.
+            Ok(max_i32.map(|v| u32::try_from(v).unwrap_or(0)))
+        })
+    }
 }
 
 #[cfg(test)]

@@ -2923,6 +2923,30 @@ else
     fail "/sla.latency percentiles non-monotonic — p50=${SLA_LAT_P50} p95=${SLA_LAT_P95} p99=${SLA_LAT_P99}"
 fi
 
+# F5.5-b-persist-read — by this point in the harness, the
+# persist-write flush task has landed multiple snapshots
+# (MINISTR_SLA_FLUSH_SECS=2 on test_serve). The /sla handler should
+# now read the max p95 from request_latency_snapshots and surface it
+# as latency.window_30d_max_p95_ms. Compare with the snapshot from
+# the SAME /sla call (current SLA_LAT_P95) and check the historical
+# max is >= the current p95 (rolling-max is monotonic over time).
+# We re-fetch /sla because the earlier capture happened BEFORE the
+# persist-write task had run; pull a fresh body so the window field
+# is wired through.
+curl_request GET "${ENDPOINT}/sla" ""
+SLA_WINDOW_P95=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.latency.window_30d_max_p95_ms // empty')
+SLA_CURR_P95=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.latency.p95_ms // empty')
+if [[ "${SLA_WINDOW_P95}" =~ ^[0-9]+$ ]]; then
+    pass "/sla.latency.window_30d_max_p95_ms is numeric (${SLA_WINDOW_P95}ms; persist-read wire live)"
+else
+    fail "/sla.latency.window_30d_max_p95_ms missing or non-numeric: '${SLA_WINDOW_P95}'"
+fi
+if [[ "${SLA_WINDOW_P95}" -ge "${SLA_CURR_P95}" ]]; then
+    pass "window_30d_max_p95_ms (${SLA_WINDOW_P95}ms) >= current p95_ms (${SLA_CURR_P95}ms) — rolling-max monotonicity holds"
+else
+    fail "window_30d_max_p95_ms (${SLA_WINDOW_P95}) < current p95_ms (${SLA_CURR_P95}) — historical max should not be less than current"
+fi
+
 # 39) **F5.4-e-rotate — re-mint in-flight licenses against a new key.**
 #     Generate old + new keypairs; mint two licenses against the OLD
 #     key (alpha + beta), recording both in the audit log; revoke alpha;
