@@ -3147,13 +3147,14 @@ pub(crate) fn cmd_cloud_generate_license_keypair(
 /// # Errors
 ///
 /// Surfaces file-read, JWT-encode, and FS-write errors.
-pub(crate) fn cmd_cloud_mint_license(
+pub(crate) async fn cmd_cloud_mint_license(
     private_key: &std::path::Path,
     enterprise_id: &str,
     seat_count: u32,
     valid_days: u32,
     out: Option<&std::path::Path>,
     audit_log: Option<&std::path::Path>,
+    pg_url_flag: Option<&str>,
 ) -> miette::Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
     if valid_days == 0 {
@@ -3183,6 +3184,43 @@ pub(crate) fn cmd_cloud_mint_license(
             private_key.display()
         ))?;
     let jwt = sign_license_jwt(&priv_pem, &claims)?;
+
+    // F5.4-e-audit-db — PG dual-write FIRST when configured. Order
+    // matters: PG → JSONL → out-file means a crash between PG and
+    // JSONL leaves a row in DB without a JSONL line (operator can
+    // catch this via `list-licenses --pg-url`); a crash between
+    // JSONL and out-file leaves a hash in both audit backends
+    // without a customer-visible JWT (operator re-runs, the
+    // ON CONFLICT DO NOTHING in PG keeps the row count correct).
+    // Either failure mode keeps the audit trail conservative.
+    let pg_url_resolved = pg_url_flag
+        .map(str::to_string)
+        .or_else(|| std::env::var("MINISTR_PG_URL").ok());
+    if let Some(url) = pg_url_resolved.as_deref()
+        && !url.trim().is_empty()
+    {
+        let pool = ministr_cloud::connect(url)
+            .into_diagnostic()
+            .wrap_err("open cloud postgres pool")?;
+        let issuance = ministr_cloud::LicenseIssuance {
+            ts_iso: ministr_api::format_unix_secs_iso(now_secs),
+            ts_unix: now_secs,
+            enterprise_id: enterprise_id.to_string(),
+            seat_count,
+            valid_days,
+            exp,
+            jwt_id_hash: ministr_cloud::license_jwt_id_hash(&jwt),
+        };
+        let inserted = ministr_cloud::persist_issuance(&pool, &issuance)
+            .await
+            .into_diagnostic()
+            .wrap_err("persist issuance to license_issuances")?;
+        tracing::info!(
+            inserted,
+            jwt_id_hash = %issuance.jwt_id_hash,
+            "license issuance persisted to PG (F5.4-e-audit-db)"
+        );
+    }
 
     // F5.4-e-audit — append before printing/writing the JWT so a
     // crash between mint + audit-write doesn't leave an orphan
@@ -3600,25 +3638,61 @@ fn append_license_audit_line(
 /// # Errors
 ///
 /// Surfaces file-read errors.
-pub(crate) fn cmd_cloud_list_licenses(
-    audit_log: &std::path::Path,
+pub(crate) async fn cmd_cloud_list_licenses(
+    audit_log: Option<&std::path::Path>,
+    pg_url_flag: Option<&str>,
     format: &str,
 ) -> miette::Result<()> {
-    let bytes = std::fs::read_to_string(audit_log)
-        .into_diagnostic()
-        .wrap_err(format!("read audit log {}", audit_log.display()))?;
+    // F5.4-e-audit-db — flag wins, env var fallback. Either source
+    // produces the same `entries: Vec<serde_json::Value>` shape so
+    // the formatter below renders identically regardless.
+    let pg_url_resolved = pg_url_flag
+        .map(str::to_string)
+        .or_else(|| std::env::var("MINISTR_PG_URL").ok())
+        .filter(|s| !s.trim().is_empty());
 
-    let mut entries: Vec<serde_json::Value> = bytes
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|l| match serde_json::from_str::<serde_json::Value>(l) {
-            Ok(v) => Some(v),
-            Err(e) => {
-                tracing::warn!(error = %e, "skipping malformed audit line");
-                None
-            }
-        })
-        .collect();
+    let mut entries: Vec<serde_json::Value> = if let Some(url) = pg_url_resolved.as_deref() {
+        let pool = ministr_cloud::connect(url)
+            .into_diagnostic()
+            .wrap_err("open cloud postgres pool")?;
+        let rows = ministr_cloud::list_issuances(&pool, None)
+            .await
+            .into_diagnostic()
+            .wrap_err("list license_issuances")?;
+        rows.into_iter()
+            .map(|r| {
+                serde_json::json!({
+                    "ts_iso": r.ts_iso,
+                    "ts_unix": r.ts_unix,
+                    "enterprise_id": r.enterprise_id,
+                    "seat_count": r.seat_count,
+                    "valid_days": r.valid_days,
+                    "exp": r.exp,
+                    "jwt_id_hash": r.jwt_id_hash,
+                })
+            })
+            .collect()
+    } else {
+        let Some(audit_path) = audit_log else {
+            return Err(miette::miette!(
+                "list-licenses: pass either --audit-log PATH (JSONL source) or --pg-url URL (DB source)"
+            ));
+        };
+        let bytes = std::fs::read_to_string(audit_path)
+            .into_diagnostic()
+            .wrap_err(format!("read audit log {}", audit_path.display()))?;
+        bytes
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .filter_map(|l| match serde_json::from_str::<serde_json::Value>(l) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    tracing::warn!(error = %e, "skipping malformed audit line");
+                    None
+                }
+            })
+            .collect()
+    };
     // Sort by ts_unix descending; missing field sorts to the end.
     entries.sort_by(|a, b| {
         let ts_a = a.get("ts_unix").and_then(serde_json::Value::as_u64).unwrap_or(0);
@@ -3638,7 +3712,12 @@ pub(crate) fn cmd_cloud_list_licenses(
     } else {
         // Treat any non-"json" format as the default `table` view.
         if entries.is_empty() {
-            println!("(no licenses in {})", audit_log.display());
+            let source = pg_url_resolved
+                .as_deref()
+                .map(|u| format!("PG {u}"))
+                .or_else(|| audit_log.map(|p| p.display().to_string()))
+                .unwrap_or_else(|| "<unspecified>".into());
+            println!("(no licenses in {source})");
             return Ok(());
         }
             println!(

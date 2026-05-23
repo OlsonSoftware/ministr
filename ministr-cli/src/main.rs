@@ -438,15 +438,32 @@ enum CloudAction {
         /// key so the issuance trail survives operator churn.
         #[arg(long)]
         audit_log: Option<std::path::PathBuf>,
+        /// F5.4-e-audit-db — optional Postgres connection string
+        /// for the multi-operator DB-backed audit mirror. When set,
+        /// every successful mint ALSO appends one row to
+        /// `license_issuances` (idempotent on the JWT's hash so
+        /// retries are safe). Falls through to `MINISTR_PG_URL`
+        /// env var when the flag is absent. Pair with
+        /// `list-licenses --pg-url URL` to read the unified view.
+        #[arg(long)]
+        pg_url: Option<String>,
     },
     /// F5.4-e-audit — print the issuance audit log (JSONL written by
     /// `mint-license --audit-log PATH`). Useful for "did I already
     /// issue a license to acme-corp this quarter?" lookups + for
     /// stashing a copy in your CRM at renewal time.
     ListLicenses {
-        /// Path to the JSONL audit log.
+        /// Path to the JSONL audit log. Mutually exclusive with
+        /// `--pg-url`; exactly one source is read per invocation.
+        #[arg(long, conflicts_with = "pg_url")]
+        audit_log: Option<std::path::PathBuf>,
+        /// F5.4-e-audit-db — Postgres connection string. When set,
+        /// read from `license_issuances` (the DB-backed multi-
+        /// operator mirror) instead of the local JSONL. Falls
+        /// through to `MINISTR_PG_URL` env var when the flag is
+        /// absent — explicit flag wins.
         #[arg(long)]
-        audit_log: std::path::PathBuf,
+        pg_url: Option<String>,
         /// Output format. `table` (default) is the human-readable
         /// dashboard view; `json` re-emits the JSONL verbatim
         /// (useful for piping into `jq`).
@@ -963,6 +980,7 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
                 valid_days,
                 out,
                 audit_log,
+                pg_url,
             } => commands::cmd_cloud_mint_license(
                 &private_key,
                 &enterprise_id,
@@ -970,10 +988,17 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
                 valid_days,
                 out.as_deref(),
                 audit_log.as_deref(),
-            ),
-            CloudAction::ListLicenses { audit_log, format } => {
-                commands::cmd_cloud_list_licenses(&audit_log, &format)
-            }
+                pg_url.as_deref(),
+            ).await,
+            CloudAction::ListLicenses {
+                audit_log,
+                pg_url,
+                format,
+            } => commands::cmd_cloud_list_licenses(
+                audit_log.as_deref(),
+                pg_url.as_deref(),
+                &format,
+            ).await,
             CloudAction::RevokeLicense {
                 jwt,
                 jwt_id_hash,

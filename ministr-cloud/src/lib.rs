@@ -60,6 +60,7 @@ pub mod license;
 pub mod ratelimit;
 pub mod saml;
 pub mod session_bundle_store;
+pub mod license_issuance;
 pub mod session_storage;
 pub mod siem;
 pub mod sla;
@@ -70,6 +71,9 @@ pub mod webhooks;
 pub use license::{
     LicenseClaims, LicenseError, RevocationRecord, is_revoked_by_file, license_jwt_id_hash,
     load_revoked_hashes, render_license_summary, validate_license_from_env, validate_license_key,
+};
+pub use license_issuance::{
+    LicenseIssuance, LicenseIssuanceError, list_issuances, persist_issuance,
 };
 pub use sla::{
     PostgresSlaWindowStore, SlaError, delete_snapshots_older_than, persist_snapshot,
