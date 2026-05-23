@@ -194,19 +194,91 @@ log — all three are operationally sensitive (private key signs JWTs,
 audit log reveals who-bought-what, revocation list reveals contract
 churn). Customer's secrets manager handles disk-level encryption.
 
+## Key rotation flow (F5.4-e-rotate)
+
+Rotate your signing keypair when (a) you're on a scheduled rotation
+cycle (annual is typical), or (b) the old private key is compromised
+and you need to invalidate every license signed with it. The flow:
+
+1. **Generate a fresh keypair** alongside the old one — keep the old
+   private key around for the duration of the rotation cycle in case
+   you need to re-issue against it for any reason.
+
+   ```bash
+   ministr cloud generate-license-keypair \
+     --private-key /secure/ministr-license-private-2027.pem \
+     --public-key  /secure/ministr-license-public-2027.pem
+   ```
+
+2. **Re-mint all in-flight licenses against the new key.** Reads the
+   existing audit log, optionally consults the revocation list to
+   skip revoked customers, drops naturally-expired records, and
+   writes one fresh JWT per surviving enterprise into `--out-dir`.
+
+   ```bash
+   ministr cloud rotate-license-keys \
+     --audit-log /secure/ministr-license-issuances.jsonl \
+     --revocation-list /secure/ministr-license-revocations.jsonl \
+     --new-private-key /secure/ministr-license-private-2027.pem \
+     --out-dir /tmp/reissued-2027-Q1/ \
+     --new-audit-log /secure/ministr-license-issuances-2027.jsonl \
+     --valid-days 365
+   ```
+
+   Stdout prints a rotation summary:
+
+   ```
+   rotation summary — 2 re-issued, 1 skipped (revoked), 0 skipped (expired)
+
+   enterprise_id             out_file
+   ------------------------  ----------------------------------------
+   acme-corp                 /tmp/reissued-2027-Q1/acme-corp-abc123.jwt
+   beta-co                   /tmp/reissued-2027-Q1/beta-co-def456.jwt
+   ```
+
+   Filenames are `<enterprise_id>-<short_hash>.jwt` so the same
+   enterprise can survive multiple rotations without colliding. The
+   new audit log captures the re-issuance side so the rotation cycle
+   is itself fully auditable.
+
+3. **Distribute the new artefacts**:
+   - Ship `ministr-license-public-2027.pem` to **every** customer (it
+     replaces the public key in their `MINISTR_LICENSE_PUBLIC_KEY`
+     env var).
+   - Ship each per-customer JWT in `/tmp/reissued-2027-Q1/` to the
+     respective customer's ops contact via your CRM / encrypted email
+     (replaces the `MINISTR_LICENSE_KEY`).
+
+4. **Customers paste both new values** and restart their pods. The
+   F5.4-a boot check accepts the fresh JWT against the new public
+   key; the old key + JWT no longer pass validation against the new
+   public key (mismatched signature). Customers who haven't pulled
+   the new pubkey yet will see boot failures — communicate the
+   rotation window clearly.
+
+5. **Retire the old private key** once you're satisfied every
+   customer has migrated. The old audit log + the old revocation list
+   become historical records; archive them with your other compliance
+   artefacts.
+
+What this command **does NOT do**:
+
+- Doesn't email customers automatically — distribution is still
+  manual through your CRM (same as the original mint flow).
+- Doesn't verify the old licenses' signatures — the audit log is
+  the source of truth for what was issued, and we re-mint from its
+  metadata, not by parsing the old JWTs.
+- Doesn't preserve each license's original time-to-expiry —
+  `--valid-days` applies uniformly to every re-issued JWT. If you
+  need per-customer horizons, run multiple rotations with different
+  audit-log subsets.
+
 ## Honest gaps in this chunk
 
 - **No admin UI** — F5.4-e-ui will surface this flow as a webapp
   with templated email distribution. Today it's CLI-only.
 
-- **No key rotation tooling** — re-running `generate-license-keypair`
-  with a different path produces a new keypair, but rotating
-  customers off the old key requires re-minting their licenses and
-  shipping the new public key. F5.4-e-rotate would automate the
-  "mint a new key + reissue all in-flight licenses + email customers
-  the new pubkey" cycle.
-
-These gaps are tractable but not blocking today — operators can issue
-licenses with the existing CLI; the gaps just mean ops processes
-(record-keeping, revocation-on-termination) live in your CRM rather
-than in ministr's tooling.
+These gaps are tractable but not blocking today — operators can issue,
+revoke, and rotate licenses with the existing CLI; the gap just means
+ops processes (record-keeping, email distribution) live in your CRM
+rather than in ministr's tooling.

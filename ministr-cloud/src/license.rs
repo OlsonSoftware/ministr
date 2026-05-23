@@ -276,6 +276,45 @@ pub fn is_revoked_by_file(
     Ok(None)
 }
 
+/// F5.4-e-rotate — batch sibling to [`is_revoked_by_file`]. Reads
+/// every well-formed record from a JSONL revocation list and returns
+/// the set of revoked `jwt_id_hash` strings. Used by the rotation
+/// flow to skip licenses that are already revoked before re-minting
+/// them against a new keypair.
+///
+/// Malformed lines are skipped silently — the same defensive posture
+/// `is_revoked_by_file` takes — so partial writes or hand-edits don't
+/// mask legitimate entries. An empty file or missing entries returns
+/// an empty set.
+///
+/// # Errors
+///
+/// Returns [`LicenseError::RevocationListUnreadable`] when the file
+/// cannot be opened.
+pub fn load_revoked_hashes(
+    path: &std::path::Path,
+) -> Result<std::collections::HashSet<String>, LicenseError> {
+    use std::io::{BufRead, BufReader};
+    let file = std::fs::File::open(path).map_err(|e| LicenseError::RevocationListUnreadable {
+        path: path.display().to_string(),
+        cause: e.to_string(),
+    })?;
+    let reader = BufReader::new(file);
+    let mut out = std::collections::HashSet::new();
+    for line in reader.lines() {
+        let Ok(line) = line else { continue };
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(record) = serde_json::from_str::<RevocationRecord>(trimmed) else {
+            continue;
+        };
+        out.insert(record.jwt_id_hash);
+    }
+    Ok(out)
+}
+
 /// Convenience: render the seat-count + expiry as a structured-log
 /// triple. Boot calls this so operators see a clear "license OK"
 /// line at startup.
@@ -511,5 +550,32 @@ mod tests {
         assert_eq!(back.jwt_id_hash, rec.jwt_id_hash);
         assert_eq!(back.reason, rec.reason);
         assert_eq!(back.enterprise_id, rec.enterprise_id);
+    }
+
+    #[test]
+    fn load_revoked_hashes_collects_unique_hashes() {
+        // F5.4-e-rotate — batch helper. Same record appearing twice
+        // (re-revocation on a different reason) collapses to one
+        // entry; malformed lines are skipped.
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().expect("temp");
+        let r1 = rev("1111111111111111", "first");
+        let r2 = rev("2222222222222222", "second");
+        let r1_dup = rev("1111111111111111", "redundant — same hash");
+        for r in [&r1, &r2, &r1_dup] {
+            writeln!(f, "{}", serde_json::to_string(r).expect("ser")).expect("write");
+        }
+        writeln!(f, "not-a-json-line").expect("write");
+        let set = load_revoked_hashes(f.path()).expect("load");
+        assert_eq!(set.len(), 2, "duplicate hash should collapse: {set:?}");
+        assert!(set.contains("1111111111111111"));
+        assert!(set.contains("2222222222222222"));
+    }
+
+    #[test]
+    fn load_revoked_hashes_empty_file_returns_empty_set() {
+        let f = tempfile::NamedTempFile::new().expect("temp");
+        let set = load_revoked_hashes(f.path()).expect("load");
+        assert!(set.is_empty());
     }
 }

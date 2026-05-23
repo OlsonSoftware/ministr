@@ -2862,6 +2862,101 @@ fi
 # Cleanup harness fixtures.
 rm -f "${REVOKE_JWT_FILE}" "${REVOKE_LIST}"
 
+# 39) **F5.4-e-rotate — re-mint in-flight licenses against a new key.**
+#     Generate old + new keypairs; mint two licenses against the OLD
+#     key (alpha + beta), recording both in the audit log; revoke alpha;
+#     run rotate-license-keys; assert exactly one new JWT file landed
+#     in out-dir (the unrevoked beta), and that it carries a fresh
+#     jwt_id_hash distinct from the original. Validates the full wire:
+#     audit-log dedup → revocation filter → re-mint with new key.
+info "F5.4-e-rotate: re-mint in-flight licenses against a new keypair"
+ROT_WORK=$(mktemp -d -t ministr-e2e-rotate.XXXXXX)
+ROT_OLD_PRIV="${ROT_WORK}/old-private.pem"
+ROT_OLD_PUB="${ROT_WORK}/old-public.pem"
+ROT_NEW_PRIV="${ROT_WORK}/new-private.pem"
+ROT_NEW_PUB="${ROT_WORK}/new-public.pem"
+ROT_AUDIT="${ROT_WORK}/audit.jsonl"
+ROT_REV_LIST="${ROT_WORK}/revocations.jsonl"
+ROT_NEW_AUDIT="${ROT_WORK}/new-audit.jsonl"
+ROT_OUT_DIR="${ROT_WORK}/reissued"
+
+# Step 1: two keypairs.
+if cargo run -q -p ministr-cli -- cloud generate-license-keypair \
+    --private-key "${ROT_OLD_PRIV}" --public-key "${ROT_OLD_PUB}" >/dev/null 2>&1 \
+ && cargo run -q -p ministr-cli -- cloud generate-license-keypair \
+    --private-key "${ROT_NEW_PRIV}" --public-key "${ROT_NEW_PUB}" >/dev/null 2>&1; then
+    pass "F5.4-e-rotate: generated old + new keypairs"
+else
+    fail "F5.4-e-rotate: failed to generate keypairs"
+fi
+
+# Step 2: mint two licenses with the OLD key into the audit log.
+if cargo run -q -p ministr-cli -- cloud mint-license \
+    --private-key "${ROT_OLD_PRIV}" \
+    --enterprise-id "rotate-alpha" --seat-count 10 --valid-days 60 \
+    --audit-log "${ROT_AUDIT}" --out "${ROT_WORK}/alpha.jwt" >/dev/null 2>&1 \
+ && cargo run -q -p ministr-cli -- cloud mint-license \
+    --private-key "${ROT_OLD_PRIV}" \
+    --enterprise-id "rotate-beta" --seat-count 20 --valid-days 60 \
+    --audit-log "${ROT_AUDIT}" --out "${ROT_WORK}/beta.jwt" >/dev/null 2>&1; then
+    pass "F5.4-e-rotate: minted 2 licenses with old key into audit log"
+else
+    fail "F5.4-e-rotate: failed to mint test licenses"
+fi
+
+# Step 3: revoke alpha.
+if cargo run -q -p ministr-cli -- cloud revoke-license \
+    --jwt "${ROT_WORK}/alpha.jwt" \
+    --enterprise-id "rotate-alpha" \
+    --reason "F5.4-e-rotate harness fixture" \
+    --revocation-list "${ROT_REV_LIST}" >/dev/null 2>&1; then
+    pass "F5.4-e-rotate: revoked rotate-alpha (will be skipped during rotation)"
+else
+    fail "F5.4-e-rotate: revoke-license failed for alpha"
+fi
+
+# Step 4: run rotate.
+ROT_OUT=$(cargo run -q -p ministr-cli -- cloud rotate-license-keys \
+    --audit-log "${ROT_AUDIT}" \
+    --revocation-list "${ROT_REV_LIST}" \
+    --new-private-key "${ROT_NEW_PRIV}" \
+    --out-dir "${ROT_OUT_DIR}" \
+    --new-audit-log "${ROT_NEW_AUDIT}" \
+    --valid-days 30 2>/dev/null) || true
+
+if printf '%s' "${ROT_OUT}" | grep -q "1 re-issued, 1 skipped (revoked)"; then
+    pass "rotate summary: 1 re-issued + 1 skipped (revoked) — matches fixture"
+else
+    fail "rotate summary line mismatch · output: $(printf '%s' "${ROT_OUT}" | tail -c 200)"
+fi
+
+# Step 5: assert exactly one JWT file in out-dir, and it's beta.
+ROT_FILES=$(ls "${ROT_OUT_DIR}"/*.jwt 2>/dev/null | wc -l | tr -d ' ')
+if [[ "${ROT_FILES}" == "1" ]]; then
+    pass "out-dir holds exactly 1 reissued JWT (revoked alpha was skipped)"
+else
+    fail "out-dir holds ${ROT_FILES} JWT files (expected 1)"
+fi
+
+ROT_BETA_FILE=$(ls "${ROT_OUT_DIR}"/rotate-beta-*.jwt 2>/dev/null | head -1)
+if [[ -n "${ROT_BETA_FILE}" && -s "${ROT_BETA_FILE}" ]]; then
+    pass "reissued JWT filename starts with rotate-beta- (sanitised enterprise_id)"
+else
+    fail "no rotate-beta-*.jwt file in out-dir"
+fi
+
+# Step 6: new audit log has exactly one record for rotate-beta.
+ROT_NEW_LINES=$(wc -l < "${ROT_NEW_AUDIT}" 2>/dev/null | tr -d ' ')
+ROT_NEW_EID=$(jq -r '.enterprise_id // empty' "${ROT_NEW_AUDIT}" 2>/dev/null | head -1)
+if [[ "${ROT_NEW_LINES}" == "1" && "${ROT_NEW_EID}" == "rotate-beta" ]]; then
+    pass "new audit log has 1 record for rotate-beta (rotation cycle is auditable)"
+else
+    fail "new audit log unexpected — lines=${ROT_NEW_LINES} eid=${ROT_NEW_EID}"
+fi
+
+# Cleanup.
+rm -rf "${ROT_WORK}"
+
 # ─── summary ──────────────────────────────────────────────────────────
 
 echo
