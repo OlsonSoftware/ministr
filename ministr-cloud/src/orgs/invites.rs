@@ -170,28 +170,37 @@ pub enum ConsumeOutcome {
     /// Token didn't match any row. Probably typo or replay against
     /// a row that was hard-deleted by a future retention cron.
     Unknown,
+    /// The authenticated user's email doesn't match the invite's
+    /// `email` field. Only returned when `user_email` is `Some`.
+    EmailMismatch {
+        expected: String,
+        actual: String,
+    },
 }
 
 /// Look up an invite by raw token, validate it, and insert the
 /// matching `org_members` row in a single transaction.
 ///
 /// `user_id` is the authenticated user (the recipient who clicked
-/// the link AND completed GitHub sign-in). We do NOT compare against
-/// `org_invites.email` in this half — that comparison lands in
-/// F3.1b-ii when email delivery enforces "only the addressed
-/// recipient can accept". F3.1b-i treats the link itself as a
-/// bearer secret (256 bits of entropy gates that).
+/// the link AND completed GitHub/OIDC sign-in).
+///
+/// When `user_email` is `Some`, the function compares it (case-
+/// insensitive) against the invite's `email` field and returns
+/// [`ConsumeOutcome::EmailMismatch`] on divergence. Pass `None`
+/// to skip the check (e.g. OOB-delivered links from F3.1b-i where
+/// email delivery wasn't available).
 ///
 /// # Errors
 ///
 /// - [`OrgError::Sql`] / [`OrgError::GetConn`] on DB issues. Logical
-///   outcomes (expired / unknown / already accepted) are NOT errors —
-///   they come back as [`ConsumeOutcome`] variants so the HTTP layer
-///   can format them.
+///   outcomes (expired / unknown / already accepted / mismatch) are
+///   NOT errors — they come back as [`ConsumeOutcome`] variants so
+///   the HTTP layer can format them.
 pub async fn consume_invite(
     pool: &Pool,
     raw_token: &str,
     user_id: &str,
+    user_email: Option<&str>,
 ) -> Result<ConsumeOutcome, OrgError> {
     let token_hash = hash_token(raw_token);
 
@@ -211,6 +220,7 @@ pub async fn consume_invite(
             "SELECT
                  id::text          AS id_text,
                  org_id::text      AS org_id_text,
+                 email,
                  role,
                  accepted_at,
                  (now() > expires_at) AS is_expired
@@ -241,6 +251,19 @@ pub async fn consume_invite(
             .await
             .map_err(|e| OrgError::Sql(format!("commit (expired): {e}")))?;
         return Ok(ConsumeOutcome::Expired);
+    }
+
+    let invite_email: String = row.get("email");
+    if let Some(actual) = user_email
+        && !actual.eq_ignore_ascii_case(&invite_email)
+    {
+        tx.commit()
+            .await
+            .map_err(|e| OrgError::Sql(format!("commit (email mismatch): {e}")))?;
+        return Ok(ConsumeOutcome::EmailMismatch {
+            expected: invite_email,
+            actual: actual.to_string(),
+        });
     }
 
     let invite_id: String = row.get("id_text");

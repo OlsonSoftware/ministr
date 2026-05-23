@@ -122,7 +122,7 @@ pub use corpus_restorer::BlobCorpusRestorer;
 pub use tenant_filter::PostgresTenantCorpusFilter;
 pub use index_job_sink::PostgresIndexJobSink;
 pub use drops_ledger::PostgresDropsLedger;
-pub use mail::LogOnlyMailSender;
+pub use mail::{build_mail_sender_from_env, LogOnlyMailSender, ResendMailSender};
 pub use session_bundle_store::{
     build_from_env as build_session_bundle_store_from_env, CloudSessionBundleStore,
     DEFAULT_SESSION_BUNDLE_CONTAINER, DEFAULT_SIGNED_URL_TTL_SECS,
