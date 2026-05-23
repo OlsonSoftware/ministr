@@ -2895,6 +2895,30 @@ else
     fail "/sla started_at_iso malformed: '${SLA_STARTED}'"
 fi
 
+# F5.5-b-latency — by this point in the harness, hundreds of
+# requests have already passed through the middleware. /sla.latency
+# should report a non-zero rolling-window sample count plus
+# numeric p50/p95/p99 in milliseconds.
+SLA_LAT_COUNT=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.latency.count // empty')
+SLA_LAT_P50=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.latency.p50_ms // empty')
+SLA_LAT_P95=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.latency.p95_ms // empty')
+SLA_LAT_P99=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.latency.p99_ms // empty')
+if [[ "${SLA_LAT_COUNT}" =~ ^[0-9]+$ ]] && [[ "${SLA_LAT_COUNT}" -gt 0 ]]; then
+    pass "/sla.latency.count > 0 (${SLA_LAT_COUNT} samples; F5.5-b-latency middleware is recording)"
+else
+    fail "/sla.latency.count missing or zero: '${SLA_LAT_COUNT}'"
+fi
+if [[ "${SLA_LAT_P50}" =~ ^[0-9]+$ ]] && [[ "${SLA_LAT_P95}" =~ ^[0-9]+$ ]] && [[ "${SLA_LAT_P99}" =~ ^[0-9]+$ ]]; then
+    pass "/sla.latency p50/p95/p99 are non-negative ms (p50=${SLA_LAT_P50}ms p95=${SLA_LAT_P95}ms p99=${SLA_LAT_P99}ms)"
+else
+    fail "/sla.latency percentiles non-numeric — p50='${SLA_LAT_P50}' p95='${SLA_LAT_P95}' p99='${SLA_LAT_P99}'"
+fi
+if [[ "${SLA_LAT_P50}" -le "${SLA_LAT_P95}" ]] && [[ "${SLA_LAT_P95}" -le "${SLA_LAT_P99}" ]]; then
+    pass "/sla.latency percentile monotonicity holds (p50 ≤ p95 ≤ p99)"
+else
+    fail "/sla.latency percentiles non-monotonic — p50=${SLA_LAT_P50} p95=${SLA_LAT_P95} p99=${SLA_LAT_P99}"
+fi
+
 # 39) **F5.4-e-rotate — re-mint in-flight licenses against a new key.**
 #     Generate old + new keypairs; mint two licenses against the OLD
 #     key (alpha + beta), recording both in the audit log; revoke alpha;
