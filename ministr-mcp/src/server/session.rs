@@ -382,7 +382,7 @@ mod tests {
             .with_drops_ledger(Arc::clone(&stub) as Arc<dyn DropsLedger>);
         let evicted: Vec<String> = vec!["docs/a.md#x".into(), "docs/b.md#y".into()];
 
-        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), async {
+        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), None, async {
             emit_section_drops(&registry, "agent-session-1", &evicted);
         })
         .await;
@@ -509,7 +509,7 @@ mod tests {
             .with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
         let status = fixture_status(5_000);
 
-        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), async {
+        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), None, async {
             emit_session_snapshot(&registry, "agent-session-1", &status);
         })
         .await;
@@ -562,7 +562,7 @@ mod tests {
     async fn emit_session_snapshot_is_noop_without_storage() {
         let registry = SessionRegistry::new(UsageConfig::default());
         // No `with_storage` call — registry.storage stays `None`.
-        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), async {
+        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), None, async {
             emit_session_snapshot(&registry, "agent-session-1", &fixture_status(123));
         })
         .await;
@@ -595,7 +595,7 @@ mod tests {
         // Sanity: registry has no in-memory shadow yet.
         assert!(registry.get_session("agent-session-1").is_none());
 
-        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), async {
+        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), None, async {
             try_restore_session(&mut registry, "agent-session-1").await;
         })
         .await;
@@ -634,7 +634,7 @@ mod tests {
         // Bootstrap the session in-memory before any restore attempt.
         registry.create_session("agent-session-1", None, AccessMode::ReadWrite);
 
-        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), async {
+        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), None, async {
             try_restore_session(&mut registry, "agent-session-1").await;
         })
         .await;
@@ -654,7 +654,7 @@ mod tests {
         let mut registry = SessionRegistry::new(UsageConfig::default());
         // No `with_storage` — `registry.storage` stays `None`.
 
-        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), async {
+        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), None, async {
             try_restore_session(&mut registry, "agent-session-1").await;
         })
         .await;
@@ -669,7 +669,7 @@ mod tests {
         let registry = SessionRegistry::new(UsageConfig::default())
             .with_drops_ledger(Arc::clone(&stub) as Arc<dyn DropsLedger>);
 
-        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), async {
+        crate::tenant_scope::scope_for_test(Some("tenant-x".into()), None, async {
             emit_section_drops(&registry, "agent-session-1", &[]);
         })
         .await;

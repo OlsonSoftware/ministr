@@ -730,6 +730,44 @@ else
     fail "cloud_corpora.tenant_id mismatch — expected ${USER_A_UUID}, got ${OWNER_OF_CORPUS}"
 fi
 
+# 4c) **F5.5-a-priority** — the customer-enqueue path
+#     (PostgresIndexJobSink::create_pending) reads the requesting
+#     tenant's Plan from the scope_tenant task-local and stamps the
+#     queue priority via ministr_mcp::auth::queue_priority. Pro tier
+#     (DEFAULT_GITHUB_SIGNIN_PLAN for harness-bootstrapped users)
+#     maps to priority=1. The local-paths POST /corpora above takes
+#     the register_corpus_only branch (no indexer_jobs row); to
+#     exercise create_pending we POST a clone with a synthetic Git URL
+#     — the worker will eventually mark it failed (DNS/auth) but the
+#     row carries the stamped priority from the moment of INSERT, and
+#     claim_next preserves the JSON blob's priority field through its
+#     deserialise/serialise round-trip. Before F5.5-a-priority this
+#     was always 0.
+F55_CLONE_REPO="https://github.com/ministr-e2e/f55-priority-fixture.git"
+F55_CLONE_BODY=$(printf '{"repo":"%s"}' "${F55_CLONE_REPO}")
+curl_request POST "${ENDPOINT}/api/v1/corpora/${CORPUS_ID_A}/clone" "${TOKEN_A}" "${F55_CLONE_BODY}"
+if [[ "${RESPONSE_STATUS}" == "200" || "${RESPONSE_STATUS}" == "201" ]]; then
+    pass "F5.5-a-priority: clone POST accepted (HTTP ${RESPONSE_STATUS})"
+    F55_CLONE_CORPUS=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.corpus_id // empty')
+else
+    fail "F5.5-a-priority: clone POST got ${RESPONSE_STATUS} (expected 200/201) · body=${RESPONSE_BODY:0:200}"
+    F55_CLONE_CORPUS=""
+fi
+if [[ -n "${F55_CLONE_CORPUS}" ]]; then
+    JOB_PRIORITY=$(psql_count "SELECT priority FROM indexer_jobs WHERE corpus_id = '${F55_CLONE_CORPUS}' ORDER BY created_at DESC LIMIT 1;")
+    if [[ "${JOB_PRIORITY}" == "1" ]]; then
+        pass "indexer_jobs.priority=1 stamped from tenant A's Pro plan (F5.5-a-priority wire is live)"
+    else
+        fail "indexer_jobs.priority mismatch — expected 1 (Pro lane), got '${JOB_PRIORITY}'"
+    fi
+    JOB_BLOB_PRIORITY=$(psql_count "SELECT (data::jsonb)->>'priority' FROM indexer_jobs WHERE corpus_id = '${F55_CLONE_CORPUS}' ORDER BY created_at DESC LIMIT 1;")
+    if [[ "${JOB_BLOB_PRIORITY}" == "1" ]]; then
+        pass "indexer_jobs.data->>priority=1 matches the column (round-trip parity preserved)"
+    else
+        fail "indexer_jobs.data->>priority drift — expected 1, got '${JOB_BLOB_PRIORITY}'"
+    fi
+fi
+
 # 5) **tenant isolation** — tenant B's GET returns 200 (and is empty —
 #    same reason as tenant A's empty GET, but ALSO genuinely doesn't
 #    own A's corpus). The data-layer ownership check above is the
@@ -882,7 +920,10 @@ fi
 #     ministr-cloud::caps::caps_for_plan: Pro = Some(10).
 QUOTA_SAMPLE_BASE="/tmp/ministr-e2e-quota-source-${RUN_TS}"
 QUOTA_ALL_SUCCEED=1
-for i in 2 3 4 5 6 7 8 9 10; do
+# Loop runs 2..9 (8 iterations). Tenant A already has the original
+# step-3 register + the step-4c F5.5-a-priority clone, so 2 + 8 = 10
+# lands exactly at the Pro cap; the DIR_OVER attempt below is #11 → 402.
+for i in 2 3 4 5 6 7 8 9; do
     DIR="${QUOTA_SAMPLE_BASE}-${i}"
     rm -rf "${DIR}"
     mkdir -p "${DIR}"
