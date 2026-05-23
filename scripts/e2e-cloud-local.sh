@@ -2922,6 +2922,64 @@ else
 fi
 rm -f "${URLFETCH_CACHE}"
 
+# 38d) **F5.4-e-revoke-api-refresh — background re-fetch keeps cache warm.**
+#      Spawn a test-serve under a NON-revoked license with
+#      MINISTR_LICENSE_REVOCATIONS_URL set + REFRESH_SECS=2 so the
+#      refresh task ticks fast enough to observe. Boot validator
+#      runs the initial fetch (cache file gets mtime T1); the
+#      background task ticks ~2s later and overwrites the cache
+#      (mtime advances to T2 > T1). Assert T2 > T1.
+info "F5.4-e-revoke-api-refresh: background re-fetch keeps cache warm"
+REFRESH_JSON=$(cargo run -q -p ministr-cli -- cloud mint-test-license \
+    --enterprise-id "e2e-refresh-test" --seat-count 3 --valid-days 1 2>/dev/null || echo '{}')
+REFRESH_JWT=$(printf '%s' "${REFRESH_JSON}" | jq -r '.jwt // empty')
+REFRESH_PUB=$(printf '%s' "${REFRESH_JSON}" | jq -r '.public_key_pem // empty')
+REFRESH_CACHE=$(mktemp -t ministr-e2e-refresh-cache.XXXXXX)
+rm -f "${REFRESH_CACHE}"
+REFRESH_LOG=/tmp/ministr-e2e-refresh-serve.log
+MINISTR_LICENSE_KEY="${REFRESH_JWT}" \
+MINISTR_LICENSE_PUBLIC_KEY="${REFRESH_PUB}" \
+MINISTR_LICENSE_REVOCATIONS_URL="${ENDPOINT}/api/v1/license-revocations.jsonl" \
+MINISTR_LICENSE_REVOCATIONS_CACHE_PATH="${REFRESH_CACHE}" \
+MINISTR_LICENSE_REVOCATIONS_REFRESH_SECS=2 \
+cargo run -q -p ministr-cli -- --config "${CONFIG_PATH}" \
+    serve --transport http --host 127.0.0.1 --port 18095 \
+    > "${REFRESH_LOG}" 2>&1 &
+REFRESH_PID=$!
+# Wait for boot fetch — cache file should exist within a few seconds.
+REFRESH_BOOT_WAIT=0
+until [[ -s "${REFRESH_CACHE}" ]]; do
+    REFRESH_BOOT_WAIT=$((REFRESH_BOOT_WAIT + 1))
+    if ! kill -0 "${REFRESH_PID}" 2>/dev/null; then
+        echo "refresh test-serve crashed before populating cache; log tail:" >&2
+        tail -10 "${REFRESH_LOG}" >&2
+        break
+    fi
+    if [[ "${REFRESH_BOOT_WAIT}" -gt 30 ]]; then
+        echo "refresh test-serve didn't populate cache in 15s" >&2
+        break
+    fi
+    sleep 0.5
+done
+if [[ -s "${REFRESH_CACHE}" ]]; then
+    pass "boot fetch populated cache at ${REFRESH_CACHE}"
+else
+    fail "boot fetch did not populate cache"
+fi
+# Capture first mtime, sleep past one refresh tick (2s), capture second mtime.
+T1=$(stat -f %m "${REFRESH_CACHE}" 2>/dev/null || stat -c %Y "${REFRESH_CACHE}" 2>/dev/null)
+sleep 4
+T2=$(stat -f %m "${REFRESH_CACHE}" 2>/dev/null || stat -c %Y "${REFRESH_CACHE}" 2>/dev/null)
+if [[ "${T2}" -gt "${T1}" ]]; then
+    pass "cache mtime advanced (T1=${T1} → T2=${T2}, background refresh task is ticking)"
+else
+    fail "cache mtime did NOT advance (T1=${T1} T2=${T2}); refresh task may not be spawned"
+fi
+# Cleanup.
+kill "${REFRESH_PID}" 2>/dev/null || true
+wait "${REFRESH_PID}" 2>/dev/null || true
+rm -f "${REFRESH_CACHE}" "${REFRESH_LOG}"
+
 # 38b) **F5.5-b-sla-skeleton — /sla endpoint returns uptime envelope.**
 #      Foundation for the eventual status.ministr.ai dashboard + richer
 #      load-balancer probes. /healthz today returns only status/corpus_count/
