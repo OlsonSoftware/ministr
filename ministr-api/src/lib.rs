@@ -28,6 +28,7 @@ pub mod query;
 pub mod session;
 pub mod session_bundle_store;
 pub mod session_storage;
+pub mod sla_window_store;
 pub mod status;
 pub mod tenant;
 pub mod tenant_filter;
@@ -50,6 +51,7 @@ pub use index_job_sink::{
 };
 pub use mail::{InviteMessage, MailSender};
 pub use plan_resolver::{PlanResolver, PlanResolverError, ResolvePlanFuture};
+pub use sla_window_store::{MaxP95Future, SlaWindowStore, SlaWindowStoreError};
 pub use session_bundle_store::{
     PutAndSignFuture, SessionBundleStore, SessionBundleStoreError, SignedBundleUrl,
     VerifyAndGetFuture,
