@@ -2975,6 +2975,38 @@ if [[ "${T2}" -gt "${T1}" ]]; then
 else
     fail "cache mtime did NOT advance (T1=${T1} T2=${T2}); refresh task may not be spawned"
 fi
+
+# F5.4-e-revoke-mid-flight — append the test-serve's license hash to
+# the main serve's revocation fixture. The next refresh tick fetches
+# the updated list; the mid-flight check finds the hash and
+# process::exit's the test-serve. Assert the PID is no longer alive
+# within a generous window (2 refresh ticks + boot-time variance).
+REFRESH_LIC_HASH=$(printf '%s' "${REFRESH_JWT}" | shasum -a 256 | awk '{print substr($1,1,16)}')
+cat >> "${REVOKE_API_FIXTURE}" <<EOF
+{"ts_iso":"2026-05-23T11:00:00Z","ts_unix":1779530400,"enterprise_id":"e2e-refresh-test","jwt_id_hash":"${REFRESH_LIC_HASH}","reason":"mid-flight revocation harness fixture"}
+EOF
+# Wait up to 12s (≥6 refresh ticks at REFRESH_SECS=2) for the
+# test-serve to detect + exit.
+REVOKE_MID_WAIT=0
+while kill -0 "${REFRESH_PID}" 2>/dev/null; do
+    REVOKE_MID_WAIT=$((REVOKE_MID_WAIT + 1))
+    if [[ "${REVOKE_MID_WAIT}" -gt 24 ]]; then
+        break
+    fi
+    sleep 0.5
+done
+if ! kill -0 "${REFRESH_PID}" 2>/dev/null; then
+    pass "test-serve exited within $(( REVOKE_MID_WAIT * 5 / 10 ))s of revocation appearing (mid-flight enforcement live)"
+else
+    fail "test-serve still alive after ${REVOKE_MID_WAIT} half-second polls (mid-flight check didn't fire)"
+fi
+# Verify the exit log mentions revocation.
+if grep -q "REVOKED" "${REFRESH_LOG}" 2>/dev/null; then
+    pass "test-serve exit log mentions REVOKED license"
+else
+    fail "test-serve exit log missing REVOKED marker; tail: $(tail -3 "${REFRESH_LOG}" 2>/dev/null | tr '\n' ' ')"
+fi
+
 # Cleanup.
 kill "${REFRESH_PID}" 2>/dev/null || true
 wait "${REFRESH_PID}" 2>/dev/null || true
