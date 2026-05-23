@@ -3509,7 +3509,7 @@ pub(crate) fn cmd_cloud_revoke_license(
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
     let record = ministr_cloud::RevocationRecord {
-        ts_iso: format_unix_secs_iso(now_secs),
+        ts_iso: ministr_api::format_unix_secs_iso(now_secs),
         ts_unix: now_secs,
         enterprise_id: enterprise_id.to_string(),
         jwt_id_hash: hash.clone(),
@@ -3561,7 +3561,7 @@ fn append_license_audit_line(
     // unix epoch via the existing audit_events partition civil-from-
     // unix-secs helper would be nice but it's not re-exported. Format
     // by hand: YYYY-MM-DDTHH:MM:SSZ.
-    let ts_iso = format_unix_secs_iso(now_secs);
+    let ts_iso = ministr_api::format_unix_secs_iso(now_secs);
     let jwt_id_hash = ministr_cloud::license_jwt_id_hash(jwt);
     let line = serde_json::json!({
         "ts_iso": ts_iso,
@@ -3591,44 +3591,6 @@ fn append_license_audit_line(
             audit_path.display()
         ))?;
     Ok(())
-}
-
-/// Format Unix-seconds as ISO-8601 UTC (YYYY-MM-DDTHH:MM:SSZ).
-/// Reuses the time-since-epoch civil-calendar arithmetic that
-/// `ministr-cloud::audit::civil_from_unix_secs` implements, but
-/// inlined here because that helper isn't re-exported. Small;
-/// duplication is two functions.
-fn format_unix_secs_iso(secs: u64) -> String {
-    let (year, month, day) = civil_from_unix_secs_cli(secs);
-    let secs_of_day = secs % 86_400;
-    let hour = secs_of_day / 3_600;
-    let minute = (secs_of_day % 3_600) / 60;
-    let second = secs_of_day % 60;
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
-}
-
-/// Howard Hinnant's `civil_from_days` — same as `ministr-cloud`'s
-/// `audit::civil_from_unix_secs` but duplicated here because that
-/// helper is private to the audit module. Pure integer arithmetic;
-/// no chrono / time dep needed.
-#[allow(
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_truncation,
-    clippy::bool_to_int_with_if
-)]
-fn civil_from_unix_secs_cli(secs: u64) -> (i32, u32, u32) {
-    let z_signed: i64 = (secs / 86_400) as i64 + 719_468;
-    let era = if z_signed >= 0 { z_signed } else { z_signed - 146_096 } / 146_097;
-    let doe = (z_signed - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
-    let y = (y + if m <= 2 { 1 } else { 0 }) as i32;
-    (y, m, d)
 }
 
 /// F5.4-e-audit — print the issuance audit log. Reads JSONL line by
