@@ -38,6 +38,70 @@ pub(super) async fn healthz(State(state): State<AdminState>) -> Json<HealthRespo
     })
 }
 
+/// F5.5-b-sla-skeleton — `/sla` response shape. Reported as JSON for
+/// status-page scrapers (the future `status.ministr.ai`) and richer
+/// load-balancer probes.
+///
+/// `uptime_secs` is `u64` so 6+ years of uptime fits without overflow
+/// (the underlying `Instant::elapsed().as_secs()` returns `u64` too).
+/// `started_at_iso` lets a scraper compute the boot moment without
+/// needing to invert the wall-clock delta itself.
+#[derive(Debug, Serialize)]
+pub(super) struct SlaResponse {
+    status: &'static str,
+    version: &'static str,
+    uptime_secs: u64,
+    started_at_iso: String,
+}
+
+/// F5.5-b-sla-skeleton — unauthenticated SLA / uptime probe. Foundation
+/// for the eventual `status.ministr.ai` dashboard (which polls this
+/// endpoint) and for load balancers that want richer state than
+/// `/healthz`'s binary up/down.
+///
+/// Honest scope: this chunk ships uptime only. Latency percentiles
+/// (F5.5-b-latency) and cross-pod persistent metrics (F5.5-b-persist)
+/// are separate follow-ups.
+pub(super) async fn sla_status(State(state): State<AdminState>) -> Json<SlaResponse> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let uptime_secs = state.uptime_secs();
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let started_at = now_secs.saturating_sub(uptime_secs);
+    Json(SlaResponse {
+        status: "ready",
+        version: env!("CARGO_PKG_VERSION"),
+        uptime_secs,
+        started_at_iso: format_unix_secs_iso(started_at),
+    })
+}
+
+/// F5.5-b-sla-skeleton — local copy of the ISO-8601 formatter the
+/// F5.4-e-audit CLI uses. `ministr-cloud::audit::civil_from_unix_secs`
+/// is module-private; lifting it to a public re-export for one caller
+/// isn't worth the surface change. Same Howard Hinnant algorithm; one
+/// shared helper across the codebase is a future cleanup chunk.
+fn format_unix_secs_iso(secs: u64) -> String {
+    // Howard Hinnant's civil_from_days algorithm.
+    let days = i64::try_from(secs / 86_400).unwrap_or(0);
+    let time = secs % 86_400;
+    let hour = time / 3_600;
+    let minute = (time % 3_600) / 60;
+    let second = time % 60;
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = u64::try_from(z - era * 146_097).unwrap_or(0); // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = i64::try_from(yoe).unwrap_or(0) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let year = if m <= 2 { y + 1 } else { y };
+    format!("{year:04}-{m:02}-{d:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct ReindexRequest {
     corpus_id: String,
@@ -131,4 +195,42 @@ pub(super) async fn reindex_events(
     });
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_unix_secs_iso_round_trips_known_dates() {
+        // 1970-01-01T00:00:00Z — epoch zero.
+        assert_eq!(format_unix_secs_iso(0), "1970-01-01T00:00:00Z");
+        // 2026-05-22T12:00:00Z — same anchor F5.3-d-iii-b-dispatch
+        // documented after the off-by-5-days fix in that chunk's audit
+        // tests.
+        assert_eq!(format_unix_secs_iso(1_779_451_200), "2026-05-22T12:00:00Z");
+    }
+
+    #[test]
+    fn format_unix_secs_iso_handles_leap_year() {
+        // 2024-02-29T00:00:00Z — leap day. Howard Hinnant's algorithm
+        // handles this without special-casing.
+        assert_eq!(format_unix_secs_iso(1_709_164_800), "2024-02-29T00:00:00Z");
+    }
+
+    #[tokio::test]
+    async fn sla_handler_returns_uptime_at_least_zero() {
+        use crate::admin::AdminState;
+        let state = AdminState::in_memory(None);
+        let resp = sla_status(axum::extract::State(state)).await;
+        // Body type is Json<SlaResponse>; deref to inspect.
+        let body = resp.0;
+        assert_eq!(body.status, "ready");
+        assert_eq!(body.version, env!("CARGO_PKG_VERSION"));
+        // uptime_secs is u64; just confirm the field exists + the iso
+        // round-trip didn't panic. After a `tokio::time::sleep` we'd
+        // expect a non-zero value but the test would be timing-sensitive.
+        assert!(body.started_at_iso.ends_with('Z'));
+        assert_eq!(body.started_at_iso.len(), 20); // "1970-01-01T00:00:00Z" = 20 chars
+    }
 }
