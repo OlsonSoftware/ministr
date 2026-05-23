@@ -67,8 +67,8 @@ pub mod users;
 pub mod webhooks;
 
 pub use license::{
-    LicenseClaims, LicenseError, render_license_summary, validate_license_from_env,
-    validate_license_key,
+    LicenseClaims, LicenseError, RevocationRecord, is_revoked_by_file, license_jwt_id_hash,
+    render_license_summary, validate_license_from_env, validate_license_key,
 };
 pub use oidc::{OidcState, REDACTED_CLIENT_SECRET, oidc_config_routes, oidc_routes};
 pub use saml::{SamlState, saml_config_routes, saml_routes};

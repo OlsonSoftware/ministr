@@ -453,6 +453,42 @@ enum CloudAction {
         #[arg(long, default_value = "table")]
         format: String,
     },
+    /// F5.4-e-revoke — append one revocation record to the JSONL
+    /// revocation list the customer's serve consults at boot via
+    /// `MINISTR_LICENSE_REVOCATIONS`. After revocation, the customer
+    /// pulls down the updated list, restarts their pods, and the
+    /// serve refuses to boot with a clear "license revoked" error.
+    /// Use for contract terminations, key compromises, or any other
+    /// situation where you need to invalidate a license before its
+    /// `exp` rolls around.
+    RevokeLicense {
+        /// Path to the customer's JWT file (the same file produced by
+        /// `mint-license --out`). The CLI computes the
+        /// `jwt_id_hash` from it. Mutually exclusive with
+        /// `--jwt-id-hash`.
+        #[arg(long, conflicts_with = "jwt_id_hash")]
+        jwt: Option<std::path::PathBuf>,
+        /// Pre-computed 16-hex-char hash — useful when you no longer
+        /// have the JWT but the audit log still has the hash. Mutually
+        /// exclusive with `--jwt`.
+        #[arg(long)]
+        jwt_id_hash: Option<String>,
+        /// Human-readable customer label. Matches
+        /// `LicenseClaims.enterprise_id`; surfaced in the boot error
+        /// so customers can confirm the right license fired.
+        #[arg(long)]
+        enterprise_id: String,
+        /// Free-text justification (contract terminated 2026-12-01,
+        /// key compromise, etc.). Echoed in the boot error so the
+        /// customer sees why the license was revoked.
+        #[arg(long, default_value = "")]
+        reason: String,
+        /// Path to the JSONL revocation list. Appended atomically;
+        /// the customer pulls this file down via the same channel as
+        /// the license + public key.
+        #[arg(long)]
+        revocation_list: std::path::PathBuf,
+    },
 }
 
 /// Subcommands for `ministr hooks`.
@@ -872,6 +908,19 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
             CloudAction::ListLicenses { audit_log, format } => {
                 commands::cmd_cloud_list_licenses(&audit_log, &format)
             }
+            CloudAction::RevokeLicense {
+                jwt,
+                jwt_id_hash,
+                enterprise_id,
+                reason,
+                revocation_list,
+            } => commands::cmd_cloud_revoke_license(
+                jwt.as_deref(),
+                jwt_id_hash.as_deref(),
+                &enterprise_id,
+                &reason,
+                &revocation_list,
+            ),
         },
         Command::Setup { .. } => {
             unreachable!("ministr setup is dispatched before resolve_config in main()")

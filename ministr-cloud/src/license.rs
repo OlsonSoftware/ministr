@@ -22,6 +22,7 @@
 //! crate-internal (no private-key signing) means the customer's
 //! deployment can audit how their key is checked.
 
+use std::fmt::Write as _;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -70,6 +71,36 @@ pub enum LicenseError {
     /// specific reason.
     #[error("license JWT validation failed: {0}")]
     JwtInvalid(String),
+    /// F5.4-e-revoke — the boot-time license's `jwt_id_hash` matched
+    /// an entry in `MINISTR_LICENSE_REVOCATIONS`. The operator pushed
+    /// a revocation list to the customer (contract termination, key
+    /// compromise, etc.) and the serve refuses to boot under a
+    /// revoked license even if its `exp` is in the future and the
+    /// signature is valid. The error names the matching hash + reason
+    /// so the operator sees which entry fired.
+    #[error("license revoked at gate: hash={hash} reason={reason}")]
+    Revoked {
+        /// First 16 hex of `sha256(jwt)` — matches both the audit-log
+        /// record from F5.4-e-audit and the revocation-list entry.
+        hash: String,
+        /// Free-text justification the operator supplied at
+        /// `revoke-license` time. Echoed in the boot error so the
+        /// customer can confirm the right license was targeted.
+        reason: String,
+    },
+    /// F5.4-e-revoke — `MINISTR_LICENSE_REVOCATIONS` is set but the
+    /// path can't be read. Boot refuses rather than silently
+    /// proceeding because the operator explicitly asked for
+    /// revocation enforcement.
+    #[error("revocation list at {path} unreadable: {cause}")]
+    RevocationListUnreadable {
+        /// Path the operator pointed at.
+        path: String,
+        /// Underlying IO error message (stringified to keep the enum
+        /// variant `Clone + Send + Sync`-friendly without dragging in
+        /// `std::io::Error`'s non-clonable shape).
+        cause: String,
+    },
 }
 
 /// F5.4-a — validate a license JWT against an RSA public key. Pure;
@@ -112,20 +143,137 @@ pub fn validate_license_key(
 /// - Either set without the other → [`LicenseError::PartialConfig`].
 /// - Validation fails → underlying [`LicenseError`].
 ///
+/// F5.4-e-revoke layers a third check on top: when
+/// `MINISTR_LICENSE_REVOCATIONS` is set, the file is scanned for a
+/// record matching the boot license's `jwt_id_hash`. A match returns
+/// [`LicenseError::Revoked`] so the operator sees the explicit
+/// revoked-at-gate reason rather than a generic JWT failure. The env
+/// var is opt-in — unset means revocation enforcement is off
+/// (preserves the F5.4-a boot shape for customers who don't ship a
+/// revocation list).
+///
 /// # Errors
 ///
-/// Surfaces partial config + validation errors so the boot path can
-/// refuse to start when the operator's license setup is broken.
+/// Surfaces partial config + validation errors + revocation hits so
+/// the boot path can refuse to start when the operator's license
+/// setup is broken or actively revoked.
 pub fn validate_license_from_env() -> Result<Option<LicenseClaims>, LicenseError> {
     let jwt = std::env::var("MINISTR_LICENSE_KEY").ok();
     let pubkey = std::env::var("MINISTR_LICENSE_PUBLIC_KEY").ok();
-    match (jwt, pubkey) {
-        (None, None) => Ok(None),
+    let (jwt_str, claims) = match (jwt, pubkey) {
+        (None, None) => return Ok(None),
         (Some(j), Some(p)) if !j.trim().is_empty() && !p.trim().is_empty() => {
-            Ok(Some(validate_license_key(&j, &p)?))
+            let claims = validate_license_key(&j, &p)?;
+            (j, claims)
         }
-        _ => Err(LicenseError::PartialConfig),
+        _ => return Err(LicenseError::PartialConfig),
+    };
+    // F5.4-e-revoke — only reached when a valid license is in hand.
+    // Revocation check is opt-in: missing env var preserves the F5.4-a
+    // boot shape.
+    if let Ok(rev_path) = std::env::var("MINISTR_LICENSE_REVOCATIONS")
+        && !rev_path.trim().is_empty()
+    {
+        let hash = license_jwt_id_hash(&jwt_str);
+        if let Some(record) = is_revoked_by_file(std::path::Path::new(&rev_path), &hash)? {
+            return Err(LicenseError::Revoked {
+                hash,
+                reason: record.reason,
+            });
+        }
     }
+    Ok(Some(claims))
+}
+
+/// F5.4-e-revoke — short unique identifier for a JWT without storing
+/// the bearer material. First 16 hex chars of `sha256(jwt)` —
+/// sufficient to disambiguate human-readable list output (16 hex = 64
+/// bits = collision-free in practice for any realistic operator
+/// issuance volume). One canonical home so the F5.4-e-audit mint log,
+/// the F5.4-e-revoke CLI, and this module's [`is_revoked_by_file`]
+/// boot check all hash the same input the same way.
+#[must_use]
+pub fn license_jwt_id_hash(jwt: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(jwt.as_bytes());
+    let digest = hasher.finalize();
+    let bytes = &digest[..8];
+    let mut s = String::with_capacity(16);
+    for b in bytes {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
+/// F5.4-e-revoke — one revocation record. Operators append these as
+/// JSONL lines to the revocation list file; the serve reads them at
+/// boot and refuses to start if the boot license's hash matches.
+///
+/// `ts_iso` and `ts_unix` carry the revocation moment (not the
+/// original mint moment — the audit log carries that). `reason` is
+/// free-text justification (contract terminated, key compromise,
+/// etc.) the operator typed at `revoke-license` time; the boot error
+/// echoes it so the customer can confirm the right license fired.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RevocationRecord {
+    /// ISO-8601 timestamp of the revocation moment.
+    pub ts_iso: String,
+    /// Unix-seconds timestamp (same moment as `ts_iso`).
+    pub ts_unix: u64,
+    /// Human-readable customer identifier. Matches `LicenseClaims.enterprise_id`.
+    pub enterprise_id: String,
+    /// First 16 hex of `sha256(jwt)` — see [`license_jwt_id_hash`].
+    pub jwt_id_hash: String,
+    /// Operator-supplied justification. Surfaced in the boot error so
+    /// customers can confirm the right license was revoked.
+    #[serde(default)]
+    pub reason: String,
+}
+
+/// F5.4-e-revoke — scan a JSONL revocation list for a record matching
+/// `target_hash`. Returns `Ok(Some(record))` on first match,
+/// `Ok(None)` when no entry matches (or the file is empty),
+/// `Err(LicenseError::RevocationListUnreadable)` when IO fails.
+///
+/// Malformed lines (partial writes, hand-edits) are skipped silently
+/// — the boot check is best-effort defensive: a single corrupt line
+/// shouldn't mask a legitimate revocation entry further down. Operators
+/// who care can `jq -c .` the file to validate.
+///
+/// # Errors
+///
+/// Returns [`LicenseError::RevocationListUnreadable`] when the file
+/// can't be opened or read. Returns [`LicenseError::Revoked`] is the
+/// boot wrapper's job — this function only signals whether a match
+/// was found.
+pub fn is_revoked_by_file(
+    path: &std::path::Path,
+    target_hash: &str,
+) -> Result<Option<RevocationRecord>, LicenseError> {
+    use std::io::{BufRead, BufReader};
+    let file = std::fs::File::open(path).map_err(|e| LicenseError::RevocationListUnreadable {
+        path: path.display().to_string(),
+        cause: e.to_string(),
+    })?;
+    let reader = BufReader::new(file);
+    for line in reader.lines() {
+        let Ok(line) = line else {
+            // Mid-line IO error — treat as malformed and continue.
+            continue;
+        };
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(record) = serde_json::from_str::<RevocationRecord>(trimmed) else {
+            continue;
+        };
+        if record.jwt_id_hash == target_hash {
+            return Ok(Some(record));
+        }
+    }
+    Ok(None)
 }
 
 /// Convenience: render the seat-count + expiry as a structured-log
@@ -263,5 +411,105 @@ mod tests {
         assert!(s.contains("acme-corp"), "rendered: {s}");
         assert!(s.contains("seat_count=100"), "rendered: {s}");
         assert!(s.contains("cmk"), "rendered: {s}");
+    }
+
+    // ── F5.4-e-revoke ─────────────────────────────────────────────────
+
+    #[test]
+    fn license_jwt_id_hash_is_16_hex_chars() {
+        let h = license_jwt_id_hash("any.jwt.string");
+        assert_eq!(h.len(), 16);
+        assert!(
+            h.chars().all(|c| c.is_ascii_hexdigit()),
+            "non-hex output: {h}"
+        );
+    }
+
+    #[test]
+    fn license_jwt_id_hash_is_deterministic() {
+        let a = license_jwt_id_hash("abc");
+        let b = license_jwt_id_hash("abc");
+        assert_eq!(a, b);
+        let c = license_jwt_id_hash("abd");
+        assert_ne!(a, c, "different input must produce different hash");
+    }
+
+    fn write_revocation_list(records: &[RevocationRecord]) -> tempfile::NamedTempFile {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().expect("temp file");
+        for r in records {
+            let line = serde_json::to_string(r).expect("serialize");
+            writeln!(f, "{line}").expect("write");
+        }
+        f
+    }
+
+    fn rev(hash: &str, reason: &str) -> RevocationRecord {
+        RevocationRecord {
+            ts_iso: "2026-05-22T00:00:00Z".into(),
+            ts_unix: 1_779_408_000,
+            enterprise_id: "acme-corp".into(),
+            jwt_id_hash: hash.into(),
+            reason: reason.into(),
+        }
+    }
+
+    #[test]
+    fn is_revoked_by_file_returns_match_on_hit() {
+        let f = write_revocation_list(&[
+            rev("aaaaaaaaaaaaaaaa", "unrelated"),
+            rev("bbbbbbbbbbbbbbbb", "contract terminated"),
+        ]);
+        let hit = is_revoked_by_file(f.path(), "bbbbbbbbbbbbbbbb")
+            .expect("read ok")
+            .expect("hit");
+        assert_eq!(hit.reason, "contract terminated");
+    }
+
+    #[test]
+    fn is_revoked_by_file_returns_none_on_miss() {
+        let f = write_revocation_list(&[rev("aaaaaaaaaaaaaaaa", "x")]);
+        let miss = is_revoked_by_file(f.path(), "ffffffffffffffff").expect("read ok");
+        assert!(miss.is_none());
+    }
+
+    #[test]
+    fn is_revoked_by_file_skips_malformed_lines() {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().expect("temp");
+        // First line is garbage; second is a valid match. The boot
+        // check must not let one corrupt line mask a legitimate
+        // revocation further down.
+        writeln!(f, "{{not valid json").expect("write");
+        let rec = rev("ccccccccccccccc1", "key compromise");
+        let line = serde_json::to_string(&rec).expect("ser");
+        writeln!(f, "{line}").expect("write");
+        let hit = is_revoked_by_file(f.path(), "ccccccccccccccc1")
+            .expect("read ok")
+            .expect("hit");
+        assert_eq!(hit.reason, "key compromise");
+    }
+
+    #[test]
+    fn is_revoked_by_file_errors_on_missing_file() {
+        let err = is_revoked_by_file(
+            std::path::Path::new("/tmp/this-path-must-not-exist-ministr-revoke-test"),
+            "00",
+        )
+        .expect_err("missing file is an error");
+        assert!(
+            matches!(err, LicenseError::RevocationListUnreadable { .. }),
+            "got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn revocation_record_round_trips_json() {
+        let rec = rev("abcdef0123456789", "test reason");
+        let s = serde_json::to_string(&rec).expect("ser");
+        let back: RevocationRecord = serde_json::from_str(&s).expect("de");
+        assert_eq!(back.jwt_id_hash, rec.jwt_id_hash);
+        assert_eq!(back.reason, rec.reason);
+        assert_eq!(back.enterprise_id, rec.enterprise_id);
     }
 }
