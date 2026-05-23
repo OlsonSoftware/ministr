@@ -184,6 +184,7 @@ pub fn spawn_refresh_task(
     cache_path: PathBuf,
     refresh_secs: u64,
     grace_secs: u64,
+    current_jwt_id_hash: String,
 ) {
     let interval = if refresh_secs == 0 {
         DEFAULT_REVOCATION_REFRESH_SECS
@@ -194,7 +195,8 @@ pub fn spawn_refresh_task(
         url,
         cache = %cache_path.display(),
         refresh_secs = interval,
-        "license revocation refresh task spawned (F5.4-e-revoke-api-refresh)"
+        boot_jwt_id_hash = %current_jwt_id_hash,
+        "license revocation refresh task spawned (F5.4-e-revoke-api-refresh + mid-flight)"
     );
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(Duration::from_secs(interval));
@@ -203,13 +205,41 @@ pub fn spawn_refresh_task(
         ticker.tick().await;
         loop {
             ticker.tick().await;
-            match fetch_revocation_list(&url, &cache_path, grace_secs).await {
-                Ok(_) => {
+            let fetch_result =
+                fetch_revocation_list(&url, &cache_path, grace_secs).await;
+            match fetch_result {
+                Ok(path) => {
                     info!(
                         url,
-                        cache = %cache_path.display(),
+                        cache = %path.display(),
                         "background revocation refresh succeeded"
                     );
+                    // F5.4-e-revoke-mid-flight — re-check the current
+                    // license's hash against the freshly-written
+                    // cache. If revoked, exit the process so the
+                    // orchestrator restarts and the boot validator
+                    // refuses the now-revoked license. Errors during
+                    // the check log warn but don't exit (the cache
+                    // read could be transient).
+                    match crate::license::is_revoked_by_file(&path, &current_jwt_id_hash) {
+                        Ok(Some(record)) => {
+                            tracing::error!(
+                                jwt_id_hash = %current_jwt_id_hash,
+                                reason = %record.reason,
+                                "running license has been REVOKED by the operator — exiting; orchestrator must restart to pick up new license"
+                            );
+                            std::process::exit(1);
+                        }
+                        Ok(None) => {
+                            // Not revoked; continue running.
+                        }
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                "mid-flight revocation check failed reading the just-refreshed cache; will retry next tick"
+                            );
+                        }
+                    }
                 }
                 Err(e) => {
                     warn!(
