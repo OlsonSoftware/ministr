@@ -132,8 +132,8 @@ pub use orgs::{
     OrgUsageResponse, OrgUsageState, OrgWithRole, OrgsState, DEFAULT_ORG_PLAN, DEFAULT_USAGE_DAYS,
 };
 pub use users::{
-    set_stripe_customer_id, upsert_github_user, upsert_oidc_user, UserError, UserRow,
-    DEFAULT_GITHUB_SIGNIN_PLAN, DEFAULT_OIDC_SIGNIN_PLAN,
+    set_stripe_customer_id, upsert_github_user, upsert_oidc_user, PostgresPlanResolver, UserError,
+    UserRow, DEFAULT_GITHUB_SIGNIN_PLAN, DEFAULT_OIDC_SIGNIN_PLAN,
 };
 pub use webhooks::{
     ChainedAuditSink, CreatedSubscription, DeliveryOutcome, SubscriptionWithSecret,

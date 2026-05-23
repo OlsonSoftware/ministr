@@ -768,6 +768,42 @@ if [[ -n "${F55_CLONE_CORPUS}" ]]; then
     fi
 fi
 
+# 4d) **F5.5-a-plan-lookup** — closes the F5.5-a-priority honest caveat
+#     by wiring PostgresPlanResolver into OAuthStore so the OAuth path
+#     resolves Tenant.plan from users.plan_id. Flip tenant A to
+#     enterprise via psql, POST a clone with a NEW repo URL (different
+#     corpus_id), assert priority=4 on the new indexer_jobs row, then
+#     restore tenant A to pro so downstream Stripe-webhook tests see
+#     the baseline they expect.
+docker compose -f docker-compose.dev.yml exec -T postgres \
+    psql -U ministr -d ministr_dev -tA \
+    -c "UPDATE users SET plan_id='enterprise' WHERE id='${USER_A_UUID}'::uuid;" \
+    >/dev/null 2>&1 || true
+F55_ENT_REPO="https://github.com/ministr-e2e/f55-plan-lookup-fixture.git"
+F55_ENT_BODY=$(printf '{"repo":"%s"}' "${F55_ENT_REPO}")
+curl_request POST "${ENDPOINT}/api/v1/corpora/${CORPUS_ID_A}/clone" "${TOKEN_A}" "${F55_ENT_BODY}"
+if [[ "${RESPONSE_STATUS}" == "200" || "${RESPONSE_STATUS}" == "201" ]]; then
+    pass "F5.5-a-plan-lookup: clone POST under Enterprise plan accepted (HTTP ${RESPONSE_STATUS})"
+    F55_ENT_CORPUS=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.corpus_id // empty')
+else
+    fail "F5.5-a-plan-lookup: clone POST got ${RESPONSE_STATUS} · body=${RESPONSE_BODY:0:200}"
+    F55_ENT_CORPUS=""
+fi
+if [[ -n "${F55_ENT_CORPUS}" ]]; then
+    ENT_PRIORITY=$(psql_count "SELECT priority FROM indexer_jobs WHERE corpus_id = '${F55_ENT_CORPUS}' ORDER BY created_at DESC LIMIT 1;")
+    if [[ "${ENT_PRIORITY}" == "4" ]]; then
+        pass "indexer_jobs.priority=4 stamped under Enterprise plan (PlanResolver OAuth path is live)"
+    else
+        fail "indexer_jobs.priority mismatch — expected 4 (Enterprise lane), got '${ENT_PRIORITY}'"
+    fi
+fi
+# Restore tenant A to pro so the rest of the harness sees the same
+# baseline the F5.5-a-priority assertion above already established.
+docker compose -f docker-compose.dev.yml exec -T postgres \
+    psql -U ministr -d ministr_dev -tA \
+    -c "UPDATE users SET plan_id='pro' WHERE id='${USER_A_UUID}'::uuid;" \
+    >/dev/null 2>&1 || true
+
 # 5) **tenant isolation** — tenant B's GET returns 200 (and is empty —
 #    same reason as tenant A's empty GET, but ALSO genuinely doesn't
 #    own A's corpus). The data-layer ownership check above is the
@@ -920,10 +956,11 @@ fi
 #     ministr-cloud::caps::caps_for_plan: Pro = Some(10).
 QUOTA_SAMPLE_BASE="/tmp/ministr-e2e-quota-source-${RUN_TS}"
 QUOTA_ALL_SUCCEED=1
-# Loop runs 2..9 (8 iterations). Tenant A already has the original
-# step-3 register + the step-4c F5.5-a-priority clone, so 2 + 8 = 10
-# lands exactly at the Pro cap; the DIR_OVER attempt below is #11 → 402.
-for i in 2 3 4 5 6 7 8 9; do
+# Loop runs 3..9 (7 iterations). Tenant A already has 3 corpora:
+# the step-3 original register, the step-4c F5.5-a-priority clone, and
+# the step-4d F5.5-a-plan-lookup Enterprise clone. 3 + 7 = 10 lands
+# exactly at the Pro cap; the DIR_OVER attempt below is #11 → 402.
+for i in 3 4 5 6 7 8 9; do
     DIR="${QUOTA_SAMPLE_BASE}-${i}"
     rm -rf "${DIR}"
     mkdir -p "${DIR}"
