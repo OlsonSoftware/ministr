@@ -3137,6 +3137,187 @@ pub(crate) fn cmd_cloud_mint_license(
     Ok(())
 }
 
+/// F5.4-e-rotate — re-mint every in-flight license against a new
+/// signing keypair. Reads the existing audit log (the F5.4-e-audit
+/// JSONL written by `mint-license --audit-log PATH`) to enumerate
+/// known licenses, skips revoked + expired records, then mints one
+/// fresh JWT per surviving enterprise into `out_dir`.
+///
+/// Dedup posture: when multiple audit lines exist for the same
+/// `enterprise_id` (renewals), the latest `ts_unix` wins. The
+/// canonical scenario is "operator re-issued the same customer
+/// twice"; we re-issue against the most recent record, ignoring
+/// older ones.
+///
+/// New `valid_days` is operator-supplied — every re-issued JWT gets
+/// the same horizon. Operators decide the new contract horizon at
+/// rotation time rather than preserving each license's original
+/// remaining lifetime, because (a) it's simpler to reason about, and
+/// (b) it lets the operator extend or shorten the cycle uniformly.
+#[allow(clippy::too_many_lines)] // sequential orchestration; splitting fragments the dedup → filter → re-mint narrative
+pub(crate) fn cmd_cloud_rotate_license_keys(
+    audit_log: &std::path::Path,
+    revocation_list: Option<&std::path::Path>,
+    new_private_key: &std::path::Path,
+    out_dir: &std::path::Path,
+    new_audit_log: &std::path::Path,
+    valid_days: u32,
+) -> miette::Result<()> {
+    use std::collections::HashMap;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    if valid_days == 0 {
+        return Err(miette::miette!(
+            "rotate-license-keys: --valid-days must be > 0"
+        ));
+    }
+    // Load the existing audit log as JSON values, mirroring
+    // cmd_cloud_list_licenses' tolerant-of-malformed-lines posture.
+    let bytes = std::fs::read_to_string(audit_log)
+        .into_diagnostic()
+        .wrap_err(format!("read audit log {}", audit_log.display()))?;
+    let mut latest_by_enterprise: HashMap<String, serde_json::Value> = HashMap::new();
+    for raw in bytes.lines() {
+        if raw.trim().is_empty() {
+            continue;
+        }
+        let Ok(entry) = serde_json::from_str::<serde_json::Value>(raw) else {
+            tracing::warn!(line = raw, "skipping malformed audit line");
+            continue;
+        };
+        let Some(eid) = entry
+            .get("enterprise_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        let ts = entry
+            .get("ts_unix")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        match latest_by_enterprise.get(&eid) {
+            Some(existing)
+                if existing
+                    .get("ts_unix")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0)
+                    >= ts =>
+            {
+                // Keep the existing (newer or equal) record.
+            }
+            _ => {
+                latest_by_enterprise.insert(eid, entry);
+            }
+        }
+    }
+
+    // Load the revocation set eagerly so we skip O(N*M) lookups.
+    let revoked: std::collections::HashSet<String> = match revocation_list {
+        Some(p) => ministr_cloud::load_revoked_hashes(p)
+            .map_err(|e| miette::miette!("load revocation list {}: {e}", p.display()))?,
+        None => std::collections::HashSet::new(),
+    };
+
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+
+    // Sort survivors by enterprise_id for deterministic output.
+    let mut survivors: Vec<(String, serde_json::Value)> =
+        latest_by_enterprise.into_iter().collect();
+    survivors.sort_by(|a, b| a.0.cmp(&b.0));
+
+    std::fs::create_dir_all(out_dir)
+        .into_diagnostic()
+        .wrap_err(format!("create out-dir {}", out_dir.display()))?;
+
+    let priv_pem = std::fs::read(new_private_key)
+        .into_diagnostic()
+        .wrap_err(format!(
+            "read new private key from {}",
+            new_private_key.display()
+        ))?;
+
+    let mut reissued = 0usize;
+    let mut skipped_revoked = 0usize;
+    let mut skipped_expired = 0usize;
+    let mut summary = Vec::new();
+
+    for (enterprise_id, entry) in survivors {
+        let prev_hash = entry
+            .get("jwt_id_hash")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        if revoked.contains(prev_hash) {
+            skipped_revoked += 1;
+            continue;
+        }
+        let prev_exp = entry
+            .get("exp")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        if prev_exp <= now_secs {
+            skipped_expired += 1;
+            continue;
+        }
+        let seat_count = entry
+            .get("seat_count")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok())
+            .unwrap_or(0);
+        let new_exp = now_secs.saturating_add(u64::from(valid_days).saturating_mul(86_400));
+        let claims = ministr_cloud::LicenseClaims {
+            enterprise_id: enterprise_id.clone(),
+            seat_count,
+            exp: new_exp,
+            enabled_features: vec![],
+        };
+        let new_jwt = sign_license_jwt(&priv_pem, &claims)?;
+        let new_hash = ministr_cloud::license_jwt_id_hash(&new_jwt);
+        // Sanitize enterprise_id for filenames: only [a-zA-Z0-9._-]
+        // survive; everything else becomes '_'. Prevents path
+        // traversal from a typo or hostile audit-log injection.
+        let safe_eid: String = enterprise_id
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let out_file = out_dir.join(format!("{safe_eid}-{new_hash}.jwt"));
+        std::fs::write(&out_file, &new_jwt)
+            .into_diagnostic()
+            .wrap_err(format!("write reissued JWT to {}", out_file.display()))?;
+        append_license_audit_line(new_audit_log, &claims, &new_jwt, valid_days)?;
+        summary.push((enterprise_id.clone(), out_file.display().to_string()));
+        reissued += 1;
+    }
+
+    println!(
+        "rotation summary — {reissued} re-issued, {skipped_revoked} skipped (revoked), {skipped_expired} skipped (expired)"
+    );
+    if !summary.is_empty() {
+        println!();
+        println!("{:<24}  out_file", "enterprise_id");
+        println!("{:-<24}  {:-<40}", "", "");
+        for (eid, path) in &summary {
+            println!("{eid:<24}  {path}");
+        }
+    }
+    tracing::info!(
+        reissued,
+        skipped_revoked,
+        skipped_expired,
+        out_dir = %out_dir.display(),
+        new_audit_log = %new_audit_log.display(),
+        "license keypair rotation complete"
+    );
+    Ok(())
+}
+
 /// F5.4-e-revoke — append one revocation record to the JSONL list
 /// the customer's serve consults at boot via
 /// `MINISTR_LICENSE_REVOCATIONS`.
