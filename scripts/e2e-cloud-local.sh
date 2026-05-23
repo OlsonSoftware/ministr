@@ -2585,6 +2585,36 @@ else
     fail "malformed from-date not rejected (HTTP ${RESPONSE_STATUS})"
 fi
 
+# 36) **F5.4-a — license-key gate refuses boot under invalid config.**
+#     Default harness runs in community mode (no env vars set; the
+#     entire 174 prior assertions stay green under that path). This
+#     assertion spawns a SEPARATE serve attempt with garbage license
+#     env vars and confirms it exits non-zero with a clear error
+#     message. The serve validates BEFORE indexing / port-bind so
+#     this should be near-instant.
+info "F5.4-a: license-key gate refuses boot under invalid config"
+LICENSE_BOOT_STATUS=0
+# Bash subtlety: `||` INSIDE a `$(...)` substitution assigns only
+# in the subshell. Put `|| STATUS=$?` OUTSIDE so the outer variable
+# actually captures the exit code.
+LICENSE_BOOT_OUT=$(MINISTR_LICENSE_KEY="not-a-jwt" \
+    MINISTR_LICENSE_PUBLIC_KEY="not-a-pem" \
+    cargo run -q -p ministr-cli -- --config "${CONFIG_PATH}" \
+        serve --transport http --host 127.0.0.1 --port 18099 \
+    2>&1 < /dev/null) || LICENSE_BOOT_STATUS=$?
+if [[ "${LICENSE_BOOT_STATUS}" != "0" ]]; then
+    pass "invalid license env vars → CLI exits non-zero (status=${LICENSE_BOOT_STATUS})"
+else
+    fail "invalid license env vars did NOT refuse boot · output: $(printf '%s' "${LICENSE_BOOT_OUT}" | tail -c 200)"
+fi
+# Match a substring of the boot error message — "license gate refused"
+# (the full sentence wraps via miette but this prefix is stable).
+if printf '%s' "${LICENSE_BOOT_OUT}" | grep -q "license gate refused"; then
+    pass "boot error message identifies the license gate as the cause"
+else
+    fail "boot error didn't mention license gate · output: $(printf '%s' "${LICENSE_BOOT_OUT}" | tail -c 200)"
+fi
+
 # ─── summary ──────────────────────────────────────────────────────────
 
 echo

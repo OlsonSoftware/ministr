@@ -56,6 +56,7 @@ pub mod mail;
 pub mod orgs;
 pub mod quota;
 pub mod oidc;
+pub mod license;
 pub mod ratelimit;
 pub mod saml;
 pub mod session_bundle_store;
@@ -65,6 +66,10 @@ pub mod tenant_filter;
 pub mod users;
 pub mod webhooks;
 
+pub use license::{
+    LicenseClaims, LicenseError, render_license_summary, validate_license_from_env,
+    validate_license_key,
+};
 pub use oidc::{OidcState, REDACTED_CLIENT_SECRET, oidc_config_routes, oidc_routes};
 pub use saml::{SamlState, saml_config_routes, saml_routes};
 pub use siem::{
