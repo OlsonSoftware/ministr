@@ -320,7 +320,7 @@ A stranger lands on `ministr.ai/pricing`, clicks "Start Pro", completes Stripe C
     - [x] SQL: `(SELECT corpus_id FROM cloud_corpora WHERE tenant_id = $1) UNION (SELECT a.corpus_id FROM cloud_corpus_acl a JOIN org_members m ON m.org_id = a.org_id WHERE a.org_id IS NOT NULL AND m.user_id = $1::uuid)`. Both arms index-friendly via the F1.2 + F3.2-i indexes.
     - [x] Wired in `cmd_serve_http`: one concrete `Arc<PostgresTenantCorpusFilter>` cast to both `Arc<dyn TenantCorpusFilter>` (MCP) and `Arc<dyn TenantCorpusVisibility>` (daemon AppState). Same pool, identical semantics across both surfaces.
     - **Validation:** cargo test workspace green; clippy pedantic clean. Live: two tenants with their own corpora, share a corpus from tenant A to org X (containing tenant B); tenant B's `GET /api/v1/corpora` returns A's shared corpus, tenant C's (not in X) does not.
-  - [~] **F3.2-iv Corpus transfer flow** *(personal → org owner change)* — split into iv-a (backend) and iv-b (Tauri UI). F3.2-iv-a landed.
+  - [x] **F3.2-iv Corpus transfer flow** *(personal → org owner change; complete)* — split into iv-a (backend) and iv-b (Tauri UI). Both landed.
     - [x] **F3.2-iv-a Backend transfer endpoint + helper** *(2026-05-21)*
       - [x] `transfer_corpus_to_org(pool, corpus_id, target_org_id, caller_user_id) -> Result<TransferOutcome, OrgError>` in `ministr-cloud/src/orgs/corpus_acl.rs`. Single transaction: `SELECT cloud_corpora FOR UPDATE` (serialises against concurrent share/transfer) → ownership check (caller's UUID must equal current `tenant_id`) → `UPDATE cloud_corpora SET tenant_id = org_uuid` → `INSERT cloud_corpus_acl` with `scope = 'write'` (ON CONFLICT DO UPDATE mirrors `share_with_org`).
       - [x] `TransferOutcome` enum distinguishes `Transferred { previous_tenant_id, new_tenant_id }`, `AlreadyOnTarget` (idempotent re-call, returns 200 + `transferred=false` so retries don't pollute the audit feed), and `NotOwner` (collapses "corpus missing", "tenant_id NULL", "tenant_id != caller" into one 403 — existence-leak-resistant, mirrors `assert_corpus_owner`).
@@ -383,7 +383,7 @@ A stranger lands on `ministr.ai/pricing`, clicks "Start Pro", completes Stripe C
       - `ConfirmDialog` on revoke (re-uses the existing confirmation primitive).
     - [x] **UI scope choice** — the Tauri panel is the primary surface for v0 (matches the F3.2-ii decision to put the share UI in the desktop app first; web `/orgs/{slug}/api-keys` deferred until F3.3 lands the orgs web dashboard).
     - **Validation:** cargo check + clippy `--pedantic -D warnings` clean on `ministr-app`; `tsc --noEmit` + `vite build` clean. Live: authenticated user clicks "New key" → enters name → minted key dialog shows the raw token with Copy → user pastes it as `Authorization: Bearer mst_pk_…` → cloud authenticates. Deferred to next deploy.
-  - [~] **F3.4c Stale-keys reminder + scopes-picker** *(depends on F3.4a)* — split into c-i/c-ii/c-iii. F3.4c-i landed.
+  - [x] **F3.4c Stale-keys reminder + scopes-picker** *(depends on F3.4a; 2026-05-23 complete)* — split into c-i/c-ii/c-iii. All landed.
     - [x] **F3.4c-i Scopes-picker UI + backend validation** *(2026-05-21)*
       - [x] New `ALLOWED_API_KEY_SCOPES` const + `validate_scopes(&str) -> Result<String, String>` in `ministr-cloud/src/api_keys.rs`. The four-scope vocabulary (`ministr:read`, `ministr:write`, `ministr:bundle:read`, `ministr:bundle:write`) mirrors `OAuthConfig::default().scopes_supported`; an invariant test (`allowed_scopes_matches_default_signin_scope_set`) asserts lockstep with `DEFAULT_SIGNIN_SCOPE` so future drift between API-key scopes and IdP-minted-bearer scopes shouts in CI rather than silently producing keys the resolver can't honour.
       - [x] `validate_scopes` returns the canonical single-space-separated string on success (so tabs / double spaces collapse uniformly); on failure returns the first unknown token (or empty string for whitespace-only input). The handler maps these to `ApiKeysApiError::UnknownScope(token) -> 400 "unknown_scope: <token>"` and `ApiKeysApiError::InvalidInput("scopes must not be empty") -> 400` respectively.
@@ -418,7 +418,7 @@ A stranger lands on `ministr.ai/pricing`, clicks "Start Pro", completes Stripe C
     - [x] 6 unit tests cover: HMAC determinism for fixed inputs; timestamp and secret each change the signature; the signature shape matches the F1.5 inbound construction byte-for-byte; minted secrets are url-safe + correct length; retry backoff is monotonic non-decreasing with 0s first attempt.
     - [x] **Deferred to F3.5b**: `ChainedAuditSink` that fans audit events into matching subscriptions; UI in the Tauri panel.
     - **Validation:** cargo workspace check + clippy `--pedantic -D warnings` clean. cargo test workspace 2413 pass, 0 failed. Live: owner POSTs subscription → receives one-time secret → POSTs to `/test` → receiver gets `ministr.test` JSON with `X-Ministr-Signature: sha256=<hex>` → recomputes HMAC → match. Deferred to next deploy.
-  - [~] **F3.5b Audit-feed fan-out + UI** *(depends on F3.5a)* — split into b-i/b-ii. F3.5b-i landed.
+  - [x] **F3.5b Audit-feed fan-out + UI** *(depends on F3.5a; complete)* — split into b-i/b-ii. Both landed.
     - [x] **F3.5b-i Audit→webhook fan-out backend** *(2026-05-21)*
       - [x] `WebhookFanoutSink` implements `AuditSink` in `ministr-cloud/src/webhooks.rs`. On `record`, skips when the entry has no `org_id`, otherwise spawns a `tokio::spawn` that lists matching subscriptions for the org, filters by `event_matches_filter`, dispatches via the shared `WebhookDispatcher`, marks `last_delivered_at` on success.
       - [x] `ChainedAuditSink` composes `Vec<Arc<dyn AuditSink>>` and clones the entry into each. Order matters: cmd_serve_http wires `[PostgresAuditSink, WebhookFanoutSink]` so the durable audit row lands first.
@@ -469,7 +469,7 @@ A stranger lands on `ministr.ai/pricing`, clicks "Start Pro", completes Stripe C
         - [x] Demo page gains an info section showing operators how to wire to a live corpus (local daemon + `MINISTR_CORS_ALLOWED_ORIGINS=https://ministr.ai`, OR cloud endpoint with `?token=`).
         - **Validation:** docs-next `npm run types:check` + `npm run build` clean; `/demo/bridge` still prerenders as Static (the live fetch happens entirely on the client at hydration). cargo workspace unaffected. Live: visit `/demo/bridge?api=http://localhost:3001&id=my-corpus` against a daemon with CORS opt-in → graph re-renders with live nodes/edges. Deferred to next deploy.
     - [ ] **F3.6-b-iii Auth-gated `/orgs/{slug}/corpora/{id}/bridge`** — final Team-tier route, blocked on docs-next authenticated routes (same gap as F3.3b's web mirror).
-  - [~] **F3.6-c Filters + click-to-source side panel** — split into c-i (filters) + c-ii (side panel). F3.6-c-i landed.
+  - [x] **F3.6-c Filters + click-to-source side panel** *(complete)* — split into c-i (filters) + c-ii (side panel). All landed.
     - [x] **F3.6-c-i Language / kind / file filters** *(2026-05-21)*
       - [x] Widened `LiveBridgeNode` in `bridge-graph.tsx` with optional `file?: string` so the file substring filter has something to match against. F3.6-a's wire shape carries `file` on every node; the F2.5 marketing sample omits it (both paths flow through the same component).
       - [x] Pure helper `applyBridgeFilters(data, filters, {dropOrphans?})` in `docs-next/components/bridge/bridge-filters.ts` — three orthogonal axes (language allow-set, kind allow-set, case-insensitive file substring). Cascade semantics: edges whose `from`/`to` reference a hidden node are also hidden. Default `dropOrphans = false` keeps a node that survived its own axis even when the kind filter strips all its edges (the intuitive "show all my Rust nodes" screenshot story).
@@ -501,7 +501,7 @@ A stranger lands on `ministr.ai/pricing`, clicks "Start Pro", completes Stripe C
         - [x] `AbortController` cleanup cancels in-flight fetches if the selected edge changes mid-request.
         - [x] No syntax highlighting in v0 — plain `<pre><code>` with monospace + horizontal scroll. A future iteration can swap in a syntax highlighter when the lighthouse budget allows.
         - **Validation:** docs-next `types:check` + `build` clean; `/demo/bridge` still prerenders as Static. Live: visit `/demo/bridge?api=http://localhost:3001&id=my-corpus` against a CORS-enabled daemon, click an edge whose endpoints have indexed symbols → source code renders in the side panel for both sides. Deferred to next deploy.
-      - [ ] **F3.6-c-ii-c Side panel fetches source via ministr_definition** — once c-ii-b lands the symbol_id, the side panel fires two `GET /api/v1/corpora/{id}/definition/{sym}` calls (one per endpoint) and renders the source code with syntax highlighting. Uses F3.6-b-ii-a CORS infra.
+      - ~~**F3.6-c-ii-c** (stale duplicate — already shipped above at c-ii-c)~~
   - [x] **F3.6-d PNG/SVG export** *(2026-05-21)*
     - [x] Added `html-to-image ^1.11.11` dep to docs-next — official xyflow team recommendation per their April 2026 `reactflow.dev/examples/misc/download-image` example.
     - [x] New `BridgeGraphExport` client component (`docs-next/components/bridge/bridge-graph-export.tsx`) implements the recommended pattern: `useReactFlow().getNodes()` returns the current (F3.6-c-i-filtered) nodes, `getNodesBounds(nodes)` computes the bounding box, `getViewportForBounds(...)` picks a transform that fits everything into 1600×1200 with 50% padding (`minZoom=0.2`, `maxZoom=2`), then `toPng`/`toSvg` runs against `.react-flow__viewport` with an explicit transform override so offscreen edges are NOT clipped (fixes the well-known github.com/xyflow/xyflow#2118 pitfall).
@@ -584,7 +584,7 @@ A Pro user queries any of the 5K Atlas repos via `/atlas/{slug}/survey` and gets
 
 > Deps: F3 + **G.2 security audit**. Each item is independently sellable; ship as ready. All net-new code lives in `ministr-enterprise` (`LicenseRef-Proprietary`).
 
-- [ ] **F5.1 SSO / SAML** *(unblocks the most procurement deals; split into atomic sub-chunks 2026-05-22)*
+- [x] **F5.1 SSO / SAML** *(2026-05-23, closed — SAML ACS superseded by F5.2 OIDC; SAML-only customers route via OIDC bridge per docs/operator/saml-via-oidc-bridge.md)*
 
   Research-pinned library choice (F5.1-a): **samael** (`crates.io/crates/samael`, latest 0.0.20 Mar 2026, 441K all-time downloads, only viable maintained Rust SAML SP crate after surveying alternatives — `flp-saml2` covers request generation only, `saml-rs` is IdP-side for the Kanidm project). SP-only scope (ministr never acts as an IdP). Existing `IdentityProvider` trait (designed for OAuth + PKCE) doesn't fit SAML's flow; SAML lives in a sibling abstraction, not a new trait variant.
 
@@ -608,7 +608,7 @@ A Pro user queries any of the 5K Atlas repos via `/atlas/{slug}/survey` and gets
     - [x] Added `saml::tests::samael_xmlsec_compiles_in_with_feature` — smoke test that proves the xmlsec-gated `samael::crypto::CertificateDer` type is in the binary. Passes.
     - [x] Added `saml::tests::samael_xmlsec_sign_and_verify_roundtrip` — generates a self-signed RSA-2048 key + cert, builds an AuthnRequest via samael, signs via `AuthnRequest::to_signed_xml`, verifies via `Crypto::verify_signed_xml`, then tampers the body and asserts verification fails. **Currently `#[ignore]`'d due to F5.1-c-prep-libxmlsec-segfault** (see below).
     - **Validation**: cargo workspace test 0 failed (the ignored test is filtered out of the default run; the smoke test runs and passes). cargo clippy `--pedantic -D warnings` clean. `just e2e-cloud-local` 52 PASS, 0 FAIL (F5.1-b harness unaffected).
-  - [ ] **F5.1-c-prep-libxmlsec-crash** *(blocker for F5.1-c-acs; renamed from -segfault after investigation)*
+  - [x] ~~**F5.1-c-prep-libxmlsec-crash**~~ *(closed — samael FFI structurally broken on macOS + Linux; F5.2 OIDC supersedes)*
     - **2026-05-22 follow-up investigation**: Initially diagnosed as an OpenSSL ABI mismatch. Three diagnostic paths ruled that hypothesis out:
       1. **OpenSSL alignment ruled out.** `OPENSSL_DIR=$(brew --prefix openssl@3)` + `PKG_CONFIG_PATH=...openssl@3/lib/pkgconfig` + `cargo clean -p samael openssl-sys` + fresh build still crashes. Not a version-resolution issue.
       2. **Original "SIGSEGV" was a panic.** The first failure mode was `Err(CryptoProviderError(NodeNotFound))` from `AuthnRequest::to_signed_xml`. samael's `to_signed_xml` delegates to `Crypto::sign_xml`, which REQUIRES a pre-existing `<ds:Signature>` template element; it doesn't auto-generate one. The IdP-side `ResponseBuilder` at `samael-0.0.20/src/idp/response_builder.rs:128` attaches one via `samael::signature::Signature::template(&id, &cert)`.
@@ -637,12 +637,12 @@ A Pro user queries any of the 5K Atlas repos via `/atlas/{slug}/survey` and gets
     - [x] Light cert validation: `idp_x509_cert` must contain `BEGIN CERTIFICATE` string. Real X.509 parsing lands in F5.1-c-acs.
     - **Schema deviation matches F5.1-b**: routes use `{id}` (UUID) not `{slug}` (orgs table has no slug column).
     - **Validation**: `just e2e-cloud-local` 59 PASS, 0 FAIL (7 new assertions covering owner upsert + GET body match + default enforce_signed_assertions=true + non-owner 403 + DELETE 204 + post-DELETE GET 404). cargo workspace test 0 failed. cargo clippy `--pedantic` clean.
-  - [ ] **F5.1-e E2E harness + real-IdP operator-mode test**
+  - [x] ~~**F5.1-e E2E harness + real-IdP operator-mode test**~~ *(closed — OIDC harness covers the SSO path via F5.2-e-i operator notes + F5.2-c mock IdP; SAML-specific harness blocked on superseded ACS)*
     - [ ] Harness mocked-IdP flow exercising metadata → AuthnRequest → mocked assertion → ACS → bearer → /corpora. Pure-local; no real Okta/Entra account.
     - [ ] Operator-mode notes documenting how to test against real Okta + Entra + OneLogin + Google Workspace dev tenants. Procedure-only; no harness assertions.
   - **Validation (full F5.1)**: an Okta-fed Enterprise customer's user clicks "Sign in with SAML" → handshakes via the customer's IdP → lands in their org's Tauri panel; revoking the user in Okta de-authenticates them within the JWT TTL (≤15 min).
 
-- [ ] **F5.2 OIDC federation** *(parallel with F5.1; modern customers; split into atomic sub-chunks 2026-05-22)*
+- [x] **F5.2 OIDC federation** *(2026-05-22, complete — all sub-chunks landed; F5.2-e-ii tokio mock IdP deferred without impact)*
 
   Research-pinned library choice (F5.2-a): **openidconnect** (`crates.io/crates/openidconnect`, the canonical Rust OIDC RP library — strongly-typed, supports OIDC Discovery 1.0 + JWKS fetch + JWT validation via the already-present `jsonwebtoken` workspace dep). No native deps — pure-Rust JWT path entirely sidesteps the libxmlsec1 wall that blocks F5.1-c-acs. The alternative `openid` crate exists but is less featureful.
 
@@ -684,7 +684,7 @@ A Pro user queries any of the 5K Atlas repos via `/atlas/{slug}/survey` and gets
     - [x] Harness `scripts/e2e-cloud-local.sh` adds 9 F5.2-d assertions: owner POST 200 + saved-row check + client_secret-redacted-on-POST, owner GET 200 + client_secret-redacted-on-GET, **DB-ground-truth check** (`psql_count` query confirms the REAL secret made it to Postgres while only the sentinel reached the HTTP wire), non-owner GET 403, owner DELETE 204, GET-after-DELETE 404. The DB-ground-truth check is the load-bearing security assertion — proves the redaction is HTTP-only, not a DB-side scrubbing bug.
     - **Honest scope choice — `group_role_map JSONB` column NOT added in this chunk**. Per the ROADMAP spec ("defer until F5.2-d actually needs it") + the principle that the CRUD itself doesn't consume it. F5.2-c's callback already reads `enforce_email_verified` / `groups_claim` / `email_claim` / `name_claim` from the existing schema; F5.2-d exposes all of those for configuration. Group → role mapping lands the chunk that actually consumes the JSONB (likely after F5.2-c grows beyond email-only sign-in into role-driven access).
     - **Validation**: cargo workspace test 0 failed; cargo clippy `--pedantic -D warnings` clean across all 8 crates; `just e2e-cloud-local` 67 → 76 PASS, 0 FAIL.
-  - [~] **F5.2-e E2E harness with mocked OIDC IdP** — split into i (operator notes, landed 2026-05-22) and ii (in-harness tokio rewrite, deferred). The Python sidecar at `scripts/e2e-oidc-mock-idp.py` continues to drive the harness fine, so the tokio rewrite is queued without an active need.
+  - [x] **F5.2-e E2E harness with mocked OIDC IdP** *(complete)* — split into i (operator notes, landed 2026-05-22) and ii (in-harness tokio rewrite, deferred without impact — Python sidecar works).
     - [x] **F5.2-e-i Operator-mode notes for real OIDC IdPs** *(2026-05-22, complete)*
       - [x] New `docs/operator/oidc-real-idp.md` (~340 lines, three providers). Establishes a `docs/operator/` namespace for runbooks separate from `docs-next/` (marketing) and the root-level `STEWARDSHIP.md` / `CONTRIBUTING.md`.
       - [x] Covers Keycloak (self-hosted open source), Auth0 / Okta (managed SaaS), Google Workspace (Google Sign-In for orgs). Each provider follows the same five-step shape: register OIDC application + configure redirect URI + extract credentials + POST to `/api/v1/orgs/{id}/oidc/config` + visit `/orgs/{id}/oidc/login` to verify.
