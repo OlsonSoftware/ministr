@@ -272,6 +272,23 @@ pub(crate) async fn cmd_serve_http(
                     license = %ministr_cloud::render_license_summary(&claims),
                     "Enterprise license validated"
                 );
+                // F5.4-e-revoke-api-refresh — when the customer opted
+                // into URL-based revocation, spawn a background task
+                // that keeps the cache warm between restarts. The
+                // task does NOT mid-flight-enforce revocations on
+                // the running serve; the next pod restart picks up
+                // the latest cache.
+                if let Some((url, cache_path, grace_secs)) =
+                    ministr_cloud::revocation_url_config()
+                {
+                    let refresh_secs = ministr_cloud::revocation_refresh_secs();
+                    ministr_cloud::spawn_refresh_task(
+                        url,
+                        cache_path,
+                        refresh_secs,
+                        grace_secs,
+                    );
+                }
                 Some(Arc::new(claims))
             }
             Err(e) => {

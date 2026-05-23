@@ -157,6 +157,73 @@ fn fallback_to_cache(
     }
 }
 
+/// Default refresh interval for the background re-fetch task. 1
+/// hour is the production default; operators tune via
+/// `MINISTR_LICENSE_REVOCATIONS_REFRESH_SECS`.
+pub const DEFAULT_REVOCATION_REFRESH_SECS: u64 = 3_600;
+
+/// F5.4-e-revoke-api-refresh — spawn a tokio task that periodically
+/// re-fetches the revocation list to keep the local cache warm.
+/// Calls into [`fetch_revocation_list`] on each tick; errors log
+/// `warn` and the loop continues so a transient portal blip never
+/// kills the task.
+///
+/// **First tick swallowed** so we don't double-fetch immediately
+/// after the boot-time fetch (`validate_license_from_env` already
+/// did one).
+///
+/// **Honest scope**: this keeps the cache warm for the NEXT
+/// restart's boot validator. It does NOT add mid-flight revocation
+/// enforcement — a serve that booted on a valid license keeps
+/// running even if a refresh later pulls in a revocation for that
+/// hash. Operators wanting strict latency restart their pods more
+/// frequently; a future chunk would add the in-process re-validate
+/// + graceful-shutdown path.
+pub fn spawn_refresh_task(
+    url: String,
+    cache_path: PathBuf,
+    refresh_secs: u64,
+    grace_secs: u64,
+) {
+    let interval = if refresh_secs == 0 {
+        DEFAULT_REVOCATION_REFRESH_SECS
+    } else {
+        refresh_secs
+    };
+    info!(
+        url,
+        cache = %cache_path.display(),
+        refresh_secs = interval,
+        "license revocation refresh task spawned (F5.4-e-revoke-api-refresh)"
+    );
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(interval));
+        // First tick is immediate per tokio docs; swallow to avoid
+        // doubling up with the boot-time fetch that already ran.
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            match fetch_revocation_list(&url, &cache_path, grace_secs).await {
+                Ok(_) => {
+                    info!(
+                        url,
+                        cache = %cache_path.display(),
+                        "background revocation refresh succeeded"
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        url,
+                        cache = %cache_path.display(),
+                        error = %e,
+                        "background revocation refresh failed; cache may go stale"
+                    );
+                }
+            }
+        }
+    });
+}
+
 /// Read the customer-side env vars and return the chosen
 /// (`url`, `cache_path`, `grace_secs`) triple, or `None` when the
 /// URL env var is unset (operator hasn't opted into network-fetched
@@ -178,6 +245,17 @@ pub fn revocation_url_config() -> Option<(String, PathBuf, u64)> {
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(DEFAULT_REVOCATION_GRACE_SECS);
     Some((url, cache_path, grace_secs))
+}
+
+/// F5.4-e-revoke-api-refresh — read the refresh interval env var.
+/// Returns the configured value or [`DEFAULT_REVOCATION_REFRESH_SECS`].
+#[must_use]
+pub fn revocation_refresh_secs() -> u64 {
+    std::env::var("MINISTR_LICENSE_REVOCATIONS_REFRESH_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(DEFAULT_REVOCATION_REFRESH_SECS)
 }
 
 #[cfg(test)]

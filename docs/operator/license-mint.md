@@ -241,11 +241,28 @@ opted into URL-based fetch. Operators transitioning from
 file-based to network-fetched can simply add the URL env without
 unsetting the old one.
 
-Honest scope: the fetcher runs once at boot. Long-running
-deployments need to restart the serve to pick up new revocations
-beyond the cache window. A future chunk could add a periodic
-background refresh task (mirroring F5.5-b-persist-write's tokio
-ticker pattern); deferred until customer demand surfaces.
+### Background refresh (F5.4-e-revoke-api-refresh)
+
+When `MINISTR_LICENSE_REVOCATIONS_URL` is set, the customer's serve
+spawns a background tokio task that re-fetches the URL every
+`MINISTR_LICENSE_REVOCATIONS_REFRESH_SECS` (default 3600 = 1 hour).
+On each tick the task overwrites the cache file. This keeps the
+cache warm so the NEXT pod restart's boot validator sees fresh
+revocations even if the portal is briefly unreachable at restart
+time.
+
+**Honest scope — no mid-flight enforcement.** A serve that booted
+on a valid license keeps running even if a refresh later pulls in
+a revocation for that license's hash. New revocations only take
+effect at the next restart (deploy / k8s rolling update / host
+reboot). Operators wanting strict revocation latency restart pods
+more frequently. A future chunk would add in-process re-validate +
+graceful-shutdown when the running license becomes revoked;
+deferred until customer demand surfaces.
+
+Refresh task errors log `warn` and the loop continues — a transient
+portal blip doesn't crash the background task; the cache simply
+stays at whatever it was last refreshed to until the portal recovers.
 
 ## Serving the revocation list via HTTP (F5.4-e-revoke-api-serve)
 
