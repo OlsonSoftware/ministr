@@ -25,6 +25,7 @@ use std::io;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
 
 use jobs::{InMemoryJobQueue, SqliteJobQueue};
 
@@ -41,6 +42,11 @@ pub struct AdminState {
     queue: JobQueueBackend,
     webhook_secret: Option<Arc<String>>,
     corpus_count: Arc<AtomicUsize>,
+    /// F5.5-b-sla-skeleton — captured at construction time so the
+    /// `/sla` handler can report uptime via `Instant::elapsed`.
+    /// `Instant` is `Copy`, so embedding directly (no Arc) keeps
+    /// `AdminState`'s cheap-clone property intact.
+    boot_started_at: Instant,
 }
 
 impl AdminState {
@@ -53,6 +59,7 @@ impl AdminState {
             queue: JobQueueBackend::InMemory(InMemoryJobQueue::new()),
             webhook_secret: webhook_secret.map(Arc::new),
             corpus_count: Arc::new(AtomicUsize::new(0)),
+            boot_started_at: Instant::now(),
         }
     }
 
@@ -72,6 +79,7 @@ impl AdminState {
             queue,
             webhook_secret: webhook_secret.map(Arc::new),
             corpus_count: Arc::new(AtomicUsize::new(0)),
+            boot_started_at: Instant::now(),
         })
     }
 
@@ -83,6 +91,13 @@ impl AdminState {
 
     fn corpus_count(&self) -> usize {
         self.corpus_count.load(Ordering::Relaxed)
+    }
+
+    /// F5.5-b-sla-skeleton — uptime since this `AdminState` was
+    /// constructed (which mirrors when the serve booted). Read by
+    /// the `/sla` handler.
+    pub(super) fn uptime_secs(&self) -> u64 {
+        self.boot_started_at.elapsed().as_secs()
     }
 
     fn webhook_secret(&self) -> Option<&str> {
