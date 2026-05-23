@@ -18,6 +18,7 @@
 mod handlers;
 mod ids;
 pub mod jobs;
+pub mod latency;
 mod router;
 mod webhook;
 
@@ -28,6 +29,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use jobs::{InMemoryJobQueue, SqliteJobQueue};
+pub use latency::{LatencySnapshot, LatencyTracker, record_latency_middleware};
 
 pub use jobs::JobQueueBackend;
 pub use router::{admin_protected_routes, admin_public_routes};
@@ -47,6 +49,12 @@ pub struct AdminState {
     /// `Instant` is `Copy`, so embedding directly (no Arc) keeps
     /// `AdminState`'s cheap-clone property intact.
     boot_started_at: Instant,
+    /// F5.5-b-latency — shared latency tracker. The
+    /// `record_latency_middleware` mounted on the final composed
+    /// router records every request's elapsed micros here; the
+    /// `/sla` handler reads percentiles via [`LatencyTracker::snapshot`].
+    /// Cheap to clone (Arc-backed).
+    latency: LatencyTracker,
 }
 
 impl AdminState {
@@ -60,6 +68,7 @@ impl AdminState {
             webhook_secret: webhook_secret.map(Arc::new),
             corpus_count: Arc::new(AtomicUsize::new(0)),
             boot_started_at: Instant::now(),
+            latency: LatencyTracker::new(),
         }
     }
 
@@ -80,6 +89,7 @@ impl AdminState {
             webhook_secret: webhook_secret.map(Arc::new),
             corpus_count: Arc::new(AtomicUsize::new(0)),
             boot_started_at: Instant::now(),
+            latency: LatencyTracker::new(),
         })
     }
 
@@ -98,6 +108,16 @@ impl AdminState {
     /// the `/sla` handler.
     pub(super) fn uptime_secs(&self) -> u64 {
         self.boot_started_at.elapsed().as_secs()
+    }
+
+    /// F5.5-b-latency — clone the embedded tracker. Used by
+    /// `cmd_serve_http` to construct the `from_fn_with_state`
+    /// middleware that records every request's latency, and by the
+    /// `/sla` handler to read percentiles. Both clones share the same
+    /// backing buffer via the inner `Arc<Mutex<...>>`.
+    #[must_use]
+    pub fn latency_tracker(&self) -> LatencyTracker {
+        self.latency.clone()
     }
 
     fn webhook_secret(&self) -> Option<&str> {
