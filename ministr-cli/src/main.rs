@@ -365,6 +365,28 @@ enum CloudAction {
         #[arg(long, default_value = "ministr:read ministr:write")]
         scope: String,
     },
+    /// F5.4-b harness helper — generate a fresh RSA-2048 keypair,
+    /// sign a license JWT carrying the supplied claims, print both
+    /// as JSON `{jwt, public_key_pem}` for the harness to capture
+    /// and pass to a test serve via `MINISTR_LICENSE_KEY` +
+    /// `MINISTR_LICENSE_PUBLIC_KEY` env vars. Intentionally NOT
+    /// gated on `MINISTR_PG_URL` — pure key-and-JWT generation.
+    MintTestLicense {
+        /// `enterprise_id` claim. Echoed in boot logs.
+        #[arg(long, default_value = "e2e-test-tenant")]
+        enterprise_id: String,
+        /// `seat_count` claim — the limit F5.4-b's invite handler
+        /// enforces. Default 2 so the harness can prove the cap
+        /// fires by inviting 3 emails.
+        #[arg(long, default_value_t = 2)]
+        seat_count: u32,
+        /// Days from now until `exp`. Default 365 (year-long test
+        /// license). Set to 0 or negative to produce an already-
+        /// expired JWT (used by F5.4-a's expired-license rejection
+        /// test path).
+        #[arg(long, default_value_t = 365)]
+        valid_days: i64,
+    },
 }
 
 /// Subcommands for `ministr hooks`.
@@ -756,6 +778,11 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
                 email,
                 scope,
             } => commands::cmd_cloud_mint_test_bearer(github_id, &email, &scope).await,
+            CloudAction::MintTestLicense {
+                enterprise_id,
+                seat_count,
+                valid_days,
+            } => commands::cmd_cloud_mint_test_license(&enterprise_id, seat_count, valid_days),
         },
         Command::Setup { .. } => {
             unreachable!("ministr setup is dispatched before resolve_config in main()")

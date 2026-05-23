@@ -83,6 +83,12 @@ pub struct OrgsState {
     /// is still in the response body either way (the inviter can
     /// copy-paste it out-of-band if no provider is configured).
     mailer: Option<Arc<dyn MailSender>>,
+    /// F5.4-b — Enterprise license claims, cached from the
+    /// boot-time `validate_license_from_env` call. `None` means
+    /// community mode (no seat cap enforced). `Some(claims)` makes
+    /// the invite handler refuse with 402 when the org's member
+    /// count would exceed `claims.seat_count`.
+    license: Option<Arc<crate::license::LicenseClaims>>,
 }
 
 fn trim_trailing_slashes(mut s: String) -> String {
@@ -103,6 +109,7 @@ impl OrgsState {
             stripe: None,
             audit: None,
             mailer: None,
+            license: None,
         }
     }
 
@@ -118,6 +125,7 @@ impl OrgsState {
             stripe: None,
             audit: None,
             mailer: None,
+            license: None,
         }
     }
 
@@ -160,6 +168,20 @@ impl OrgsState {
     #[must_use]
     pub fn with_mailer(mut self, mailer: Arc<dyn MailSender>) -> Self {
         self.mailer = Some(mailer);
+        self
+    }
+
+    /// F5.4-b — wire the cached Enterprise license claims so the
+    /// invite handler enforces the contracted seat cap. `None`
+    /// (community-mode deployments) leaves the invite path
+    /// unrestricted. The claims are read at boot via
+    /// [`crate::license::validate_license_from_env`].
+    #[must_use]
+    pub fn with_license(
+        mut self,
+        license: Arc<crate::license::LicenseClaims>,
+    ) -> Self {
+        self.license = Some(license);
         self
     }
 
@@ -461,6 +483,34 @@ async fn create_invite_handler(
     let trimmed = body.email.trim();
     if trimmed.is_empty() || !trimmed.contains('@') {
         return Err(OrgsApiError::InvalidInviteEmail);
+    }
+
+    // F5.4-b — Enterprise seat-cap enforcement. Only fires when
+    // boot-time license validation produced a `LicenseClaims`
+    // (community-mode deployments leave `state.license = None` and
+    // skip this check entirely). Counts current `org_members`
+    // rows; refuses the invite if accepting would push the count
+    // past `seat_count`. Pending invites are NOT counted in v0 —
+    // tightening that is F5.4-b-pending-invites if customers care.
+    if let Some(claims) = state.license.as_ref() {
+        let cap = claims.seat_count;
+        let conn = state
+            .pool
+            .get()
+            .await
+            .map_err(|e| OrgsApiError::Repo(OrgError::GetConn(e.to_string())))?;
+        let row = conn
+            .query_one(
+                "SELECT count(*) FROM org_members WHERE org_id = $1::text::uuid",
+                &[&org_id],
+            )
+            .await
+            .map_err(|e| OrgsApiError::Repo(OrgError::Sql(format!("seat-cap count: {e}"))))?;
+        let count_i: i64 = row.get(0);
+        let current = u64::try_from(count_i).unwrap_or(u64::MAX);
+        if current + 1 > u64::from(cap) {
+            return Err(OrgsApiError::SeatCapExceeded { current, cap });
+        }
     }
 
     let created = create_invite(
@@ -916,6 +966,10 @@ enum OrgsApiError {
     /// error. Both arms (Repo / Stripe) collapse to 500 with the actual
     /// failure logged at warn.
     TransferPersonal(TransferPersonalError),
+    /// F5.4-b — Enterprise seat cap would be exceeded by the
+    /// proposed invite. Returns 402 with a paywall-shaped JSON body
+    /// so the caller's Tauri panel can surface the contract limit.
+    SeatCapExceeded { current: u64, cap: u32 },
 }
 
 impl IntoResponse for OrgsApiError {
@@ -950,6 +1004,19 @@ impl IntoResponse for OrgsApiError {
             Self::TransferPersonal(e) => {
                 warn!(error = %e, "transfer-personal handler internal error");
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response()
+            }
+            Self::SeatCapExceeded { current, cap } => {
+                // F5.4-b — paywall-shaped 402 mirroring F3.3 quota:
+                // `{"error", "current", "cap", "upgrade_url"}`. The
+                // Tauri panel branches on `error` to render a
+                // contract-limit message.
+                let body = serde_json::json!({
+                    "error": "seat_cap_exceeded",
+                    "current": current,
+                    "cap": cap,
+                    "upgrade_url": "https://ministr.ai/contact?from=seat_cap_exceeded",
+                });
+                (StatusCode::PAYMENT_REQUIRED, axum::Json(body)).into_response()
             }
         }
     }

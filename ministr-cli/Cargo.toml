@@ -74,6 +74,13 @@ notify.workspace = true
 toml.workspace = true
 dialoguer.workspace = true
 onpath.workspace = true
+# F5.4-b harness helper — `cmd_cloud_mint_test_license` generates a
+# fresh RSA-2048 keypair + signs a license JWT for the e2e harness
+# to feed into the test-serve via env vars. Direct dep on
+# `openssl` + `jsonwebtoken` keeps the dependency contract visible
+# (both are already in tree transitively via ministr-cloud / Atlas).
+openssl = "0.10.80"
+jsonwebtoken = "9"
 
 [features]
 # Opt-in DirectML GPU acceleration for Windows (no-op elsewhere).
