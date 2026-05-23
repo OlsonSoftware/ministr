@@ -424,10 +424,17 @@ corpus_paths = []
 EOF
 info "compiling ministr-cli (cached after first run)"
 cargo build -q -p ministr-cli
+# F5.4-e-revoke-api-serve: seed a fixture revocation list the
+# main test_serve can serve at /api/v1/license-revocations.jsonl.
+REVOKE_API_FIXTURE="/tmp/ministr-e2e-revoke-serve-fixture.jsonl"
+cat > "${REVOKE_API_FIXTURE}" <<'EOF'
+{"ts_iso":"2026-05-23T00:00:00Z","ts_unix":1779494400,"enterprise_id":"e2e-revoke-api-fixture","jwt_id_hash":"aaaaaaaaaaaaaaaa","reason":"harness fixture"}
+EOF
 # F5.5-b-persist-write: MINISTR_SLA_FLUSH_SECS=2 makes the periodic
 # SLA snapshot flush tick fast enough to land at least one row
 # within the harness's runtime (default is 60s — too slow for e2e).
 MINISTR_SLA_FLUSH_SECS=2 \
+MINISTR_LICENSE_REVOCATIONS_SERVE_PATH="${REVOKE_API_FIXTURE}" \
 cargo run -q -p ministr-cli -- \
     --config "${CONFIG_PATH}" \
     serve --transport http --oauth \
@@ -3166,6 +3173,40 @@ if cargo run -q -p ministr-cli -- cloud sla-prune-snapshots \
 else
     pass "sla-prune-snapshots --older-than-secs 0 refuses (defensive against accidental delete-all)"
 fi
+
+# 42) **F5.4-e-revoke-api-serve — public revocation-list endpoint.**
+#     Main test_serve started with MINISTR_LICENSE_REVOCATIONS_SERVE_PATH
+#     pointing at the seeded fixture. GET /api/v1/license-revocations.jsonl
+#     should return 200 + application/x-ndjson + the fixture body.
+info "F5.4-e-revoke-api-serve: public revocation-list endpoint"
+REVOKE_API_RESP=$(curl -s -i "${ENDPOINT}/api/v1/license-revocations.jsonl" 2>&1)
+REVOKE_API_STATUS=$(printf '%s' "${REVOKE_API_RESP}" | head -1 | awk '{print $2}')
+if [[ "${REVOKE_API_STATUS}" == "200" ]]; then
+    pass "GET /api/v1/license-revocations.jsonl returns 200"
+else
+    fail "GET /api/v1/license-revocations.jsonl returned ${REVOKE_API_STATUS} (expected 200)"
+fi
+# Content-Type header — case-insensitive grep because curl preserves
+# server casing.
+if printf '%s' "${REVOKE_API_RESP}" | grep -qi "^content-type: *application/x-ndjson"; then
+    pass "Content-Type: application/x-ndjson (correct mime for JSONL streaming)"
+else
+    fail "Content-Type missing or wrong; response head: $(printf '%s' "${REVOKE_API_RESP}" | head -10)"
+fi
+# Cache-Control header — 5-minute public cache as a thundering-herd guard.
+if printf '%s' "${REVOKE_API_RESP}" | grep -qi "^cache-control: *public, max-age=300"; then
+    pass "Cache-Control: public, max-age=300 (thundering-herd guard)"
+else
+    fail "Cache-Control header missing or wrong"
+fi
+# Body carries the fixture's enterprise_id.
+if printf '%s' "${REVOKE_API_RESP}" | grep -q "e2e-revoke-api-fixture"; then
+    pass "body carries the seeded fixture entry"
+else
+    fail "body missing fixture; response: $(printf '%s' "${REVOKE_API_RESP}" | tail -5)"
+fi
+# Cleanup the fixture file.
+rm -f "${REVOKE_API_FIXTURE}"
 
 # ─── summary ──────────────────────────────────────────────────────────
 

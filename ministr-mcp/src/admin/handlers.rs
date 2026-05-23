@@ -9,8 +9,9 @@ use std::time::Duration;
 
 use axum::Json;
 use axum::extract::{Extension, Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -138,6 +139,82 @@ pub(super) async fn sla_status(State(state): State<AdminState>) -> Json<SlaRespo
         started_at_iso,
         latency,
     })
+}
+
+/// F5.4-e-revoke-api-serve — public HTTP endpoint serving the
+/// operator's revocation JSONL.
+///
+/// On-prem customers (F5.4-c Helm / F5.4-d Docker Compose) can
+/// optionally fetch the operator's `revoke-license`-managed JSONL
+/// from this endpoint instead of mounting the file directly. Three
+/// states:
+///
+/// - `MINISTR_LICENSE_REVOCATIONS_SERVE_PATH` unset → 404 +
+///   plain-text body explaining the operator hasn't opted in.
+/// - env set + file readable → 200 + `application/x-ndjson` body +
+///   `Cache-Control: max-age=300, public` so polling clients don't
+///   thunder.
+/// - env set + file unreadable → 503 + plain-text error so the
+///   operator sees the misconfiguration.
+///
+/// **Reads the env var at request time** rather than boot so an
+/// operator can swap the file path or update its contents without
+/// bouncing the serve — critical for revocation latency.
+///
+/// **Unauthenticated**: the revocation list is non-secret. A
+/// `jwt_id_hash` reveals "this license is revoked" but nothing
+/// about the bearer, the customer, or the original mint context.
+/// Customers need to fetch it without bearer tokens for the
+/// F5.4-e-revoke-api-fetch (deferred) flow to work.
+pub(super) async fn serve_revocation_list() -> Response {
+    let Ok(path) = std::env::var("MINISTR_LICENSE_REVOCATIONS_SERVE_PATH") else {
+        return (
+            StatusCode::NOT_FOUND,
+            "MINISTR_LICENSE_REVOCATIONS_SERVE_PATH is not set on this serve. \
+             The operator has not opted in to HTTP-served revocation lists; \
+             use the file-based MINISTR_LICENSE_REVOCATIONS env var instead.",
+        )
+            .into_response();
+    };
+    if path.trim().is_empty() {
+        return (
+            StatusCode::NOT_FOUND,
+            "MINISTR_LICENSE_REVOCATIONS_SERVE_PATH is set but empty.",
+        )
+            .into_response();
+    }
+    let body = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) => {
+            warn!(
+                error = %e,
+                path = %path,
+                "MINISTR_LICENSE_REVOCATIONS_SERVE_PATH points at an unreadable file"
+            );
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!(
+                    "revocation list at {path} unreadable: {e}; \
+                     check operator config + filesystem permissions",
+                ),
+            )
+                .into_response();
+        }
+    };
+    let mut response = (StatusCode::OK, body).into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/x-ndjson"),
+    );
+    // 5-minute cache is a thundering-herd guard; the customer-side
+    // fetcher (F5.4-e-revoke-api-fetch, deferred) handles freshness
+    // by polling more often if it has reason to. Public because the
+    // list is non-secret and CDN-friendly.
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=300"),
+    );
+    response
 }
 
 #[derive(Debug, Deserialize)]
