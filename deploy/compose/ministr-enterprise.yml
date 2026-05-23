@@ -1,0 +1,90 @@
+# F5.4-d — Docker Compose template for ministr-enterprise on-prem.
+#
+# Single-node trial / dev deployment. Bundles a Postgres instance for
+# convenience — customers running production should set
+# `MINISTR_PG_URL` to their own external Postgres in `.env` and start
+# only the `cloud` service (`docker compose up -d cloud`).
+#
+# Required env (set in `.env` — see `.env.example`):
+#   MINISTR_LICENSE_KEY           RS256 JWT from the ministr portal
+#   MINISTR_LICENSE_PUBLIC_KEY    SPKI PEM ships out-of-band
+#   POSTGRES_PASSWORD             internal DB password (bundled PG only)
+#
+# Optional overrides:
+#   PORT                          host port to publish (default 8080)
+#   MINISTR_IMAGE                 image override (default ghcr.io/ministr-ai/cloud:0.6.0)
+#   MINISTR_PG_URL                override the bundled PG with external
+
+services:
+  postgres:
+    # Postgres 16 matches the Azure baseline (deploy/azure/lib/postgres.ts);
+    # alpine variant keeps the trial image small.
+    image: postgres:16-alpine
+    container_name: ministr-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ministr
+      POSTGRES_DB: ministr
+      # Customer provides via .env. Compose fails loudly if unset
+      # because there's no sensible default (no default password
+      # ships with the chart).
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in .env}
+    volumes:
+      - ministr-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` short-circuits before the cloud serve tries to
+      # connect — depends_on/service_healthy waits on this.
+      test: ["CMD-SHELL", "pg_isready -U ministr -d ministr"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  cloud:
+    # Default to the public registry; customers behind a firewall
+    # override MINISTR_IMAGE to their internal mirror.
+    image: ${MINISTR_IMAGE:-ghcr.io/ministr-ai/cloud:0.6.0}
+    container_name: ministr-cloud
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        # Wait for pg_isready before booting; avoids a noisy first-
+        # boot retry loop on `MINISTR_PG_URL` connect failures.
+        condition: service_healthy
+    environment:
+      # F5.4-a license gate. The `:?` shell-style fail-fast means
+      # `docker compose up` errors loudly if either is unset.
+      MINISTR_LICENSE_KEY: ${MINISTR_LICENSE_KEY:?MINISTR_LICENSE_KEY is required in .env}
+      MINISTR_LICENSE_PUBLIC_KEY: ${MINISTR_LICENSE_PUBLIC_KEY:?MINISTR_LICENSE_PUBLIC_KEY is required in .env}
+      # PG connection — defaults to the bundled service. Customers
+      # running production override this to point at their own DB
+      # and start only the `cloud` service.
+      MINISTR_PG_URL: ${MINISTR_PG_URL:-postgres://ministr:${POSTGRES_PASSWORD}@postgres:5432/ministr}
+      # Optional audit-archive directory backed by the named volume
+      # below. Set to empty in .env to skip wiring it.
+      MINISTR_AUDIT_ARCHIVE_DIR: ${MINISTR_AUDIT_ARCHIVE_DIR:-/var/lib/ministr/audit-archive}
+    ports:
+      - "${PORT:-8080}:8080"
+    volumes:
+      - ministr-audit-archive:/var/lib/ministr/audit-archive
+    command:
+      - serve
+      - --transport
+      - http
+      - --oauth
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  ministr-pg-data:
+    name: ministr-pg-data
+  ministr-audit-archive:
+    name: ministr-audit-archive
