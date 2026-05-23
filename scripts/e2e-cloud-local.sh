@@ -2785,6 +2785,83 @@ if [[ -n "${SEATCAP_PID}" ]]; then
     wait "${SEATCAP_PID}" 2>/dev/null || true
 fi
 
+# 38) **F5.4-e-revoke — boot refuses under a revoked license.**
+#     Mint a fresh license; compute its jwt_id_hash; write a
+#     revocation list containing that hash; attempt to boot a serve
+#     pointing MINISTR_LICENSE_REVOCATIONS at the file; expect
+#     non-zero exit with "license revoked" in the error. This proves
+#     the wire (CLI revoke-license → JSONL file → boot is_revoked_by_file
+#     → LicenseError::Revoked → miette refusal) is connected.
+info "F5.4-e-revoke: boot refuses under a revoked license"
+REVOKE_JSON=$(cargo run -q -p ministr-cli -- cloud mint-test-license \
+    --enterprise-id "e2e-revoke-test" --seat-count 5 --valid-days 1 2>/dev/null || echo '{}')
+REVOKE_JWT=$(printf '%s' "${REVOKE_JSON}" | jq -r '.jwt // empty')
+REVOKE_PUBKEY=$(printf '%s' "${REVOKE_JSON}" | jq -r '.public_key_pem // empty')
+if [[ -n "${REVOKE_JWT}" && -n "${REVOKE_PUBKEY}" ]]; then
+    pass "F5.4-e-revoke: mint-test-license produced fresh license fixture"
+else
+    fail "F5.4-e-revoke: mint-test-license produced empty fixture"
+fi
+
+REVOKE_JWT_FILE=$(mktemp -t ministr-e2e-revoke-jwt.XXXXXX)
+REVOKE_LIST=$(mktemp -t ministr-e2e-revoke-list.XXXXXX)
+printf '%s' "${REVOKE_JWT}" > "${REVOKE_JWT_FILE}"
+
+# Use the CLI itself to write the revocation record — exercises the
+# JWT-file → hash → JSONL-append path end-to-end rather than
+# back-computing the hash in bash.
+if cargo run -q -p ministr-cli -- cloud revoke-license \
+    --jwt "${REVOKE_JWT_FILE}" \
+    --enterprise-id "e2e-revoke-test" \
+    --reason "harness fixture for F5.4-e-revoke" \
+    --revocation-list "${REVOKE_LIST}" 2>/dev/null; then
+    pass "F5.4-e-revoke: revoke-license CLI exited 0"
+else
+    fail "F5.4-e-revoke: revoke-license CLI exited non-zero"
+fi
+
+if [[ -s "${REVOKE_LIST}" ]]; then
+    REVOKE_LINE=$(head -1 "${REVOKE_LIST}")
+    REVOKE_RECORDED_HASH=$(printf '%s' "${REVOKE_LINE}" | jq -r '.jwt_id_hash // empty')
+    REVOKE_RECORDED_REASON=$(printf '%s' "${REVOKE_LINE}" | jq -r '.reason // empty')
+    if [[ ${#REVOKE_RECORDED_HASH} -eq 16 ]]; then
+        pass "revocation record carries 16-hex jwt_id_hash (${REVOKE_RECORDED_HASH})"
+    else
+        fail "revocation record jwt_id_hash malformed: '${REVOKE_RECORDED_HASH}'"
+    fi
+    if [[ "${REVOKE_RECORDED_REASON}" == "harness fixture for F5.4-e-revoke" ]]; then
+        pass "revocation record carries operator-supplied reason"
+    else
+        fail "revocation record reason mismatch: '${REVOKE_RECORDED_REASON}'"
+    fi
+else
+    fail "revocation list file is empty after revoke-license"
+fi
+
+# Now attempt to boot a serve under the revoked license. Expect
+# non-zero exit AND "revoked" in the error output (F5.4-a-style boot
+# check — fails fast before port-bind).
+REVOKE_BOOT_STATUS=0
+REVOKE_BOOT_OUT=$(MINISTR_LICENSE_KEY="${REVOKE_JWT}" \
+    MINISTR_LICENSE_PUBLIC_KEY="${REVOKE_PUBKEY}" \
+    MINISTR_LICENSE_REVOCATIONS="${REVOKE_LIST}" \
+    cargo run -q -p ministr-cli -- --config "${CONFIG_PATH}" \
+        serve --transport http --host 127.0.0.1 --port 18097 \
+    2>&1 < /dev/null) || REVOKE_BOOT_STATUS=$?
+if [[ "${REVOKE_BOOT_STATUS}" != "0" ]]; then
+    pass "revoked license → CLI exits non-zero (status=${REVOKE_BOOT_STATUS})"
+else
+    fail "revoked license did NOT refuse boot · output: $(printf '%s' "${REVOKE_BOOT_OUT}" | tail -c 200)"
+fi
+if printf '%s' "${REVOKE_BOOT_OUT}" | grep -qi "revoked"; then
+    pass "boot error message identifies the revocation as the cause"
+else
+    fail "boot error didn't mention revocation · output: $(printf '%s' "${REVOKE_BOOT_OUT}" | tail -c 200)"
+fi
+
+# Cleanup harness fixtures.
+rm -f "${REVOKE_JWT_FILE}" "${REVOKE_LIST}"
+
 # ─── summary ──────────────────────────────────────────────────────────
 
 echo
