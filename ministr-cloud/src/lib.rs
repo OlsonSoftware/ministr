@@ -71,7 +71,9 @@ pub use license::{
     LicenseClaims, LicenseError, RevocationRecord, is_revoked_by_file, license_jwt_id_hash,
     load_revoked_hashes, render_license_summary, validate_license_from_env, validate_license_key,
 };
-pub use sla::{PostgresSlaWindowStore, SlaError, persist_snapshot};
+pub use sla::{
+    PostgresSlaWindowStore, SlaError, delete_snapshots_older_than, persist_snapshot,
+};
 pub use oidc::{OidcState, REDACTED_CLIENT_SECRET, oidc_config_routes, oidc_routes};
 pub use saml::{SamlState, saml_config_routes, saml_routes};
 pub use siem::{

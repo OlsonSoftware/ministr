@@ -453,6 +453,23 @@ enum CloudAction {
         #[arg(long, default_value = "table")]
         format: String,
     },
+    /// F5.5-b-persist-retention — DELETE `request_latency_snapshots`
+    /// rows older than the supplied window. Designed to be wrapped in
+    /// an operator cron / Azure Container Apps Job — there is NO
+    /// in-process background task because retention cadence is policy
+    /// (changes shouldn't require a serve restart). The typical
+    /// schedule is daily at low-traffic hour with
+    /// `--older-than-secs $((30 * 86400))`.
+    ///
+    /// Defensive: the flag is required and refuses 0 — the most
+    /// common operator typo ("I meant 30 days, typed 0") would
+    /// otherwise nuke the entire table.
+    SlaPruneSnapshots {
+        /// Age threshold in seconds. Rows whose `ts_unix` is strictly
+        /// less than `now - older_than_secs` are deleted. Must be > 0.
+        #[arg(long)]
+        older_than_secs: i64,
+    },
     /// F5.4-e-rotate — re-mint every in-flight license against a new
     /// signing keypair. Reads the existing audit log to enumerate
     /// known licenses, skips records whose `jwt_id_hash` matches the
@@ -970,6 +987,9 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
                 &reason,
                 &revocation_list,
             ),
+            CloudAction::SlaPruneSnapshots { older_than_secs } => {
+                commands::cmd_cloud_sla_prune_snapshots(older_than_secs).await
+            }
             CloudAction::RotateLicenseKeys {
                 audit_log,
                 revocation_list,
