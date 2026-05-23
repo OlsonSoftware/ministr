@@ -2615,6 +2615,98 @@ else
     fail "boot error didn't mention license gate · output: $(printf '%s' "${LICENSE_BOOT_OUT}" | tail -c 200)"
 fi
 
+# 37) **F5.4-b — seat-cap enforcement.** Mint a fresh license with
+#     seat_count=2 via the new `ministr cloud mint-test-license`
+#     subcommand. Spawn a SEPARATE serve with that license. Tenant
+#     A creates an org (owner = seat 1), invites email 2 (seat 2 —
+#     pending; not counted in v0), and the THIRD invite SHOULD be
+#     refused with 402 once another member actually joins.
+#
+#     Honest scope: pending invites don't count, only actual
+#     org_members rows. So the trip-up is: own as 1, invite 2nd to
+#     consume → 2 members, invite 3rd → 402. Simulating consume
+#     mid-harness is heavy; instead seed a second org_member row
+#     directly via psql to push the count to 2, then attempt the
+#     invite and expect 402.
+info "F5.4-b: seat-cap enforcement refuses next-seat invite when count == seat_count"
+# Earlier chunks (F5.2-f group_role_map, etc) have already added
+# members to ORG_ID_A — exact count varies. Query the current
+# count and set seat_count to that exact value so the very next
+# invite trips the cap.
+CURRENT_MEMBERS=$(docker compose -f docker-compose.dev.yml exec -T postgres \
+    psql -U ministr -d ministr_dev -tA \
+    -c "SELECT count(*) FROM org_members WHERE org_id='${ORG_ID_A}'::uuid;" \
+    2>/dev/null | tr -d ' \r\n')
+if [[ "${CURRENT_MEMBERS}" =~ ^[0-9]+$ ]] && [[ "${CURRENT_MEMBERS}" -ge "1" ]]; then
+    pass "ORG_ID_A has ${CURRENT_MEMBERS} existing org_members (dynamic baseline)"
+else
+    fail "could not query org_members count, got '${CURRENT_MEMBERS}'"
+fi
+LICENSE_JSON=$(cargo run -q -p ministr-cli -- cloud mint-test-license \
+    --enterprise-id "e2e-test-acme" --seat-count "${CURRENT_MEMBERS}" --valid-days 1 2>/dev/null || echo '{}')
+LICENSE_JWT=$(printf '%s' "${LICENSE_JSON}" | jq -r '.jwt // empty')
+LICENSE_PUBKEY=$(printf '%s' "${LICENSE_JSON}" | jq -r '.public_key_pem // empty')
+if [[ -n "${LICENSE_JWT}" && -n "${LICENSE_PUBKEY}" ]]; then
+    pass "mint-test-license CLI produced JWT + public key (jwt_len=${#LICENSE_JWT})"
+else
+    fail "mint-test-license CLI produced empty JWT / pubkey · json: ${LICENSE_JSON:0:200}"
+fi
+
+# Spawn the test serve with the license env vars set + a different
+# port from the default harness's port. The serve uses the SAME
+# Postgres so it sees ORG_ID_A's now-2-member state.
+SEATCAP_PORT=18098
+SEATCAP_LOG=/tmp/ministr-e2e-seatcap-serve.log
+MINISTR_LICENSE_KEY="${LICENSE_JWT}" \
+MINISTR_LICENSE_PUBLIC_KEY="${LICENSE_PUBKEY}" \
+cargo run -q -p ministr-cli -- --config "${CONFIG_PATH}" \
+    serve --transport http --oauth --host 127.0.0.1 --port "${SEATCAP_PORT}" \
+    > "${SEATCAP_LOG}" 2>&1 &
+SEATCAP_PID=$!
+# Wait for it to bind /healthz.
+SEATCAP_WAIT=0
+until curl -sf "http://127.0.0.1:${SEATCAP_PORT}/healthz" >/dev/null 2>&1; do
+    SEATCAP_WAIT=$((SEATCAP_WAIT + 1))
+    if ! kill -0 "${SEATCAP_PID}" 2>/dev/null; then
+        echo "seatcap serve crashed during boot — log tail:" >&2
+        tail -10 "${SEATCAP_LOG}" >&2
+        SEATCAP_PID=""
+        break
+    fi
+    if [[ "${SEATCAP_WAIT}" -gt 60 ]]; then
+        echo "seatcap serve didn't bind in 12s" >&2
+        kill "${SEATCAP_PID}" 2>/dev/null || true
+        SEATCAP_PID=""
+        break
+    fi
+    sleep 0.2
+done
+
+if [[ -n "${SEATCAP_PID}" ]]; then
+    # Attempt to invite a 3rd seat. Expect 402 (paywall).
+    SEATCAP_BODY='{"email":"thirdseat@e2e.test"}'
+    SEATCAP_ENDPOINT="http://127.0.0.1:${SEATCAP_PORT}"
+    curl_request POST "${SEATCAP_ENDPOINT}/api/v1/orgs/${ORG_ID_A}/invites" "${TOKEN_A}" "${SEATCAP_BODY}"
+    assert_status "${RESPONSE_STATUS}" "402" "POST /invites under seat_count=2 with 2 members → 402"
+    # Body should be the paywall shape with error="seat_cap_exceeded".
+    SEAT_ERR=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.error // empty')
+    if [[ "${SEAT_ERR}" == "seat_cap_exceeded" ]]; then
+        pass "402 body carries error=seat_cap_exceeded (paywall shape)"
+    else
+        fail "402 body error field expected 'seat_cap_exceeded', got '${SEAT_ERR}' · body: ${RESPONSE_BODY:0:200}"
+    fi
+    SEAT_CAP_FIELD=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.cap // empty')
+    if [[ "${SEAT_CAP_FIELD}" == "${CURRENT_MEMBERS}" ]]; then
+        pass "402 body cap=${CURRENT_MEMBERS} (license seat_count echoed)"
+    else
+        fail "402 body cap expected ${CURRENT_MEMBERS}, got '${SEAT_CAP_FIELD}'"
+    fi
+
+    # Cleanup the test serve.
+    kill "${SEATCAP_PID}" 2>/dev/null || true
+    wait "${SEATCAP_PID}" 2>/dev/null || true
+fi
+
 # ─── summary ──────────────────────────────────────────────────────────
 
 echo
