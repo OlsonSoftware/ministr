@@ -597,6 +597,59 @@ pub(crate) async fn cmd_serve_http(
     let admin_public = ministr_mcp::admin::admin_public_routes(admin_state.clone());
     let admin_protected = ministr_mcp::admin::admin_protected_routes(admin_state);
 
+    // F5.5-b-persist-write — when cloud Postgres is wired, spawn a
+    // tokio task that flushes the in-process LatencyTracker snapshot
+    // to `request_latency_snapshots` every MINISTR_SLA_FLUSH_SECS
+    // (default 60s). Self-hosted serve (no cloud_pool) leaves this
+    // unspawned — there's nowhere to flush to and historical p95
+    // isn't a self-hosted concern. Best-effort: a failing flush logs
+    // at warn and the loop continues; a snapshot with no samples is
+    // silently skipped so the first row only lands after a request
+    // has flowed.
+    if let Some(pool) = cloud_pool.as_ref() {
+        let pool = Arc::clone(pool);
+        let tracker = latency_tracker.clone();
+        let flush_secs = std::env::var("MINISTR_SLA_FLUSH_SECS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .filter(|n| *n > 0)
+            .unwrap_or(60);
+        tracing::info!(
+            interval_secs = flush_secs,
+            "SLA latency flush task spawned (F5.5-b-persist-write)"
+        );
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(flush_secs));
+            // First tick is immediate per tokio docs; subsequent ticks
+            // fire every `flush_secs`. We swallow the immediate one so
+            // the first row lands AFTER at least `flush_secs` has
+            // elapsed — gives the latency tracker a chance to gather
+            // samples and avoids a `count=0` row at boot.
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                let Some(snapshot) = tracker.snapshot() else {
+                    continue;
+                };
+                let ts_unix = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
+                if let Err(e) = ministr_cloud::persist_snapshot(
+                    &pool,
+                    ts_unix,
+                    snapshot.count,
+                    snapshot.p50_us,
+                    snapshot.p95_us,
+                    snapshot.p99_us,
+                )
+                .await
+                {
+                    tracing::warn!(error = %e, "failed to persist SLA latency snapshot");
+                }
+            }
+        });
+    }
+
     // ── Daemon REST surface (/api/v1/corpora/* + /activity + /coherence-events) ─
     // Share the same `Arc<CorpusRegistry>` already wired into the MCP
     // server (see the build_corpus_registry call above). The daemon's

@@ -62,6 +62,7 @@ pub mod saml;
 pub mod session_bundle_store;
 pub mod session_storage;
 pub mod siem;
+pub mod sla;
 pub mod tenant_filter;
 pub mod users;
 pub mod webhooks;
@@ -70,6 +71,7 @@ pub use license::{
     LicenseClaims, LicenseError, RevocationRecord, is_revoked_by_file, license_jwt_id_hash,
     load_revoked_hashes, render_license_summary, validate_license_from_env, validate_license_key,
 };
+pub use sla::{SlaError, persist_snapshot};
 pub use oidc::{OidcState, REDACTED_CLIENT_SECRET, oidc_config_routes, oidc_routes};
 pub use saml::{SamlState, saml_config_routes, saml_routes};
 pub use siem::{
