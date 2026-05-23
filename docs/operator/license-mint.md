@@ -251,14 +251,38 @@ cache warm so the NEXT pod restart's boot validator sees fresh
 revocations even if the portal is briefly unreachable at restart
 time.
 
-**Honest scope — no mid-flight enforcement.** A serve that booted
-on a valid license keeps running even if a refresh later pulls in
-a revocation for that license's hash. New revocations only take
-effect at the next restart (deploy / k8s rolling update / host
-reboot). Operators wanting strict revocation latency restart pods
-more frequently. A future chunk would add in-process re-validate +
-graceful-shutdown when the running license becomes revoked;
-deferred until customer demand surfaces.
+### Mid-flight enforcement (F5.4-e-revoke-mid-flight)
+
+The background refresh task ALSO re-checks the running license's
+hash against the just-fetched cache. If the operator revokes the
+license while the customer's serve is running, the task detects
+it on the next refresh tick and exits the process. The
+orchestrator (k8s / Docker / systemd) restarts the pod; the boot
+validator refuses the now-revoked license; the pod stays down
+(`CrashLoopBackOff` on k8s) until the operator unsets the license
+or the customer pulls a new one.
+
+Detection latency = ≤ `MINISTR_LICENSE_REVOCATIONS_REFRESH_SECS`
+(default 1 hour). Operators wanting tighter latency lower the
+env var — there's no other knob.
+
+Exit code 1 with a clear log line:
+
+```
+ERROR running license has been REVOKED by the operator — exiting;
+orchestrator must restart to pick up new license
+   jwt_id_hash=abcdef0123456789
+   reason=contract terminated 2026-12-01
+```
+
+Honest scope: `std::process::exit` is brutal — in-flight HTTP
+requests get connection-reset rather than HTTP-503'd gracefully.
+For graceful 503 + drain, a future chunk would wire
+`axum::serve(...).with_graceful_shutdown(signal)` and a top-level
+middleware reading a "license revoked" state flag. Today's
+posture is the k8s-friendly one: pod dies → orchestrator notices
+in CrashLoopBackOff → operator sees the log line. Operational
+end-state is identical (no service under revoked license).
 
 Refresh task errors log `warn` and the loop continues — a transient
 portal blip doesn't crash the background task; the cache simply

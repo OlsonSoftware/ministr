@@ -274,19 +274,31 @@ pub(crate) async fn cmd_serve_http(
                 );
                 // F5.4-e-revoke-api-refresh — when the customer opted
                 // into URL-based revocation, spawn a background task
-                // that keeps the cache warm between restarts. The
-                // task does NOT mid-flight-enforce revocations on
-                // the running serve; the next pod restart picks up
-                // the latest cache.
+                // that keeps the cache warm between restarts.
+                //
+                // F5.4-e-revoke-mid-flight — the task ALSO re-checks
+                // the current license's hash against the just-
+                // refreshed cache; on revocation, it logs an error
+                // and process::exit so the orchestrator restarts and
+                // the boot validator refuses the now-revoked license.
                 if let Some((url, cache_path, grace_secs)) =
                     ministr_cloud::revocation_url_config()
                 {
                     let refresh_secs = ministr_cloud::revocation_refresh_secs();
+                    // Compute the running license's hash so the
+                    // background task can detect revocation of *this*
+                    // serve's license specifically. MINISTR_LICENSE_KEY
+                    // is guaranteed non-empty here because
+                    // validate_license_from_env returned Ok(Some).
+                    let jwt = std::env::var("MINISTR_LICENSE_KEY")
+                        .unwrap_or_default();
+                    let hash = ministr_cloud::license_jwt_id_hash(&jwt);
                     ministr_cloud::spawn_refresh_task(
                         url,
                         cache_path,
                         refresh_secs,
                         grace_secs,
+                        hash,
                     );
                 }
                 Some(Arc::new(claims))
