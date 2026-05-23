@@ -95,7 +95,7 @@ pub use api_keys::{
     ApiKeyRow, ApiKeysError, ApiKeysState, CreatedApiKey, DEFAULT_API_KEY_SCOPE,
     DEFAULT_STALE_API_KEY_DAYS, PostgresApiKeyResolver, StaleApiKey, StaleApiKeysOutcome,
     TOKEN_PREFIX, api_keys_routes, create_user_api_key, flag_stale_api_keys,
-    list_user_api_keys, revoke_user_api_key,
+    list_user_api_keys, revoke_user_api_key, send_stale_key_digests,
 };
 pub use audit::{
     ArchiveOutcome, ArchiveSink, AuditError, AuditListQuery, AuditRow, AuditState,

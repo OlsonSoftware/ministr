@@ -218,6 +218,83 @@ pub async fn flag_stale_api_keys(
     })
 }
 
+/// F3.4c-iii — group stale keys by owner, look up each owner's email,
+/// and fire one [`StaleKeyDigestMessage`] per owner via the mailer.
+/// Best-effort: missing emails log + skip; mailer failures are
+/// fire-and-forget (the trait contract).
+///
+/// # Errors
+///
+/// [`ApiKeysError::GetConn`] / [`ApiKeysError::Sql`] on pool or query
+/// failure. Per-owner email lookup failures are logged and skipped.
+pub async fn send_stale_key_digests(
+    pool: &Pool,
+    threshold_days: u32,
+    mailer: &dyn ministr_api::MailSender,
+) -> Result<u64, ApiKeysError> {
+    let client = pool
+        .get()
+        .await
+        .map_err(|e| ApiKeysError::GetConn(format!("send_stale_key_digests: {e}")))?;
+    let threshold = i32::try_from(threshold_days).unwrap_or(i32::MAX);
+    let rows = client
+        .query(
+            "SELECT
+                 owner_user_id::text  AS owner_user_id,
+                 name,
+                 COALESCE(prefix, '') AS prefix
+             FROM api_keys
+             WHERE revoked_at IS NULL
+               AND COALESCE(last_used_at, created_at)
+                     < now() - make_interval(days => $1::integer)
+             ORDER BY owner_user_id, name",
+            &[&threshold],
+        )
+        .await
+        .map_err(|e| ApiKeysError::Sql(format!("select stale for digest: {e}")))?;
+
+    let mut grouped: std::collections::HashMap<String, Vec<ministr_api::StaleKeyEntry>> =
+        std::collections::HashMap::new();
+    for row in &rows {
+        let owner: String = row.get("owner_user_id");
+        let name: String = row.get("name");
+        let prefix: String = row.get("prefix");
+        grouped
+            .entry(owner)
+            .or_default()
+            .push(ministr_api::StaleKeyEntry { name, prefix });
+    }
+
+    let mut sent: u64 = 0;
+    for (owner_id, keys) in &grouped {
+        let email = match crate::orgs::user_email(pool, owner_id).await {
+            Ok(Some(e)) => e,
+            Ok(None) => {
+                tracing::warn!(
+                    owner_user_id = %owner_id,
+                    "stale-key digest: no email for owner — skipping"
+                );
+                continue;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    owner_user_id = %owner_id,
+                    error = %e,
+                    "stale-key digest: failed to look up owner email — skipping"
+                );
+                continue;
+            }
+        };
+        mailer.send_stale_key_digest(ministr_api::StaleKeyDigestMessage {
+            to_email: email,
+            keys: keys.clone(),
+            threshold_days,
+        });
+        sent = sent.saturating_add(1);
+    }
+    Ok(sent)
+}
+
 /// F3.4c-i — validate a whitespace-separated scopes string against
 /// [`ALLOWED_API_KEY_SCOPES`]. Returns the canonical re-joined string
 /// (single-space-separated, original order preserved) on success.

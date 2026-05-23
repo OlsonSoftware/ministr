@@ -364,7 +364,7 @@ A stranger lands on `ministr.ai/pricing`, clicks "Start Pro", completes Stripe C
     - **Validation:** cargo workspace check + clippy `--pedantic -D warnings` clean; cargo test workspace green (no FAILED entries); ministr-app `tsc --noEmit` + `vite build` clean. Live: owner picks org → "Export CSV" → save dialog → CSV writes to disk; projection row displays end-of-month estimate. Deferred to next deploy.
   - **F3.3 done criterion:** 3-seat org with mixed activity → dashboard shows correct per-member counts; sum matches the total in the Stripe invoice within ±1.
 
-- [~] **F3.4 Named API keys (service accounts)** *(depends on F3.1)* — split into a/b/c. F3.4a/b/c-i/c-ii landed; c-iii remains.
+- [x] **F3.4 Named API keys (service accounts)** *(depends on F3.1; 2026-05-23 complete)* — split into a/b/c. All sub-chunks landed.
   - [x] **F3.4a Backend — mint, resolve, last_used** *(2026-05-20)*
     - [x] Migration `0006_api_keys_columns.sql` adds `prefix TEXT` + `revoked_at TIMESTAMPTZ` columns to the existing `api_keys` table (shipped in 0001 as part of F1.2) + a partial index on `(hash) WHERE revoked_at IS NULL` for the resolver hot path.
     - [x] Open-core seam at `ministr-api/src/api_key.rs` — `ApiKeyResolver` trait (Pin Box Future shape, mirrors `InstallationTokenMinter`) returning `ResolvedApiKey { key_id, subject, org_id, plan_id, scopes }`. `ApiKeyError::Storage` variant for fail-closed surface.
@@ -400,8 +400,13 @@ A stranger lands on `ministr.ai/pricing`, clicks "Start Pro", completes Stripe C
       - [x] Tauri UI: `isStaleApiKey` helper computes staleness client-side using the same `COALESCE(last_used_at, created_at) < now() - 90d` rule the backend SQL uses. `ApiKeysTable` renders a small `stale` badge next to the key name when true; tooltip explains the rule + the weekly cron behavior. `STALE_API_KEY_THRESHOLD_DAYS = 90` const locks the value in lockstep with the backend.
       - [x] Three new backend unit tests: default-threshold matches roadmap, `StaleApiKeysOutcome` shape construction, and the audit-event wire shape (`action="api_key.stale"`, `actor=owner_id`, `org_id=None`). Postgres-integration coverage of the actual SELECT gated on `MINISTR_TEST_PG_URL` per convention.
       - **Validation:** cargo workspace test green; clippy `--pedantic -D warnings` clean; `tsc --noEmit` + `vite build` clean. CLI smoke: `ministr api-keys flag-stale --help` shows the `--threshold-days [default: 90]` flag wired correctly. Live: cron runs → stale keys land in `audit_events` with action=`api_key.stale`, actor=owner → next refresh of the desktop API keys panel shows the `stale` badge. Deferred to next deploy.
-    - [ ] **F3.4c-iii Weekly email digest** *(blocked on [F3.1b-ii] email delivery)*
-      - [ ] Once email delivery lands, the cron sums stale keys per owner into a weekly digest message.
+    - [x] **F3.4c-iii Weekly email digest** *(2026-05-23, complete)*
+      - [x] `StaleKeyDigestMessage` + `StaleKeyEntry` structs in `ministr-api/src/mail.rs`. `send_stale_key_digest` method on `MailSender` trait with default no-op (backward-compatible).
+      - [x] `LogOnlyMailSender` logs recipient + key count + threshold. `ResendMailSender` sends an HTML table listing each stale key's name + `mst_pk_` prefix + the threshold window, with XSS-safe escaping. Singular/plural grammar handled.
+      - [x] `send_stale_key_digests(pool, threshold_days, mailer)` in `ministr-cloud/src/api_keys.rs` — groups stale keys by `owner_user_id` via `HashMap`, looks up each owner's email via `user_email`, fires one digest per owner. Missing emails log + skip.
+      - [x] `cmd_api_keys_flag_stale` wires `build_mail_sender_from_env()` after the audit pass — both audit events and digest emails run in the same cron invocation.
+      - [x] 5 new tests: digest HTML rendering (count + names, singular grammar, XSS escaping), log-only smoke.
+      - **Validation:** cargo workspace test 0 failed; cargo clippy `--pedantic -D warnings` clean. Live: weekly cron with `MINISTR_MAIL_PROVIDER=resend` set → per-owner digest email listing stale keys lands in their inbox. Deferred to next deploy.
   - **F3.4 done criterion:** create a read-only key → CI uses it to query the org corpus → admin sees `last_used_at` update within the next minute; revoke → next request returns 401.
 
 - [x] **F3.5 Slack / Discord webhook** *(2026-05-21, complete)* — split into a/b-i/b-ii, all landed.
