@@ -23,6 +23,7 @@ pub mod drops_ledger;
 pub mod github_app;
 pub mod index_job_sink;
 pub mod mail;
+pub mod plan_resolver;
 pub mod query;
 pub mod session;
 pub mod session_bundle_store;
@@ -48,6 +49,7 @@ pub use index_job_sink::{
     IndexJobError, IndexJobFuture, IndexJobSink, IndexJobSnapshot, IndexJobStatus,
 };
 pub use mail::{InviteMessage, MailSender};
+pub use plan_resolver::{PlanResolver, PlanResolverError, ResolvePlanFuture};
 pub use session_bundle_store::{
     PutAndSignFuture, SessionBundleStore, SessionBundleStoreError, SignedBundleUrl,
     VerifyAndGetFuture,
