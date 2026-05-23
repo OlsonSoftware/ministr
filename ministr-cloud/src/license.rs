@@ -101,6 +101,20 @@ pub enum LicenseError {
         /// `std::io::Error`'s non-clonable shape).
         cause: String,
     },
+    /// F5.4-e-revoke-api-fetch — `MINISTR_LICENSE_REVOCATIONS_URL`
+    /// is set, the boot-time HTTP fetch failed, AND no within-grace
+    /// cache is available. Boot refuses rather than silently
+    /// proceeding because the operator explicitly opted into
+    /// network-fetched revocation; falling back to "no revocation
+    /// check" would mask a deliberately unreachable portal.
+    #[error("revocation fetch from {url} failed: {cause}")]
+    RevocationFetchFailed {
+        /// URL the operator pointed at.
+        url: String,
+        /// Underlying fetch error message + (when relevant) why the
+        /// cache fallback also failed.
+        cause: String,
+    },
 }
 
 /// F5.4-a — validate a license JWT against an RSA public key. Pure;
@@ -157,7 +171,7 @@ pub fn validate_license_key(
 /// Surfaces partial config + validation errors + revocation hits so
 /// the boot path can refuse to start when the operator's license
 /// setup is broken or actively revoked.
-pub fn validate_license_from_env() -> Result<Option<LicenseClaims>, LicenseError> {
+pub async fn validate_license_from_env() -> Result<Option<LicenseClaims>, LicenseError> {
     let jwt = std::env::var("MINISTR_LICENSE_KEY").ok();
     let pubkey = std::env::var("MINISTR_LICENSE_PUBLIC_KEY").ok();
     let (jwt_str, claims) = match (jwt, pubkey) {
@@ -168,19 +182,36 @@ pub fn validate_license_from_env() -> Result<Option<LicenseClaims>, LicenseError
         }
         _ => return Err(LicenseError::PartialConfig),
     };
-    // F5.4-e-revoke — only reached when a valid license is in hand.
-    // Revocation check is opt-in: missing env var preserves the F5.4-a
-    // boot shape.
-    if let Ok(rev_path) = std::env::var("MINISTR_LICENSE_REVOCATIONS")
-        && !rev_path.trim().is_empty()
+    let hash = license_jwt_id_hash(&jwt_str);
+    // F5.4-e-revoke-api-fetch — URL takes precedence over the file
+    // path so an operator transitioning from file-based to network-
+    // fetched revocation can simply set the new env var without
+    // unsetting the old one. The fetcher writes the body to
+    // cache_path; we then consult that path via the existing
+    // file-based is_revoked_by_file.
+    if let Some((url, cache_path, grace_secs)) =
+        crate::revocation_fetch::revocation_url_config()
     {
-        let hash = license_jwt_id_hash(&jwt_str);
-        if let Some(record) = is_revoked_by_file(std::path::Path::new(&rev_path), &hash)? {
+        let path =
+            crate::revocation_fetch::fetch_revocation_list(&url, &cache_path, grace_secs).await?;
+        if let Some(record) = is_revoked_by_file(&path, &hash)? {
             return Err(LicenseError::Revoked {
                 hash,
                 reason: record.reason,
             });
         }
+        return Ok(Some(claims));
+    }
+    // F5.4-e-revoke — file-based fallback. Opt-in: missing env var
+    // preserves the F5.4-a boot shape.
+    if let Ok(rev_path) = std::env::var("MINISTR_LICENSE_REVOCATIONS")
+        && !rev_path.trim().is_empty()
+        && let Some(record) = is_revoked_by_file(std::path::Path::new(&rev_path), &hash)?
+    {
+        return Err(LicenseError::Revoked {
+            hash,
+            reason: record.reason,
+        });
     }
     Ok(Some(claims))
 }

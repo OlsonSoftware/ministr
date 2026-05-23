@@ -260,7 +260,7 @@ pub(crate) async fn cmd_serve_http(
     // The captured `license_claims` is threaded into OrgsState
     // below (F5.4-b seat-cap enforcement reads claims.seat_count).
     let license_claims: Option<Arc<ministr_cloud::LicenseClaims>> =
-        match ministr_cloud::validate_license_from_env() {
+        match ministr_cloud::validate_license_from_env().await {
             Ok(None) => {
                 tracing::info!(
                     "running in community mode (no MINISTR_LICENSE_KEY / MINISTR_LICENSE_PUBLIC_KEY set)"

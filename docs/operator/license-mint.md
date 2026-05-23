@@ -194,6 +194,59 @@ log — all three are operationally sensitive (private key signs JWTs,
 audit log reveals who-bought-what, revocation list reveals contract
 churn). Customer's secrets manager handles disk-level encryption.
 
+## Customer-side HTTP fetch (F5.4-e-revoke-api-fetch)
+
+The complement to `F5.4-e-revoke-api-serve` on the customer side.
+When the customer sets `MINISTR_LICENSE_REVOCATIONS_URL`, the boot
+validator fetches the operator's revocation list over HTTP, caches
+it locally, falls back to the cache within a grace window if the
+fetch fails, and refuses boot beyond grace.
+
+Three env vars:
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `MINISTR_LICENSE_REVOCATIONS_URL` | unset | When set, takes precedence over `MINISTR_LICENSE_REVOCATIONS` file path. Operator-published URL. |
+| `MINISTR_LICENSE_REVOCATIONS_CACHE_PATH` | `/tmp/ministr-revocations-cache.jsonl` | Where the fetcher writes the body on success; reads on fallback. |
+| `MINISTR_LICENSE_REVOCATIONS_GRACE_SECS` | `86400` (24h) | Cache mtime cap. If fetch fails AND cache is older than this, refuse boot. |
+
+Boot flow when URL is set:
+
+1. **Fetch** with a 10s timeout. On 2xx, write body to
+   `_CACHE_PATH`, consult the cache for the boot license's hash.
+2. **On non-2xx / network error WITH fresh cache** (mtime ≤
+   `_GRACE_SECS`): log a warning, use the cache. The serve boots
+   under the slightly-stale list — better than refusing boot on a
+   transient portal blip.
+3. **On failure WITH stale or missing cache**: refuse boot with
+   `LicenseError::RevocationFetchFailed`. Operator opted into
+   network-fetched revocation; falling back to "no revocation
+   check" would silently allow a revoked license to keep running.
+
+Customer-side example (Helm values, Docker Compose `.env`, or bare
+env):
+
+```bash
+export MINISTR_LICENSE_KEY="eyJhbGc..."
+export MINISTR_LICENSE_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----..."
+export MINISTR_LICENSE_REVOCATIONS_URL="https://mcp.ministr.ai/api/v1/license-revocations.jsonl"
+export MINISTR_LICENSE_REVOCATIONS_CACHE_PATH="/var/lib/ministr/revocations.jsonl"
+export MINISTR_LICENSE_REVOCATIONS_GRACE_SECS="86400"  # default; 24h
+ministr serve --transport http --port 8080
+```
+
+Mode coexistence: when both `_URL` and `_REVOCATIONS` (file) are
+set, **URL wins** — the file fallback is for customers who never
+opted into URL-based fetch. Operators transitioning from
+file-based to network-fetched can simply add the URL env without
+unsetting the old one.
+
+Honest scope: the fetcher runs once at boot. Long-running
+deployments need to restart the serve to pick up new revocations
+beyond the cache window. A future chunk could add a periodic
+background refresh task (mirroring F5.5-b-persist-write's tokio
+ticker pattern); deferred until customer demand surfaces.
+
 ## Serving the revocation list via HTTP (F5.4-e-revoke-api-serve)
 
 Customers' on-prem serves can fetch the revocation list dynamically
