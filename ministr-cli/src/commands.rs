@@ -257,25 +257,30 @@ pub(crate) async fn cmd_serve_http(
     // the enterprise_id + seat_count + days-left). Invalid →
     // refuse to boot with the underlying error. Runs BEFORE
     // `build_server` so a broken license never reaches indexing.
-    match ministr_cloud::validate_license_from_env() {
-        Ok(None) => {
-            tracing::info!(
-                "running in community mode (no MINISTR_LICENSE_KEY / MINISTR_LICENSE_PUBLIC_KEY set)"
-            );
-        }
-        Ok(Some(claims)) => {
-            tracing::info!(
-                license = %ministr_cloud::render_license_summary(&claims),
-                "Enterprise license validated"
-            );
-        }
-        Err(e) => {
-            return Err(miette::miette!(
-                "license gate refused boot: {e}. Set both MINISTR_LICENSE_KEY + \
-                 MINISTR_LICENSE_PUBLIC_KEY, OR unset both to run in community mode."
-            ));
-        }
-    }
+    // The captured `license_claims` is threaded into OrgsState
+    // below (F5.4-b seat-cap enforcement reads claims.seat_count).
+    let license_claims: Option<Arc<ministr_cloud::LicenseClaims>> =
+        match ministr_cloud::validate_license_from_env() {
+            Ok(None) => {
+                tracing::info!(
+                    "running in community mode (no MINISTR_LICENSE_KEY / MINISTR_LICENSE_PUBLIC_KEY set)"
+                );
+                None
+            }
+            Ok(Some(claims)) => {
+                tracing::info!(
+                    license = %ministr_cloud::render_license_summary(&claims),
+                    "Enterprise license validated"
+                );
+                Some(Arc::new(claims))
+            }
+            Err(e) => {
+                return Err(miette::miette!(
+                    "license gate refused boot: {e}. Set both MINISTR_LICENSE_KEY + \
+                     MINISTR_LICENSE_PUBLIC_KEY, OR unset both to run in community mode."
+                ));
+            }
+        };
 
     let (server, ctx, _coherence_handle) = infra::build_server(
         corpus_paths,
@@ -1080,6 +1085,12 @@ pub(crate) async fn cmd_serve_http(
             tracing::info!(
                 "mail sender wired: LogOnlyMailSender (no provider configured — invite URLs are in the HTTP response body)"
             );
+            // F5.4-b — thread the cached license claims so the invite
+            // handler enforces the contracted seat cap. None →
+            // community mode (no cap).
+            if let Some(claims) = license_claims.as_ref() {
+                orgs_state = orgs_state.with_license(Arc::clone(claims));
+            }
             let orgs_router = ministr_cloud::orgs_routes(orgs_state);
             let orgs_protected = ministr_mcp::auth::scope_protected_router(
                 orgs_router,
@@ -2864,6 +2875,82 @@ pub(crate) async fn cmd_audit_ensure_partitions(
 ///
 /// Requires `MINISTR_PG_URL`. Idempotent: re-running with the same
 /// `github_id` returns the same UUID (the `users.github_id` UNIQUE key
+/// F5.4-b harness helper — generate a fresh RSA-2048 keypair via
+/// the `openssl` dev-dep, sign a license JWT with the supplied
+/// claims, and print `{jwt, public_key_pem}` JSON on stdout. The
+/// harness captures both via `jq` and exports them as
+/// `MINISTR_LICENSE_KEY` + `MINISTR_LICENSE_PUBLIC_KEY` on a
+/// separate test-serve invocation. Pure key-and-JWT generation;
+/// does NOT touch Postgres so it works in any environment.
+///
+/// Lives in `ministr-cli` (not `ministr-cloud`) on purpose: only
+/// the test harness needs the SIGNING side. The serve only ever
+/// VERIFIES (public-key-only) — keeps the production attack
+/// surface clean.
+pub(crate) fn cmd_cloud_mint_test_license(
+    enterprise_id: &str,
+    seat_count: u32,
+    valid_days: i64,
+) -> miette::Result<()> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    // Allow negative valid_days to produce an already-expired JWT.
+    let exp_offset = valid_days.saturating_mul(86_400);
+    let exp = if exp_offset >= 0 {
+        // exp_offset >= 0 here; `unsigned_abs()` gives a u64
+        // without the cast-sign-loss lint that `as u64` triggers.
+        now_secs.saturating_add(exp_offset.unsigned_abs())
+    } else {
+        now_secs.saturating_sub(exp_offset.unsigned_abs())
+    };
+    let claims = ministr_cloud::LicenseClaims {
+        enterprise_id: enterprise_id.to_string(),
+        seat_count,
+        exp,
+        enabled_features: vec![],
+    };
+    // Generate RSA-2048 + sign. openssl is already a workspace dep
+    // (used by ministr-cloud's SAML xmlsec test fixtures and
+    // ministr-cloud's session_bundle_store key handling).
+    let rsa = openssl::rsa::Rsa::generate(2048)
+        .into_diagnostic()
+        .wrap_err("generate RSA-2048")?;
+    let pkey = openssl::pkey::PKey::from_rsa(rsa)
+        .into_diagnostic()
+        .wrap_err("wrap PKey")?;
+    let priv_pem = pkey
+        .private_key_to_pem_pkcs8()
+        .into_diagnostic()
+        .wrap_err("private key to PEM")?;
+    let pub_pem = pkey
+        .public_key_to_pem()
+        .into_diagnostic()
+        .wrap_err("public key to PEM")?;
+    let enc_key = jsonwebtoken::EncodingKey::from_rsa_pem(&priv_pem)
+        .into_diagnostic()
+        .wrap_err("encoding key from PEM")?;
+    let header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
+    let jwt = jsonwebtoken::encode(&header, &claims, &enc_key)
+        .into_diagnostic()
+        .wrap_err("encode JWT")?;
+    let pub_pem_str =
+        String::from_utf8(pub_pem).into_diagnostic().wrap_err("public PEM utf-8")?;
+    let out = serde_json::json!({
+        "jwt": jwt,
+        "public_key_pem": pub_pem_str,
+        "enterprise_id": enterprise_id,
+        "seat_count": seat_count,
+        "exp": exp,
+    });
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&out).into_diagnostic()?
+    );
+    Ok(())
+}
+
 /// drives `ON CONFLICT`). A fresh token is minted each call — old
 /// tokens remain valid until they expire.
 pub(crate) async fn cmd_cloud_mint_test_bearer(
