@@ -194,6 +194,63 @@ log — all three are operationally sensitive (private key signs JWTs,
 audit log reveals who-bought-what, revocation list reveals contract
 churn). Customer's secrets manager handles disk-level encryption.
 
+## Multi-operator setup (F5.4-e-audit-db)
+
+When several operators issue licenses from different machines, each
+one's local JSONL audit log is invisible to the others. The DB-backed
+mirror gives them a shared view via the existing cloud Postgres —
+no new infrastructure to provision.
+
+Two-step opt-in:
+
+1. **One-time migration** — applied automatically when
+   `MINISTR_PG_URL` is set on a serve that hasn't yet run migration
+   `0017_license_issuances`. No manual step required on the operator
+   side beyond the env var.
+
+2. **Add the flag** to every `mint-license` invocation:
+
+   ```bash
+   ministr cloud mint-license \
+     --private-key /secure/ministr-license-private.pem \
+     --enterprise-id "acme-corp" \
+     --seat-count 50 \
+     --valid-days 365 \
+     --audit-log /secure/ministr-license-issuances.jsonl \
+     --pg-url "$MINISTR_PG_URL" \
+     --out /tmp/acme-corp-license.jwt
+   ```
+
+   Or set `MINISTR_PG_URL` as an env var and the flag falls through
+   automatically. Both backends get the same data — JSONL stays the
+   file-local truth, PG becomes the multi-operator-visible mirror.
+
+Read the unified history:
+
+```bash
+# Table view from DB across ALL operators
+ministr cloud list-licenses --pg-url "$MINISTR_PG_URL"
+
+# Or with the env var fall-through
+ministr cloud list-licenses --pg-url "$MINISTR_PG_URL" --format json
+```
+
+The DB-backed flow uses an `INSERT ... ON CONFLICT DO NOTHING` on
+`jwt_id_hash`, so re-running `mint-license` after a transient backend
+blip is idempotent — the duplicate insert is silently absorbed. A
+crash between the PG write and the JSONL write leaves the row in DB
+without a corresponding JSONL line; the operator can spot this via
+`list-licenses --pg-url`.
+
+Storage cost: ~120 bytes per issuance × even 10K customers/year ≈
+1.2 MB/year. Effectively free against the existing PG flex footprint.
+
+Honest gap: the `list-licenses --pg-url` view doesn't dedupe rows
+across JSONL + PG — if both are loaded into a single dashboard, the
+DB-mirror's rows could double-count. The CLI surfaces one or the
+other per invocation (mutually exclusive flags), so the operator
+chooses which source to consume per query.
+
 ## Key rotation flow (F5.4-e-rotate)
 
 Rotate your signing keypair when (a) you're on a scheduled rotation

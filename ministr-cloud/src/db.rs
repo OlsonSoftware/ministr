@@ -51,6 +51,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (14, include_str!("../migrations/0014_org_siem_configs.sql")),
     (15, include_str!("../migrations/0015_audit_events_revoke_runtime_role.sql")),
     (16, include_str!("../migrations/0016_request_latency_snapshots.sql")),
+    (17, include_str!("../migrations/0017_license_issuances.sql")),
 ];
 
 /// Errors surfaced by [`connect`] and [`run_migrations`].
