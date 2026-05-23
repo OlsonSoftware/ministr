@@ -59,6 +59,19 @@ impl PostgresIndexJobSink {
     fn resolve_tenant_id(&self) -> Option<String> {
         ministr_mcp::tenant_scope::current().or_else(|| self.tenant_id.clone())
     }
+
+    /// F5.5-a-priority — resolve the queue priority to stamp on a
+    /// customer-driven enqueue. Reads the requesting tenant's plan
+    /// from `ministr_mcp::tenant_scope::current_plan` (set by the
+    /// `scope_tenant` axum middleware) and maps it via
+    /// `queue_priority`. Falls back to `0` when called outside a
+    /// scoped request — keeps self-hosted serve + stdio transport at
+    /// the operator-default lane, never inadvertently jumping a
+    /// paying tier.
+    fn resolve_priority() -> i16 {
+        ministr_mcp::tenant_scope::current_plan()
+            .map_or(0, ministr_mcp::auth::queue_priority)
+    }
 }
 
 fn map_err<E: std::fmt::Display>(prefix: &str) -> impl FnOnce(E) -> IndexJobError + '_ {
@@ -150,6 +163,13 @@ impl IndexJobSink for PostgresIndexJobSink {
                 "embeddings_total": 0,
                 "embeddings_done": 0,
             });
+            // F5.5-a-priority — stamp the resolved tenant's queue
+            // priority on both the JSON blob (for round-trip parity
+            // with `PostgresJobQueue::enqueue`'s shape) and the
+            // dedicated `priority` column the F2.2 composite index
+            // covers. Outside a scoped request the helper falls back
+            // to `0`, matching the operator-default lane.
+            let priority = Self::resolve_priority();
             let job_blob = json!({
                 "id": job_id,
                 "corpus_id": corpus_id,
@@ -159,7 +179,7 @@ impl IndexJobSink for PostgresIndexJobSink {
                 "created_at": now,
                 "updated_at": now,
                 "error": null,
-                "priority": 0,
+                "priority": priority,
             })
             .to_string();
 
@@ -199,11 +219,14 @@ impl IndexJobSink for PostgresIndexJobSink {
             // 2. INSERT pending indexer_jobs row. Same column set
             //    `PostgresJobQueue::enqueue` writes; the worker's
             //    `claim_next` finds this row via its existing query.
+            //    F5.5-a-priority: bind the resolved priority so the
+            //    composite index `idx_indexer_jobs_status_priority_created`
+            //    can drain Enterprise/Team ahead of Pro on contention.
             tx.execute(
                 "INSERT INTO indexer_jobs \
                    (id, corpus_id, status, created_at, updated_at, data, priority) \
-                 VALUES ($1, $2, 'pending', $3, $3, $4, 0)",
-                &[&job_id, &corpus_id, &now_i64, &job_blob],
+                 VALUES ($1, $2, 'pending', $3, $3, $4, $5)",
+                &[&job_id, &corpus_id, &now_i64, &job_blob, &priority],
             )
             .await
             .map_err(map_err("create_pending: insert indexer_jobs"))?;
@@ -352,6 +375,19 @@ mod tests {
         let pool = build_dummy_pool();
         let sink = PostgresIndexJobSink::new(Arc::new(pool), Some("t1".into()));
         assert_dyn(&sink);
+    }
+
+    #[tokio::test]
+    async fn resolve_priority_falls_back_to_zero_outside_scope() {
+        // F5.5-a-priority — without an outer `scope_tenant` middleware
+        // (stdio transport, in-process tests, self-hosted serve) the
+        // sink MUST default to priority 0 so it never inadvertently
+        // jumps a paying tier. The "inside scope -> queue_priority"
+        // arm is covered by `tenant_scope::tests::current_plan_*`
+        // composed with `auth::tenant::tests::queue_priority_*` — the
+        // task-local helper that would exercise it end-to-end is
+        // `#[cfg(test)]`-private to ministr-mcp.
+        assert_eq!(PostgresIndexJobSink::resolve_priority(), 0);
     }
 
     #[test]

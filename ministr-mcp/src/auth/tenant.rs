@@ -42,9 +42,19 @@ pub enum Plan {
 }
 
 /// Indexing-queue priority for a tier. Higher wins. The pool drains in
-/// `ORDER BY priority DESC, enqueued_at ASC`. F2.2 wires this into
-/// `JobQueue::enqueue`; F5.5 reserves higher values for the dedicated
-/// Enterprise pool.
+/// `ORDER BY priority DESC, enqueued_at ASC`. F2.2 wired this into the
+/// queue schema + `claim_next` ordering; F5.5-a-priority finishes the
+/// producer side: customer-driven enqueues stamp this value so Team
+/// jumps Pro and Enterprise jumps both.
+///
+/// Enterprise sits at `4` (not `3`) to match the F5.5 roadmap line
+/// "otherwise a dedicated `priority=4` lane in the shared pool ahead
+/// of all multi-tenant traffic." `3` is reserved for future per-org
+/// boosts (e.g. paid SLA add-on for a Team customer).
+///
+/// Operator-driven enqueues (GitHub webhooks, Atlas weekly re-index)
+/// pass `0` directly — they're not customer-facing and shouldn't jump
+/// any paying tier.
 ///
 /// Lives here (MIT) — not on `Plan` itself — so the open-core handler
 /// surface can derive priority without depending on `ministr-cloud`.
@@ -55,7 +65,7 @@ pub const fn queue_priority(plan: Plan) -> i16 {
     match plan {
         Plan::Pro => 1,
         Plan::Team => 2,
-        Plan::Enterprise => 3,
+        Plan::Enterprise => 4,
     }
 }
 
@@ -98,6 +108,17 @@ mod tests {
     #[test]
     fn plan_default_is_pro() {
         assert_eq!(Plan::default(), Plan::Pro);
+    }
+
+    #[test]
+    fn queue_priority_matches_roadmap_f55_lanes() {
+        // F5.5-a-priority — operator/unscoped enqueues sit at 0;
+        // paying tiers climb in order, with Enterprise at the roadmap-
+        // pinned `priority=4` lane (gap at 3 reserved for future
+        // per-org boosts on top of a Team subscription).
+        assert_eq!(queue_priority(Plan::Pro), 1);
+        assert_eq!(queue_priority(Plan::Team), 2);
+        assert_eq!(queue_priority(Plan::Enterprise), 4);
     }
 
     #[test]
