@@ -1,0 +1,21 @@
+{{/*
+F5.4-c — ClusterIP service for the cloud serve. Customer wires
+their own Ingress / Gateway / LoadBalancer; the chart intentionally
+doesn't ship an Ingress template (variability across clusters is
+too high).
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ministr-enterprise.fullname" . }}
+  labels:
+    {{- include "ministr-enterprise.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "ministr-enterprise.selectorLabels" . | nindent 4 }}
