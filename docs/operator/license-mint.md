@@ -133,12 +133,68 @@ operationally-sensitive (the audit log reveals who-bought-what; the
 private key signs JWTs). Customer's secrets manager handles
 disk-level encryption.
 
-## Honest gaps in this chunk
+## Revocation flow (F5.4-e-revoke)
 
-- **No revocation** — once a JWT is issued it's valid until `exp`
-  even if the customer's contract terminates. F5.4-e-revoke will
-  add a revocation table the serve checks on each boot (with a
-  cached grace window for offline operation).
+When a customer contract terminates or a license key is compromised,
+revoke the JWT so the customer's serve refuses to boot under it even
+though `exp` may still be in the future.
+
+```bash
+ministr cloud revoke-license \
+  --jwt /tmp/acme-corp-license.jwt \
+  --enterprise-id "acme-corp" \
+  --reason "contract terminated 2026-12-01" \
+  --revocation-list /secure/ministr-license-revocations.jsonl
+```
+
+Or, if you no longer have the JWT file but the audit log has the
+hash:
+
+```bash
+ministr cloud revoke-license \
+  --jwt-id-hash abcdef0123456789 \
+  --enterprise-id "acme-corp" \
+  --reason "key compromise reported 2026-12-01" \
+  --revocation-list /secure/ministr-license-revocations.jsonl
+```
+
+Each invocation appends one JSONL record carrying `ts_iso`,
+`ts_unix`, `enterprise_id`, `jwt_id_hash`, and `reason`. Distribute
+the updated revocation list to the customer via the same channel as
+the license itself; the customer points
+`MINISTR_LICENSE_REVOCATIONS=/path/to/revocations.jsonl` at the file
+and restarts their pods. On boot, the serve refuses to start with:
+
+```
+license revoked at gate: hash=abcdef0123456789 reason=contract terminated 2026-12-01
+```
+
+Helm chart (`F5.4-c`) reads the path from `values.yaml`:
+
+```yaml
+license:
+  key: …
+  publicKey: …
+  revocationsPath: /etc/ministr/revocations.jsonl
+```
+
+Docker Compose (`F5.4-d`) reads it from `.env` as
+`MINISTR_LICENSE_REVOCATIONS`. The env var is **opt-in**: customers
+who never receive a revocation list operate unchanged from the
+F5.4-a boot shape — only customers whose ops contact has been told
+"point at this file" enable the enforcement path.
+
+Hash-stability guarantee: `jwt_id_hash` is computed as the first 16
+hex characters of `sha256(jwt)`, identical to the hash in the
+F5.4-e-audit log. Revoke from either source (the JWT file or the
+audit log) and you get the same record.
+
+Stash the revocation list alongside your license private key + audit
+log — all three are operationally sensitive (private key signs JWTs,
+audit log reveals who-bought-what, revocation list reveals contract
+churn). Customer's secrets manager handles disk-level encryption.
+
+## Honest gaps in this chunk
 
 - **No admin UI** — F5.4-e-ui will surface this flow as a webapp
   with templated email distribution. Today it's CLI-only.

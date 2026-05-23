@@ -3137,24 +3137,97 @@ pub(crate) fn cmd_cloud_mint_license(
     Ok(())
 }
 
-/// F5.4-e-audit — compute a short unique identifier for the JWT
-/// without storing the bearer material. First 16 hex chars of
-/// SHA-256(jwt). Sufficient to disambiguate human-readable list
-/// output (16 hex = 64 bits = collision-free in practice for any
-/// realistic operator issuance volume).
-fn license_jwt_id_hash(jwt: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(jwt.as_bytes());
-    let digest = hasher.finalize();
-    // 8 bytes = 16 hex chars; ample collision resistance for ops use.
-    let bytes = &digest[..8];
-    let mut s = String::with_capacity(16);
-    for b in bytes {
-        use std::fmt::Write;
-        let _ = write!(s, "{b:02x}");
-    }
-    s
+/// F5.4-e-revoke — append one revocation record to the JSONL list
+/// the customer's serve consults at boot via
+/// `MINISTR_LICENSE_REVOCATIONS`.
+///
+/// The hash can come from one of two sources:
+///
+/// - `jwt_path: Some(_)` — operator still has the JWT file
+///   `mint-license --out` wrote. The CLI reads it and hashes via
+///   [`ministr_cloud::license_jwt_id_hash`].
+/// - `jwt_id_hash: Some(_)` — operator lost the JWT but the audit log
+///   still has the hash. Useful when revoking against the
+///   `list-licenses` output rather than the bearer material.
+///
+/// Exactly one of those must be set. Mutual exclusion is also enforced
+/// at the clap layer via `conflicts_with`; the runtime check below
+/// covers the "neither provided" gap clap can't model.
+pub(crate) fn cmd_cloud_revoke_license(
+    jwt_path: Option<&std::path::Path>,
+    jwt_id_hash: Option<&str>,
+    enterprise_id: &str,
+    reason: &str,
+    revocation_list: &std::path::Path,
+) -> miette::Result<()> {
+    use std::io::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let hash = match (jwt_path, jwt_id_hash) {
+        (Some(p), None) => {
+            let jwt = std::fs::read_to_string(p)
+                .into_diagnostic()
+                .wrap_err(format!("read JWT from {}", p.display()))?;
+            ministr_cloud::license_jwt_id_hash(jwt.trim())
+        }
+        (None, Some(h)) => {
+            // Sanity-check shape so a typo surfaces here rather than
+            // as a silent never-matches entry in the customer's
+            // revocation list.
+            let h = h.trim();
+            if h.len() != 16 || !h.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err(miette::miette!(
+                    "--jwt-id-hash must be 16 hex chars (got {} chars)",
+                    h.len()
+                ));
+            }
+            h.to_string()
+        }
+        (Some(_), Some(_)) => {
+            return Err(miette::miette!(
+                "pass exactly one of --jwt or --jwt-id-hash, not both"
+            ));
+        }
+        (None, None) => {
+            return Err(miette::miette!(
+                "pass exactly one of --jwt or --jwt-id-hash"
+            ));
+        }
+    };
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let record = ministr_cloud::RevocationRecord {
+        ts_iso: format_unix_secs_iso(now_secs),
+        ts_unix: now_secs,
+        enterprise_id: enterprise_id.to_string(),
+        jwt_id_hash: hash.clone(),
+        reason: reason.to_string(),
+    };
+    let serialized = serde_json::to_string(&record)
+        .into_diagnostic()
+        .wrap_err("serialize revocation record")?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(revocation_list)
+        .into_diagnostic()
+        .wrap_err(format!(
+            "open revocation list {} for append",
+            revocation_list.display()
+        ))?;
+    writeln!(file, "{serialized}")
+        .into_diagnostic()
+        .wrap_err(format!(
+            "append to revocation list {}",
+            revocation_list.display()
+        ))?;
+    tracing::info!(
+        enterprise_id,
+        jwt_id_hash = %hash,
+        revocation_list = %revocation_list.display(),
+        "license revoked"
+    );
+    Ok(())
 }
 
 /// F5.4-e-audit — append one JSONL line to the audit log. JSONL is
@@ -3177,7 +3250,7 @@ fn append_license_audit_line(
     // unix-secs helper would be nice but it's not re-exported. Format
     // by hand: YYYY-MM-DDTHH:MM:SSZ.
     let ts_iso = format_unix_secs_iso(now_secs);
-    let jwt_id_hash = license_jwt_id_hash(jwt);
+    let jwt_id_hash = ministr_cloud::license_jwt_id_hash(jwt);
     let line = serde_json::json!({
         "ts_iso": ts_iso,
         "ts_unix": now_secs,
