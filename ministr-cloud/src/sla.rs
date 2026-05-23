@@ -111,6 +111,39 @@ impl PostgresSlaWindowStore {
     }
 }
 
+/// F5.5-b-persist-retention — DELETE every `request_latency_snapshots`
+/// row whose `ts_unix` is strictly less than `cutoff_ts_unix`. Returns
+/// the number of rows deleted so the calling CLI / operator script
+/// can log what happened.
+///
+/// Pure async function so an operator's cron / Container Apps Job
+/// invokes it via the `ministr cloud sla-prune-snapshots` CLI; no
+/// in-process tokio task — retention cadence is an operator policy
+/// decision that shouldn't be coupled to serve restarts.
+///
+/// # Errors
+///
+/// Returns [`SlaError::GetConn`] when the pool can't hand out a
+/// connection, [`SlaError::Insert`] (the existing variant covers
+/// DELETE too — same backend error class) when the statement fails.
+pub async fn delete_snapshots_older_than(
+    pool: &Pool,
+    cutoff_ts_unix: i64,
+) -> Result<u64, SlaError> {
+    let conn = pool
+        .get()
+        .await
+        .map_err(|e| SlaError::GetConn(e.to_string()))?;
+    let rows = conn
+        .execute(
+            "DELETE FROM request_latency_snapshots WHERE ts_unix < $1",
+            &[&cutoff_ts_unix],
+        )
+        .await
+        .map_err(|e| SlaError::Insert(e.to_string()))?;
+    Ok(rows)
+}
+
 impl SlaWindowStore for PostgresSlaWindowStore {
     fn max_p95_since(&self, since_ts_unix: i64) -> MaxP95Future<'_> {
         Box::pin(async move {
@@ -184,6 +217,57 @@ mod tests {
         conn.execute(
             "DELETE FROM request_latency_snapshots WHERE ts_unix = $1",
             &[&ts],
+        )
+        .await
+        .expect("cleanup");
+    }
+
+    #[tokio::test]
+    #[ignore = "needs MINISTR_TEST_PG_URL"]
+    async fn delete_snapshots_older_than_removes_old_rows_only() {
+        let Ok(url) = std::env::var("MINISTR_TEST_PG_URL") else {
+            return;
+        };
+        let pool = connect(&url).expect("open pool");
+        run_migrations(&pool).await.expect("migrate");
+
+        // Two rows: one ancient, one recent. Prune above the ancient
+        // ts but below the recent ts; assert only the ancient is gone.
+        let old_ts: i64 = 1_500_000_000;
+        let new_ts: i64 = 9_500_000_000;
+        persist_snapshot(&pool, old_ts, 10, 100, 200, 300)
+            .await
+            .expect("persist old");
+        persist_snapshot(&pool, new_ts, 10, 100, 200, 300)
+            .await
+            .expect("persist new");
+
+        // Cutoff sits between the two rows.
+        let cutoff = 5_000_000_000;
+        let deleted = delete_snapshots_older_than(&pool, cutoff)
+            .await
+            .expect("prune");
+        assert!(
+            deleted >= 1,
+            "expected at least one row deleted, got {deleted}"
+        );
+
+        // Confirm the recent row survived; cleanup it ourselves.
+        let conn = pool.get().await.expect("get conn");
+        let survived: i64 = conn
+            .query_one(
+                "SELECT count(*) FROM request_latency_snapshots WHERE ts_unix = $1",
+                &[&new_ts],
+            )
+            .await
+            .expect("count survived")
+            .get(0);
+        assert_eq!(survived, 1, "recent row should survive");
+
+        let conn = pool.get().await.expect("get conn");
+        conn.execute(
+            "DELETE FROM request_latency_snapshots WHERE ts_unix IN ($1, $2)",
+            &[&old_ts, &new_ts],
         )
         .await
         .expect("cleanup");

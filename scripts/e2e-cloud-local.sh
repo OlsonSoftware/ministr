@@ -3072,6 +3072,35 @@ else
     fail "persisted row monotonicity broken — p50=${SLA_LATEST_P50} p95=${SLA_LATEST_P95} p99=${SLA_LATEST_P99}"
 fi
 
+# 41) **F5.5-b-persist-retention — sla-prune-snapshots CLI removes old rows.**
+#     Use --older-than-secs 1 against the snapshots the persist-write
+#     task has been writing (with MINISTR_SLA_FLUSH_SECS=2). All rows
+#     older than 1 second should be deleted; very-recently-written
+#     rows (less than 1s old) may survive but the table count should
+#     drop substantially. Also verify the defensive 0-second refusal
+#     fires.
+info "F5.5-b-persist-retention: sla-prune-snapshots CLI removes old rows"
+PRE_PRUNE_COUNT=$(psql_count "SELECT count(*) FROM request_latency_snapshots;")
+if cargo run -q -p ministr-cli -- cloud sla-prune-snapshots \
+    --older-than-secs 1 >/dev/null 2>&1; then
+    pass "sla-prune-snapshots CLI exited 0"
+else
+    fail "sla-prune-snapshots CLI exited non-zero"
+fi
+POST_PRUNE_COUNT=$(psql_count "SELECT count(*) FROM request_latency_snapshots;")
+if [[ "${POST_PRUNE_COUNT}" -lt "${PRE_PRUNE_COUNT}" ]]; then
+    pass "request_latency_snapshots row count dropped (pre=${PRE_PRUNE_COUNT} post=${POST_PRUNE_COUNT})"
+else
+    fail "row count did not drop after prune — pre=${PRE_PRUNE_COUNT} post=${POST_PRUNE_COUNT}"
+fi
+# Defensive: --older-than-secs 0 must refuse.
+if cargo run -q -p ministr-cli -- cloud sla-prune-snapshots \
+    --older-than-secs 0 >/dev/null 2>&1; then
+    fail "sla-prune-snapshots --older-than-secs 0 should refuse but exited 0"
+else
+    pass "sla-prune-snapshots --older-than-secs 0 refuses (defensive against accidental delete-all)"
+fi
+
 # ─── summary ──────────────────────────────────────────────────────────
 
 echo
