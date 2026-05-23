@@ -589,6 +589,11 @@ pub(crate) async fn cmd_serve_http(
         .layer(session_export_scope_tenant_layer);
 
     let admin_state = build_admin_state(&cloud_env, corpus_paths.len())?;
+    // F5.5-b-latency — capture the shared LatencyTracker before
+    // admin_state is moved into the protected-routes constructor. The
+    // tracker is Arc-backed so the middleware mounted at the outer
+    // layer below sees the same buffer the /sla handler reads.
+    let latency_tracker = admin_state.latency_tracker();
     let admin_public = ministr_mcp::admin::admin_public_routes(admin_state.clone());
     let admin_protected = ministr_mcp::admin::admin_protected_routes(admin_state);
 
@@ -1435,6 +1440,19 @@ pub(crate) async fn cmd_serve_http(
             .merge(daemon_obs_router)
             .merge(session_export_router)
     };
+
+    // F5.5-b-latency — outermost middleware that records every
+    // request's elapsed time into the shared LatencyTracker the
+    // /sla handler reads from. Mounted INSIDE the CORS layer (i.e.
+    // CORS wraps this) so a CORS preflight that 204s doesn't
+    // pollute the rolling buffer with sub-millisecond samples. Every
+    // route — public, protected, daemon, MCP — passes through; the
+    // 1024-sample window is wide enough that the few admin-only
+    // probes don't shift query-tier percentiles meaningfully.
+    let app = app.layer(axum::middleware::from_fn_with_state(
+        latency_tracker,
+        ministr_mcp::admin::record_latency_middleware,
+    ));
 
     // F3.6-b-ii-a — opt-in CORS layer. Mounted last so the headers
     // wrap the final composed router (including OAuth-protected and

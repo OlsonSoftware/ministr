@@ -46,12 +46,43 @@ pub(super) async fn healthz(State(state): State<AdminState>) -> Json<HealthRespo
 /// (the underlying `Instant::elapsed().as_secs()` returns `u64` too).
 /// `started_at_iso` lets a scraper compute the boot moment without
 /// needing to invert the wall-clock delta itself.
+///
+/// F5.5-b-latency — `latency` carries p50/p95/p99 over the rolling
+/// in-process window. `None` until at least one request has been
+/// recorded (the boot's very first `/sla` poll sees `null`).
 #[derive(Debug, Serialize)]
 pub(super) struct SlaResponse {
     status: &'static str,
     version: &'static str,
     uptime_secs: u64,
     started_at_iso: String,
+    latency: Option<LatencyEmission>,
+}
+
+/// F5.5-b-latency — JSON-rendered latency envelope. Microseconds get
+/// converted to milliseconds at the seam so consumers (status pages,
+/// dashboards) read the SLA contract's native unit directly. `count`
+/// is the rolling-window sample count for callers that want to
+/// understand how warmed-up the percentiles are.
+#[derive(Debug, Serialize)]
+struct LatencyEmission {
+    count: usize,
+    p50_ms: u64,
+    p95_ms: u64,
+    p99_ms: u64,
+}
+
+impl From<crate::admin::LatencySnapshot> for LatencyEmission {
+    fn from(s: crate::admin::LatencySnapshot) -> Self {
+        // Microseconds → milliseconds at the seam. u32 max micros is
+        // ~71 minutes ⇒ never overflows the u64 ms field.
+        Self {
+            count: s.count,
+            p50_ms: u64::from(s.p50_us) / 1_000,
+            p95_ms: u64::from(s.p95_us) / 1_000,
+            p99_ms: u64::from(s.p99_us) / 1_000,
+        }
+    }
 }
 
 /// F5.5-b-sla-skeleton — unauthenticated SLA / uptime probe. Foundation
@@ -69,11 +100,13 @@ pub(super) async fn sla_status(State(state): State<AdminState>) -> Json<SlaRespo
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
     let started_at = now_secs.saturating_sub(uptime_secs);
+    let latency = state.latency_tracker().snapshot().map(LatencyEmission::from);
     Json(SlaResponse {
         status: "ready",
         version: env!("CARGO_PKG_VERSION"),
         uptime_secs,
         started_at_iso: format_unix_secs_iso(started_at),
+        latency,
     })
 }
 
