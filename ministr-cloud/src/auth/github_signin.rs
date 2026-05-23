@@ -375,7 +375,7 @@ async fn handle_github_callback(
     // orgs and a clear "invite expired" toast in F3.1b-ii's email
     // half. The result is observable via tracing today.
     if let Some(raw_invite) = pending.invite_token.as_deref() {
-        match crate::orgs::consume_invite(&state.pool, raw_invite, &user.id).await {
+        match crate::orgs::consume_invite(&state.pool, raw_invite, &user.id, Some(&user.email)).await {
             Ok(crate::orgs::ConsumeOutcome::Accepted { org_id, role }) => {
                 info!(
                     user_id = %user.id,
@@ -425,6 +425,14 @@ async fn handle_github_callback(
                         }
                     }
                 }
+            }
+            Ok(crate::orgs::ConsumeOutcome::EmailMismatch { expected, actual }) => {
+                warn!(
+                    user_id = %user.id,
+                    expected = %expected,
+                    actual = %actual,
+                    "org invite rejected — authenticated email doesn't match invite"
+                );
             }
             Ok(other) => {
                 warn!(
