@@ -2862,6 +2862,39 @@ fi
 # Cleanup harness fixtures.
 rm -f "${REVOKE_JWT_FILE}" "${REVOKE_LIST}"
 
+# 38b) **F5.5-b-sla-skeleton — /sla endpoint returns uptime envelope.**
+#      Foundation for the eventual status.ministr.ai dashboard + richer
+#      load-balancer probes. /healthz today returns only status/corpus_count/
+#      version; /sla adds uptime_secs + started_at_iso so polling consumers
+#      can compute boot moment + age without inverting wall-clock deltas.
+info "F5.5-b-sla-skeleton: /sla endpoint returns uptime envelope"
+curl_request GET "${ENDPOINT}/sla" ""
+assert_status "${RESPONSE_STATUS}" "200" "GET /sla returns 200 (unauthenticated)"
+SLA_STATUS=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.status // empty')
+SLA_VERSION=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.version // empty')
+SLA_UPTIME=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.uptime_secs // empty')
+SLA_STARTED=$(printf '%s' "${RESPONSE_BODY}" | jq -r '.started_at_iso // empty')
+if [[ "${SLA_STATUS}" == "ready" ]]; then
+    pass "/sla body status==ready"
+else
+    fail "/sla status mismatch — got '${SLA_STATUS}'"
+fi
+if [[ -n "${SLA_VERSION}" && "${SLA_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    pass "/sla body version is semver-shaped (${SLA_VERSION})"
+else
+    fail "/sla version malformed: '${SLA_VERSION}'"
+fi
+if [[ "${SLA_UPTIME}" =~ ^[0-9]+$ ]]; then
+    pass "/sla body uptime_secs is non-negative integer (${SLA_UPTIME}s)"
+else
+    fail "/sla uptime_secs non-numeric: '${SLA_UPTIME}'"
+fi
+if [[ "${SLA_STARTED}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+    pass "/sla body started_at_iso is ISO-8601 Z-suffixed (${SLA_STARTED})"
+else
+    fail "/sla started_at_iso malformed: '${SLA_STARTED}'"
+fi
+
 # 39) **F5.4-e-rotate — re-mint in-flight licenses against a new key.**
 #     Generate old + new keypairs; mint two licenses against the OLD
 #     key (alpha + beta), recording both in the audit log; revoke alpha;

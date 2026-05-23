@@ -12,13 +12,18 @@ use axum::Router;
 use axum::routing::{get, post};
 
 use super::AdminState;
-use super::handlers::{healthz, reindex, reindex_events};
+use super::handlers::{healthz, reindex, reindex_events, sla_status};
 use super::webhook::github_webhook;
 
-/// Build the public admin router: health probe + GitHub webhook.
+/// Build the public admin router: health probe, SLA probe, GitHub webhook.
+///
+/// `/sla` (F5.5-b-sla-skeleton) is mounted unauthenticated alongside
+/// `/healthz` so the eventual `status.ministr.ai` dashboard + richer
+/// load-balancer probes can poll uptime without a bearer token.
 pub fn admin_public_routes(state: AdminState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
+        .route("/sla", get(sla_status))
         .route("/webhook/github", post(github_webhook))
         .with_state(state)
 }
