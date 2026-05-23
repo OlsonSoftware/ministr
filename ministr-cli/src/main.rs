@@ -431,6 +431,27 @@ enum CloudAction {
         /// to the customer's ops contact.
         #[arg(long)]
         out: Option<std::path::PathBuf>,
+        /// F5.4-e-audit — optional path to append one JSONL line
+        /// per successful mint. Records who/what/when (NO bearer
+        /// material — just a SHA-256 hash of the JWT for unique
+        /// identification). Stash alongside your license private
+        /// key so the issuance trail survives operator churn.
+        #[arg(long)]
+        audit_log: Option<std::path::PathBuf>,
+    },
+    /// F5.4-e-audit — print the issuance audit log (JSONL written by
+    /// `mint-license --audit-log PATH`). Useful for "did I already
+    /// issue a license to acme-corp this quarter?" lookups + for
+    /// stashing a copy in your CRM at renewal time.
+    ListLicenses {
+        /// Path to the JSONL audit log.
+        #[arg(long)]
+        audit_log: std::path::PathBuf,
+        /// Output format. `table` (default) is the human-readable
+        /// dashboard view; `json` re-emits the JSONL verbatim
+        /// (useful for piping into `jq`).
+        #[arg(long, default_value = "table")]
+        format: String,
     },
 }
 
@@ -839,13 +860,18 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
                 seat_count,
                 valid_days,
                 out,
+                audit_log,
             } => commands::cmd_cloud_mint_license(
                 &private_key,
                 &enterprise_id,
                 seat_count,
                 valid_days,
                 out.as_deref(),
+                audit_log.as_deref(),
             ),
+            CloudAction::ListLicenses { audit_log, format } => {
+                commands::cmd_cloud_list_licenses(&audit_log, &format)
+            }
         },
         Command::Setup { .. } => {
             unreachable!("ministr setup is dispatched before resolve_config in main()")
