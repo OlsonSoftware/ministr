@@ -259,6 +259,7 @@ pub(crate) async fn cmd_serve_http(
     // `build_server` so a broken license never reaches indexing.
     // The captured `license_claims` is threaded into OrgsState
     // below (F5.4-b seat-cap enforcement reads claims.seat_count).
+    let mut revocation_handle: Option<ministr_cloud::RevocationShutdownHandle> = None;
     let license_claims: Option<Arc<ministr_cloud::LicenseClaims>> =
         match ministr_cloud::validate_license_from_env().await {
             Ok(None) => {
@@ -285,20 +286,18 @@ pub(crate) async fn cmd_serve_http(
                     ministr_cloud::revocation_url_config()
                 {
                     let refresh_secs = ministr_cloud::revocation_refresh_secs();
-                    // Compute the running license's hash so the
-                    // background task can detect revocation of *this*
-                    // serve's license specifically. MINISTR_LICENSE_KEY
-                    // is guaranteed non-empty here because
-                    // validate_license_from_env returned Ok(Some).
                     let jwt = std::env::var("MINISTR_LICENSE_KEY")
                         .unwrap_or_default();
                     let hash = ministr_cloud::license_jwt_id_hash(&jwt);
+                    let handle = ministr_cloud::RevocationShutdownHandle::new();
+                    revocation_handle = Some(handle.clone());
                     ministr_cloud::spawn_refresh_task(
                         url,
                         cache_path,
                         refresh_secs,
                         grace_secs,
                         hash,
+                        Some(handle),
                     );
                 }
                 Some(Arc::new(claims))
@@ -1576,11 +1575,27 @@ pub(crate) async fn cmd_serve_http(
         )
     });
 
-    axum::serve(listener, app)
-        .await
-        .into_diagnostic()
-        .wrap_err("HTTP server exited with error")?;
+    if let Some(ref handle) = revocation_handle {
+        let h = handle.clone();
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move { h.shutdown.notified().await })
+            .await
+            .into_diagnostic()
+            .wrap_err("HTTP server exited with error")?;
+    } else {
+        axum::serve(listener, app)
+            .await
+            .into_diagnostic()
+            .wrap_err("HTTP server exited with error")?;
+    }
 
+    if revocation_handle
+        .as_ref()
+        .is_some_and(ministr_cloud::RevocationShutdownHandle::is_revoked)
+    {
+        tracing::error!("ministr shutting down — license revoked");
+        std::process::exit(1);
+    }
     tracing::info!("ministr shutting down");
     Ok(())
 }

@@ -75,8 +75,8 @@ pub use license::{
 };
 pub use revocation_fetch::{
     DEFAULT_REVOCATION_CACHE_PATH, DEFAULT_REVOCATION_GRACE_SECS,
-    DEFAULT_REVOCATION_REFRESH_SECS, fetch_revocation_list, revocation_refresh_secs,
-    revocation_url_config, spawn_refresh_task,
+    DEFAULT_REVOCATION_REFRESH_SECS, RevocationShutdownHandle, fetch_revocation_list,
+    revocation_refresh_secs, revocation_url_config, spawn_refresh_task,
 };
 pub use license_issuance::{
     LicenseIssuance, LicenseIssuanceError, list_issuances, persist_issuance,

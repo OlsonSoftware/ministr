@@ -162,29 +162,65 @@ fn fallback_to_cache(
 /// `MINISTR_LICENSE_REVOCATIONS_REFRESH_SECS`.
 pub const DEFAULT_REVOCATION_REFRESH_SECS: u64 = 3_600;
 
+/// Shared state between the refresh task and the server.
+///
+/// When revocation is detected, the task sets `revoked` and notifies
+/// `shutdown` so the server can drain gracefully instead of
+/// `process::exit`.
+#[derive(Clone)]
+pub struct RevocationShutdownHandle {
+    pub revoked: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub shutdown: std::sync::Arc<tokio::sync::Notify>,
+}
+
+impl RevocationShutdownHandle {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            revoked: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            shutdown: std::sync::Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    #[must_use]
+    pub fn is_revoked(&self) -> bool {
+        self.revoked.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn trigger(&self) {
+        self.revoked
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.shutdown.notify_one();
+    }
+}
+
+impl Default for RevocationShutdownHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for RevocationShutdownHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RevocationShutdownHandle")
+            .field("revoked", &self.is_revoked())
+            .finish()
+    }
+}
+
 /// F5.4-e-revoke-api-refresh — spawn a tokio task that periodically
 /// re-fetches the revocation list to keep the local cache warm.
-/// Calls into [`fetch_revocation_list`] on each tick; errors log
-/// `warn` and the loop continues so a transient portal blip never
-/// kills the task.
 ///
-/// **First tick swallowed** so we don't double-fetch immediately
-/// after the boot-time fetch (`validate_license_from_env` already
-/// did one).
-///
-/// **Honest scope**: this keeps the cache warm for the NEXT
-/// restart's boot validator. It does NOT add mid-flight revocation
-/// enforcement — a serve that booted on a valid license keeps
-/// running even if a refresh later pulls in a revocation for that
-/// hash. Operators wanting strict latency restart their pods more
-/// frequently; a future chunk would add the in-process re-validate
-/// + graceful-shutdown path.
+/// When `shutdown_handle` is `Some`, revocation triggers a graceful
+/// shutdown signal instead of `process::exit(1)`. When `None`, falls
+/// back to the brutal exit for backward compatibility.
 pub fn spawn_refresh_task(
     url: String,
     cache_path: PathBuf,
     refresh_secs: u64,
     grace_secs: u64,
     current_jwt_id_hash: String,
+    shutdown_handle: Option<RevocationShutdownHandle>,
 ) {
     let interval = if refresh_secs == 0 {
         DEFAULT_REVOCATION_REFRESH_SECS
@@ -226,8 +262,12 @@ pub fn spawn_refresh_task(
                             tracing::error!(
                                 jwt_id_hash = %current_jwt_id_hash,
                                 reason = %record.reason,
-                                "running license has been REVOKED by the operator — exiting; orchestrator must restart to pick up new license"
+                                "running license has been REVOKED by the operator — initiating graceful shutdown"
                             );
+                            if let Some(ref handle) = shutdown_handle {
+                                handle.trigger();
+                                return;
+                            }
                             std::process::exit(1);
                         }
                         Ok(None) => {
