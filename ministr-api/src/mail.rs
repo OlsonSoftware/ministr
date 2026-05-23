@@ -54,6 +54,22 @@ pub struct InviteMessage {
     pub role: String,
 }
 
+/// Weekly stale-key digest payload. The cron groups stale keys by
+/// owner, looks up the owner's email, and fires one digest per owner.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StaleKeyDigestMessage {
+    pub to_email: String,
+    pub keys: Vec<StaleKeyEntry>,
+    pub threshold_days: u32,
+}
+
+/// One stale key inside a [`StaleKeyDigestMessage`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StaleKeyEntry {
+    pub name: String,
+    pub prefix: String,
+}
+
 /// Fire-and-forget sink for outbound mail.
 ///
 /// Implementations must be `Send + Sync` so they can be stored as
@@ -67,6 +83,10 @@ pub trait MailSender: Send + Sync + std::fmt::Debug {
     /// Send a magic-link invite. Returns immediately; the actual
     /// delivery completes asynchronously.
     fn send_invite(&self, message: InviteMessage);
+
+    /// Send a weekly stale-key digest. Default impl is a no-op so
+    /// existing implementations don't break.
+    fn send_stale_key_digest(&self, _message: StaleKeyDigestMessage) {}
 }
 
 #[cfg(test)]

@@ -2828,6 +2828,17 @@ pub(crate) async fn cmd_api_keys_flag_stale(threshold_days: u32) -> miette::Resu
         threshold_days = outcome.threshold_days,
         "api-keys flag-stale complete"
     );
+
+    // F3.4c-iii — send digest emails when a mail provider is configured.
+    let mailer = ministr_cloud::build_mail_sender_from_env();
+    match ministr_cloud::send_stale_key_digests(&pool_arc, threshold_days, mailer.as_ref()).await {
+        Ok(sent) => {
+            tracing::info!(digests_sent = sent, "stale-key digest emails dispatched");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "stale-key digest query failed — emails not sent");
+        }
+    }
     Ok(())
 }
 
