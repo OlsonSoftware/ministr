@@ -3400,6 +3400,55 @@ pub(crate) fn cmd_cloud_rotate_license_keys(
     Ok(())
 }
 
+/// F5.5-b-persist-retention — DELETE old `request_latency_snapshots`
+/// rows. Reads `MINISTR_PG_URL`, opens the cloud pool, computes
+/// `cutoff = now - older_than_secs`, calls
+/// [`ministr_cloud::delete_snapshots_older_than`], prints the row
+/// count.
+///
+/// Defensive: refuses `older_than_secs <= 0` to prevent the most
+/// common operator typo ("I meant 30 days, typed 0") from nuking
+/// the table. Operators wrap in cron with
+/// `--older-than-secs $((30 * 86400))` for the canonical 30-day
+/// retention.
+pub(crate) async fn cmd_cloud_sla_prune_snapshots(
+    older_than_secs: i64,
+) -> miette::Result<()> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    if older_than_secs <= 0 {
+        return Err(miette::miette!(
+            "sla-prune-snapshots: --older-than-secs must be > 0 (got {older_than_secs}). \
+             Use `--older-than-secs $((30 * 86400))` for the canonical 30-day retention."
+        ));
+    }
+    let pg_url = std::env::var("MINISTR_PG_URL").map_err(|_| {
+        miette::miette!(
+            "sla-prune-snapshots requires MINISTR_PG_URL (the cloud Postgres connection string)"
+        )
+    })?;
+    let pool = ministr_cloud::connect(&pg_url)
+        .into_diagnostic()
+        .wrap_err("open cloud postgres pool")?;
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
+    let cutoff = now_secs.saturating_sub(older_than_secs);
+    let deleted = ministr_cloud::delete_snapshots_older_than(&pool, cutoff)
+        .await
+        .into_diagnostic()
+        .wrap_err("delete snapshots")?;
+    println!(
+        "sla-prune-snapshots: deleted {deleted} row(s) older than ts_unix < {cutoff} (now - {older_than_secs}s)"
+    );
+    tracing::info!(
+        deleted,
+        cutoff_ts_unix = cutoff,
+        older_than_secs,
+        "sla snapshot retention complete"
+    );
+    Ok(())
+}
+
 /// F5.4-e-revoke — append one revocation record to the JSONL list
 /// the customer's serve consults at boot via
 /// `MINISTR_LICENSE_REVOCATIONS`.
