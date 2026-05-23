@@ -1,0 +1,36 @@
+# F5.4-c — Helm chart for the on-prem ministr-enterprise deployment.
+#
+# Customer-installable in any Kubernetes 1.27+ cluster. Brings the
+# cloud serve (license-gated via F5.4-a + seat-cap-enforced via
+# F5.4-b) inside the customer's VPC. Postgres + blob storage are
+# customer-provided (this chart doesn't ship a database).
+apiVersion: v2
+name: ministr-enterprise
+description: |
+  ministr Enterprise — license-gated on-prem deployment of the ministr
+  cloud serve. Combines per-org SAML/OIDC SSO, immutable + SIEM-streamed
+  audit, and tenant-isolated indexing in a single chart that runs inside
+  the customer's own Kubernetes cluster.
+type: application
+# Chart version — bump on every change to templates/values.yaml.
+# Independent of the app being deployed.
+version: 0.1.0
+# Default app version (image tag fallback when values.image.tag is
+# empty). Tracks the ministr workspace version.
+appVersion: "0.6.0"
+keywords:
+  - ministr
+  - sso
+  - saml
+  - oidc
+  - audit
+  - enterprise
+home: https://ministr.ai
+sources:
+  - https://github.com/ministr-ai/ministr
+maintainers:
+  - name: ministr.ai
+    email: support@ministr.ai
+# Single-node-clusterable; the chart's default `replicaCount: 1` works
+# under K3s, minikube, kind, and managed AKS/EKS/GKE alike. HPA is the
+# customer's responsibility — no opinionated autoscaling shipped.
