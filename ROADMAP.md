@@ -945,6 +945,11 @@ A Pro user queries any of the 5K Atlas repos via `/atlas/{slug}/survey` and gets
       - Operator runbook (`docs/operator/license-mint.md`) extended with a "Revocation flow" section covering both forms + Helm/Compose env-var wiring.
       - 6 new unit tests in `license.rs` (hash determinism, hash hex shape, JSONL hit/miss/malformed/missing-file, record round-trip). 6 new harness assertions (mint fixture, revoke CLI exit 0, hash on disk is 16-hex, reason recorded, boot exits non-zero under revoked JWT, boot error mentions revocation).
       - [ ] `license_revocations` table the serve checks on each boot; offline-cached grace window for graceful degradation when ministr's portal is unreachable.
+    - [x] **F5.4-e-revoke-mid-flight-graceful** *(2026-05-23, complete)*
+      - [x] `RevocationShutdownHandle` struct in `ministr-cloud/src/revocation_fetch.rs` — `Arc<AtomicBool>` revoked flag + `Arc<Notify>` shutdown signal. `trigger()` sets the flag + notifies; `is_revoked()` reads the flag.
+      - [x] `spawn_refresh_task` gains `shutdown_handle: Option<RevocationShutdownHandle>`. On revocation: when handle is `Some`, triggers graceful signal and returns (task exits cleanly). When `None`, falls back to `process::exit(1)` for backward compat.
+      - [x] `cmd_serve_http` creates the handle when URL-based revocation is configured, wires `axum::serve(...).with_graceful_shutdown(handle.shutdown.notified())`. After graceful drain completes, exits with code 1 so the orchestrator restarts. In-flight requests finish rather than getting connection-reset.
+      - **Validation:** cargo workspace test 0 failed; cargo clippy `--pedantic -D warnings` clean. Existing harness F5.4-e-revoke-mid-flight assertions (229→231 PASS) continue to hold — the behavior difference (drain vs instant exit) isn't observable from the harness's perspective since the exit code is still 1.
     - [ ] **F5.4-e-ui Admin UI** *(deferred)*
       - [ ] Internal webapp surfacing the F5.4-e-mint flow with templated email distribution + audit-log browser + revocation toggle.
     - [x] **F5.4-e-rotate Key rotation tooling** *(2026-05-22, complete — harness 192 → 199 PASS)*
