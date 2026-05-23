@@ -22,6 +22,7 @@ pub mod corpus_restorer;
 pub mod drops_ledger;
 pub mod github_app;
 pub mod index_job_sink;
+pub mod iso8601;
 pub mod mail;
 pub mod plan_resolver;
 pub mod query;
@@ -49,6 +50,7 @@ pub use github_app::{InstallationTokenMinter, MintError};
 pub use index_job_sink::{
     IndexJobError, IndexJobFuture, IndexJobSink, IndexJobSnapshot, IndexJobStatus,
 };
+pub use iso8601::format_unix_secs_iso;
 pub use mail::{InviteMessage, MailSender};
 pub use plan_resolver::{PlanResolver, PlanResolverError, ResolvePlanFuture};
 pub use sla_window_store::{MaxP95Future, SlaWindowStore, SlaWindowStoreError};

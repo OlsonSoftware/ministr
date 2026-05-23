@@ -109,6 +109,7 @@ pub(super) async fn sla_status(State(state): State<AdminState>) -> Json<SlaRespo
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
     let started_at = now_secs.saturating_sub(uptime_secs);
+    let started_at_iso = ministr_api::format_unix_secs_iso(started_at);
     // F5.5-b-persist-read — pull the historical 30d max p95 from the
     // wired store (cloud mode only). 30 days = 30 × 86_400 secs.
     // i64 fits centuries of unix-epoch comfortably; saturating_sub
@@ -134,34 +135,9 @@ pub(super) async fn sla_status(State(state): State<AdminState>) -> Json<SlaRespo
         status: "ready",
         version: env!("CARGO_PKG_VERSION"),
         uptime_secs,
-        started_at_iso: format_unix_secs_iso(started_at),
+        started_at_iso,
         latency,
     })
-}
-
-/// F5.5-b-sla-skeleton — local copy of the ISO-8601 formatter the
-/// F5.4-e-audit CLI uses. `ministr-cloud::audit::civil_from_unix_secs`
-/// is module-private; lifting it to a public re-export for one caller
-/// isn't worth the surface change. Same Howard Hinnant algorithm; one
-/// shared helper across the codebase is a future cleanup chunk.
-fn format_unix_secs_iso(secs: u64) -> String {
-    // Howard Hinnant's civil_from_days algorithm.
-    let days = i64::try_from(secs / 86_400).unwrap_or(0);
-    let time = secs % 86_400;
-    let hour = time / 3_600;
-    let minute = (time % 3_600) / 60;
-    let second = time % 60;
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = u64::try_from(z - era * 146_097).unwrap_or(0); // [0, 146096]
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
-    let y = i64::try_from(yoe).unwrap_or(0) + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
-    let mp = (5 * doy + 2) / 153; // [0, 11]
-    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
-    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
-    let year = if m <= 2 { y + 1 } else { y };
-    format!("{year:04}-{m:02}-{d:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
 
 #[derive(Debug, Deserialize)]
@@ -263,22 +239,12 @@ pub(super) async fn reindex_events(
 mod tests {
     use super::*;
 
-    #[test]
-    fn format_unix_secs_iso_round_trips_known_dates() {
-        // 1970-01-01T00:00:00Z — epoch zero.
-        assert_eq!(format_unix_secs_iso(0), "1970-01-01T00:00:00Z");
-        // 2026-05-22T12:00:00Z — same anchor F5.3-d-iii-b-dispatch
-        // documented after the off-by-5-days fix in that chunk's audit
-        // tests.
-        assert_eq!(format_unix_secs_iso(1_779_451_200), "2026-05-22T12:00:00Z");
-    }
-
-    #[test]
-    fn format_unix_secs_iso_handles_leap_year() {
-        // 2024-02-29T00:00:00Z — leap day. Howard Hinnant's algorithm
-        // handles this without special-casing.
-        assert_eq!(format_unix_secs_iso(1_709_164_800), "2024-02-29T00:00:00Z");
-    }
+    // The two algorithmic round-trip tests
+    // (`format_unix_secs_iso_round_trips_known_dates` +
+    // `format_unix_secs_iso_handles_leap_year`) moved to
+    // `ministr-api/src/iso8601.rs` when the helper consolidated
+    // into the workspace-shared location. The handler-shape test
+    // below still pins the JSON envelope.
 
     #[tokio::test]
     async fn sla_handler_returns_uptime_at_least_zero() {
