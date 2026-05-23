@@ -1151,7 +1151,10 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 >
 > **Impact on ministr:** The F-Test-3b-fix-1 tenant-capture-on-`initialize` pattern (our `tenant_id_hint` populated from `context.extensions` during `ServerHandler::initialize`) breaks when clients stop sending `initialize`. The fork-per-connection model (`server_factory` calling `fork_for_new_session`) needs rethinking. rmcp will update to the new spec; our pinned version will hold temporarily but we need to migrate before the ecosystem moves.
 
-- [ ] **F7.1 Audit current MCP surface against 2026-07-28 RC** — read the RC spec; enumerate every `initialize`-dependent code path in `ministr-mcp`; produce a migration plan. No code changes.
+- [x] **F7.1 Audit current MCP surface against 2026-07-28 RC** *(2026-05-23, complete — migration plan at docs/operator/mcp-2026-07-28-migration.md)*
+  - [x] 6 dependency areas mapped: (1) tenant capture via initialize → 13 tool-handler call sites (HIGH); (2) client name hint (LOW); (3) extension negotiation — negotiated but never read at runtime (MEDIUM); (4) fork-per-connection (MEDIUM); (5) session binding — recommended X-Ministr-Session custom header (MEDIUM); (6) OAuth hardening (LOW).
+  - [x] **Blocking question identified:** does rmcp expose `RequestContext.extensions` (with `Parts`) on every tool call in stateless mode? If yes, F7.2 is ~50 lines. If no, middleware workaround needed. Check rmcp's main branch before starting F7.2.
+  - [x] Recommended execution order: F7.2 → F7.3 → F7.6 → F7.4 → F7.5.
 - [ ] **F7.2 Stateless tenant resolution** — replace the `initialize`-captured `tenant_id_hint` with a per-request resolution path that works without `initialize`. The OAuth bearer token already carries the tenant; the question is how rmcp exposes it in the stateless world.
 - [ ] **F7.3 Session continuity without `Mcp-Session-Id`** — the spec removes the session header. ministr's session machinery (F6.1) uses it for session binding. Evaluate: client-provided session ID in tool params vs. server-side session inference from the bearer token.
 - [ ] **F7.4 Extensions framework adoption** — register ministr's capabilities as MCP extensions rather than the old `initialize`-negotiated features. Evaluate whether MCP Apps (server-initiated UI) is relevant for the bridge visualizer or session inspector.
