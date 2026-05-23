@@ -252,6 +252,31 @@ pub(crate) async fn cmd_serve_http(
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     };
 
+    // F5.4-a — license-key gate. Two env vars unset → community mode
+    // (no gate, log info). Both set + valid → Enterprise mode (log
+    // the enterprise_id + seat_count + days-left). Invalid →
+    // refuse to boot with the underlying error. Runs BEFORE
+    // `build_server` so a broken license never reaches indexing.
+    match ministr_cloud::validate_license_from_env() {
+        Ok(None) => {
+            tracing::info!(
+                "running in community mode (no MINISTR_LICENSE_KEY / MINISTR_LICENSE_PUBLIC_KEY set)"
+            );
+        }
+        Ok(Some(claims)) => {
+            tracing::info!(
+                license = %ministr_cloud::render_license_summary(&claims),
+                "Enterprise license validated"
+            );
+        }
+        Err(e) => {
+            return Err(miette::miette!(
+                "license gate refused boot: {e}. Set both MINISTR_LICENSE_KEY + \
+                 MINISTR_LICENSE_PUBLIC_KEY, OR unset both to run in community mode."
+            ));
+        }
+    }
+
     let (server, ctx, _coherence_handle) = infra::build_server(
         corpus_paths,
         config_path,
