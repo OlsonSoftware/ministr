@@ -455,18 +455,22 @@ function SurfaceBody({
 
   if (surface === "projects") {
     return (
-      <ProjectsSurface
-        corpora={status.corpora}
-        activeCorpusId={activeCorpusId}
-        onSelectCorpus={onSelectCorpus}
-        onRefresh={onRefresh}
-      />
+      <AdaptiveSurface>
+        <ProjectsSurface
+          corpora={status.corpora}
+          activeCorpusId={activeCorpusId}
+          onSelectCorpus={onSelectCorpus}
+          onRefresh={onRefresh}
+        />
+      </AdaptiveSurface>
     );
   }
 
   if (surface === "sessions") {
     return (
-      <SessionsSurface status={status} activeCorpusId={activeCorpusId} />
+      <AdaptiveSurface>
+        <SessionsSurface status={status} activeCorpusId={activeCorpusId} />
+      </AdaptiveSurface>
     );
   }
 
@@ -482,16 +486,18 @@ function SurfaceBody({
 
   if (surface === "explore") {
     return (
-      <div className="h-full flex flex-col min-h-0">
-        <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-6">
-          <ServerSettings status={status} />
-          <DeveloperPanel
-            status={status}
-            activeCorpusId={activeCorpusId}
-            setActiveCorpusId={setActiveCorpusId}
-          />
+      <AdaptiveSurface>
+        <div className="h-full flex flex-col min-h-0">
+          <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-6">
+            <ServerSettings status={status} />
+            <DeveloperPanel
+              status={status}
+              activeCorpusId={activeCorpusId}
+              setActiveCorpusId={setActiveCorpusId}
+            />
+          </div>
         </div>
-      </div>
+      </AdaptiveSurface>
     );
   }
 
