@@ -819,10 +819,18 @@ h1.ministr-gradient-text,
  * Scoped under .ministr-v2 so they don't leak into fumadocs pages.
  * ════════════════════════════════════════════════════════════════════ */
 
+/* Hide fumadocs chrome when v2 pages render — they carry their own nav */
+body:has(.ministr-v2) header.sticky {
+  display: none !important;
+}
+body:has(.ministr-v2) {
+  background: var(--bg);
+}
+
 .ministr-v2 {
-  max-width: 760px;
+  max-width: 1080px;
   margin: 0 auto;
-  padding: 0 32px;
+  padding: 0 48px;
   font-family: var(--font-geist), -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 17px;
   line-height: 1.55;
@@ -883,7 +891,7 @@ h1.ministr-gradient-text,
   line-height: 1.55;
   color: var(--ink-2);
   margin: 0 0 44px;
-  max-width: 58ch;
+  max-width: 68ch;
   font-weight: 400;
 }
 .v2-offer {
@@ -1063,7 +1071,7 @@ h1.ministr-gradient-text,
 .v2-footer-links a:hover { color: var(--amber); }
 
 /* ── Responsive ─────────────────────────────────────────────────── */
-@media (max-width: 600px) {
+@media (max-width: 640px) {
   .ministr-v2 { font-size: 16px; padding: 0 22px; }
   .v2-nav { padding-top: 22px; }
   .v2-nav-links { gap: 18px; }
