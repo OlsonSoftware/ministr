@@ -1409,11 +1409,10 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] File header comment updated to reference the F14 design language.
   - **Acceptance:** `tsc --noEmit` + `vite build` clean.
 
-- [ ] **F14.2 GeneralSettings + AboutPanel — flat row redesign**
-  - [ ] Rewrite `GeneralSettings` to use `SettingsSection` + flat `PrefRow`s directly (no Zone wrapper, no max-w-2xl). Preferences section becomes: section header "Preferences" → rows (Theme, Default tab, Density, Autostart) spanning full width of the content pane.
-  - [ ] Rewrite `AboutPanel` to use the same flat pattern. Version info, data directory, links rendered as flat rows with no card wrapping.
-  - [ ] Remove the `max-w-2xl mx-auto` from GeneralSettings' outer div — the AdaptiveSurface + sidebar from F13.2 already constrains width naturally.
-  - **Acceptance:** `tsc --noEmit` + `vite build` clean; GeneralSettings renders edge-to-edge rows; no Zone visible in the Settings surface; visual parity with macOS System Settings row density.
+- [x] **F14.2 GeneralSettings + AboutPanel — flat row redesign** *(2026-05-24, complete)*
+  - [x] `GeneralSettings`: removed `Zone` wrapper + `max-w-2xl mx-auto`. Now renders `SettingsSection("Preferences")` header + flat PrefRows edge-to-edge. Zone import removed.
+  - [x] `AboutPanel`: removed `Zone` wrapper + `max-w-2xl mx-auto`. `SettingsSection("Maintenance")` header + action grid with subtle `border-border-soft rounded-md` (the grid itself benefits from a light border since actions are icon-button cells, but it's NOT a Zone — no header strip, no bg-surface layering). Footer softened from `border-t-2` to `border-t border-border-soft`.
+  - **Acceptance:** `tsc --noEmit` + `vite build` clean; no Zone in Settings surface.
 
 - [ ] **F14.3 ServerSettings + CloudPanel sections — flat row redesign**
   - [ ] Rewrite `ServerSettings` to use `SettingsSection` + `MetaRow`s without Zone. Server info (version, model, memory, data dir) rendered as flat rows under a "Server" section header.

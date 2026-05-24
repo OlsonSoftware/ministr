@@ -18,9 +18,8 @@ import {
   useDensity,
 } from "../../hooks/usePreferences";
 import { Toggle } from "../ui/toggle";
-import { Zone } from "../ui/zone";
 import { useToast } from "../shell/ToastTray";
-import { PrefRow } from "./settings-primitives";
+import { SettingsSection, PrefRow } from "./settings-primitives";
 
 interface Props {
   status: DaemonStatus;
@@ -48,8 +47,8 @@ export function GeneralSettings({
   }
 
   return (
-    <div className="space-y-4 max-w-2xl mx-auto">
-      <Zone title="PREFERENCES" tone="serif">
+    <div>
+      <SettingsSection title="Preferences" />
         <PrefRow label="THEME" description="Adapts to OS by default.">
           <div className="flex gap-0">
             {(
@@ -137,7 +136,6 @@ export function GeneralSettings({
             ariaLabel="Start at login"
           />
         </PrefRow>
-      </Zone>
     </div>
   );
 }
