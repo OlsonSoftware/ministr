@@ -1,13 +1,48 @@
 /**
  * Shared row primitives for the Settings sub-panels.
  *
- * Extracted from the old monolithic Settings.tsx when it was split into
- * General / Server / About. Kept in one file because each primitive is
- * tiny and they're only ever used together by the settings panels.
+ * Design language (F14): flat full-width rows, edge-to-edge within the
+ * content pane. No Zone/card wrappers. Section grouping via headers +
+ * whitespace. Matches macOS System Settings / Discord / Linear pattern.
  */
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "../../lib/utils";
 
+/**
+ * Section header for settings views. Renders a bold label with optional
+ * description and top spacing. No border, no background — just text.
+ */
+export function SettingsSection({
+  title,
+  description,
+  className,
+}: {
+  title: string;
+  description?: string;
+  className?: string;
+}) {
+  return (
+    <div className={cn("pt-6 pb-2 first:pt-0", className)}>
+      <h3 className="font-sans text-sm font-semibold text-text">{title}</h3>
+      {description && (
+        <p className="font-sans text-xs text-text-dim mt-0.5">{description}</p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Lightweight divider between preference groups within a section.
+ * Thinner than section spacing — just a hairline with vertical margin.
+ */
+export function SettingsDivider() {
+  return <hr className="border-border-soft my-2" />;
+}
+
+/**
+ * Full-width preference row: label+description left, control right.
+ * Renders edge-to-edge — the parent provides horizontal padding.
+ */
 export function PrefRow({
   label,
   description,
@@ -23,7 +58,7 @@ export function PrefRow({
     ? label.charAt(0) + label.slice(1).toLowerCase()
     : label;
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-border-soft last:border-b-0 px-3 py-3">
+    <div className="flex items-center justify-between gap-4 border-b border-border-soft last:border-b-0 py-3">
       <div className="min-w-0 flex-1 flex items-start gap-2">
         {Icon && (
           <Icon
@@ -47,6 +82,9 @@ export function PrefRow({
   );
 }
 
+/**
+ * Read-only key-value row. Edge-to-edge — parent provides padding.
+ */
 export function MetaRow({
   label,
   value,
@@ -57,7 +95,7 @@ export function MetaRow({
   truncate?: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-border-soft last:border-b-0 px-3 py-1.5">
+    <div className="flex items-center justify-between gap-3 border-b border-border-soft last:border-b-0 py-1.5">
       <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim shrink-0">
         {label}
       </span>
