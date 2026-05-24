@@ -32,7 +32,7 @@ export function SettingsSurface(props: Props) {
   return (
     <AdaptiveSurface>
       <div className="h-full flex flex-col @min-[900px]/surface:flex-row min-h-0">
-        {/* Sidebar nav */}
+        {/* Sidebar nav — wide viewports */}
         <nav className="hidden @min-[900px]/surface:flex flex-col gap-1 w-[200px] shrink-0 border-r border-border-soft p-4 pt-6">
           {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
             <button
@@ -51,6 +51,26 @@ export function SettingsSurface(props: Props) {
             </button>
           ))}
         </nav>
+
+        {/* Tab bar — narrow viewports */}
+        <div className="flex @min-[900px]/surface:hidden border-b border-border-soft shrink-0">
+          {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setActive(id)}
+              className={cn(
+                "flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium transition-colors duration-150",
+                active === id
+                  ? "text-text border-b-2 border-accent -mb-[1px]"
+                  : "text-text-muted hover:text-text",
+              )}
+            >
+              <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.8} />
+              {label}
+            </button>
+          ))}
+        </div>
 
         {/* Active view */}
         <div className="flex-1 min-h-0 overflow-y-auto p-5">
