@@ -1345,6 +1345,43 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
 
 - **Validation:** each chunk's acceptance is `npm run types:check` + `npm run build` clean on web/ (MDX pages must parse), plus a manual read confirming no obviously stale claims remain in the audited pages.
 
+### F13 — Tauri UI/UX layout redesign *(discovered 2026-05-24 via /roadmap-refresh)*
+
+> **Context.** Many surfaces don't use the full viewport. `SettingsSurface` uses `max-w-3xl mx-auto` (~768px cap), `ServerSettings` and `CloudPanel` use `max-w-2xl` (~672px cap) — all wasting horizontal space on wide viewports. Meanwhile `ProjectsSurface` (master-detail flex), `SessionsSurface` (responsive grid `grid-cols-1 md:grid-cols-2 xl:grid-cols-3`), and `AskSurface` (container queries `@container/page`) all use viewport well. The inconsistency makes the app feel under-designed on wider displays (common for developer desktops at 1440px+).
+>
+> **Design direction.** Container queries (`@container`) are the 2025/2026 standard for component-level responsiveness in desktop apps where the window IS the viewport (Tailwind v4 ships native `@container` support; SitePoint Feb 2026, Josh Comeau Jan 2025). The app already proves this pattern works in `AskSurface`. This track introduces a consistent adaptive layout system across all surfaces, then redesigns the constrained ones.
+>
+> **Research findings (serpapi 2026-05-24):** (1) UXPlanet (Dec 2024) recommends 240-300px sidebar width (expanded) for settings navigation; (2) shadcn/ui's SaaS sidebar patterns (Medium, Mar 2026) favor persistent category sidebars at wide viewports collapsing to stacked at narrow; (3) Atomic Object (Dec 2025) confirms container queries fix the "component doesn't know its available space" problem that media queries can't solve in panel-based UIs.
+
+- [x] **F13.1 Adaptive layout foundation** *(2026-05-24, complete — blocks F13.2–F13.4)*
+  - [x] New `AdaptiveSurface` wrapper component at `ministr-app/src/components/ui/adaptive-surface.tsx` — `@container/surface` named container with documented breakpoints: `@min-[600px]/surface:` (sm), `@min-[900px]/surface:` (md — sidebar layouts), `@min-[1200px]/surface:` (lg — multi-column grids).
+  - [x] New layout tokens in `lib/ui-tokens.ts`: `surfaceContainer` (the @container wrapper class), `contentNarrow` (max-w-3xl centered), `contentWide` (no cap), `contentAdaptive` (narrow below 900px, wide above via container query).
+  - [x] `DESIGN.md` updated with "Layout — adaptive surfaces" section documenting the breakpoint table, content width tokens, and when-to-use-which guidance.
+  - [x] Existing surfaces unaffected — purely additive (no existing code changed). `tsc --noEmit` + `vite build` clean.
+  - **Acceptance:** `tsc --noEmit` + `vite build` clean; existing surfaces render identically; the new tokens are importable from `ui-tokens`.
+
+- [ ] **F13.2 Settings surface adaptive redesign**
+  - [ ] Replace the current `max-w-3xl mx-auto` single-column layout with a sidebar + content area pattern at `@md`+ (900px+). Sidebar (~240px) shows section links (General, AI assistants, About); content area fills remaining width. Below `@md`, collapse to the current stacked layout (scroll-based).
+  - [ ] Each settings section should use the available width: `GeneralSettings` preference rows can expand to side-by-side label+control layout at `@lg`; `AiAssistantsPanel` client rows gain more breathing room for the status/action area.
+  - [ ] `AboutPanel` can remain narrow (prose content) — use `contentNarrow` token within the wider layout.
+  - **Acceptance:** `tsc --noEmit` + `vite build` clean; at 1200px+ the settings page shows sidebar + wide content; at 800px it stacks vertically like today; Playwright screenshot comparison confirms no regression at narrow widths.
+
+- [ ] **F13.3 Cloud panel adaptive card layout**
+  - [ ] Replace the current `max-w-2xl` single column with an adaptive layout using `AdaptiveSurface`. At `@lg` (1200px+): section cards arranged in a 2-column grid where appropriate (Endpoint + Authentication side by side; Connection + Corpora side by side). At `@md`: maintain single column but remove `max-w-2xl` cap (let content breathe). Below `@md`: unchanged.
+  - [ ] `OnboardingWizard` should span full width regardless of grid (it's contextual to progress, not a permanent fixture).
+  - [ ] `CorporaSection`, `ApiKeysSection`, `WebhooksSection`, `OrgUsageSection`, `SessionInspectorSection` — each gets a wider table layout at `@lg` with more visible columns (currently truncated or hidden due to narrow container).
+  - **Acceptance:** `tsc --noEmit` + `vite build` clean; Cloud surface uses full viewport at wide sizes; card grid renders 2-col at 1200px+; all existing functionality preserved.
+
+- [ ] **F13.4 Explore surface + cross-surface density pass**
+  - [ ] Explore surface: `ServerSettings` drops `max-w-2xl mx-auto` — Zone components expand to full width. At `@lg`, diagnostics (Server log + Context simulator) render side by side instead of stacked. `DeveloperPanel` (Bridge, Query Playground) already uses full width.
+  - [ ] Cross-surface density audit: verify all 6 surfaces use `AdaptiveSurface` wrapper consistently; standardize header patterns (H1 + subtitle + action buttons) across surfaces; ensure the nav rail → surface slot transition is seamless at all widths.
+  - [ ] Add responsive `gap` tokens that scale with container width (tighter at `@xs`, more spacious at `@lg`) for a polished feel across viewport sizes.
+  - **Acceptance:** `tsc --noEmit` + `vite build` clean; all 6 surfaces wrapped in `AdaptiveSurface`; diagnostics side-by-side at wide viewports; visual consistency verified via Playwright screenshots at 3 widths (800px, 1200px, 1600px).
+
+- **Validation:** at 1440px+ (common developer display), every surface uses the full viewport meaningfully — no narrow column surrounded by dead space. At 800px (Tauri minimum-ish), layout degrades gracefully to stacked/narrow. Container queries (not media queries) drive all breakpoints so surfaces respond to their actual allocated space, not the window.
+
+> NOTE (refresh 2026-05-24): consider promoting F13.1 to immediately after the current in-progress chunk — the layout foundation is zero-risk (additive primitives, opt-in per surface) and unblocks the visual improvements. F13.2 (Settings) is the highest-impact single fix since Settings is the most-visited surface after Ask. Re-prioritization left to user decision.
+
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
 > Cross-cutting: builds the local equivalent of `azure-smoke` so multi-tenant cloud correctness, ACL semantics, API-key authn parity, session-tenant-scoping, webhook fan-out, and billing webhooks are all exercisable on a laptop without an Azure deploy. Today's `scripts/demo-local.sh` covers ONE tenant's happy path; the F-items above ship with Postgres-integration tests gated on `MINISTR_TEST_PG_URL` and unit coverage, but no e2e proof that ties them together end-to-end. F-Test fills that gap. Each chunk extends the harness in place — there's only one command to remember (`just e2e-cloud-local`) regardless of which scenario it ends up covering. Mirrors the `azure-smoke` extension policy from `justfile`.
@@ -1947,6 +1984,16 @@ These gaps surfaced when fixing `just azure-demo`'s smoke test end-to-end. The s
 ---
 
 ## Research notes
+
+### 2026-05-24 — Tauri UI/UX viewport utilization audit
+
+Surfaced via `/roadmap-refresh` deliberate + ministr + serpapi research cycle. Topic: "lots of pages like Settings don't make use of the full viewport."
+
+- **Layout audit results.** 3 of 6 surfaces waste viewport: `SettingsSurface` (`max-w-3xl mx-auto` = 768px cap), `ServerSettings` (`max-w-2xl mx-auto` = 672px cap), `CloudPanel` (`max-w-2xl` = 672px cap). 3 surfaces use space well: `ProjectsSurface` (master-detail flex), `SessionsSurface` (responsive grid `grid-cols-1 md:grid-cols-2 xl:grid-cols-3`), `AskSurface` (container queries `@container/page` with sidebar at 1180px+). Root cause: inconsistent layout language, not a deliberate constraint.
+- **Container queries confirmed as 2025/2026 standard.** Tailwind v4 ships native `@container` (Sitepoint, Feb 2026). Josh Comeau's "Container Queries Unleashed" (Jan 2025) demonstrates the "component-level responsive" pattern. Atomic Object (Dec 2025) specifically addresses the panel-based desktop app use case. AskSurface already proves the pattern in this codebase.
+- **Settings page UX research.** UXPlanet (Dec 2024): optimal sidebar width 240-300px expanded, 48-64px collapsed. Multi-level sidebar best practice: "limit navigation level to one" (UX Movement). Shadcn/ui SaaS sidebar patterns (Medium, Mar 2026): persistent category sidebar at wide viewports, collapsing to stacked at narrow.
+- **Tauri UI templates using shadcn/ui.** shadcn.io hosts a "Tauri UI" free template (React + shadcn/ui + Tailwind) — validates the tech stack choice. The project already uses this exact stack.
+- **Action taken.** Added F13 track (4 chunks: layout foundation → Settings redesign → Cloud card layout → Explore + cross-surface density pass). Re-prioritization candidate surfaced in the NOTE for user review.
 
 ### 2026-05-24 — MCP 2026-07-28 RC + ecosystem refresh
 
