@@ -1,4 +1,4 @@
-# ministr-app — Design contract ("Cockpit")
+# ministr-app — Design contract (v2)
 
 This is the **single source of truth** for UI consistency. Every component
 must obey it; `pnpm design:lint` enforces the hard rules in CI.
