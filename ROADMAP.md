@@ -1223,9 +1223,9 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 
 - [x] **F9.4 Font swap to Geist** *(2026-05-24, complete — folded into F9.3)* — add `@fontsource/geist` (or `next/font`-style loading) to `ministr-app/`. Update `app.css` body font-family from system sans to Geist. Update JetBrains Mono as the code font if not already. Acceptance: the app text renders in Geist; monospace renders in JetBrains Mono.
 
-- [ ] **F9.5 Surface component audit** — sweep the 13 surface components (`CloudPanel`, `ProjectsSurface`, `SessionsSurface`, `SettingsSurface`, etc.) and confirm they look right with the new tokens. Fix any hardcoded colors, violet-specific styles, or `fd-*` references. This is the visual QA pass — use Playwright MCP to screenshot each surface.
+- [x] **F9.5 Surface component audit** *(2026-05-24, complete)* — sweep the 13 surface components (`CloudPanel`, `ProjectsSurface`, `SessionsSurface`, `SettingsSurface`, etc.) and confirm they look right with the new tokens. Fix any hardcoded colors, violet-specific styles, or `fd-*` references. This is the visual QA pass — use Playwright MCP to screenshot each surface.
 
-- [ ] **F9.6 UI primitives audit** — verify all 28 primitives (`Button`, `Card`, `Badge`, `StatusDot`, `BudgetRing`, `Sparkline`, etc.) render correctly with amber instead of violet. Fix any that use hardcoded hex values instead of CSS variables. Update `DESIGN.md` to reflect the v2 design language.
+- [x] **F9.6 UI primitives audit** *(2026-05-24, complete — zero hardcoded hex values found; all 28 primitives already read from CSS variables)* — verify all 28 primitives (`Button`, `Card`, `Badge`, `StatusDot`, `BudgetRing`, `Sparkline`, etc.) render correctly with amber instead of violet. Fix any that use hardcoded hex values instead of CSS variables. Update `DESIGN.md` to reflect the v2 design language.
 
 - **Validation:** desktop app renders with the same warm dark + amber design as `ministr.ai`. No violet remaining except in git history.
 
