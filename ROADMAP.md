@@ -4,9 +4,9 @@
 
 <!-- Sections are appended as drafting steps complete. -->
 
-## Shipped this conversation (2026-05-22 / 2026-05-23)
+## Shipped this conversation (2026-05-22 / 2026-05-24)
 
-Sustained `/roadmap` iteration ran 10 chunks back-to-back through the F5 track. Harness moved 181 → 215 PASS (+34). Snapshot of what landed:
+Sustained `/roadmap` iteration ran 10 chunks back-to-back through the F5 track, then F8 (web restructure), F9 (app redesign), F10 (nav overhaul), and F11 (web auth). Harness moved 181 → 231 PASS (+50). Snapshot of what landed:
 
 - **F5.5-a-priority** (181→184) — customer-enqueue stamps tenant priority on `indexer_jobs` (Pro=1, Team=2, Enterprise=**4** bumped from 3 to match roadmap wording).
 - **F5.5-a-plan-lookup** (184→186) — `PlanResolver` trait + `PostgresPlanResolver` wire OAuth tenants to `users.plan_id` (closes the `Tenant::local()`-defaults-to-Pro gap that made the Enterprise=4 lane unreachable through OAuth).
@@ -22,7 +22,7 @@ Sustained `/roadmap` iteration ran 10 chunks back-to-back through the F5 track. 
 
 **Full F5.5-b SLA backend track is now complete end-to-end**: skeleton (uptime) → latency (p95) → persist-write (snapshot flush) → persist-read (window 30d max) → persist-retention (CLI prune) → page-skeleton (customer-visible /status).
 
-**Remaining unblocked code work is thinning**: F5.4-e-ui (admin webapp, requires architecture choice on key storage), F5.5-b-page-dashboard (full external status.ministr.ai), F5.4-e-revoke-mid-flight-graceful (axum graceful shutdown + 503 mode instead of process::exit; current implementation is k8s-friendly but brutal on in-flight requests). Larger chunks gated on Azure $$ opt-in: F5.5-c-dedicated-aca, F5.6 CMK BYOK. Blocked: F5.1 SAML (samael), F4.4 Atlas mirror (depends F4.2). *(F3.1b-ii-b landed 2026-05-23 — ResendMailSender + email-match enforcement on consume_invite. F5.4-e-revoke-mid-flight landed 2026-05-23, harness 229 → 231 — running serve self-detects revocation and exits within one refresh tick; F5.4-e-revoke-api-refresh landed 2026-05-23, harness 227 → 229; F5.4-e-revoke-api-fetch landed 2026-05-23, harness 224 → 227; F5.4-e-revoke-api-serve landed 2026-05-23, harness 220 → 224; F5.4-e-audit-db landed 2026-05-23, harness 215 → 220.)*
+**Remaining unblocked code work is thinning**: F5.4-e-ui (admin webapp, requires architecture choice on key storage), F5.5-b-page-dashboard (full external status.ministr.ai). Larger chunks gated on Azure $$ opt-in: F5.5-c-dedicated-aca, F5.6 CMK BYOK. Blocked: F5.1 SAML (samael — superseded by F5.2 OIDC), F4.4 Atlas mirror (depends F4.2), F7 (rmcp stateless — rmcp still at May 13 2026 release, no update). *(F3.1b-ii-b landed 2026-05-23 — ResendMailSender + email-match enforcement on consume_invite. F5.4-e-revoke-mid-flight landed 2026-05-23, harness 229 → 231. F10.1–F10.4 landed 2026-05-23 — full nav overhaul: 6-surface rail (Ask/Projects/Sessions/Cloud/Explore/Settings), Settings flattened to single page. F11.1–F11.4 landed 2026-05-23/24 — web auth infra, auth-gated bridge viz, org usage dashboard, GitHub OAuth web flow.)*
 
 
 ## 1. Positioning + moat thesis
@@ -350,7 +350,7 @@ A stranger lands on `ministr.ai/pricing`, clicks "Start Pro", completes Stripe C
     - [x] `CloudPanel.tsx` gains an `OrgUsageSection` rendered between `WebhooksSection` and the disconnect footer. Org-picker dropdown (reuses the F3.5b-ii pattern), refresh loop, two display components: `UsageTotalsRow` (org-wide totals header with member count) + `UsageMembersTable` (per-member rows showing query.served / index.minutes / atlas.queries).
     - [x] Client-side aggregation in `useMemo`: walks the raw per-day-per-kind rollups + today_partial into `Map<user_id, MemberTotals>` with separate rollup/partial maps per kind. Keeps the F3.3a backend response shape stable so F3.3c (cost projection + CSV) can reuse without a backend redesign.
     - [x] `formatUsageCell` renders `1,234` or `1,234 (+56 today)` depending on whether there's a same-day partial. Uses `Number.toLocaleString()` for thousands separators.
-    - [x] **Web `/orgs/{slug}/usage` deferred** — `docs-next/` lacks authenticated-page infrastructure today; the Tauri surface is the higher-value half (org admins live in the desktop app). Web lands when docs-next gets auth.
+    - [x] **Web `/orgs/{slug}/usage` deferred** — `docs-next/` lacks authenticated-page infrastructure today; the Tauri surface is the higher-value half (org admins live in the desktop app). *(Superseded by F11.3 — web org usage dashboard shipped 2026-05-23 at `/orgs/usage/?org=X`.)*
     - **Validation:** cargo check + clippy `--pedantic -D warnings` clean on ministr-app; `tsc --noEmit` + `vite build` clean. Live: owner picks org → table renders per-seat totals over the last 30 days with today's partial inline. Deferred to next deploy.
   - [x] **F3.3c Cost projection + CSV** *(2026-05-21)*
     - [x] Backend `GET /api/v1/orgs/{id}/usage.csv` route mounted alongside the F3.3a JSON route in `org_usage_routes`. Reuses `fetch_org_usage` + the same owner/admin authz inline, renders RFC-4180 CSV with header `member,user_id,day,kind,total`. Today's partial rows render with `day=today (partial)` so the spreadsheet preserves the rolled-up vs. live distinction. Response carries `Content-Disposition: attachment; filename=org-<sanitised>-usage-<N>d.csv` so receivers that follow the header get a sensible default name.
@@ -1235,8 +1235,8 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 >
 > **Proposed restructuring:** expand the nav rail from 4 → 6 surfaces. Cloud and Explore become first-class destinations. Linked Projects folds into Projects. Settings shrinks to actual preferences.
 >
-> Current: `Ask | Projects | Sessions | Settings(7 tabs)`
-> Proposed: `Ask | Projects | Sessions | Cloud | Explore | Settings(3 tabs)`
+> Before: `Ask | Projects | Sessions | Settings(7 tabs)`
+> After (shipped 2026-05-23): `Ask | Projects | Sessions | Cloud | Explore | Settings(single page, 3 sections)`
 
 - [x] **F10.1 Promote Cloud to top-level surface** *(2026-05-23, complete)* — moved CloudPanel from `Settings → Cloud` tab to its own nav-rail destination. `SurfaceId = "cloud"` added to `Sidebar.tsx`; lucide `Cloud` icon; keyboard chord `g c`; `ShortcutAction = "nav:cloud"` in `shortcuts.ts`; `SurfaceBody` branch in `App.tsx`; "Go to Cloud" entry in `CommandPalette.tsx`; `DefaultTab` extended in `usePreferences.ts`. SettingsSurface dropped from 7 tabs to 6 (cloud tab + CloudPanel import removed). No content changes — just routing + nav entry.
   - **Validation:** `tsc --noEmit` + `vite build` clean; nav rail shows 5 icons (Ask / Projects / Sessions / Cloud / Settings); Cloud opens directly without going through Settings; `g c` chord navigates; command palette "Go to Cloud" entry works.
