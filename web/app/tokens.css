@@ -1,0 +1,26 @@
+/*
+ * ministr v2 design tokens.
+ *
+ * Warm dark palette with amber accents. Geist for prose,
+ * JetBrains Mono for code. Consumed by the marketing pages
+ * (landing, pricing, stewardship, status) and inherited by
+ * fumadocs docs pages via the root layout.
+ */
+
+:root {
+  --bg: #16130E;
+  --bg-2: #1E1B15;
+  --bg-3: #28241C;
+  --ink: #EDEAE4;
+  --ink-2: #C0BCB4;
+  --muted: #7A766F;
+  --rule: #2A2620;
+  --rule-2: #38332B;
+  --amber: #F59E0B;
+  --amber-2: #FBB833;
+}
+
+::selection {
+  background: var(--amber);
+  color: var(--bg);
+}
