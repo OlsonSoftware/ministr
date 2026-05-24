@@ -1208,21 +1208,26 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 
 - **Validation:** `ministr.ai` renders the v2 homepage design; `/docs` still works with fumadocs nav; `/pricing`, `/status`, `/stewardship` render with the v2 dark theme; operator docs are accessible at `/docs/operator/*`; Lighthouse ≥ 95 on the landing page.
 
-### F9 — Brand thread: Tauri app ↔ web identity *(discovered 2026-05-23 via /roadmap-refresh)*
+### F9 — Tauri app v2 redesign *(revised 2026-05-24 — full adoption of the v2 design system, not just a brand thread)*
 
-> **Context.** The web v2 design system (warm dark `#16130E`, amber `#F59E0B`, Geist) and the Tauri "Cockpit" design system (cool dark `#08080b`, violet `#9d7bff`, system sans) are **intentionally different** — Cockpit is a data-dense observability dashboard for power users; v2 web is editorial marketing for first-time visitors. Full convergence would damage the Cockpit's UX. But zero brand continuity (amber website → purple desktop app) confuses users who download from `ministr.ai` and land in a differently-branded app.
+> **Context.** The user wants the desktop app to **match** the web v2 design — same warm dark background (`#16130E`), amber accent (`#F59E0B`), Geist + JetBrains Mono fonts. The old "Cockpit" violet design system is being replaced, not threaded alongside. This is a significant overhaul: 109 files, 28 UI primitives, 13 surface components, 21K lines of TSX, 360-line `app.css`.
 >
-> The fix: thread the **brand identity** (amber-gradient logo SVG, "ministr." wordmark with amber dot, amber as a secondary accent color) through the desktop app without overriding Cockpit's primary violet accent.
+> Scope: `app.css` token swap (violet → amber, cool greys → warm greys), font swap to Geist, and surface-by-surface component updates. UI primitives (Button, Card, Badge, etc.) change color automatically via token swap — they already read from CSS variables.
 
-- [x] **F9.1 Amber brand thread in Tauri app** *(2026-05-24, complete)*
-  - [x] `--color-brand: #F59E0B` + `--color-brand-hover: #FBB833` in both light and dark themes in `app.css`. Tailwind v4 auto-maps to `text-brand` / `bg-brand` utilities.
-  - [x] Onboarding screen: amber-gradient logo SVG (same as web v2 homepage) + wordmark dot rendered in `var(--color-brand)` instead of `text-text-dim`.
-  - [x] Violet `--color-accent` unchanged for interactive elements (buttons, focus rings, glow).
-  - **Validation:** `tsc --noEmit` clean.
+- [x] **F9.1 Amber brand thread** *(2026-05-24, complete — superseded by F9.3+ below but the `--color-brand` token and logo SVG changes are preserved)*
 
 - [x] **F9.2 Shared brand tokens** *(2026-05-24, complete)*
-  - [x] `brand/` directory at repo root with `logo.svg` (canonical amber-gradient square), `tokens.json` (amber hex + gradient stops + wordmark config), and `README.md` (rules for cross-surface brand consistency).
-  - [x] Both `web/` and `ministr-app/` inline the same logo SVG and amber hex; `brand/` is the reference they should be checked against to prevent drift.
+  - [x] `brand/` directory at repo root with `logo.svg`, `tokens.json`, `README.md`.
+
+- [ ] **F9.3 app.css token swap — violet → amber, cool → warm** — replace all violet accent values (`#6b3aff` light / `#9d7bff` dark) with amber (`#F59E0B` / `#FBB833`). Replace cool dark backgrounds (`#08080b`, `#111116`, `#16161c`) with warm dark (`#16130E`, `#1E1B15`, `#28241C`). Replace cool greys (`#2a2a33`, `#7c7c8a`) with warm greys (`#2A2620`, `#7A766F`). Replace cool text (`#f4f4f7`) with warm cream (`#EDEAE4`). This single file change propagates to every component that reads from CSS variables — the 28 UI primitives auto-update. Acceptance: `tsc --noEmit` + `vite build` clean; the app renders with warm dark bg and amber accents.
+
+- [ ] **F9.4 Font swap to Geist** — add `@fontsource/geist` (or `next/font`-style loading) to `ministr-app/`. Update `app.css` body font-family from system sans to Geist. Update JetBrains Mono as the code font if not already. Acceptance: the app text renders in Geist; monospace renders in JetBrains Mono.
+
+- [ ] **F9.5 Surface component audit** — sweep the 13 surface components (`CloudPanel`, `ProjectsSurface`, `SessionsSurface`, `SettingsSurface`, etc.) and confirm they look right with the new tokens. Fix any hardcoded colors, violet-specific styles, or `fd-*` references. This is the visual QA pass — use Playwright MCP to screenshot each surface.
+
+- [ ] **F9.6 UI primitives audit** — verify all 28 primitives (`Button`, `Card`, `Badge`, `StatusDot`, `BudgetRing`, `Sparkline`, etc.) render correctly with amber instead of violet. Fix any that use hardcoded hex values instead of CSS variables. Update `DESIGN.md` to reflect the v2 design language.
+
+- **Validation:** desktop app renders with the same warm dark + amber design as `ministr.ai`. No violet remaining except in git history.
 
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
