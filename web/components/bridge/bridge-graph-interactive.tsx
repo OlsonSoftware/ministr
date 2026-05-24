@@ -12,7 +12,7 @@
 // part of the marketing /pricing page's Lighthouse ≥ 95 contract.
 // This component adds DOM-only react-flow surface (`"use client"`),
 // so it lives separately and is only mounted on Team-tier pages
-// (demo for now, /orgs/.../bridge once F3.6-b-iii lands docs-next
+// (demo for now, /orgs/.../bridge once F3.6-b-iii lands web
 // auth).
 //
 // # Layout

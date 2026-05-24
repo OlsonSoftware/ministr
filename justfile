@@ -93,28 +93,28 @@ test-backend-equiv:
     cargo test --test backend_equivalence -p ministr-core --features candle --release -- --ignored --nocapture
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Documentation site (Fumadocs, Next.js) — docs-next/
+# Documentation site (Fumadocs, Next.js) — web/
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Install node deps for the docs site
 docs-deps:
-    cd docs-next && npm install
+    cd web && npm install
 
-# Build the docs site as a static export (output at docs-next/out/)
+# Build the docs site as a static export (output at web/out/)
 docs-build:
-    cd docs-next && npm run build
+    cd web && npm run build
 
 # Run the Next.js dev server with hot reload (http://localhost:3000)
 docs-dev:
-    cd docs-next && npm run dev
+    cd web && npm run dev
 
 # Serve the pre-built static export (http://localhost:3000)
 docs-serve:
-    cd docs-next && npm run start
+    cd web && npm run start
 
 # TypeScript + MDX + Next.js type-check (no build)
 docs-typecheck:
-    cd docs-next && npm run types:check
+    cd web && npm run types:check
 
 # Build Docker image
 docker-build:
@@ -797,7 +797,7 @@ validate: fmt-check lint test design-lint blackbox-lint
 # Release pre-flight gates — run before merging the release-plz PR
 release-preflight: validate deny eval-gate
     cargo audit
-    cd docs-next && npm run types:check && npm run build
+    cd web && npm run types:check && npm run build
 
 # Releases are automated by release-plz (see RELEASE.md). Versions +
 # CHANGELOG are bumped on a bot "release" PR from Conventional Commits;

@@ -44,6 +44,6 @@ axum.workspace = true
 # apply to atlas blobs as to user-owned corpora.
 ministr-core.workspace = true
 # Manifest is the wire contract between this crate and the public
-# `ministr.ai/atlas/manifest.json` mirror in docs-next; sharing the
+# `ministr.ai/atlas/manifest.json` mirror in web; sharing the
 # Plan type keeps the access check in cloud handlers consistent.
 ministr-mcp.workspace = true
