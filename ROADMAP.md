@@ -1220,7 +1220,9 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
   - [x] Violet `--color-accent` unchanged for interactive elements (buttons, focus rings, glow).
   - **Validation:** `tsc --noEmit` clean.
 
-- [ ] **F9.2 Shared brand tokens** — extract the logo SVG, wordmark font config, and brand-amber color into a shared location both `web/` and `ministr-app/` consume. Prevents the two surfaces from drifting on the brand identity while keeping their design systems independent. Could be a `brand/` directory at the repo root or an npm workspace package.
+- [x] **F9.2 Shared brand tokens** *(2026-05-24, complete)*
+  - [x] `brand/` directory at repo root with `logo.svg` (canonical amber-gradient square), `tokens.json` (amber hex + gradient stops + wordmark config), and `README.md` (rules for cross-surface brand consistency).
+  - [x] Both `web/` and `ministr-app/` inline the same logo SVG and amber hex; `brand/` is the reference they should be checked against to prevent drift.
 
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
