@@ -25,6 +25,10 @@ pub(super) struct RegistrationRequest {
     client_name: Option<String>,
     scope: Option<String>,
     token_endpoint_auth_method: Option<String>,
+    // SEP-837 — clients declare their type during DCR. Accepted but
+    // not acted upon (we treat all clients identically).
+    #[allow(dead_code)]
+    application_type: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -219,6 +223,18 @@ pub(super) async fn authorize(
     if let Some(state) = query.state {
         let _ = write!(redirect, "&state={state}");
     }
+    // SEP-2468 / RFC 9207 — include the issuer so clients can validate
+    // the authorization response came from the expected server.
+    let issuer = &store.config().issuer;
+    let mut encoded_issuer = String::with_capacity(issuer.len());
+    for b in issuer.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~' | b':' | b'/') {
+            encoded_issuer.push(b as char);
+        } else {
+            let _ = write!(encoded_issuer, "%{b:02X}");
+        }
+    }
+    let _ = write!(redirect, "&iss={encoded_issuer}");
 
     (StatusCode::FOUND, [(header::LOCATION, redirect)]).into_response()
 }
