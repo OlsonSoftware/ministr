@@ -1276,6 +1276,28 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 
 - **Validation:** unauthenticated visitor to `/orgs/acme/usage` sees the AuthGate login prompt; authenticated user sees the usage dashboard.
 
+### F12 — Documentation accuracy audit *(discovered 2026-05-24 via /roadmap-refresh)*
+
+> **Context.** The project ships documentation across 5 surfaces: `web/content/docs/` (20+ MDX pages for tools, concepts, CLI, getting-started, architecture, config, operator guides), `docs/operator/` (4 runbooks), root markdown (README, CONTRIBUTING, DEMO, RELEASE, SECURITY, STEWARDSHIP), and inline Rust doc-comments. Many pages were written during early F-phases and reference old paths (`docs-next/` → `web/`), old feature names, deprecated env vars, or describe behavior that has since changed (F9 redesign, F10 nav overhaul, F11 web auth). A systematic piece-by-piece audit ensures each page matches the live codebase.
+>
+> **Methodology.** Each chunk: read the documentation page(s), read the corresponding Rust/TS source via ministr, identify discrepancies, fix them. One chunk per invocation so fixes are atomic and verifiable.
+
+- [ ] **F12.1 Tool reference pages** — audit all 20 `web/content/docs/tools/*.mdx` pages (survey, symbols, definition, references, read, extract, toc, bridge, related, solid, impact, usage, compress, dead, dropped, fetch, clone, refresh) against the current tool implementations in `ministr-mcp/src/server/mod.rs`. Verify: parameter names + types, return shapes, described behavior, example outputs. Fix any stale descriptions.
+
+- [ ] **F12.2 Concept pages** — audit `web/content/docs/concepts/*.mdx` (bridges, references, search, symbols) against the current `ministr-core` implementation. Verify: described algorithms, data structures, and flows match the actual code paths. Fix any conceptual drift.
+
+- [ ] **F12.3 Getting-started + installation + configuration** — audit `web/content/docs/getting-started.mdx`, `installation.mdx`, `configuration.mdx`, `client-setup.mdx` against the current CLI (`ministr init`, `ministr serve`), config format (`.ministr.toml`), and client-setup procedures. Verify: commands produce the described output, paths exist, env vars are current.
+
+- [ ] **F12.4 Architecture page** — audit `web/content/docs/architecture.mdx` against the current workspace layout (8 crates + web/ + deploy/). Verify: crate descriptions, dependency diagram, and feature-flag documentation match `Cargo.toml` and actual module structure.
+
+- [ ] **F12.5 Operator guides** — audit `docs/operator/` (license-mint.md, oidc-real-idp.md, saml-via-oidc-bridge.md, mcp-2026-07-28-migration.md) + their `web/content/docs/operator/*.mdx` mirrors against the current Rust implementations. Verify: env var names, SQL schemas, CLI flags, and step-by-step procedures match the live code.
+
+- [ ] **F12.6 Root markdown** — audit `README.md`, `CONTRIBUTING.md`, `DEMO.md`, `RELEASE.md`, `SECURITY.md`, `STEWARDSHIP.md` against the current project state. Verify: workspace shape, install instructions, demo procedures, CI commands, and security contact info are current.
+
+- [ ] **F12.7 CLI reference** — audit `web/content/docs/cli/*.mdx` (init, and any other CLI pages) against the current `ministr-cli/src/main.rs` clap definitions. Verify: every subcommand, flag, and default value matches the live `--help` output. Add documentation for any undocumented subcommands (e.g. `ministr cloud mint-license`, `ministr audit prune`, `ministr api-keys flag-stale`, `ministr cloud sla-prune-snapshots`).
+
+- **Validation:** each chunk's acceptance is `npm run types:check` + `npm run build` clean on web/ (MDX pages must parse), plus a manual read confirming no obviously stale claims remain in the audited pages.
+
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
 > Cross-cutting: builds the local equivalent of `azure-smoke` so multi-tenant cloud correctness, ACL semantics, API-key authn parity, session-tenant-scoping, webhook fan-out, and billing webhooks are all exercisable on a laptop without an Azure deploy. Today's `scripts/demo-local.sh` covers ONE tenant's happy path; the F-items above ship with Postgres-integration tests gated on `MINISTR_TEST_PG_URL` and unit coverage, but no e2e proof that ties them together end-to-end. F-Test fills that gap. Each chunk extends the harness in place — there's only one command to remember (`just e2e-cloud-local`) regardless of which scenario it ends up covering. Mirrors the `azure-smoke` extension policy from `justfile`.
