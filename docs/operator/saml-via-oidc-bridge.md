@@ -10,12 +10,9 @@ IdP's assertions and exposes them over OIDC to ministr.
 
 ministr ships SAML SP metadata (`GET /orgs/{id}/saml/metadata.xml`)
 and an SP-initiated AuthnRequest (`GET /orgs/{id}/saml/login`), but
-the assertion-consumer endpoint (ACS) requires XML-DSig signature
-verification via `samael`'s libxmlsec1 FFI — and that FFI is
-structurally broken on both macOS (runtime SIGSEGV) and Linux
-(compile-time type mismatch). The library is pre-1.0 with a single
-maintainer and a 9-month release cadence. Rather than own custom
-XML-DSig crypto, we route SAML customers through an OIDC bridge.
+the assertion-consumer endpoint (ACS) is not yet available. Rather
+than block SAML-mandated customers, we route through an OIDC bridge
+so you can sign in today.
 
 ## Architecture
 
