@@ -1162,6 +1162,24 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 - [ ] **F7.6 rmcp version bump** — update to the rmcp release that targets 2026-07-28. This is the integration chunk; everything above informs it.
 - **Validation:** `just e2e-cloud-local` passes with the updated rmcp; multi-tenant MCP tool calls work without `initialize`; existing Tauri + CLI clients continue to function.
 
+### F8 — Web presence restructuring + homepage v2 *(discovered 2026-05-23 via /roadmap-refresh)*
+
+> **Context.** `docs-next/` currently serves both the marketing site (landing, /pricing, /stewardship, /status, /install, /demo/bridge) AND the developer docs (/docs/*) from one fumadocs-powered Next.js 16 app. The user designed a new homepage (v2) with a completely different design system: dark warm background (`#16130E`), amber accents (`#F59E0B`), Geist + JetBrains Mono fonts, minimal sections, no fumadocs chrome. The current folder name `docs-next/` is confusing. Operator docs (`docs/operator/`) aren't served by any web framework. This track reorganizes the web presence and implements the v2 design.
+>
+> Reference design: `/Users/alrik/Downloads/ministr-homepage-v2.html` (single-file HTML with full CSS).
+
+- [ ] **F8.1 Rename `docs-next/` → `web/`** — rename the directory, update all `import` paths, CI references, `justfile` recipes, `.claude` rules, and `ROADMAP.md` references. Purely mechanical; no design changes. Acceptance: `npm run build` in the renamed directory succeeds; `just e2e-cloud-local` still passes.
+
+- [ ] **F8.2 Extract design tokens** — pull the v2 color palette, typography, and spacing into a shared CSS variables file (`web/app/tokens.css`) that both marketing pages and fumadocs docs can reference. Map the v2 design system: `--bg: #16130E`, `--ink: #EDEAE4`, `--amber: #F59E0B`, Geist for prose, JetBrains Mono for code. The fumadocs docs pages can keep their current layout while inheriting the dark theme.
+
+- [ ] **F8.3 Homepage v2 implementation** — replace the current `(home)/page.tsx` (357-line fumadocs-styled manuscript layout) with the v2 design from the reference HTML. Four sections: hero (wordmark + "give your AI agent eyes for code" + install CTA), features grid (structural / semantic / cross-language / instant), "why ministr" stat callout, install steps. Static export friendly (zero client JS on the page, matching v2's approach). Reuse existing `INSTALL_COMMANDS` from `lib/install.ts`.
+
+- [ ] **F8.4 Integrate operator docs into fumadocs** — move `docs/operator/*.md` (license-mint, oidc-real-idp, saml-via-oidc-bridge, mcp-migration) into `web/content/docs/operator/` so they're served at `/docs/operator/*` with the same search and nav as the developer docs. Keep the markdown files as-is; fumadocs handles rendering.
+
+- [ ] **F8.5 Folder cleanup** — consolidate top-level folders: move `installer/` into `deploy/installer/` (macOS .pkg resources belong with other deployment configs); assess whether `windsurf/`, `workers/`, `examples/` need cleanup or can stay. Document the resulting folder structure in `CONTRIBUTING.md`.
+
+- **Validation:** `ministr.ai` renders the v2 homepage design; `/docs` still works with fumadocs nav; `/pricing`, `/status`, `/stewardship` render with the new dark theme; operator docs are accessible at `/docs/operator/*`; Lighthouse ≥ 95 on the landing page.
+
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
 > Cross-cutting: builds the local equivalent of `azure-smoke` so multi-tenant cloud correctness, ACL semantics, API-key authn parity, session-tenant-scoping, webhook fan-out, and billing webhooks are all exercisable on a laptop without an Azure deploy. Today's `scripts/demo-local.sh` covers ONE tenant's happy path; the F-items above ship with Postgres-integration tests gated on `MINISTR_TEST_PG_URL` and unit coverage, but no e2e proof that ties them together end-to-end. F-Test fills that gap. Each chunk extends the harness in place — there's only one command to remember (`just e2e-cloud-local`) regardless of which scenario it ends up covering. Mirrors the `azure-smoke` extension policy from `justfile`.
