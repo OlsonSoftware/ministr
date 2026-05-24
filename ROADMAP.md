@@ -468,7 +468,7 @@ A stranger lands on `ministr.ai/pricing`, clicks "Start Pro", completes Stripe C
         - [x] Demo page wraps `<BridgeGraphLive />` in a `<Suspense fallback={...}>` — required by Next.js 16's static-export semantics for `useSearchParams`. The fallback renders `BridgeGraphInteractive` against the sample so the visible canvas never blanks while the wrapper mounts.
         - [x] Demo page gains an info section showing operators how to wire to a live corpus (local daemon + `MINISTR_CORS_ALLOWED_ORIGINS=https://ministr.ai`, OR cloud endpoint with `?token=`).
         - **Validation:** docs-next `npm run types:check` + `npm run build` clean; `/demo/bridge` still prerenders as Static (the live fetch happens entirely on the client at hydration). cargo workspace unaffected. Live: visit `/demo/bridge?api=http://localhost:3001&id=my-corpus` against a daemon with CORS opt-in → graph re-renders with live nodes/edges. Deferred to next deploy.
-    - [ ] **F3.6-b-iii Auth-gated `/orgs/{slug}/corpora/{id}/bridge`** — final Team-tier route, blocked on docs-next authenticated routes (same gap as F3.3b's web mirror).
+    - [ ] **F3.6-b-iii Auth-gated `/orgs/{slug}/corpora/{id}/bridge`** — final Team-tier route, blocked on docs-next authenticated routes (same gap as F3.3b's web mirror). *(Refresh 2026-05-23: unblocked by F11.1 — Next.js auth middleware. Superseded by F11.2 which implements this directly.)*
   - [x] **F3.6-c Filters + click-to-source side panel** *(complete)* — split into c-i (filters) + c-ii (side panel). All landed.
     - [x] **F3.6-c-i Language / kind / file filters** *(2026-05-21)*
       - [x] Widened `LiveBridgeNode` in `bridge-graph.tsx` with optional `file?: string` so the file substring filter has something to match against. F3.6-a's wire shape carries `file` on every node; the F2.5 marketing sample omits it (both paths flow through the same component).
@@ -1155,7 +1155,7 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
   - [x] 6 dependency areas mapped: (1) tenant capture via initialize → 13 tool-handler call sites (HIGH); (2) client name hint (LOW); (3) extension negotiation — negotiated but never read at runtime (MEDIUM); (4) fork-per-connection (MEDIUM); (5) session binding — recommended X-Ministr-Session custom header (MEDIUM); (6) OAuth hardening (LOW).
   - [x] **Blocking question identified:** does rmcp expose `RequestContext.extensions` (with `Parts`) on every tool call in stateless mode? If yes, F7.2 is ~50 lines. If no, middleware workaround needed. Check rmcp's main branch before starting F7.2.
   - [x] Recommended execution order: F7.2 → F7.3 → F7.6 → F7.4 → F7.5.
-- [ ] **F7.2 Stateless tenant resolution** *(blocked on rmcp — rmcp 1.5.0 still implements the stateful protocol; no release targets 2026-07-28 RC yet as of 2026-05-23)* — replace the `initialize`-captured `tenant_id_hint` with a per-request resolution path that works without `initialize`. The OAuth bearer token already carries the tenant; the question is how rmcp exposes it in the stateless world.
+- [ ] **F7.2 Stateless tenant resolution** *(blocked on rmcp — latest crates.io release is May 13 2026, still implements the stateful protocol; no release targets 2026-07-28 RC yet as of 2026-05-23; refresh 2026-05-23 confirmed no movement)* — replace the `initialize`-captured `tenant_id_hint` with a per-request resolution path that works without `initialize`. The OAuth bearer token already carries the tenant; the question is how rmcp exposes it in the stateless world.
 - [ ] **F7.3 Session continuity without `Mcp-Session-Id`** — the spec removes the session header. ministr's session machinery (F6.1) uses it for session binding. Evaluate: client-provided session ID in tool params vs. server-side session inference from the bearer token.
 - [ ] **F7.4 Extensions framework adoption** — register ministr's capabilities as MCP extensions rather than the old `initialize`-negotiated features. Evaluate whether MCP Apps (server-initiated UI) is relevant for the bridge visualizer or session inspector.
 - [ ] **F7.5 OAuth hardening alignment** — the RC hardens the OAuth flow. Audit our existing OAuth 2.1 + DCR + PKCE implementation against the new spec requirements.
@@ -1251,6 +1251,22 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
   - **Validation:** `tsc --noEmit` + `vite build` clean; Settings renders as a single scrollable page with three sections; no tab bar.
 
 - **Validation:** nav rail shows 6 icons; Cloud opens directly without going through Settings; Explore gives direct access to Logs + Query playground; Settings is a clean preferences page; all keyboard chords work.
+
+### F11 — Web auth middleware *(discovered 2026-05-23 via /roadmap-refresh)*
+
+> **Context.** The `web/` Next.js app currently serves only public pages — no authenticated routes exist. This blocks F3.6-b-iii (auth-gated bridge visualizer), F3.3b's web usage mirror, and any future per-org web page. The blocker was always framed as "docs-next lacks auth infrastructure" but the fix is small: a Next.js `middleware.ts` that reads a ministr bearer token from a cookie, validates it server-side against the cloud's `/api/v1/billing/usage` (or a lightweight `/api/v1/me` endpoint), and gates org-specific routes. No external auth library needed — the cloud already issues bearer tokens via GitHub OAuth and OIDC; the web app just needs to consume them.
+>
+> **Research (2026-05-23):** Next.js 16 middleware-based auth is well-documented (Authgear Mar 2026, WorkOS Feb 2026 guide, LinkedIn Learning Feb 2026 course). The pattern: `middleware.ts` at the project root reads a cookie, validates the token, and either continues or redirects to a login page. Server components can read the validated token from headers/cookies. No client-side auth state needed for server-rendered pages.
+>
+> **Unblocks:** F3.6-b-iii (auth-gated `/orgs/{slug}/corpora/{id}/bridge`), F3.3b (web `/orgs/{slug}/usage`), future web-based org dashboards.
+
+- [ ] **F11.1 Next.js auth middleware + login flow** — add `web/middleware.ts` that reads a `ministr-token` cookie, validates it against the cloud, and gates `/orgs/*` routes. Login page at `/login` redirects to the cloud's GitHub OAuth flow (reusing the existing `GET /auth/github/start` endpoint) with a `redirect_uri` back to `/auth/callback` which sets the cookie. Logout clears the cookie.
+
+- [ ] **F11.2 Auth-gated bridge visualizer** *(unblocks F3.6-b-iii)* — move the F3.6-b-ii-b live-fetch bridge graph from the public `/demo/bridge?api=&id=&token=` shape to an authenticated `/orgs/{slug}/corpora/{id}/bridge` route. The middleware supplies the bearer; the page fetches the bridge graph API server-side. Team-tier gate via the cloud's quota/plan check.
+
+- [ ] **F11.3 Web org usage dashboard** *(unblocks F3.3b web mirror)* — authenticated `/orgs/{slug}/usage` page consuming the F3.3a `GET /api/v1/orgs/{id}/usage` endpoint. Server-rendered with the middleware-supplied bearer. Mirrors the Tauri `OrgUsageSection` but as a standalone web page.
+
+- **Validation:** unauthenticated visitor to `/orgs/acme/usage` gets redirected to `/login`; authenticated Team user sees the usage dashboard; bearer cookie is HttpOnly + Secure + SameSite=Lax.
 
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
