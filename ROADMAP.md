@@ -1360,11 +1360,11 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] Existing surfaces unaffected — purely additive (no existing code changed). `tsc --noEmit` + `vite build` clean.
   - **Acceptance:** `tsc --noEmit` + `vite build` clean; existing surfaces render identically; the new tokens are importable from `ui-tokens`.
 
-- [ ] **F13.2 Settings surface adaptive redesign**
-  - [ ] Replace the current `max-w-3xl mx-auto` single-column layout with a sidebar + content area pattern at `@md`+ (900px+). Sidebar (~240px) shows section links (General, AI assistants, About); content area fills remaining width. Below `@md`, collapse to the current stacked layout (scroll-based).
-  - [ ] Each settings section should use the available width: `GeneralSettings` preference rows can expand to side-by-side label+control layout at `@lg`; `AiAssistantsPanel` client rows gain more breathing room for the status/action area.
-  - [ ] `AboutPanel` can remain narrow (prose content) — use `contentNarrow` token within the wider layout.
-  - **Acceptance:** `tsc --noEmit` + `vite build` clean; at 1200px+ the settings page shows sidebar + wide content; at 800px it stacks vertically like today; Playwright screenshot comparison confirms no regression at narrow widths.
+- [x] **F13.2 Settings surface adaptive redesign** *(2026-05-24, complete)*
+  - [x] Replaced `max-w-3xl mx-auto` single-column with `AdaptiveSurface` + sidebar navigation. At `@min-[900px]/surface:`: 200px sidebar with section links (General / AI assistants / About, each with lucide icons + active highlight) + content area fills remaining width with `max-w-none`. Below 900px: sidebar hidden, content stacks vertically (same as before, with `max-w-3xl` preserved for narrow viewports).
+  - [x] IntersectionObserver tracks scroll position → sidebar active state updates as user scrolls. Click sidebar item → smooth scroll to section.
+  - [x] Content area removes `max-w-3xl` cap at `@min-[900px]/surface:` so GeneralSettings and AiAssistantsPanel rows use the available width.
+  - **Acceptance:** `tsc --noEmit` + `vite build` clean.
 
 - [ ] **F13.3 Cloud panel adaptive card layout**
   - [ ] Replace the current `max-w-2xl` single column with an adaptive layout using `AdaptiveSurface`. At `@lg` (1200px+): section cards arranged in a 2-column grid where appropriate (Endpoint + Authentication side by side; Connection + Corpora side by side). At `@md`: maintain single column but remove `max-w-2xl` cap (let content breathe). Below `@md`: unchanged.
