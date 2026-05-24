@@ -1208,6 +1208,16 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 
 - **Validation:** `ministr.ai` renders the v2 homepage design; `/docs` still works with fumadocs nav; `/pricing`, `/status`, `/stewardship` render with the v2 dark theme; operator docs are accessible at `/docs/operator/*`; Lighthouse ≥ 95 on the landing page.
 
+### F9 — Brand thread: Tauri app ↔ web identity *(discovered 2026-05-23 via /roadmap-refresh)*
+
+> **Context.** The web v2 design system (warm dark `#16130E`, amber `#F59E0B`, Geist) and the Tauri "Cockpit" design system (cool dark `#08080b`, violet `#9d7bff`, system sans) are **intentionally different** — Cockpit is a data-dense observability dashboard for power users; v2 web is editorial marketing for first-time visitors. Full convergence would damage the Cockpit's UX. But zero brand continuity (amber website → purple desktop app) confuses users who download from `ministr.ai` and land in a differently-branded app.
+>
+> The fix: thread the **brand identity** (amber-gradient logo SVG, "ministr." wordmark with amber dot, amber as a secondary accent color) through the desktop app without overriding Cockpit's primary violet accent.
+
+- [ ] **F9.1 Amber brand thread in Tauri app** — add the amber-gradient logo SVG to the Onboarding component (currently renders "ministr." in grey). Thread amber (`#F59E0B`) as a `--color-brand` CSS variable alongside the existing violet `--color-accent`. Use brand-amber for the logo, wordmark dot, and system tray icon; keep violet for interactive elements (buttons, focus rings, glow). Small, well-scoped.
+
+- [ ] **F9.2 Shared brand tokens** — extract the logo SVG, wordmark font config, and brand-amber color into a shared location both `web/` and `ministr-app/` consume. Prevents the two surfaces from drifting on the brand identity while keeping their design systems independent. Could be a `brand/` directory at the repo root or an npm workspace package.
+
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
 > Cross-cutting: builds the local equivalent of `azure-smoke` so multi-tenant cloud correctness, ACL semantics, API-key authn parity, session-tenant-scoping, webhook fan-out, and billing webhooks are all exercisable on a laptop without an Azure deploy. Today's `scripts/demo-local.sh` covers ONE tenant's happy path; the F-items above ship with Postgres-integration tests gated on `MINISTR_TEST_PG_URL` and unit coverage, but no e2e proof that ties them together end-to-end. F-Test fills that gap. Each chunk extends the harness in place — there's only one command to remember (`just e2e-cloud-local`) regardless of which scenario it ends up covering. Mirrors the `azure-smoke` extension policy from `justfile`.
