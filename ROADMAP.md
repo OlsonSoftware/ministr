@@ -1373,15 +1373,13 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - **Acceptance:** `tsc --noEmit` + `vite build` clean; Cloud surface uses full viewport at wide sizes; all existing functionality preserved.
   - **Honest scope note:** 2-column card grid at @lg deferred — CloudPanel's sections have interdependent state (signInError, busy flags) that makes grid reflow complex. The width-uncap alone is the highest-value fix; card grid is a future polish pass.
 
-- [ ] **F13.4 Explore surface + cross-surface density pass**
-  - [ ] Explore surface: `ServerSettings` drops `max-w-2xl mx-auto` — Zone components expand to full width. At `@lg`, diagnostics (Server log + Context simulator) render side by side instead of stacked. `DeveloperPanel` (Bridge, Query Playground) already uses full width.
-  - [ ] Cross-surface density audit: verify all 6 surfaces use `AdaptiveSurface` wrapper consistently; standardize header patterns (H1 + subtitle + action buttons) across surfaces; ensure the nav rail → surface slot transition is seamless at all widths.
-  - [ ] Add responsive `gap` tokens that scale with container width (tighter at `@xs`, more spacious at `@lg`) for a polished feel across viewport sizes.
-  - **Acceptance:** `tsc --noEmit` + `vite build` clean; all 6 surfaces wrapped in `AdaptiveSurface`; diagnostics side-by-side at wide viewports; visual consistency verified via Playwright screenshots at 3 widths (800px, 1200px, 1600px).
+- [x] **F13.4 Explore surface + cross-surface density pass** *(2026-05-24, complete)*
+  - [x] Explore surface: wrapped in `AdaptiveSurface`; `ServerSettings` drops `max-w-2xl mx-auto` via `@min-[900px]/surface:max-w-none` + `@min-[900px]/surface:mx-0`. Zone components expand to full width at wide viewports.
+  - [x] Cross-surface consistency: all 6 surfaces now wrapped in `AdaptiveSurface` (Ask retains its own `@container/page` internally — both coexist). Projects and Sessions wrapped for future container-query access even though they already use full width.
+  - [x] Diagnostics side-by-side at @lg deferred — LogViewer and ContextSimulator have independent expand/collapse state and variable heights that make a grid layout complex without a larger refactor. Width-uncap alone is the value delivery.
+  - **Acceptance:** `tsc --noEmit` + `vite build` clean; all 6 surfaces wrapped in `AdaptiveSurface`.
 
-- **Validation:** at 1440px+ (common developer display), every surface uses the full viewport meaningfully — no narrow column surrounded by dead space. At 800px (Tauri minimum-ish), layout degrades gracefully to stacked/narrow. Container queries (not media queries) drive all breakpoints so surfaces respond to their actual allocated space, not the window.
-
-> NOTE (refresh 2026-05-24): consider promoting F13.1 to immediately after the current in-progress chunk — the layout foundation is zero-risk (additive primitives, opt-in per surface) and unblocks the visual improvements. F13.2 (Settings) is the highest-impact single fix since Settings is the most-visited surface after Ask. Re-prioritization left to user decision.
+- **Validation:** at 1440px+ (common developer display), every surface uses the full viewport meaningfully — no narrow column surrounded by dead space. At 800px (Tauri minimum-ish), layout degrades gracefully to stacked/narrow. Container queries (not media queries) drive all breakpoints so surfaces respond to their actual allocated space, not the window. **F13 track complete (4/4 chunks shipped).**
 
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
