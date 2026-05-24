@@ -204,10 +204,22 @@ function StepSetup({ onContinue }: { onContinue: () => void }) {
       <p className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-accent mb-3">
         Step 1 of 4 · Setup
       </p>
-      <h1 className="text-display text-text">
-        Welcome to
-        <br />
-        <span className="text-text-dim">ministr.</span>
+      <h1 className="text-display text-text flex items-end gap-3">
+        <svg className="w-10 h-10 flex-shrink-0 mb-1" viewBox="0 0 926 926" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <defs>
+            <linearGradient id="ministrBrandGrad" x1="1098.5" y1="-174" x2="-173.5" y2="1092" gradientUnits="userSpaceOnUse">
+              <stop stopColor="#F8AC18"/>
+              <stop offset="1" stopColor="#FF9900"/>
+            </linearGradient>
+          </defs>
+          <path fillRule="evenodd" clipRule="evenodd" d="M926 926H0V0H926V926ZM241 241V685H685V241H241Z" fill="url(#ministrBrandGrad)"/>
+        </svg>
+        <span>
+          Welcome to
+          <br />
+          <span className="text-text">ministr</span>
+          <span style={{ color: 'var(--color-brand)' }}>.</span>
+        </span>
       </h1>
       <p className="font-sans text-base italic text-text-muted mt-4 max-w-xl leading-relaxed">
         The installer placed the app and wired the{" "}

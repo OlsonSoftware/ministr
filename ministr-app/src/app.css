@@ -28,6 +28,9 @@
   --color-text-muted: #4a4a52;
   --color-text-dim: #76767e;
 
+  --color-brand: #F59E0B;
+  --color-brand-hover: #FBB833;
+
   --color-accent: #6b3aff;
   --color-accent-hover: #5325f5;
   --color-accent-fg-on: #ffffff;
@@ -102,6 +105,9 @@
   --color-text: #f4f4f7;
   --color-text-muted: #b4b4c0;
   --color-text-dim: #7c7c8a;
+
+  --color-brand: #F59E0B;
+  --color-brand-hover: #FBB833;
 
   --color-accent: #9d7bff;
   --color-accent-hover: #b298ff;
