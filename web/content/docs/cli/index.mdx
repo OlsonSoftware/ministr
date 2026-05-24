@@ -23,6 +23,11 @@ If no subcommand is given, `ministr` runs `serve` with stdio transport — the d
 | `export` | Export the corpus index to a portable bundle |
 | `import` | Import a bundle into the local corpus store |
 | `hooks test` | Validate installed agent hooks |
+| `setup` | Add ministr to PATH (used by installers and first-run setup) |
+| `cloud` | Cloud operator commands (check, demo, license minting/revoking/rotating, SLA pruning) |
+| `atlas` | Atlas operator commands (reindex, manifest) |
+| `audit` | Audit log operator commands (prune, ensure-partitions, archive) |
+| `api-keys` | API key operator commands (flag-stale) |
 
 ## Global options
 
@@ -41,7 +46,6 @@ Starts the MCP server. Default transport is stdio — any MCP client can spawn `
 ministr serve                                              # stdio (default)
 ministr serve --transport http --host 0.0.0.0 --port 8080  # Streamable HTTP
 ministr serve --transport http --oauth                     # with OAuth 2.1
-ministr serve --proxy                                      # delegate to ministr daemon
 ```
 
 | Flag | Description |
@@ -49,11 +53,10 @@ ministr serve --proxy                                      # delegate to ministr
 | `-t, --transport <TRANSPORT>` | `stdio` (default) or `http` (Streamable HTTP) |
 | `--host <HOST>` | Bind host for HTTP transport (default: `127.0.0.1`) |
 | `-p, --port <PORT>` | HTTP port (default: `8080`) |
-| `--proxy` | Run as thin proxy to the ministr daemon over `~/.ministr/ministrd.sock` |
 | `--oauth` | Enable OAuth 2.1 authentication (HTTP transport only) |
 | `--oauth-issuer <URL>` | OAuth issuer URL (default: `http://<host>:<port>`) |
 
-The `--proxy` mode keeps the CLI lightweight by delegating heavy work to the daemon — ideal when running alongside the ministr desktop app.
+stdio mode always delegates to the ministr daemon (auto-spawned if not running), keeping the MCP server lightweight.
 
 ## `ministr index`
 
@@ -120,3 +123,44 @@ ministr hooks test
 On macOS, when the FastEmbed/ONNX path is selected, ministr always pins the CoreML execution provider to CPU+GPU compute units. Routing to the Apple Neural Engine is intentionally disabled because of a known ~12 GB/batch CoreML/ANE memory leak ([onnxruntime#14455](https://github.com/microsoft/onnxruntime/issues/14455)); there is no env-var knob to enable it.
 
 To override the data directory, set `data_dir` in `~/.ministr/config.toml` (see [Configuration](/docs/configuration)) or pass `-C, --config <PATH>` to point at an alternate config file.
+
+## Operator commands
+
+These commands are used by cloud operators and automated cron jobs. They require `MINISTR_PG_URL` to be set.
+
+### `ministr cloud`
+
+| Subcommand | Purpose |
+|---|---|
+| `check` | Probe every cloud integration (Postgres, Stripe, GitHub, blob) and print a tick/cross table |
+| `demo` | End-to-end runner against a deployed cloud — OAuth flow, clone, index, survey |
+| `watch` | Stream a corpus's indexing progress to the terminal |
+| `generate-license-keypair` | Generate an RSA signing keypair for license JWTs |
+| `mint-license` | Sign a license JWT for an Enterprise customer |
+| `list-licenses` | Print the issuance audit log |
+| `revoke-license` | Append a revocation record to the JSONL revocation list |
+| `rotate-license-keys` | Re-mint all in-flight licenses against a new keypair |
+| `sla-prune-snapshots` | Delete latency snapshots older than a threshold |
+
+See [License Key Management](/docs/operator/license-mint) for the full license lifecycle.
+
+### `ministr audit`
+
+| Subcommand | Purpose |
+|---|---|
+| `prune` | Drop audit events older than `--retention-days` (default 90) |
+| `ensure-partitions` | Extend quarterly partition surface forward |
+| `archive` | Archive a partition to gzipped JSONL and detach from the database |
+
+### `ministr api-keys`
+
+| Subcommand | Purpose |
+|---|---|
+| `flag-stale` | Flag API keys unused for `--threshold-days` (default 90) and emit audit events |
+
+### `ministr atlas`
+
+| Subcommand | Purpose |
+|---|---|
+| `reindex` | Re-index every Atlas seed repo |
+| `manifest` | Emit the public Atlas manifest as JSON on stdout |

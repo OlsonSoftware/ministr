@@ -1300,7 +1300,7 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 
 - [x] **F12.6 Root markdown** *(2026-05-24)* — audited 6 root files. Fixed: `STEWARDSHIP.md` tool count 19→20 + deduplicated tool list (ministr_extract was listed twice; added ministr_task + ministr_projects); `CONTRIBUTING.md` bridge linker expanded ~7→13 kinds; `SECURITY.md` supported version 0.1.x→0.6.x. README.md, DEMO.md, RELEASE.md all accurate, unchanged.
 
-- [ ] **F12.7 CLI reference** — audit `web/content/docs/cli/*.mdx` (init, and any other CLI pages) against the current `ministr-cli/src/main.rs` clap definitions. Verify: every subcommand, flag, and default value matches the live `--help` output. Add documentation for any undocumented subcommands (e.g. `ministr cloud mint-license`, `ministr audit prune`, `ministr api-keys flag-stale`, `ministr cloud sla-prune-snapshots`).
+- [x] **F12.7 CLI reference** *(2026-05-24)* — audited 2 CLI doc pages against clap definitions. Fixed: removed stale `--proxy` flag docs (deprecated no-op, hidden); added 5 missing commands to command table (setup, cloud, atlas, audit, api-keys); added operator commands section with subcommand tables (cloud 9, audit 3, api-keys 1, atlas 2). init.mdx verified accurate, unchanged. `npm run types:check` + `npm run build` clean. **F12 documentation accuracy audit track complete.**
 
 - **Validation:** each chunk's acceptance is `npm run types:check` + `npm run build` clean on web/ (MDX pages must parse), plus a manual read confirming no obviously stale claims remain in the audited pages.
 
