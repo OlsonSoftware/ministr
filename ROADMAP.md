@@ -1282,7 +1282,13 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 >
 > **Methodology.** Each chunk: read the documentation page(s), read the corresponding Rust/TS source via ministr, identify discrepancies, fix them. One chunk per invocation so fixes are atomic and verifiable.
 
-- [ ] **F12.1 Tool reference pages** — audit all 20 `web/content/docs/tools/*.mdx` pages (survey, symbols, definition, references, read, extract, toc, bridge, related, solid, impact, usage, compress, dead, dropped, fetch, clone, refresh) against the current tool implementations in `ministr-mcp/src/server/mod.rs`. Verify: parameter names + types, return shapes, described behavior, example outputs. Fix any stale descriptions.
+- [ ] **F12.1a Core navigation tools** — audit `web/content/docs/tools/{survey,symbols,definition,references,read,toc}.mdx` (6 pages) against `ministr-mcp/src/server/mod.rs` + `types.rs`. Highest-drift risk: `survey.mdx` (F6.3 added `corpus_ids` + `corpus_boost` params), `symbols.mdx` (verify kind/module/visibility filters). Verify: parameter names + types, return shapes, described behavior.
+
+- [ ] **F12.1b Session + budget tools** — audit `web/content/docs/tools/{extract,compress,dropped,usage,dead}.mdx` (5 pages) against the implementations. These are the agent-primitive tools; verify the budget/session integration descriptions match the F6.1 persistent-session architecture.
+
+- [ ] **F12.1c Code-intelligence tools** — audit `web/content/docs/tools/{bridge,solid,impact,related}.mdx` (4 pages). Highest-drift risk: `bridge.mdx` (F3.6-c-ii-b added `symbol_id` to BridgeNode), `solid.mdx` (many params added including `cyclic_dependency`, `shotgun_surgery`), `impact.mdx` (verify blast-radius description).
+
+- [ ] **F12.1d Project-management tools** — audit `web/content/docs/tools/{clone,fetch,refresh}.mdx` (3 pages) + `index.mdx` (tool listing page). Verify: described parameters match the daemon handlers in `ministr-daemon/src/daemon.rs`.
 
 - [ ] **F12.2 Concept pages** — audit `web/content/docs/concepts/*.mdx` (bridges, references, search, symbols) against the current `ministr-core` implementation. Verify: described algorithms, data structures, and flows match the actual code paths. Fix any conceptual drift.
 
