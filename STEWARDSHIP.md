@@ -25,13 +25,13 @@ MIT-licensed. The current six workspace crates are:
 | [`ministr-core`](ministr-core/) | Domain logic — indexing, embedding, SOLID detector, cross-language bridge graph, 12 bridge detectors, ~40 language parsers, claim extraction, session shadow, coherence |
 | [`ministr-api`](ministr-api/) | Shared request/response types |
 | [`ministr-daemon`](ministr-daemon/) | HTTP API over Unix domain socket |
-| [`ministr-mcp`](ministr-mcp/) | MCP server adapter (all 19 MCP tools) |
+| [`ministr-mcp`](ministr-mcp/) | MCP server adapter (all 20 MCP tools) |
 | [`ministr-cli`](ministr-cli/) | Binary entry point + `ministr serve` |
 | [`ministr-app/src-tauri`](ministr-app/src-tauri/) | Desktop app (Tauri v2, macOS/Windows/Linux) |
 
 A user who runs `ministr serve --transport http --oauth` on their own box
 gets the complete tool surface, OAuth issuer included, private-repo PAT path
-included, bundle export/import included, and all 19 MCP tools included. This
+included, bundle export/import included, and all 20 MCP tools included. This
 will remain true.
 
 ## What is closed (and why)
@@ -61,7 +61,8 @@ closed is how the cloud and enterprise products fund the open core.
   `ministr_read`, `ministr_extract`, `ministr_toc`, `ministr_bridge`,
   `ministr_compress`, `ministr_usage`, `ministr_dropped`, `ministr_solid`,
   `ministr_impact`, `ministr_dead`, `ministr_related`, `ministr_clone`,
-  `ministr_fetch`, `ministr_refresh`, `ministr_extract` — are MIT.
+  `ministr_fetch`, `ministr_refresh`, `ministr_task`, `ministr_projects`
+  — are MIT.
 - **Self-host is fully featured.** Running ministr on your own box gives you
   the same indexing, the same parsers, the same SOLID detector, the same
   bridge graph, and the same agent primitives that the cloud uses. The cloud

@@ -17,7 +17,7 @@ You should receive an acknowledgment within 72 hours. Confirmed vulnerabilities 
 
 | Version | Supported |
 |---------|-----------|
-| 0.1.x   | Yes       |
+| 0.6.x   | Yes       |
 
 Older pre-release versions are not supported. If you're running a development snapshot, update to the latest tagged release before reporting.
 

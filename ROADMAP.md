@@ -1298,7 +1298,7 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 
 - [x] **F12.5 Operator guides** *(2026-05-24)* — audited 4 guides + 3 web mirrors. All env vars, CLI flags, SQL schemas, and API endpoints verified correct. Fixed one broken sentence in license-mint.md/mdx (missing "to"). mcp-2026-07-28-migration.md is an internal planning doc with no web mirror (intentional). `npm run types:check` + `npm run build` clean.
 
-- [ ] **F12.6 Root markdown** — audit `README.md`, `CONTRIBUTING.md`, `DEMO.md`, `RELEASE.md`, `SECURITY.md`, `STEWARDSHIP.md` against the current project state. Verify: workspace shape, install instructions, demo procedures, CI commands, and security contact info are current.
+- [x] **F12.6 Root markdown** *(2026-05-24)* — audited 6 root files. Fixed: `STEWARDSHIP.md` tool count 19→20 + deduplicated tool list (ministr_extract was listed twice; added ministr_task + ministr_projects); `CONTRIBUTING.md` bridge linker expanded ~7→13 kinds; `SECURITY.md` supported version 0.1.x→0.6.x. README.md, DEMO.md, RELEASE.md all accurate, unchanged.
 
 - [ ] **F12.7 CLI reference** — audit `web/content/docs/cli/*.mdx` (init, and any other CLI pages) against the current `ministr-cli/src/main.rs` clap definitions. Verify: every subcommand, flag, and default value matches the live `--help` output. Add documentation for any undocumented subcommands (e.g. `ministr cloud mint-license`, `ministr audit prune`, `ministr api-keys flag-stale`, `ministr cloud sla-prune-snapshots`).
 
