@@ -63,7 +63,7 @@ export function ServerSettings({ status }: Props) {
   }, []);
 
   return (
-    <div className="space-y-4 max-w-2xl mx-auto">
+    <div className="space-y-4 max-w-2xl @min-[900px]/surface:max-w-none mx-auto @min-[900px]/surface:mx-0">
       <Zone title="SERVER" subtitle="READ-ONLY" tone="serif">
         <MetaRow label="VERSION" value={`v${status.version}`} />
         <MetaRow label="EMBEDDING MODEL" value={status.model} />
