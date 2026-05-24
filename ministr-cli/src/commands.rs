@@ -89,6 +89,7 @@ struct CloudEnv {
     /// layer mounted ⇒ self-hosted serve has zero browser exposure.
     /// Each entry is a full origin (`https://ministr.ai`).
     cors_allowed_origins: Option<String>,
+    resend_webhook_secret: Option<String>,
 }
 
 fn read_cloud_env() -> CloudEnv {
@@ -116,6 +117,7 @@ fn read_cloud_env() -> CloudEnv {
         stripe_price_pro: trimmed("MINISTR_STRIPE_PRICE_PRO"),
         stripe_price_team: trimmed("MINISTR_STRIPE_PRICE_TEAM"),
         cors_allowed_origins: trimmed("MINISTR_CORS_ALLOWED_ORIGINS"),
+        resend_webhook_secret: trimmed("MINISTR_RESEND_WEBHOOK_SECRET"),
     }
 }
 
@@ -1386,6 +1388,18 @@ pub(crate) async fn cmd_serve_http(
                 );
                 composed = composed.merge(stripe_router);
                 tracing::info!("stripe webhook mounted — POST /webhooks/stripe");
+            }
+            // F3.1b-ii-c — Resend bounce webhook. Public route
+            // (Resend is the caller); svix signature is the only auth.
+            if let Some(resend_secret) = cloud_env.resend_webhook_secret.as_ref() {
+                let resend_router = ministr_cloud::resend_webhook_routes(
+                    ministr_cloud::ResendWebhookState::new(
+                        Arc::clone(pool),
+                        resend_secret.clone(),
+                    ),
+                );
+                composed = composed.merge(resend_router);
+                tracing::info!("resend webhook mounted — POST /webhooks/resend");
             }
             // F5.1-b — SAML SP endpoints. Public routes (IdP doesn't
             // carry bearer tokens); per-org config gates whether
