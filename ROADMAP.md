@@ -1229,6 +1229,25 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 
 - **Validation:** desktop app renders with the same warm dark + amber design as `ministr.ai`. No violet remaining except in git history.
 
+### F10 — Tauri app navigation overhaul *(discovered 2026-05-24 via /roadmap-refresh)*
+
+> **Context.** Settings is a dumping ground with 7 tabs totaling ~5,100 lines of TSX serving completely different user intents. CloudPanel alone is 3,314 lines — bigger than most top-level surfaces. DeveloperPanel wraps 3 debug tools (Logs, Explore, Query playground) that power users need quick access to. The 4-surface nav rail (Ask / Projects / Sessions / Settings) was capped early and Settings became the junk drawer for everything that didn't fit. NNGroup (2021): "vertical navigation is a good fit for broad or growing IAs."
+>
+> **Proposed restructuring:** expand the nav rail from 4 → 6 surfaces. Cloud and Explore become first-class destinations. Linked Projects folds into Projects. Settings shrinks to actual preferences.
+>
+> Current: `Ask | Projects | Sessions | Settings(7 tabs)`
+> Proposed: `Ask | Projects | Sessions | Cloud | Explore | Settings(3 tabs)`
+
+- [ ] **F10.1 Promote Cloud to top-level surface** — move CloudPanel (3,314 lines) from `Settings → Cloud` tab to its own nav-rail destination. New `SurfaceId = "cloud"` in `Sidebar.tsx`. Cloud icon (lucide `Cloud`). Keyboard chord `g c`. No content changes — just the routing + nav entry.
+
+- [ ] **F10.2 Promote Developer tools to 'Explore' surface** — move DeveloperPanel's 3 sub-tools (Logs, Explore, Query playground) + ServerSettings (daemon diagnostics) into a new top-level "Explore" surface. New `SurfaceId = "explore"` in `Sidebar.tsx`. Icon: lucide `Terminal` or `Search`. Chord `g e`. The Bridge visualizer and SymbolGraph components also surface here. This is the power-user debug destination.
+
+- [ ] **F10.3 Fold Linked Projects into Projects surface** — the "Linked projects" tab in Settings manages `.ministr.toml` project links, which is fundamentally a project-management action. Move it into the Projects surface as a section or tab alongside the corpus list. Remove the tab from Settings.
+
+- [ ] **F10.4 Slim Settings to General + AI + About** — after F10.1-F10.3, Settings has only 3 tabs (General, AI assistants, About). Remove the tab bar entirely and render them as a single scrollable page with section headers — the settings equivalent of a macOS System Settings flow. Simpler, less chrome, matches what users expect from "Settings."
+
+- **Validation:** nav rail shows 6 icons; Cloud opens directly without going through Settings; Explore gives direct access to Logs + Query playground; Settings is a clean preferences page; all keyboard chords work.
+
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
 > Cross-cutting: builds the local equivalent of `azure-smoke` so multi-tenant cloud correctness, ACL semantics, API-key authn parity, session-tenant-scoping, webhook fan-out, and billing webhooks are all exercisable on a laptop without an Azure deploy. Today's `scripts/demo-local.sh` covers ONE tenant's happy path; the F-items above ship with Postgres-integration tests gated on `MINISTR_TEST_PG_URL` and unit coverage, but no e2e proof that ties them together end-to-end. F-Test fills that gap. Each chunk extends the harness in place — there's only one command to remember (`just e2e-cloud-local`) regardless of which scenario it ends up covering. Mirrors the `azure-smoke` extension policy from `justfile`.
