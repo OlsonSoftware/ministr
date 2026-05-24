@@ -20,10 +20,9 @@ import {
 
 import type { DaemonStatus } from "../../lib/types";
 import { resetPreferences } from "../../hooks/usePreferences";
-import { Zone } from "../ui/zone";
 import { ConfirmDialog } from "../ui/confirm-dialog";
 import { useToast } from "../shell/ToastTray";
-import { MaintAction, formatUptime } from "./settings-primitives";
+import { SettingsSection, MaintAction, formatUptime } from "./settings-primitives";
 
 // Public, brand-owned destination. ministr is closed-source: never link
 // to the (private) GitHub repo from shipped UI.
@@ -112,9 +111,9 @@ export function AboutPanel({
   }
 
   return (
-    <div className="space-y-4 max-w-2xl mx-auto">
-      <Zone title="MAINTENANCE" tone="serif">
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-0">
+    <div className="space-y-4">
+      <SettingsSection title="Maintenance" />
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-0 border border-border-soft rounded-md overflow-hidden">
           <MaintAction
             icon={FolderOpen}
             label="OPEN DATA FOLDER"
@@ -143,9 +142,8 @@ export function AboutPanel({
             onClick={() => setConfirmClear(true)}
           />
         </div>
-      </Zone>
 
-      <footer className="flex items-center justify-between gap-3 border-t-2 border-border px-3 py-2 font-mono text-xs uppercase tracking-[0.08em] text-text-dim">
+      <footer className="flex items-center justify-between gap-3 border-t border-border-soft pt-4 mt-6 font-mono text-xs uppercase tracking-[0.08em] text-text-dim">
         <button
           onClick={copyVersion}
           title="Click to copy version"
