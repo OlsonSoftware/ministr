@@ -119,6 +119,10 @@ pub struct GitHubSigninState {
     /// serve or cloud deployments without audit wiring) skips
     /// emission silently.
     audit: Option<Arc<dyn ministr_api::AuditSink>>,
+    /// F11.4 — allowed non-loopback redirect origins for the web sign-in
+    /// flow. Read from `MINISTR_WEB_ALLOWED_ORIGINS` (comma-separated).
+    /// Empty means loopback-only (the pre-F11.4 posture).
+    web_allowed_origins: Vec<String>,
     /// Open requests awaiting callback. `parking_lot::Mutex` matches the
     /// workspace convention (no poisoning, smaller, faster).
     pending: Arc<Mutex<HashMap<String, PendingState>>>,
@@ -133,6 +137,7 @@ impl std::fmt::Debug for GitHubSigninState {
             .field("oauth_store", &"<OAuthStore>")
             .field("stripe_configured", &self.stripe.is_some())
             .field("audit_wired", &self.audit.is_some())
+            .field("web_allowed_origins", &self.web_allowed_origins)
             .field("pending_count", &self.pending.lock().len())
             .finish()
     }
@@ -157,6 +162,7 @@ impl GitHubSigninState {
             cloud_base_url: trim_trailing_slashes(cloud_base_url.into()),
             stripe: None,
             audit: None,
+            web_allowed_origins: Vec::new(),
             pending: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -177,6 +183,16 @@ impl GitHubSigninState {
     #[must_use]
     pub fn with_audit(mut self, audit: Arc<dyn ministr_api::AuditSink>) -> Self {
         self.audit = Some(audit);
+        self
+    }
+
+    /// F11.4 — set the allowed non-loopback redirect origins for the
+    /// web sign-in flow (e.g. `["https://ministr.ai"]`). When non-empty,
+    /// `is_allowed_redirect` admits any URL whose origin matches an
+    /// entry alongside the existing loopback addresses.
+    #[must_use]
+    pub fn with_web_allowed_origins(mut self, origins: Vec<String>) -> Self {
+        self.web_allowed_origins = origins;
         self
     }
 }
@@ -276,7 +292,7 @@ async fn handle_github_start(
     State(state): State<GitHubSigninState>,
     Query(query): Query<StartQuery>,
 ) -> Result<Response, GitHubSigninError> {
-    if !is_loopback_redirect(&query.loopback_redirect) {
+    if !is_allowed_redirect(&query.loopback_redirect, &state.web_allowed_origins) {
         return Err(GitHubSigninError::InvalidLoopback);
     }
 
@@ -503,12 +519,24 @@ async fn handle_github_callback(
     Ok((StatusCode::FOUND, [(header::LOCATION, redirect)]).into_response())
 }
 
-fn is_loopback_redirect(url: &str) -> bool {
-    // RFC 8252 §7.3 — native-app PKCE flows MUST use loopback. Anything
-    // else here is a token-exfiltration attempt.
-    url.starts_with("http://127.0.0.1:")
+fn is_allowed_redirect(url: &str, web_allowed_origins: &[String]) -> bool {
+    if url.starts_with("http://127.0.0.1:")
         || url.starts_with("http://[::1]:")
         || url.starts_with("http://localhost:")
+    {
+        return true;
+    }
+    for origin in web_allowed_origins {
+        let prefix = if origin.ends_with('/') {
+            origin.clone()
+        } else {
+            format!("{origin}/")
+        };
+        if url.starts_with(&prefix) || url == origin.as_str() {
+            return true;
+        }
+    }
+    false
 }
 
 fn prune_expired(pending: &mut HashMap<String, PendingState>) {
@@ -610,21 +638,28 @@ mod tests {
 
     #[test]
     fn loopback_redirect_accepts_127_and_localhost() {
-        assert!(is_loopback_redirect("http://127.0.0.1:53219/cb"));
-        assert!(is_loopback_redirect("http://localhost:53219/cb"));
-        assert!(is_loopback_redirect("http://[::1]:53219/cb"));
+        let empty: Vec<String> = vec![];
+        assert!(is_allowed_redirect("http://127.0.0.1:53219/cb", &empty));
+        assert!(is_allowed_redirect("http://localhost:53219/cb", &empty));
+        assert!(is_allowed_redirect("http://[::1]:53219/cb", &empty));
     }
 
     #[test]
     fn loopback_redirect_rejects_external_hosts() {
-        assert!(!is_loopback_redirect("https://evil.example/cb"));
-        assert!(!is_loopback_redirect("http://example.com/cb"));
-        // Schemes other than `http://` are rejected — RFC 8252 §7.3
-        // recommends http (over loopback) for native apps.
-        assert!(!is_loopback_redirect("https://127.0.0.1:53219/cb"));
-        // Bare loopback without a port is also rejected — the listener
-        // always picks a kernel-assigned port.
-        assert!(!is_loopback_redirect("http://127.0.0.1/cb"));
+        let empty: Vec<String> = vec![];
+        assert!(!is_allowed_redirect("https://evil.example/cb", &empty));
+        assert!(!is_allowed_redirect("http://example.com/cb", &empty));
+        assert!(!is_allowed_redirect("https://127.0.0.1:53219/cb", &empty));
+        assert!(!is_allowed_redirect("http://127.0.0.1/cb", &empty));
+    }
+
+    #[test]
+    fn web_allowed_origins_admits_configured_origin() {
+        let origins = vec!["https://ministr.ai".to_string()];
+        assert!(is_allowed_redirect("https://ministr.ai/auth/callback/", &origins));
+        assert!(is_allowed_redirect("https://ministr.ai/", &origins));
+        assert!(!is_allowed_redirect("https://evil.example/auth/callback/", &origins));
+        assert!(!is_allowed_redirect("https://ministr.ai.evil.com/", &origins));
     }
 
     #[test]
