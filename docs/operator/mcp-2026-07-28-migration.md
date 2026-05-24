@@ -65,6 +65,15 @@ negotiated state today, the migration is: (a) register ministr's
 extensions via the new framework, (b) remove the `initialize`-based
 negotiation code. **Low urgency** — can be deferred to a later release.
 
+**EVALUATED (2026-05-24, F7.4).** Current extension identifiers
+(`dev.ministr/usage-protocol`, `dev.ministr/coherence`,
+`dev.ministr/compression`) already use reverse-DNS — compatible
+with SEP-2133. Rename to `ai.ministr/*` when migrating to the
+production domain. No code changes possible until rmcp ships
+SEP-2133 support (rmcp 1.7 predates the RC). MCP Apps (SEP-1865)
+evaluated as a future opportunity for the bridge visualizer —
+not actionable today (no client ships Apps support yet).
+
 ### 4. Fork-per-connection
 
 **Current:** `server_factory` at `commands.rs:499` calls
