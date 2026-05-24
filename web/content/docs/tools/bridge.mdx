@@ -8,7 +8,7 @@ description: Query cross-language binding links between exported symbols and the
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `query` | string | no | Filter by binding key or symbol name (case-insensitive substring match) |
-| `bridge_kind` | string | no | Filter by kind: `tauri_command`, `tauri_event`, `napi`, `wasm_bindgen`, `pyo3`, `http_route`, `ffi` |
+| `bridge_kind` | string | no | Filter by kind: `tauri_command`, `tauri_event`, `napi`, `wasm_bindgen`, `pyo3`, `http_route`, `ffi`, `cgo`, `jni`, `uni_ffi`, `grpc`, `flutter_channel`, `electron_ipc` |
 | `language` | string | no | Filter to links involving this language (e.g. `rust`, `typescript`, `javascript`, `python`) |
 | `file_path` | string | no | Filter to links where either endpoint is in this file path |
 | `project` | string | no | Linked-project label. Omit for the session's primary corpus. |
@@ -70,11 +70,19 @@ Wrapped in the [standard response envelope](/docs/tools#response-envelope). The 
 
 | Framework | Export Side | Import Side |
 |---|---|---|
-| Tauri | `#[tauri::command]` | `invoke('name', ...)` |
+| Tauri commands | `#[tauri::command]` | `invoke('name', ...)` |
+| Tauri events | `emit('event', ...)` | `listen('event', ...)` |
 | napi-rs | `#[napi]` | `import { name }` from native module |
 | PyO3 | `#[pyfunction]`, `#[pymethods]` | `from module import name` |
 | wasm-bindgen | `#[wasm_bindgen]` | JS/TS import from WASM module |
 | HTTP routes | `#[get]`, `#[post]`, etc. | `fetch('/path')`, `axios.get('/path')` |
+| FFI | `extern "C"`, `ctypes` | C function calls, ctypes bindings |
+| cgo | C function definitions | Go `C.func(...)` calls |
+| JNI | C/C++ `Java_*` exports | Java/Kotlin `native`/`external` methods |
+| UniFFI | `#[uniffi::export]` | Swift/Kotlin/Python generated bindings |
+| gRPC | `.proto` service definitions | Generated client/stub references |
+| Flutter channels | Native channel handlers | Dart `MethodChannel('name')` |
+| Electron IPC | `ipcMain.handle('chan')` | `ipcRenderer.invoke('chan')` |
 
 ## Behavior
 
