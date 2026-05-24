@@ -126,3 +126,33 @@ workaround.
 
 **Action:** Check rmcp's `main` branch or issue tracker for
 2026-07-28 RC support before starting the migration.
+
+## RC findings (updated 2026-05-24)
+
+The MCP 2026-07-28 RC dropped **2026-05-21**. Key additional changes
+not in the original audit above:
+
+- **Sampling deprecated** (SEP-2577): `sampling/createMessage` is
+  deprecated. ministr's `SamplingCompressor` uses this. Extractive
+  compression is unaffected. 12-month removal window per lifecycle
+  policy.
+- **Roots deprecated** (SEP-2577): ministr doesn't use Roots — no
+  impact.
+- **Logging deprecated** (SEP-2577): ministr doesn't use MCP-level
+  logging — no impact.
+- **Header-based routing** (SEP-2243): `Mcp-Method` and `Mcp-Name`
+  headers enable gateway routing without body inspection. Plus
+  `MCP-Protocol-Version` header. Low-priority; verify rmcp handles.
+- **Tasks extension** (SEP-2663): long-running operations with
+  `tasks/get`/`tasks/update`/`tasks/cancel`. May be relevant for
+  indexing jobs. Evaluate during F7.4.
+- **JSON Schema 2020-12** (SEP-2106): input schemas now support
+  `oneOf`/`anyOf`/`allOf`/`$ref`. Verify our tool schemas are
+  compatible.
+- **Error code change** (SEP-2164): missing resource error changes
+  from `-32002` to `-32602`. Check our error returns.
+
+**rmcp status**: v1.6.0 on crates.io already has stateless mode
+(per GitHub issue #841, May 9 2026). ministr is on 0.14. The
+0.x→1.x upgrade (F7.6) is the gating prerequisite for all other
+F7 chunks.
