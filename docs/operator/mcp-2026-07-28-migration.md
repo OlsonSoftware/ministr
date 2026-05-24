@@ -124,8 +124,21 @@ load-bearing question for the tenant-resolution work. If yes, the migration is a
 If no, we need an rmcp upstream contribution or a middleware
 workaround.
 
-**Action:** Check rmcp's `main` branch or issue tracker for
-2026-07-28 RC support before starting the migration.
+**ANSWERED YES (2026-05-24, F7.6).** rmcp 1.7.0's
+`transport/streamable_http_server/tower.rs` documents: *"The
+service consumes the request body but injects the remaining
+`http::request::Parts` into `crate::model::Extensions`, which is
+accessible through `crate::service::RequestContext`."* Tool
+handlers can use `Extension(parts): Extension<Parts>` to read the
+full HTTP request parts on every call. The `Tenant` axum extension
+(set by our `scope_tenant` middleware) is included in `Parts`.
+
+Additionally, `NeverSessionManager` disables rmcp's session layer
+entirely for stateless mode — swap from `LocalSessionManager` when
+ready for the 2026-07-28 spec.
+
+**Action:** ~~Check rmcp's main branch~~ → proceed directly to
+F7.2 (stateless tenant resolution, ~50 lines).
 
 ## RC findings (updated 2026-05-24)
 
