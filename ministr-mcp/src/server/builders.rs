@@ -80,6 +80,7 @@ impl MinistrServer {
             parent_session_id_hint: read_parent_session_env(),
             client_name_hint: Arc::new(std::sync::Mutex::new(None)),
             tenant_id_hint: Arc::new(std::sync::Mutex::new(None)),
+            session_id_override: Arc::new(std::sync::Mutex::new(None)),
             corpus_registry: None,
         }
     }
@@ -150,6 +151,7 @@ impl MinistrServer {
             parent_session_id_hint: read_parent_session_env(),
             client_name_hint: Arc::new(std::sync::Mutex::new(None)),
             tenant_id_hint: Arc::new(std::sync::Mutex::new(None)),
+            session_id_override: Arc::new(std::sync::Mutex::new(None)),
             corpus_registry: None,
         }
     }
@@ -175,6 +177,7 @@ impl MinistrServer {
         // previous tenant's captured subject through the shared Arc.
         // Each connection re-stamps via its own `initialize` handler.
         forked.tenant_id_hint = std::sync::Arc::new(std::sync::Mutex::new(None));
+        forked.session_id_override = std::sync::Arc::new(std::sync::Mutex::new(None));
         forked
     }
 
@@ -247,6 +250,7 @@ impl MinistrServer {
             parent_session_id_hint: read_parent_session_env(),
             client_name_hint: Arc::new(std::sync::Mutex::new(None)),
             tenant_id_hint: Arc::new(std::sync::Mutex::new(None)),
+            session_id_override: Arc::new(std::sync::Mutex::new(None)),
             corpus_registry: None,
         }
     }
@@ -515,9 +519,28 @@ impl MinistrServer {
     }
 
     /// The active session ID for this MCP connection.
+    ///
+    /// Returns the raw field — prefer [`Self::effective_session_id`]
+    /// inside tool handlers where the stateless override may be set.
     #[must_use]
     pub fn active_session_id(&self) -> &str {
         &self.active_session_id
+    }
+
+    /// The session ID tool handlers should use.
+    ///
+    /// In stateful mode (with `initialize`), this returns
+    /// `active_session_id` unchanged. In stateless mode (F7.3),
+    /// `call_tool` sets `session_id_override` to a deterministic ID
+    /// derived from the tenant subject so the same agent gets the same
+    /// session across requests. This method checks the override first.
+    #[must_use]
+    pub(crate) fn effective_session_id(&self) -> String {
+        self.session_id_override
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .unwrap_or_else(|| self.active_session_id.clone())
     }
 
     /// Resolve the calling tenant's subject — walks the tokio
