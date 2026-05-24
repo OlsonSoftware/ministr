@@ -75,17 +75,19 @@ export function AiAssistantsPanel({ corpora, activeCorpusId }: Props) {
         </div>
       )}
 
-      <ul className="space-y-2.5">
-        {views.map((view) => (
-          <ClientRow
-            key={view.info.id}
-            view={view}
-            busy={busy === view.info.id}
-            onConnect={() => connect(view.info.id)}
-            onTest={() => runTest(view.info.id)}
-          />
-        ))}
-      </ul>
+      <div className="bg-surface-sunken rounded-lg p-3">
+        <ul className="space-y-2.5">
+          {views.map((view) => (
+            <ClientRow
+              key={view.info.id}
+              view={view}
+              busy={busy === view.info.id}
+              onConnect={() => connect(view.info.id)}
+              onTest={() => runTest(view.info.id)}
+            />
+          ))}
+        </ul>
+      </div>
 
       <AgentConfigCard />
     </div>

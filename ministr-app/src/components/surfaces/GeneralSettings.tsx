@@ -49,6 +49,7 @@ export function GeneralSettings({
   return (
     <div>
       <SettingsSection title="Preferences" />
+      <div className="bg-surface-sunken rounded-lg p-4 space-y-0">
         <PrefRow label="THEME" description="Adapts to OS by default.">
           <div className="flex gap-0">
             {(
@@ -136,6 +137,7 @@ export function GeneralSettings({
             ariaLabel="Start at login"
           />
         </PrefRow>
+      </div>
     </div>
   );
 }
