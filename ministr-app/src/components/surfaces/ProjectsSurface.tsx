@@ -45,6 +45,7 @@ import { H1 } from "../ui/heading";
 import { MetricTile } from "../ui/metric-tile";
 import { Progress } from "../ui/progress";
 import { ProjectSessions } from "./ProjectSessions";
+import { LinkedProjectsPanel } from "./LinkedProjectsPanel";
 import { useToast } from "../shell/ToastTray";
 
 interface Props {
@@ -231,6 +232,15 @@ export function ProjectsSurface({
           </>
         )}
       </div>
+
+      {corpora.length > 0 && (
+        <div className="border-t border-border px-5 py-4 shrink-0 overflow-y-auto max-h-[40%]">
+          <LinkedProjectsPanel
+            corpora={corpora}
+            activeCorpusId={activeCorpusId}
+          />
+        </div>
+      )}
 
       <ConfirmDialog
         open={!!confirmReindex}
