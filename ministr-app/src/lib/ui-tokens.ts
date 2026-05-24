@@ -115,3 +115,24 @@ export const chipActive =
   "bg-accent px-2.5 py-0.5 font-mono text-mono-mini font-medium " +
   "uppercase tracking-[0.06em] text-[var(--color-accent-fg-on)] " +
   "cursor-pointer";
+
+/* ---- Layout tier (adaptive surface system) ---- */
+
+/** Container-query wrapper class for top-level surfaces.
+ *  Apply to the outermost div of each surface so children can use
+ *  @min-[600px]/surface:, @min-[900px]/surface:, @min-[1200px]/surface: */
+export const surfaceContainer = "@container/surface h-full min-h-0";
+
+/** Narrow content constraint — for prose-heavy areas that shouldn't
+ *  expand beyond comfortable reading width (forms, about panels). */
+export const contentNarrow = "max-w-3xl mx-auto";
+
+/** Wide content — no max-width; fills available container space.
+ *  For grids, master-detail layouts, dashboards. */
+export const contentWide = "w-full";
+
+/** Adaptive content — narrow below @md, wide above. Use inside an
+ *  AdaptiveSurface wrapper. Children still need to apply their own
+ *  responsive grid/flex classes using container-query prefixes. */
+export const contentAdaptive =
+  "w-full max-w-3xl @min-[900px]/surface:max-w-none mx-auto @min-[900px]/surface:mx-0";
