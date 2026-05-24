@@ -49,6 +49,14 @@ ministr-daemon/        — HTTP API over Unix domain socket
 ministr-mcp/           — MCP server adapter (rmcp)
 ministr-cli/           — binary entry point
 ministr-app/src-tauri/ — Tauri v2 desktop app with system tray
+ministr-cloud/         — proprietary multi-tenant cloud surface (LicenseRef-Proprietary)
+ministr-atlas/         — proprietary Atlas curated-repo crate (LicenseRef-Proprietary)
+web/                   — Next.js 16 marketing site + fumadocs developer docs
+deploy/                — Azure Pulumi, Helm chart, Docker Compose, Caddy, macOS installer
+workers/               — Cloudflare Workers (release-proxy)
+examples/              — sample .ministr.toml configs for different project types
+docs/operator/         — operator runbooks (also served via web/ at /docs/operator/*)
+scripts/               — e2e harness, demo scripts, CI helpers
 ```
 
 ### Layered architecture
