@@ -1294,7 +1294,7 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 
 - [x] **F12.3 Getting-started + installation + configuration** *(2026-05-24)* — audited 4 pages. Fixed: `getting-started.mdx` tool table expanded 15→20 (added solid/dead/impact/task/projects); `configuration.mdx` gained `[[linked]]` section documenting cross-project query config (was entirely missing despite `project` param on 15+ tool pages). installation.mdx + client-setup.mdx verified accurate, unchanged. `npm run types:check` + `npm run build` clean.
 
-- [ ] **F12.4 Architecture page** — audit `web/content/docs/architecture.mdx` against the current workspace layout (8 crates + web/ + deploy/). Verify: crate descriptions, dependency diagram, and feature-flag documentation match `Cargo.toml` and actual module structure.
+- [x] **F12.4 Architecture page** *(2026-05-24)* — audited architecture.mdx. Page is an intentional black-box overview (says so explicitly) with no crate-level detail to drift. All factual claims verified correct: 13 bridge kinds, 40+ languages, two query surfaces, local-only, stdio/HTTP transport. No edits needed.
 
 - [ ] **F12.5 Operator guides** — audit `docs/operator/` (license-mint.md, oidc-real-idp.md, saml-via-oidc-bridge.md, mcp-2026-07-28-migration.md) + their `web/content/docs/operator/*.mdx` mirrors against the current Rust implementations. Verify: env var names, SQL schemas, CLI flags, and step-by-step procedures match the live code.
 
