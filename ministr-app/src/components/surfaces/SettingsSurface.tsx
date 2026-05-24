@@ -7,13 +7,11 @@ import { LinkedProjectsPanel } from "./LinkedProjectsPanel";
 import { ServerSettings } from "./ServerSettings";
 import { DeveloperPanel } from "./DeveloperPanel";
 import { AboutPanel } from "./AboutPanel";
-import { CloudPanel } from "./CloudPanel";
 
 type SettingsTab =
   | "general"
   | "ai"
   | "linked"
-  | "cloud"
   | "server"
   | "developer"
   | "about";
@@ -27,7 +25,6 @@ const TABS: Tab[] = [
   { id: "general", label: "General" },
   { id: "ai", label: "AI assistants" },
   { id: "linked", label: "Linked projects" },
-  { id: "cloud", label: "ministr Cloud" },
   { id: "server", label: "Server" },
   { id: "developer", label: "Developer" },
   { id: "about", label: "About" },
@@ -109,7 +106,6 @@ export function SettingsSurface(props: Props) {
             activeCorpusId={props.activeCorpusId}
           />
         )}
-        {tab === "cloud" && <CloudPanel />}
         {tab === "server" && <ServerSettings status={props.status} />}
         {tab === "developer" && (
           <DeveloperPanel
