@@ -21,6 +21,8 @@ import { CommandPalette } from "./components/chrome/CommandPalette";
 import { ProjectsSurface } from "./components/surfaces/ProjectsSurface";
 import { SettingsSurface } from "./components/surfaces/SettingsSurface";
 import { CloudPanel } from "./components/surfaces/CloudPanel";
+import { DeveloperPanel } from "./components/surfaces/DeveloperPanel";
+import { ServerSettings } from "./components/surfaces/ServerSettings";
 import { corpusLabel } from "./lib/corpus";
 import { useLiveEvents } from "./lib/liveBus";
 import { fade } from "./lib/motion";
@@ -125,11 +127,10 @@ function AppInner() {
         t === "projects" ||
         t === "sessions" ||
         t === "cloud" ||
+        t === "explore" ||
         t === "settings"
       ) {
         navigate(t);
-      } else if (t === "explore") {
-        navigate("settings");
       }
     });
     const unlistenSelect = listen<string>("select-corpus", (event) => {
@@ -144,6 +145,7 @@ function AppInner() {
         detail === "projects" ||
         detail === "sessions" ||
         detail === "cloud" ||
+        detail === "explore" ||
         detail === "settings"
       ) {
         navigate(detail);
@@ -229,6 +231,9 @@ function AppInner() {
             return;
           case "nav:cloud":
             navigate("cloud");
+            return;
+          case "nav:explore":
+            navigate("explore");
             return;
           case "nav:settings":
             navigate("settings");
@@ -472,11 +477,25 @@ function SurfaceBody({
     );
   }
 
+  if (surface === "explore") {
+    return (
+      <div className="h-full flex flex-col min-h-0">
+        <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-6">
+          <ServerSettings status={status} />
+          <DeveloperPanel
+            status={status}
+            activeCorpusId={activeCorpusId}
+            setActiveCorpusId={setActiveCorpusId}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <SettingsSurface
       status={status}
       activeCorpusId={activeCorpusId}
-      setActiveCorpusId={setActiveCorpusId}
       theme={theme}
       onThemeChange={onThemeChange}
       onShowOnboarding={onShowOnboarding}
