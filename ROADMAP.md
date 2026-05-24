@@ -1423,6 +1423,44 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
 
 - **Validation:** at any viewport width, settings pages render as flat full-width rows with controls on the right — no bordered cards, no centered floating panels, no bg-surface card-within-card nesting. The sidebar (F13.2) provides the structural grouping; within each view, content flows edge-to-edge with only hairline separators and section headers.
 
+### F15 — Per-surface visual refinement *(discovered 2026-05-24)*
+
+> **Context.** F13 (viewport utilization) and F14 (flat rows, Zone deletion) were structural plumbing. The mechanics are right but the surfaces now lack visual containment — rows float in empty space without grouping. The fix is NOT "bring back cards" — it's **recessed trays** (`bg-surface-sunken rounded-lg p-4`, no border, no header strip) for groups of related rows, plus better whitespace hierarchy and per-surface layout tuning appropriate to each view's content.
+>
+> **Surfaces that DON'T need work:** Ask (container-query responsive, sidebar, best surface), Projects (master-detail, well-structured), Sessions (responsive card grid, animated, good density).
+>
+> **Surfaces that need work:** Settings sub-views (General, AI, About), Explore (ServerSettings), Cloud (visual hierarchy).
+>
+> **Design vocabulary for this track:**
+> - **Recessed tray** — `bg-surface-sunken rounded-lg p-4` — a subtle inset background that groups rows without adding a card border or header strip. Used for: clusters of PrefRows, MetaRow groups, action grids.
+> - **Section header** — `SettingsSection` — bold label with whitespace above. Already exists from F14.1.
+> - **Visual hierarchy** — above-the-fold content (auth status, connection) should feel prominent; secondary content (API keys, webhooks, inspector) should feel subordinate (smaller headers, more compact spacing).
+
+- [x] **F15.1 Settings views — visual containment + spacing** *(2026-05-24, complete)*
+  - [x] **General:** 4 PrefRows wrapped in `bg-surface-sunken rounded-lg p-4 space-y-0` recessed tray. Rows now sit on a visible surface — no longer floating in empty space.
+  - [x] **AI assistants:** client row list wrapped in `bg-surface-sunken rounded-lg p-3` recessed tray. AgentConfigCard already self-contained.
+  - [x] **About:** action grid switched from `border border-border-soft rounded-md` to `bg-surface-sunken rounded-lg` for consistency with the recessed tray language. Footer already fine.
+  - [x] Vertical rhythm maintained via SettingsSection headers (pt-6 pb-2 first:pt-0) → tray below.
+  - **Acceptance:** `tsc --noEmit` + `vite build` clean; all 3 Settings sub-views have recessed trays.
+
+- [ ] **F15.2 Explore + Cloud — visual hierarchy pass**
+  - [ ] **Explore > ServerSettings:** wrap the MetaRow group (version, model, memory, data dir, log file) in a recessed tray. DiagnosticSections (collapsible log + simulator) are already visually self-contained via their expand/collapse pattern — verify they look good without additional wrapping.
+  - [ ] **Explore > DeveloperPanel:** already has a tabbed interface — verify it needs no changes. The tab content areas (Bridge, Query Playground) already fill the space.
+  - [ ] **Cloud:** establish visual hierarchy between primary and secondary sections:
+    - **Primary (above the fold):** Endpoint + Authentication + Connection — these are the "is it working?" sections. Give them more visual weight (slightly larger type for status indicators, accent-colored connection badge).
+    - **Secondary:** CorporaSection, ApiKeysSection, WebhooksSection, OrgUsageSection, SessionInspectorSection — these are operational tools. Slightly more compact headers, tighter spacing between them to signal "these are peer items in a list."
+  - [ ] Tune the `border-t border-border-soft pt-5` section separators in CloudPanel — consider whether recessed trays per-section would work better than hairline separators for the primary sections.
+  - **Acceptance:** `tsc --noEmit` + `vite build` clean; Explore ServerSettings has contained MetaRow group; Cloud has visible hierarchy between primary/secondary sections.
+
+- [ ] **F15.3 Cross-surface consistency + polish**
+  - [ ] Audit all 6 surfaces for consistent H1/H2 heading patterns — every top-level surface should have a clear title area with the same typographic weight.
+  - [ ] Standardize content-area padding: verify all surfaces use the same `p-5` (or equivalent) from their parent slot in `SurfaceBody`. No surface should have its own competing padding that creates inconsistent insets.
+  - [ ] Settings sidebar nav: verify the narrow-viewport fallback (<900px) — if no sidebar is visible, the user needs some way to switch between General/AI/About (tab bar at top, or show all sections stacked).
+  - [ ] Mobile/narrow viewport audit: at 800px (Tauri minimized), every surface should still be usable — no overlapping elements, no unreadable truncation, no hidden-without-access content.
+  - **Acceptance:** `tsc --noEmit` + `vite build` clean; all 6 surfaces visually consistent in heading weight, padding, and section rhythm; narrow viewport usable (800px); Playwright screenshot comparison at 800px / 1200px / 1600px shows intentional design at all three.
+
+- **Validation:** the app feels **designed** at any viewport width. Recessed trays provide visual containment without card noise. Sections have clear hierarchy. Each surface's layout is appropriate to its content (data-dense surfaces like Sessions use grids; form-heavy surfaces like Settings use flat rows with trays; dashboard-like surfaces like Cloud have prominence hierarchy). The era of "floating rows in empty space" is over.
+
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
 > Cross-cutting: builds the local equivalent of `azure-smoke` so multi-tenant cloud correctness, ACL semantics, API-key authn parity, session-tenant-scoping, webhook fan-out, and billing webhooks are all exercisable on a laptop without an Azure deploy. Today's `scripts/demo-local.sh` covers ONE tenant's happy path; the F-items above ship with Postgres-integration tests gated on `MINISTR_TEST_PG_URL` and unit coverage, but no e2e proof that ties them together end-to-end. F-Test fills that gap. Each chunk extends the harness in place — there's only one command to remember (`just e2e-cloud-local`) regardless of which scenario it ends up covering. Mirrors the `azure-smoke` extension policy from `justfile`.

@@ -113,7 +113,7 @@ export function AboutPanel({
   return (
     <div className="space-y-4">
       <SettingsSection title="Maintenance" />
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-0 border border-border-soft rounded-md overflow-hidden">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-0 bg-surface-sunken rounded-lg overflow-hidden">
           <MaintAction
             icon={FolderOpen}
             label="OPEN DATA FOLDER"
