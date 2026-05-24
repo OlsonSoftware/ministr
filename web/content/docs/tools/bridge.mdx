@@ -11,6 +11,7 @@ description: Query cross-language binding links between exported symbols and the
 | `bridge_kind` | string | no | Filter by kind: `tauri_command`, `tauri_event`, `napi`, `wasm_bindgen`, `pyo3`, `http_route`, `ffi` |
 | `language` | string | no | Filter to links involving this language (e.g. `rust`, `typescript`, `javascript`, `python`) |
 | `file_path` | string | no | Filter to links where either endpoint is in this file path |
+| `project` | string | no | Linked-project label. Omit for the session's primary corpus. |
 
 ## Response
 
