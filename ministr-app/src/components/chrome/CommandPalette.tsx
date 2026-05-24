@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
+  Cloud,
   Eye,
   FileText,
   FolderOpen,
@@ -132,6 +133,15 @@ export function CommandPalette({
         icon: Activity,
         mode: "",
         run: () => onNavigate("sessions"),
+      },
+      {
+        id: "nav:cloud",
+        label: "Go to Cloud",
+        hint: "ministr Cloud account + billing",
+        keywords: "cloud account billing api keys webhooks orgs",
+        icon: Cloud,
+        mode: "",
+        run: () => onNavigate("cloud"),
       },
       {
         id: "nav:settings",
