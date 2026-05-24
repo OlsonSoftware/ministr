@@ -1288,7 +1288,7 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 
 - [x] **F12.1c Code-intelligence tools** *(2026-05-24)* — audited 4 MDX pages. Fixed: all 4 missing `project` param; `solid.mdx` prose said "four detectors" in 3 places + frontmatter — updated to "six" (shotgun_surgery + cyclic_dependency). Bridge `symbol_id` concern was false alarm (only on graph viz API, not MCP tool response). `npm run types:check` + `npm run build` clean.
 
-- [ ] **F12.1d Project-management tools** — audit `web/content/docs/tools/{clone,fetch,refresh}.mdx` (3 pages) + `index.mdx` (tool listing page). Verify: described parameters match the daemon handlers in `ministr-daemon/src/daemon.rs`.
+- [x] **F12.1d Project-management tools** *(2026-05-24)* — audited 3 MDX pages + index. clone/fetch/refresh all correct (no drift). `index.mdx` was missing `ministr_task` and `ministr_projects` (2 of 20 tools) — added both. `npm run types:check` + `npm run build` clean. Discovered: neither task nor projects has a dedicated doc page (backlog).
 
 - [ ] **F12.2 Concept pages** — audit `web/content/docs/concepts/*.mdx` (bridges, references, search, symbols) against the current `ministr-core` implementation. Verify: described algorithms, data structures, and flows match the actual code paths. Fix any conceptual drift.
 
