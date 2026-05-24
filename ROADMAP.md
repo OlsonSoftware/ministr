@@ -944,7 +944,7 @@ A Pro user queries any of the 5K Atlas repos via `/atlas/{slug}/survey` and gets
       - CLI: `ministr cloud revoke-license --jwt PATH | --jwt-id-hash hex --enterprise-id ID --reason "..." --revocation-list PATH`. Hash-only form supports revoking against the audit log when the JWT file is gone.
       - Operator runbook (`docs/operator/license-mint.md`) extended with a "Revocation flow" section covering both forms + Helm/Compose env-var wiring.
       - 6 new unit tests in `license.rs` (hash determinism, hash hex shape, JSONL hit/miss/malformed/missing-file, record round-trip). 6 new harness assertions (mint fixture, revoke CLI exit 0, hash on disk is 16-hex, reason recorded, boot exits non-zero under revoked JWT, boot error mentions revocation).
-      - [ ] `license_revocations` table the serve checks on each boot; offline-cached grace window for graceful degradation when ministr's portal is unreachable.
+      - ~~`license_revocations` table~~ *(superseded 2026-05-23 — the API-based approach via F5.4-e-revoke-api-serve/fetch/refresh implements the same functionality without a DB table: HTTP fetch + local JSONL cache + grace-window fallback + mid-flight detection)*
     - [x] **F5.4-e-revoke-mid-flight-graceful** *(2026-05-23, complete)*
       - [x] `RevocationShutdownHandle` struct in `ministr-cloud/src/revocation_fetch.rs` — `Arc<AtomicBool>` revoked flag + `Arc<Notify>` shutdown signal. `trigger()` sets the flag + notifies; `is_revoked()` reads the flag.
       - [x] `spawn_refresh_task` gains `shutdown_handle: Option<RevocationShutdownHandle>`. On revocation: when handle is `Some`, triggers graceful signal and returns (task exits cleanly). When `None`, falls back to `process::exit(1)` for backward compat.
@@ -1194,7 +1194,11 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
   - [x] `windsurf/` (IDE rules), `workers/` (Cloudflare release-proxy), `examples/` (sample .ministr.toml) assessed and kept at root — correctly positioned for discoverability.
   - [x] CONTRIBUTING.md architecture section expanded from 6-line crate list to 13-line full project layout (web/, deploy/, workers/, examples/, docs/operator/, scripts/).
 
-- **Validation:** `ministr.ai` renders the v2 homepage design; `/docs` still works with fumadocs nav; `/pricing`, `/status`, `/stewardship` render with the new dark theme; operator docs are accessible at `/docs/operator/*`; Lighthouse ≥ 95 on the landing page.
+- [ ] **F8.6 Marketing pages v2 redesign** — `/pricing`, `/stewardship`, `/status`, and `/install` still use old Tailwind/fumadocs styling (light bg, `fd-muted-foreground` colors) that visually clashes with the v2 homepage. Apply the v2 design tokens (dark bg, amber accents, Geist/JetBrains Mono) to each page. Can be done one page at a time or batched.
+
+- [ ] **F8.7 Resend retry policy** — `ResendMailSender::send_invite` fires once with no retry. Add exponential backoff (3 attempts at 0/5/30s, mirroring the F3.5 webhook dispatcher shape). Small, well-scoped.
+
+- **Validation:** `ministr.ai` renders the v2 homepage design; `/docs` still works with fumadocs nav; `/pricing`, `/status`, `/stewardship` render with the v2 dark theme; operator docs are accessible at `/docs/operator/*`; Lighthouse ≥ 95 on the landing page.
 
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
