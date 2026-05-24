@@ -3,13 +3,11 @@ import { cn } from "../../lib/utils";
 import type { DaemonStatus } from "../../lib/types";
 import { GeneralSettings } from "./GeneralSettings";
 import { AiAssistantsPanel } from "./AiAssistantsPanel";
-import { LinkedProjectsPanel } from "./LinkedProjectsPanel";
 import { AboutPanel } from "./AboutPanel";
 
 type SettingsTab =
   | "general"
   | "ai"
-  | "linked"
   | "about";
 
 interface Tab {
@@ -20,7 +18,6 @@ interface Tab {
 const TABS: Tab[] = [
   { id: "general", label: "General" },
   { id: "ai", label: "AI assistants" },
-  { id: "linked", label: "Linked projects" },
   { id: "about", label: "About" },
 ];
 
@@ -89,12 +86,6 @@ export function SettingsSurface(props: Props) {
         )}
         {tab === "ai" && (
           <AiAssistantsPanel
-            corpora={props.status.corpora}
-            activeCorpusId={props.activeCorpusId}
-          />
-        )}
-        {tab === "linked" && (
-          <LinkedProjectsPanel
             corpora={props.status.corpora}
             activeCorpusId={props.activeCorpusId}
           />
