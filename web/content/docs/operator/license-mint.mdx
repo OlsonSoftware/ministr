@@ -70,8 +70,8 @@ key from the keypair-generation step.
 ## Customer-side setup
 
 The customer pastes both values into their `MINISTR_LICENSE_KEY` +
-`MINISTR_LICENSE_PUBLIC_KEY` env vars. Helm chart (
-`deploy/helm/ministr-enterprise/`) takes them via `values.yaml`:
+`MINISTR_LICENSE_PUBLIC_KEY` env vars. The Helm chart takes them
+via `values.yaml`:
 
 ```yaml
 license:
@@ -82,7 +82,7 @@ license:
     -----END PUBLIC KEY-----
 ```
 
-Docker Compose ( `deploy/compose/`) takes them via `.env`.
+Docker Compose takes them via `.env`.
 
 The customer's serve boot logs an "Enterprise license validated"
 line on success — confirms they pasted the right
