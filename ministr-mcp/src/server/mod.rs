@@ -965,6 +965,32 @@ impl ServerHandler for MinistrServer {
 
 #[tool_router]
 impl MinistrServer {
+    // F7.2 — per-request tenant capture for stateless MCP.
+    //
+    // The macro-generated `call_tool` is suppressed when we define our
+    // own. We capture the tenant from the HTTP `Parts` that rmcp 1.7
+    // injects into every `RequestContext::extensions`, then delegate to
+    // the macro-generated router. This makes `current_tenant_subject()`
+    // work on EVERY tool call regardless of whether `initialize` ran
+    // (stateless mode) or whether the tokio task-local survived rmcp's
+    // internal `tokio::spawn` boundary.
+    async fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::CallToolResult, rmcp::model::ErrorData> {
+        if let Some(parts) = context.extensions.get::<axum::http::request::Parts>()
+            && let Some(tenant) = parts.extensions.get::<crate::auth::tenant::Tenant>()
+            && let Ok(mut guard) = self.tenant_id_hint.lock()
+        {
+            *guard = Some(tenant.subject.clone());
+        }
+
+        let tcc =
+            rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        Self::tool_router().call(tcc).await
+    }
+
     /// Search the corpus for sections relevant to your query.
     ///
     /// Returns ranked summaries with relevance scores across all resolution
