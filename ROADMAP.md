@@ -1443,14 +1443,11 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] Vertical rhythm maintained via SettingsSection headers (pt-6 pb-2 first:pt-0) → tray below.
   - **Acceptance:** `tsc --noEmit` + `vite build` clean; all 3 Settings sub-views have recessed trays.
 
-- [ ] **F15.2 Explore + Cloud — visual hierarchy pass**
-  - [ ] **Explore > ServerSettings:** wrap the MetaRow group (version, model, memory, data dir, log file) in a recessed tray. DiagnosticSections (collapsible log + simulator) are already visually self-contained via their expand/collapse pattern — verify they look good without additional wrapping.
-  - [ ] **Explore > DeveloperPanel:** already has a tabbed interface — verify it needs no changes. The tab content areas (Bridge, Query Playground) already fill the space.
-  - [ ] **Cloud:** establish visual hierarchy between primary and secondary sections:
-    - **Primary (above the fold):** Endpoint + Authentication + Connection — these are the "is it working?" sections. Give them more visual weight (slightly larger type for status indicators, accent-colored connection badge).
-    - **Secondary:** CorporaSection, ApiKeysSection, WebhooksSection, OrgUsageSection, SessionInspectorSection — these are operational tools. Slightly more compact headers, tighter spacing between them to signal "these are peer items in a list."
-  - [ ] Tune the `border-t border-border-soft pt-5` section separators in CloudPanel — consider whether recessed trays per-section would work better than hairline separators for the primary sections.
-  - **Acceptance:** `tsc --noEmit` + `vite build` clean; Explore ServerSettings has contained MetaRow group; Cloud has visible hierarchy between primary/secondary sections.
+- [x] **F15.2 Explore + Cloud — visual hierarchy pass** *(2026-05-24, complete)*
+  - [x] **Explore > ServerSettings:** MetaRow group (version, model, memory, data dir, log file) wrapped in `bg-surface-sunken rounded-lg p-4` tray. DiagnosticSections (log + simulator) also wrapped in a shared `bg-surface-sunken rounded-lg overflow-hidden` tray — they expand inline within the recessed surface.
+  - [x] **Explore > DeveloperPanel:** verified — tabbed interface already works well, no changes needed.
+  - [x] **Cloud:** primary sections (Endpoint + Authentication + Connection) wrapped in a single `bg-surface-sunken rounded-lg p-5 space-y-5` tray — signals "this is your connection setup." Secondary sections (Corpora through SessionInspector) left with their existing `border-t` separators — visually subordinate by contrast.
+  - **Acceptance:** `tsc --noEmit` + `vite build` clean.
 
 - [ ] **F15.3 Cross-surface consistency + polish**
   - [ ] Audit all 6 surfaces for consistent H1/H2 heading patterns — every top-level surface should have a clear title area with the same typographic weight.
