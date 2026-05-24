@@ -1252,21 +1252,26 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 
 - **Validation:** nav rail shows 6 icons; Cloud opens directly without going through Settings; Explore gives direct access to Logs + Query playground; Settings is a clean preferences page; all keyboard chords work.
 
-### F11 — Web auth middleware *(discovered 2026-05-23 via /roadmap-refresh)*
+### F11 — Web auth infrastructure *(discovered 2026-05-23 via /roadmap-refresh; revised 2026-05-23 — client-side auth, not middleware)*
 
-> **Context.** The `web/` Next.js app currently serves only public pages — no authenticated routes exist. This blocks F3.6-b-iii (auth-gated bridge visualizer), F3.3b's web usage mirror, and any future per-org web page. The blocker was always framed as "docs-next lacks auth infrastructure" but the fix is small: a Next.js `middleware.ts` that reads a ministr bearer token from a cookie, validates it server-side against the cloud's `/api/v1/billing/usage` (or a lightweight `/api/v1/me` endpoint), and gates org-specific routes. No external auth library needed — the cloud already issues bearer tokens via GitHub OAuth and OIDC; the web app just needs to consume them.
+> **Context.** The `web/` Next.js app uses `output: 'export'` (static site on GitHub Pages). This means **no server-side middleware, no API routes, no cookies** — Next.js middleware requires a Node.js server runtime. F11.1's original plan (middleware.ts + cookie-based auth) was impossible without switching to a server deployment.
 >
-> **Research (2026-05-23):** Next.js 16 middleware-based auth is well-documented (Authgear Mar 2026, WorkOS Feb 2026 guide, LinkedIn Learning Feb 2026 course). The pattern: `middleware.ts` at the project root reads a cookie, validates the token, and either continues or redirects to a login page. Server components can read the validated token from headers/cookies. No client-side auth state needed for server-rendered pages.
+> **Revised approach (2026-05-23):** Client-side auth via `localStorage` + bearer headers. The user pastes an API key (`mst_pk_...` from the Tauri panel's F3.4 API keys section) into a `/login` page; the page validates it against the cloud's `GET /api/v1/corpora`; on success, stores it in `localStorage`. A `useAuth` hook and `AuthGate` wrapper component provide auth state to gated pages. This matches the existing F3.6-b-ii-b pattern (BridgeGraphLive's `?token=` param) but with persistent localStorage storage.
+>
+> **Honest scope note:** Token lives in localStorage (XSS-accessible). Acceptable for API keys (already pasted into CLI/curl by design) but less secure than HttpOnly cookies. A future GitHub OAuth web flow (requiring backend changes to the `loopback_redirect` allowlist in `github_signin.rs::is_loopback_redirect`) is the consumer upgrade path.
 >
 > **Unblocks:** F3.6-b-iii (auth-gated `/orgs/{slug}/corpora/{id}/bridge`), F3.3b (web `/orgs/{slug}/usage`), future web-based org dashboards.
 
-- [ ] **F11.1 Next.js auth middleware + login flow** — add `web/middleware.ts` that reads a `ministr-token` cookie, validates it against the cloud, and gates `/orgs/*` routes. Login page at `/login` redirects to the cloud's GitHub OAuth flow (reusing the existing `GET /auth/github/start` endpoint) with a `redirect_uri` back to `/auth/callback` which sets the cookie. Logout clears the cookie.
+- [x] **F11.1 Client-side auth infrastructure** *(2026-05-23, complete — plan deviation: client-side localStorage, not server middleware)* — `web/lib/auth.ts` (`useAuth` hook + `validateToken` helper), `web/components/auth-gate.tsx` (`AuthGate` wrapper showing login prompt when unauthenticated), `web/app/(home)/login/page.tsx` + `login-form.tsx` (API key input with cloud validation, optional endpoint override, `?returnUrl` redirect on success). No Rust changes. Static export preserved.
+  - **Validation:** `npm run types:check` + `npm run build` clean; `/login` prerendered as Static; form validates against cloud endpoint; AuthGate redirects to /login when not authenticated.
 
-- [ ] **F11.2 Auth-gated bridge visualizer** *(unblocks F3.6-b-iii)* — move the F3.6-b-ii-b live-fetch bridge graph from the public `/demo/bridge?api=&id=&token=` shape to an authenticated `/orgs/{slug}/corpora/{id}/bridge` route. The middleware supplies the bearer; the page fetches the bridge graph API server-side. Team-tier gate via the cloud's quota/plan check.
+- [ ] **F11.2 Auth-gated bridge visualizer** *(unblocks F3.6-b-iii)* — new `/orgs/[slug]/corpora/[id]/bridge` client page wrapping `BridgeGraphLive` inside `AuthGate`. The `useAuth` hook supplies the bearer token; the page reads the corpus ID from the route and fetches the bridge graph client-side with `Authorization: Bearer`. Team-tier gate is implicit (the cloud's quota middleware returns 402 for non-Team callers).
 
-- [ ] **F11.3 Web org usage dashboard** *(unblocks F3.3b web mirror)* — authenticated `/orgs/{slug}/usage` page consuming the F3.3a `GET /api/v1/orgs/{id}/usage` endpoint. Server-rendered with the middleware-supplied bearer. Mirrors the Tauri `OrgUsageSection` but as a standalone web page.
+- [ ] **F11.3 Web org usage dashboard** *(unblocks F3.3b web mirror)* — authenticated `/orgs/[slug]/usage` client page consuming the F3.3a `GET /api/v1/orgs/{id}/usage` endpoint. Client-side fetch with `useAuth`-supplied bearer. Mirrors the Tauri `OrgUsageSection` data display.
 
-- **Validation:** unauthenticated visitor to `/orgs/acme/usage` gets redirected to `/login`; authenticated Team user sees the usage dashboard; bearer cookie is HttpOnly + Secure + SameSite=Lax.
+- [ ] **F11.4 GitHub OAuth web flow** *(optional upgrade — requires backend change)* — expand `github_signin.rs::is_loopback_redirect` to accept a configured `MINISTR_WEB_ALLOWED_ORIGINS` allowlist. Add a `/auth/callback` client page that receives `?token=...` from the cloud's redirect and stores it in localStorage. Replaces the API-key paste UX with a one-click "Sign in with GitHub" flow.
+
+- **Validation:** unauthenticated visitor to `/orgs/acme/usage` sees the AuthGate login prompt; authenticated user sees the usage dashboard.
 
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
