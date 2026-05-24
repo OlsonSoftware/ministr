@@ -76,6 +76,9 @@ Once connected, your agent has access to these tools:
 | `ministr_symbols` | Search the code symbol index |
 | `ministr_definition` | Get full source of a symbol |
 | `ministr_references` | Find callers, implementors, importers |
+| `ministr_impact` | Transitive blast radius of changing a symbol |
+| `ministr_dead` | Symbols with zero references (deletion candidates) |
+| `ministr_solid` | Deterministic SOLID-violation detector |
 | `ministr_bridge` | Query cross-language bindings |
 | `ministr_usage` | Advisory token-usage estimate (internal accounting) |
 | `ministr_compress` | Generate compact summaries of sections |
@@ -83,6 +86,8 @@ Once connected, your agent has access to these tools:
 | `ministr_fetch` | Fetch a web URL into the corpus |
 | `ministr_clone` | Clone and index a git repository |
 | `ministr_refresh` | Re-fetch sources that have changed upstream |
+| `ministr_task` | Check status of a running clone/fetch task |
+| `ministr_projects` | List available linked projects |
 
 See the [tool reference](/docs/tools) for parameter schemas and response formats.
 

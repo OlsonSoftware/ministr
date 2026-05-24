@@ -115,6 +115,28 @@ name = "my-project"                # optional; defaults to URL filename stem
 pin_version = "abc123def456"       # optional; skips staleness checks if set
 ```
 
+### `[[linked]]` — cross-project queries
+
+Linked projects are separate codebases that keep their own index but can be queried from this project. The agent targets them by passing `project: "<label>"` to any query tool (see `ministr_projects` to list available labels).
+
+Unlike `[[corpus.include]]` (which merges external paths into the current corpus), a linked project stays independent — it has its own `.ministr.toml`, its own index, and its own identity.
+
+```toml
+[[linked]]
+path = "~/Code/shared-types"
+label = "shared-types"       # optional; defaults to the final path component
+
+[[linked]]
+path = "../api-server"
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `path` | string | yes | Absolute or `~`-relative path to the linked project's root |
+| `label` | string | no | Human-readable label the agent uses to target this project (defaults to the final component of `path`) |
+
+Cloned repos (via `ministr_clone`) are also accessible as linked projects — the clone result includes the label.
+
 ### `[agent]` — custom agent rules
 
 Rules listed under `[agent]` are appended to every generated advisory file (`.claude/rules/`, `.cursor/rules/ministr.mdc`, `.github/copilot-instructions.md`, `AGENTS.md`, etc.) when you run `ministr init`:
