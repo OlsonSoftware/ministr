@@ -4,16 +4,12 @@ import type { DaemonStatus } from "../../lib/types";
 import { GeneralSettings } from "./GeneralSettings";
 import { AiAssistantsPanel } from "./AiAssistantsPanel";
 import { LinkedProjectsPanel } from "./LinkedProjectsPanel";
-import { ServerSettings } from "./ServerSettings";
-import { DeveloperPanel } from "./DeveloperPanel";
 import { AboutPanel } from "./AboutPanel";
 
 type SettingsTab =
   | "general"
   | "ai"
   | "linked"
-  | "server"
-  | "developer"
   | "about";
 
 interface Tab {
@@ -25,15 +21,12 @@ const TABS: Tab[] = [
   { id: "general", label: "General" },
   { id: "ai", label: "AI assistants" },
   { id: "linked", label: "Linked projects" },
-  { id: "server", label: "Server" },
-  { id: "developer", label: "Developer" },
   { id: "about", label: "About" },
 ];
 
 interface Props {
   status: DaemonStatus;
   activeCorpusId: string | null;
-  setActiveCorpusId: (id: string | null) => void;
   theme: "system" | "dark" | "light";
   onThemeChange: (t: "system" | "dark" | "light") => void;
   onShowOnboarding: () => void;
@@ -104,14 +97,6 @@ export function SettingsSurface(props: Props) {
           <LinkedProjectsPanel
             corpora={props.status.corpora}
             activeCorpusId={props.activeCorpusId}
-          />
-        )}
-        {tab === "server" && <ServerSettings status={props.status} />}
-        {tab === "developer" && (
-          <DeveloperPanel
-            status={props.status}
-            activeCorpusId={props.activeCorpusId}
-            setActiveCorpusId={props.setActiveCorpusId}
           />
         )}
         {tab === "about" && (
