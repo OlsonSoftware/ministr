@@ -8,8 +8,9 @@ description: Structural overview of the indexed corpus — documents, section co
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `document_id` | string | no | — | If provided, return the TOC for a single document |
-| `limit` | integer | no | — | Maximum number of entries |
+| `limit` | integer | no | 100 | Maximum number of entries |
 | `offset` | integer | no | 0 | Pagination offset |
+| `project` | string | no | — | Linked-project label. Omit for the session's primary corpus. |
 
 ## Response
 

@@ -1282,7 +1282,7 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 >
 > **Methodology.** Each chunk: read the documentation page(s), read the corresponding Rust/TS source via ministr, identify discrepancies, fix them. One chunk per invocation so fixes are atomic and verifiable.
 
-- [ ] **F12.1a Core navigation tools** — audit `web/content/docs/tools/{survey,symbols,definition,references,read,toc}.mdx` (6 pages) against `ministr-mcp/src/server/mod.rs` + `types.rs`. Highest-drift risk: `survey.mdx` (F6.3 added `corpus_ids` + `corpus_boost` params), `symbols.mdx` (verify kind/module/visibility filters). Verify: parameter names + types, return shapes, described behavior.
+- [x] **F12.1a Core navigation tools** *(2026-05-24)* — audited 6 MDX pages against `types.rs`. Fixed: all 6 missing `project` param; `survey.mdx` missing `corpus_ids` + `corpus_boost` + `source_corpus` (F6.3); `toc.mdx` `limit` default corrected to 100. `npm run types:check` + `npm run build` clean.
 
 - [ ] **F12.1b Session + budget tools** — audit `web/content/docs/tools/{extract,compress,dropped,usage,dead}.mdx` (5 pages) against the implementations. These are the agent-primitive tools; verify the budget/session integration descriptions match the F6.1 persistent-session architecture.
 
