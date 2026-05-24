@@ -50,7 +50,7 @@ Headline numbers for the README:
 
 Token savings vs grep + Read at equivalent recall levels — semble published a recall-vs-tokens curve; ministr should publish the same curve plus a multi-resolution breakdown showing how `ministr_survey` returns claim / section / symbol / full-source slices instead of whole files.
 
-Source data is `ministr-core/tests/token_baseline.rs` (existing) plus per-tool token costs already documented in [`docs-next/content/docs/tools/index.mdx`](../docs-next/content/docs/tools/index.mdx).
+Source data is `ministr-core/tests/token_baseline.rs` (existing) plus per-tool token costs already documented in [`web/content/docs/tools/index.mdx`](../web/content/docs/tools/index.mdx).
 
 ## Per-language matrix
 

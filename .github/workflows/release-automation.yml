@@ -44,7 +44,7 @@ on:
     # breaking `!` release), so don't spin the release runner for them.
     paths-ignore:
       - '**.md'
-      - 'docs-next/**'
+      - 'web/**'
       - 'assets/**'
       - '.github/**'
   # Manual lever: re-run release detection on demand (e.g. after a

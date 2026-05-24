@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Record assets/launch.cast — the asciinema recording that drives the
-# interactive terminal demo on the docs-next site.
+# interactive terminal demo on the web site.
 #
 # Prerequisite: `brew install asciinema` (v3+).
 #

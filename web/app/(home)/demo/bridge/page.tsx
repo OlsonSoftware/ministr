@@ -5,7 +5,7 @@
 // `?api=&id=` (and optional `?token=` for cloud-auth endpoints).
 //
 // F3.6-b-iii will add the auth-gated `/orgs/{slug}/corpora/{id}/bridge`
-// page once docs-next gains authenticated routes.
+// page once web gains authenticated routes.
 //
 // Why this is a separate route from `/pricing`:
 //

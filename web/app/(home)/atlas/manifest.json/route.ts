@@ -3,7 +3,7 @@
 // This is the public-transparency endpoint third parties scrape to
 // know what Atlas indexes. Same shape as the cloud's
 // `GET /atlas/manifest.json` route handler in `ministr-atlas` — but
-// served by docs-next so unauthenticated browsers can fetch it
+// served by web so unauthenticated browsers can fetch it
 // without crossing the `mcp.ministr.ai` auth boundary.
 //
 // Source of truth: `ministr-atlas/src/repos.rs::ATLAS_SEED_REPOS`.

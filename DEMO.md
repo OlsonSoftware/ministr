@@ -272,9 +272,9 @@ TL;DR:
 - Set `MINISTR_BLOB_STORE_KIND=azure` plus
   `MINISTR_BLOB_AZURE_ACCOUNT` + `MINISTR_BLOB_AZURE_CONTAINER`.
 - DNS: `mcp.ministr.ai` → ACA ingress.
-- Domain split: `ministr.ai` (docs-next on GitHub Pages) +
+- Domain split: `ministr.ai` (web on GitHub Pages) +
   `mcp.ministr.ai` (cloud binary) — see ROADMAP §3 and the existing
-  `docs-next/public/CNAME` for the static-site side.
+  `web/public/CNAME` for the static-site side.
 
 ---
 

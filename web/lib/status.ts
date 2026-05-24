@@ -56,7 +56,7 @@ export async function fetchSlaStatus(
     const data = (await res.json()) as SlaResponse;
     // Defensive: every required field must be present + the right
     // shape; otherwise fall through to null. Protects against
-    // protocol drift between docs-next and the cloud serve.
+    // protocol drift between web and the cloud serve.
     if (
       data.status !== 'ready' ||
       typeof data.version !== 'string' ||

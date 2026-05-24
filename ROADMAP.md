@@ -1168,7 +1168,11 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 >
 > Reference design: `/Users/alrik/Downloads/ministr-homepage-v2.html` (single-file HTML with full CSS).
 
-- [ ] **F8.1 Rename `docs-next/` → `web/`** — rename the directory, update all `import` paths, CI references, `justfile` recipes, `.claude` rules, and `ROADMAP.md` references. Purely mechanical; no design changes. Acceptance: `npm run build` in the renamed directory succeeds; `just e2e-cloud-local` still passes.
+- [x] **F8.1 Rename `docs-next/` → `web/`** *(2026-05-23, complete)*
+  - [x] `git mv docs-next web` + `git mv .github/workflows/docs-next.yml .github/workflows/web.yml`.
+  - [x] 15 files updated: justfile (6 recipes), GitHub workflows (2), RELEASE.md, DEMO.md, benchmarks/README.md, scripts/demo-record-cast.sh, ministr-atlas/Cargo.toml, web/next.config.mjs, web/package.json, + 5 internal web/ source files.
+  - [x] Zero remaining `docs-next` references outside ROADMAP.md/CHANGELOG.md.
+  - **Validation:** `npm run types:check --prefix web` clean; `cargo check -p ministr-atlas` clean.
 
 - [ ] **F8.2 Extract design tokens** — pull the v2 color palette, typography, and spacing into a shared CSS variables file (`web/app/tokens.css`) that both marketing pages and fumadocs docs can reference. Map the v2 design system: `--bg: #16130E`, `--ink: #EDEAE4`, `--amber: #F59E0B`, Geist for prose, JetBrains Mono for code. The fumadocs docs pages can keep their current layout while inheriting the dark theme.
 
