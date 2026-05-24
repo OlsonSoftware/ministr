@@ -11,14 +11,28 @@ None.
 
 ## Response
 
-This tool returns its estimate directly (no wrapper envelope):
-
 ```json
 {
+  "total_budget": 100000,
+  "estimated_used": 34500,
+  "estimated_remaining": 65500,
   "level": "normal",
-  "tokens_used": 34500,
-  "tokens_remaining": 65500,
-  "utilization": 0.345
+  "drop_candidates": [],
+  "prefetch_metrics": { "hits": 3, "misses": 7 },
+  "session_metrics": {
+    "total_deliveries": 12,
+    "cumulative_tokens_delivered": 34500,
+    "total_evictions": 2,
+    "cumulative_tokens_evicted": 5200,
+    "total_compressions": 1,
+    "cumulative_tokens_compressed": 800,
+    "total_tokens_saved": 6000,
+    "compression_ratio": 0.174,
+    "delta_updates": 0,
+    "dedup_hits": 3
+  },
+  "schema_tokens": 4200,
+  "tool_count": 20
 }
 ```
 
@@ -26,10 +40,17 @@ This tool returns its estimate directly (no wrapper envelope):
 
 | Field | Description |
 |---|---|
-| `level` | A coarse label for the estimate: `"normal"`, `"elevated"`, or `"critical"` |
-| `tokens_used` | Estimated tokens of content delivered so far this session |
-| `tokens_remaining` | Estimated tokens left against the configured window |
-| `utilization` | `tokens_used / window`, 0.0–1.0 |
+| `total_budget` | Total context window budget in tokens (configured, not real) |
+| `estimated_used` | Estimated tokens currently used |
+| `estimated_remaining` | Estimated tokens remaining |
+| `level` | Pressure level: `"normal"`, `"elevated"`, or `"critical"` |
+| `drop_candidates` | Ranked eviction candidates (empty under normal pressure). Each has `content_id`, `reason`, `tokens_recoverable`, `score`. |
+| `prefetch_metrics` | Prefetch cache hit/miss metrics by strategy |
+| `session_metrics` | Cumulative token economics — deliveries, evictions, compressions, dedup hits, delta updates |
+| `schema_tokens` | Total tokens consumed by MCP tool schemas (descriptions + parameters) |
+| `tool_count` | Number of registered tools |
+| `coherence_alerts` | Optional — pending coherence alerts when underlying content has changed |
+| `elicitation_evicted` | Optional — content IDs evicted via interactive elicitation (when pressure is elevated) |
 
 ## Behavior
 

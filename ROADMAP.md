@@ -1284,7 +1284,7 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 
 - [x] **F12.1a Core navigation tools** *(2026-05-24)* — audited 6 MDX pages against `types.rs`. Fixed: all 6 missing `project` param; `survey.mdx` missing `corpus_ids` + `corpus_boost` + `source_corpus` (F6.3); `toc.mdx` `limit` default corrected to 100. `npm run types:check` + `npm run build` clean.
 
-- [ ] **F12.1b Session + budget tools** — audit `web/content/docs/tools/{extract,compress,dropped,usage,dead}.mdx` (5 pages) against the implementations. These are the agent-primitive tools; verify the budget/session integration descriptions match the F6.1 persistent-session architecture.
+- [x] **F12.1b Session + budget tools** *(2026-05-24)* — audited 5 MDX pages. Fixed: extract, compress, dead missing `project` param; `usage.mdx` complete response rewrite (old docs had wrong field names — `tokens_used`/`utilization` vs actual `estimated_used`/`total_budget`/`drop_candidates`/`session_metrics`/etc.). `dropped.mdx` was already correct. `npm run types:check` + `npm run build` clean.
 
 - [ ] **F12.1c Code-intelligence tools** — audit `web/content/docs/tools/{bridge,solid,impact,related}.mdx` (4 pages). Highest-drift risk: `bridge.mdx` (F3.6-c-ii-b added `symbol_id` to BridgeNode), `solid.mdx` (many params added including `cyclic_dependency`, `shotgun_surgery`), `impact.mdx` (verify blast-radius description).
 
