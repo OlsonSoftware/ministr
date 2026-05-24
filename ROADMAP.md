@@ -1194,7 +1194,12 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
   - [x] `windsurf/` (IDE rules), `workers/` (Cloudflare release-proxy), `examples/` (sample .ministr.toml) assessed and kept at root — correctly positioned for discoverability.
   - [x] CONTRIBUTING.md architecture section expanded from 6-line crate list to 13-line full project layout (web/, deploy/, workers/, examples/, docs/operator/, scripts/).
 
-- [ ] **F8.6 Marketing pages v2 redesign** — `/pricing`, `/stewardship`, `/status`, and `/install` still use old Tailwind/fumadocs styling (light bg, `fd-muted-foreground` colors) that visually clashes with the v2 homepage. Apply the v2 design tokens (dark bg, amber accents, Geist/JetBrains Mono) to each page. Can be done one page at a time or batched.
+- [x] **F8.6 Marketing pages v2 redesign** *(2026-05-23, complete)*
+  - [x] `/pricing` — wrapped in `.ministr-v2`, uses v2 section/h2/sub/feature classes. PricingTable preserved. Promise section with amber-highlighted offer terms.
+  - [x] `/stewardship` — full v2 rewrite: 4 sections (promise, MIT, closed, in practice) with v2-features grid for the 4 commitments. Sourcegraph cautionary tale in footer.
+  - [x] `/status` — SLA cards as v2-features grid. Color-coded p95 (green if meeting target, amber if not). Degraded state with v2 styling. Server-side fetch + revalidate=30 preserved.
+  - [x] `/install` — wrapped in ministr-v2 container. InstallClient component preserved (client component with its own layout).
+  - **Validation:** `npm run types:check` + `npm run build` clean; all 4 pages prerender as Static.
 
 - [ ] **F8.7 Resend retry policy** — `ResendMailSender::send_invite` fires once with no retry. Add exponential backoff (3 attempts at 0/5/30s, mirroring the F3.5 webhook dispatcher shape). Small, well-scoped.
 
