@@ -1247,7 +1247,8 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 - [x] **F10.3 Fold Linked Projects into Projects surface** *(2026-05-23, complete)* — moved LinkedProjectsPanel from Settings → Linked projects tab into the Projects surface as a border-separated section below the master-detail area (rendered only when corpora exist; max-h-[40%] with own scroll). SettingsSurface dropped from 4 tabs to 3 (General, AI assistants, About). LinkedProjectsPanel import + rendering removed from SettingsSurface.
   - **Validation:** `tsc --noEmit` + `vite build` clean; linked projects visible on the Projects surface; Settings has 3 tabs.
 
-- [ ] **F10.4 Slim Settings to General + AI + About** — after F10.1-F10.3, Settings has only 3 tabs (General, AI assistants, About). Remove the tab bar entirely and render them as a single scrollable page with section headers — the settings equivalent of a macOS System Settings flow. Simpler, less chrome, matches what users expect from "Settings."
+- [x] **F10.4 Slim Settings to General + AI + About** *(2026-05-23, complete)* — rewrote SettingsSurface from a 3-tab bar layout to a single scrollable page with three `<section>` elements (General, AI assistants, About) separated by `<hr>` dividers and headed by H2 components. Removed tab state (`SettingsTab` type, `TABS` array, `useState`, `cn` import, nav element, conditional rendering). All panels render unconditionally — no hidden content. `max-w-3xl mx-auto` constrains reading width; `space-y-10` gives breathing room.
+  - **Validation:** `tsc --noEmit` + `vite build` clean; Settings renders as a single scrollable page with three sections; no tab bar.
 
 - **Validation:** nav rail shows 6 icons; Cloud opens directly without going through Settings; Explore gives direct access to Logs + Query playground; Settings is a clean preferences page; all keyboard chords work.
 
