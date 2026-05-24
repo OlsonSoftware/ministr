@@ -1,0 +1,148 @@
+---
+title: SAML SSO via OIDC Bridge
+description: Route SAML-mandated customers through an OIDC bridge (Auth0, Okta, Keycloak) to ministr.
+---
+
+# SAML SSO via OIDC Bridge
+
+ministr's enterprise SSO uses OIDC natively (F5.2). If your
+organisation mandates SAML and cannot switch to OIDC directly,
+route through an OIDC bridge — a service that consumes your SAML
+IdP's assertions and exposes them over OIDC to ministr.
+
+## Why not native SAML?
+
+ministr ships SAML SP metadata (`GET /orgs/{id}/saml/metadata.xml`)
+and an SP-initiated AuthnRequest (`GET /orgs/{id}/saml/login`), but
+the assertion-consumer endpoint (ACS) requires XML-DSig signature
+verification via `samael`'s libxmlsec1 FFI — and that FFI is
+structurally broken on both macOS (runtime SIGSEGV) and Linux
+(compile-time type mismatch). The library is pre-1.0 with a single
+maintainer and a 9-month release cadence. Rather than own custom
+XML-DSig crypto, we route SAML customers through an OIDC bridge.
+
+## Architecture
+
+```
+┌──────────┐   SAML    ┌─────────────────┐   OIDC    ┌─────────┐
+│ Your IdP │ ───────── │ Bridge (Auth0 / │ ───────── │ ministr │
+│ (Okta /  │ assertion │ Okta / Keycloak)│ id_token  │  cloud  │
+│ Entra ID)│           └─────────────────┘           └─────────┘
+└──────────┘
+```
+
+The bridge acts as a SAML SP to your IdP and an OIDC IdP to
+ministr. Your users sign in once; the bridge translates the
+protocol.
+
+## Setup: Auth0
+
+1. **Create an Auth0 Enterprise Connection** (type: SAML).
+   - Upload your IdP's metadata XML or fill in the SSO URL +
+     certificate manually.
+   - Auth0's SP metadata and ACS URL are generated automatically —
+     configure these in your IdP.
+
+2. **Create an Auth0 Regular Web Application** for ministr.
+   - Allowed Callback URL:
+     `https://mcp.ministr.ai/orgs/{org_id}/oidc/callback`
+   - Note the **Domain**, **Client ID**, and **Client Secret**.
+
+3. **Enable the SAML connection** on the Auth0 application (
+   Connections tab → Enterprise → toggle on your SAML connection).
+
+4. **Configure ministr's OIDC endpoint** for your org:
+
+   ```bash
+   curl -X POST https://mcp.ministr.ai/api/v1/orgs/{org_id}/oidc/config \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "issuer_url": "https://YOUR_AUTH0_DOMAIN/",
+       "client_id": "AUTH0_CLIENT_ID",
+       "client_secret": "AUTH0_CLIENT_SECRET"
+     }'
+   ```
+
+5. **Test**: visit
+   `https://mcp.ministr.ai/orgs/{org_id}/oidc/login` →
+   Auth0 redirects to your SAML IdP → assertion flows back through
+   Auth0 → ministr receives an OIDC id_token → bearer minted.
+
+## Setup: Okta
+
+1. **Add a SAML Identity Provider** in Okta (Security → Identity
+   Providers → Add Identity Provider → SAML 2.0 IdP).
+   - Configure your upstream SAML IdP's SSO URL + certificate.
+
+2. **Create an Okta OIDC Web Application** for ministr.
+   - Sign-in redirect URI:
+     `https://mcp.ministr.ai/orgs/{org_id}/oidc/callback`
+   - Note the **Okta domain**, **Client ID**, and **Client Secret**.
+
+3. **Configure ministr** (same `POST /oidc/config` as above, with
+   Okta's issuer URL `https://YOUR_OKTA_DOMAIN/`).
+
+## Setup: Keycloak (self-hosted)
+
+1. **Add a SAML Identity Provider** in Keycloak (Identity Providers
+   → Add provider → SAML v2.0). Import your upstream IdP's metadata.
+
+2. **Create an OIDC Client** in the same realm for ministr.
+   - Valid redirect URI:
+     `https://mcp.ministr.ai/orgs/{org_id}/oidc/callback`
+   - Access type: confidential.
+
+3. **Configure ministr** with
+   `issuer_url = https://keycloak.example.com/realms/YOUR_REALM`.
+
+## Group → role mapping
+
+If your SAML IdP emits group assertions and the bridge forwards
+them as an OIDC `groups` claim (Auth0 and Keycloak do this by
+default; Okta requires a Groups claim filter on the OIDC app),
+ministr's `group_role_map` configuration applies:
+
+```bash
+curl -X POST https://mcp.ministr.ai/api/v1/orgs/{org_id}/oidc/config \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "issuer_url": "https://YOUR_DOMAIN/",
+    "client_id": "...",
+    "client_secret": "...",
+    "group_role_map": {
+      "ministr-admins": "admin",
+      "ministr-users": "member"
+    }
+  }'
+```
+
+See [oidc-real-idp.md](oidc-real-idp.md) for the full OIDC
+configuration reference including `groups_claim`,
+`enforce_email_verified`, and troubleshooting.
+
+## Cost
+
+The bridge itself costs what the bridge provider charges:
+
+| Provider  | Cost for this use case |
+|-----------|----------------------|
+| Auth0     | Free tier covers 7,500 MAU; Enterprise connections require a paid plan (~$23/mo Developer tier) |
+| Okta      | Included in Workforce Identity plans; SAML IdP federation is a standard feature |
+| Keycloak  | Free (self-hosted); customer runs and operates |
+
+ministr charges nothing extra — the OIDC endpoint is the same one
+every non-SAML customer uses.
+
+## Limitations
+
+- **Extra hop adds ~200ms to sign-in latency** (bridge's SAML
+  validation + OIDC token minting). Not noticeable in practice.
+- **SLO (Single Logout)** is not wired end-to-end in v0. Revoking
+  a user in the upstream SAML IdP takes effect within the JWT TTL
+  (≤15 min) or on the next sign-in, whichever comes first.
+- **ministr's SAML CRUD endpoints** (`POST /saml/config`,
+  `GET /saml/metadata.xml`, `GET /saml/login`) still exist and are
+  usable for SP-metadata exchange, but the ACS endpoint that would
+  complete a direct SAML flow is not available.
