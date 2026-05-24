@@ -1,0 +1,132 @@
+---
+title: MCP 2026-07-28 Migration
+description: Audit and migration plan for the MCP stateless protocol release candidate.
+---
+
+# MCP 2026-07-28 Migration Plan
+
+Audit of ministr's MCP surface against the 2026-07-28 specification
+release candidate (stateless protocol core). Produced by F7.1.
+
+## Spec changes that affect ministr
+
+| Change | Impact | ministr dependency |
+|--------|--------|--------------------|
+| **No `initialize` handshake** | HIGH | `MinistrServer::initialize` captures `tenant_id_hint` + `client_name_hint` + negotiates extensions |
+| **No `Mcp-Session-Id` header** | MEDIUM | `fork_for_new_session` per-connection isolation relies on rmcp's session management |
+| **No resumable streams** | LOW | ministr doesn't use resumable streams |
+| **Extensions framework** replaces capability negotiation | MEDIUM | `NegotiatedExtensions::negotiate` called from `initialize` |
+| **Enhanced OAuth** | LOW-MEDIUM | Our OAuth 2.1 + DCR + PKCE may need alignment |
+
+## Dependency map
+
+### 1. Tenant capture (HIGH — F7.2)
+
+**Current path:** `initialize` → `context.extensions` → `Parts` →
+`Tenant` → `tenant_id_hint` (F-Test-3b-fix-1).
+
+**13 downstream call sites** use `self.current_tenant_subject()` which
+reads `tenant_id_hint`. All tool handlers depend on this for:
+- Default corpus selection
+- Cross-corpus survey tenant filtering
+- Session stamping (`ensure_session_mut`)
+- Audit emission
+- Per-tenant visibility filtering
+
+**Migration path:** In the stateless world, every request must carry
+the bearer token. rmcp's stateless mode will need to expose the
+`Parts` (or equivalent) on every `RequestContext`, not just
+`initialize`. If rmcp provides per-request `Parts`, we read the
+`Tenant` from every tool call's context rather than caching it once.
+If rmcp doesn't, we need a middleware that extracts the tenant from
+the `Authorization` header and injects it into a server-side field
+that tool handlers read.
+
+### 2. Client name capture (LOW — folds into F7.2)
+
+**Current:** `initialize` → `request.client_info.name` →
+`client_name_hint`.
+
+**Migration:** Client info may be sent via a new mechanism in the
+extensions framework, or may be dropped entirely. The hint is
+cosmetic (tray tooltip + session dashboard). Acceptable to lose
+temporarily.
+
+### 3. Extension negotiation (MEDIUM — F7.4)
+
+**Current:** `NegotiatedExtensions::negotiate` runs in `initialize`
+and stores in `Arc<Mutex<NegotiatedExtensions>>`. The struct has
+fields: `usage_protocol`, `coherence`, `compression`.
+
+**Read sites:** `negotiated_extensions()` accessor in `builders.rs`
+— but currently **no tool handler reads it at runtime** (the
+accessor exists for future use). The negotiation result is logged
+but never consumed.
+
+**Migration:** Extensions framework in the new spec replaces
+`initialize`-based negotiation. Since no tool handler reads the
+negotiated state today, the migration is: (a) register ministr's
+extensions via the new framework, (b) remove the `initialize`-based
+negotiation code. **Low urgency** — can be deferred past F7.2/F7.3.
+
+### 4. Fork-per-connection (MEDIUM — F7.3)
+
+**Current:** `server_factory` at `commands.rs:499` calls
+`server.fork_for_new_session()` which assigns a fresh `uuid_v4`
+`active_session_id`. rmcp's `StreamableHttpService` calls the factory
+per-connection.
+
+**Migration:** In the stateless world, there may not be a
+"connection" concept at all — each request is independent. The
+`fork_for_new_session` pattern may become fork-per-request or
+unnecessary entirely if sessions are identified by bearer token +
+explicit session parameter.
+
+### 5. Session binding (MEDIUM — F7.3)
+
+**Current:** `active_session_id` is assigned per-fork (uuid_v4).
+Session entry is created lazily on first tool call via
+`ensure_session_mut`. Sessions are tenant-scoped via the
+`tenant_id` field stamped from `current_tenant_subject()`.
+
+**Migration options:**
+- **A. Client-provided session ID in tool params.** Add an optional
+  `session_id` param to every tool. The client carries it across
+  requests. Simple but pollutes every tool schema.
+- **B. Server-inferred from bearer token.** One session per bearer.
+  Matches the "stateless" ethos but loses multi-session-per-user.
+- **C. Session ID in a custom header.** Clients opt into session
+  continuity by sending `X-Ministr-Session: <id>`. Invisible to
+  tools. Cleaner than A.
+- **Recommended: C** — custom header, fallback to bearer-derived.
+
+### 6. OAuth hardening (LOW — F7.5)
+
+**Current:** OAuth 2.1 + DCR + PKCE, well-aligned with prior spec.
+
+**Migration:** Audit the RC's enhanced OAuth requirements. Likely
+minor — our existing implementation is already strict (RS256,
+PKCE S256, short-lived tokens). May need to add specific OAuth
+metadata fields the new spec requires.
+
+## Recommended execution order
+
+1. **F7.1** (this document) — audit. Done.
+2. **F7.2** — stateless tenant resolution. Highest impact; unblocks
+   all tool handlers.
+3. **F7.3** — session continuity. Depends on F7.2's tenant path.
+4. **F7.6** — rmcp version bump. The integration test.
+5. **F7.4** — extensions framework. Can follow the bump.
+6. **F7.5** — OAuth hardening. Lowest urgency; audit-only.
+
+## Blocking question
+
+**Does rmcp expose `RequestContext.extensions` (with `Parts`) on
+every tool call in the stateless mode?** This is the single
+load-bearing question for F7.2. If yes, the migration is a
+~50-line refactor (read tenant per-request instead of per-init).
+If no, we need an rmcp upstream contribution or a middleware
+workaround.
+
+**Action:** Check rmcp's `main` branch or issue tracker for
+2026-07-28 RC support before starting F7.2.
