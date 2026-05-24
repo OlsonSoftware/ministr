@@ -1722,7 +1722,14 @@ Surfaced during an F4 + G.1 deliberate + ministr + serpapi research cycle. None 
 
 Surfaced via serpapi research cycle on MCP ecosystem, competitive landscape, and email delivery.
 
-- [ ] **F3.1b-ii-c Resend bounce webhook handler** — `POST /webhooks/resend` endpoint receiving Resend's `email.bounced` webhook events. On bounce, mark the email address in a `bounced_emails` table so future invite sends skip it (or warn the admin). Resend webhook signature verification uses svix-style HMAC. Small, well-scoped chunk; unblocked once the operator's Resend dashboard is configured.
+- [x] **F3.1b-ii-c Resend bounce webhook handler** *(2026-05-23, complete)*
+  - [x] Migration `0018_bounced_emails.sql` (`email TEXT PK`, `bounced_at`, `reason`). Wired into `db.rs` MIGRATIONS at index 18.
+  - [x] `record_bounce(pool, email, reason)` + `is_bounced(pool, email)` helpers in `ministr-cloud/src/mail.rs`.
+  - [x] `verify_svix_signature` — Standard Webhooks / Svix HMAC-SHA256 scheme (`svix-id.svix-timestamp.body`, base64 key with `whsec_` prefix, multi-signature header support).
+  - [x] `POST /webhooks/resend` axum handler: verifies svix signature, parses `email.bounced` events, records recipient + bounce reason to `bounced_emails`. Returns 200 for all verified events (non-bounce types silently accepted per Resend's retry contract).
+  - [x] `ResendWebhookState` + `resend_webhook_routes` builder. Wired in `cmd_serve_http` behind `MINISTR_RESEND_WEBHOOK_SECRET` env var (same pattern as the Stripe webhook).
+  - [x] 4 new svix signature tests (valid, wrong-secret, tampered-body, multi-sig). 17 total mail tests.
+  - **Validation:** cargo workspace test 0 failed; cargo clippy `--pedantic -D warnings` clean. Live: configure Resend webhook for `email.bounced` → bounce event hits `/webhooks/resend` → `bounced_emails` row created. Deferred to next deploy.
 - [ ] **F7 — MCP 2026-07-28 spec migration** — see §F7 above. The highest-priority new track; creates 6 unblocked code chunks.
   > NOTE (refresh 2026-05-23): consider promoting F7 to the top of the pending queue — rmcp will update to the new spec and our `initialize`-dependent architecture will break.
 
