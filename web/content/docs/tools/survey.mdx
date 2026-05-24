@@ -9,6 +9,9 @@ description: Semantic search across the indexed corpus — documents, sections, 
 |---|---|---|---|---|
 | `query` | string | yes | — | Natural language query |
 | `top_k` | integer | no | 10 | Maximum number of results to return |
+| `project` | string | no | — | Linked-project label (from `.ministr.toml` `[[linked]]`). Omit for the session's primary corpus. |
+| `corpus_ids` | string[] | no | — | Cross-corpus fan-out. When set, fans the query across each corpus ID (own corpora or Atlas slugs like `atlas/react`), tags hits with `source_corpus`, and merges results by score. Omit to query a single corpus. |
+| `corpus_boost` | object | no | — | Per-corpus score multipliers for cross-corpus ranking. Map of `corpus_id → multiplier`; absent corpora default to `1.0`; values clamped to `[0, 10]`. Use `2.0` to float your own repo above Atlas hits, `0.0` to suppress a corpus. |
 
 ## Response
 
@@ -31,7 +34,8 @@ Wrapped in the [standard response envelope](/docs/tools#response-envelope). The 
         "resolution": "symbol_stub",
         "score": 0.82,
         "text": "pub struct Claims { sub: String, exp: i64, ... }",
-        "heading_path": ["src/auth.rs", "struct Claims"]
+        "heading_path": ["src/auth.rs", "struct Claims"],
+        "source_corpus": "atlas/my-lib"
       }
     ],
     "deduplicated_count": 2
@@ -49,6 +53,7 @@ Wrapped in the [standard response envelope](/docs/tools#response-envelope). The 
 | `results[].score` | Similarity score (0.0-1.0, higher is better) |
 | `results[].text` | Content text at the match's resolution level |
 | `results[].heading_path` | Heading hierarchy or symbol path (optional; present on section- and symbol-level hits) |
+| `results[].source_corpus` | Optional — corpus that produced this hit. Present only for cross-corpus `corpus_ids` queries. |
 | `deduplicated_count` | Number of results filtered out (already delivered this session) |
 
 ## Behavior
