@@ -1,13 +1,3 @@
-// F5.5-b-page-skeleton — public /status page.
-//
-// Polls the cloud's `/sla` endpoint (F5.5-b-sla-skeleton +
-// F5.5-b-latency + F5.5-b-persist-read) every 30s via Next.js fetch
-// revalidation and renders the uptime envelope + current p50/p95/p99 +
-// the rolling 30-day worst p95.
-//
-// Server component; zero client JS. Stale-when-revalidate keeps the
-// page snappy even if a request races the next backend tick.
-
 import {
   DEFAULT_CLOUD_BASE_URL,
   fetchSlaStatus,
@@ -26,159 +16,120 @@ export default async function StatusPage() {
   const sla = await fetchSlaStatus(baseUrl);
 
   return (
-    <main className="mx-auto flex max-w-4xl flex-col gap-10 p-8">
-      <header className="flex flex-col gap-3">
-        <p className="font-mono text-xs uppercase tracking-[0.18em] text-fd-muted-foreground">
-          Status
+    <div className="ministr-v2">
+      <section className="v2-section" style={{ paddingTop: '64px' }}>
+        <p className="v2-meta" style={{ marginBottom: '16px' }}>Status</p>
+        <h1 className="v2-h2" style={{ maxWidth: 'none' }}>Cloud SLA snapshot</h1>
+        <p className="v2-sub">
+          Live data from <code>{baseUrl}/sla</code>, refreshed every 30 seconds.
+          Contractual SLA targets: ≥{SLA_TARGET_UPTIME_PCT}% uptime, p95 ≤{' '}
+          {SLA_TARGET_P95_MS}ms query latency.
         </p>
-        <h1 className="text-3xl font-semibold sm:text-4xl">
-          Cloud SLA snapshot
-        </h1>
-        <p className="max-w-3xl text-fd-muted-foreground">
-          Live data from <code className="font-mono">{baseUrl}/sla</code>,
-          refreshed every 30 seconds. Contractual SLA targets: ≥
-          {SLA_TARGET_UPTIME_PCT}% uptime, p95 ≤ {SLA_TARGET_P95_MS}ms query
-          latency.
-        </p>
-      </header>
+      </section>
 
-      {sla ? <SlaCards sla={sla} /> : <DegradedState baseUrl={baseUrl} />}
+      <hr className="v2-rule" />
 
-      <footer className="border-t border-fd-border pt-6 text-xs text-fd-muted-foreground">
-        <p>
-          The data above is fetched server-side and cached for 30 seconds. For
-          the full historical record, see the operator dashboard (deferred —
-          this page is the customer-facing summary). Snapshot pipeline:
-          F5.5-b-skeleton → F5.5-b-latency → F5.5-b-persist-write →
-          F5.5-b-persist-read.
-        </p>
+      <section className="v2-section">
+        {sla ? <SlaCards sla={sla} /> : <DegradedState baseUrl={baseUrl} />}
+      </section>
+
+      <footer className="v2-footer">
+        <div style={{ color: 'var(--muted)', fontSize: '12px', fontFamily: 'var(--font-mono), monospace' }}>
+          Server-side fetch, cached 30s. Pipeline: skeleton → latency → persist-write → persist-read.
+        </div>
+        <div className="v2-footer-links">
+          <a href="/">Home</a>
+          <a href="/pricing">Pricing</a>
+        </div>
       </footer>
-    </main>
+    </div>
   );
 }
 
 function SlaCards({ sla }: { sla: SlaResponse }) {
   const latency = sla.latency;
   const currentP95Ms = latency?.p95_ms;
-  const meetingP95 =
-    currentP95Ms !== undefined && currentP95Ms <= SLA_TARGET_P95_MS;
-  return (
-    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-      <Card title="Uptime">
-        <Metric value={formatUptime(sla.uptime_secs)} caption="since boot" />
-        <Field label="Booted at" value={sla.started_at_iso} mono />
-        <Field label="Version" value={sla.version} mono />
-      </Card>
+  const meetingP95 = currentP95Ms !== undefined && currentP95Ms <= SLA_TARGET_P95_MS;
 
-      <Card title="Current request latency">
+  return (
+    <div className="v2-features">
+      <div className="v2-feature">
+        <h3>Uptime</h3>
+        <p style={{ fontSize: '28px', fontWeight: 500, color: 'var(--ink)', marginBottom: '8px' }}>
+          {formatUptime(sla.uptime_secs)}
+        </p>
+        <p>Since boot · {sla.started_at_iso}</p>
+        <p>Version {sla.version}</p>
+      </div>
+
+      <div className="v2-feature">
+        <h3>Current p95</h3>
         {latency ? (
           <>
-            <Metric
-              value={`${latency.p95_ms}ms`}
-              caption={`p95 of last ${latency.count} requests`}
-              tone={meetingP95 ? 'ok' : 'warn'}
-            />
-            <Field label="p50" value={`${latency.p50_ms}ms`} mono />
-            <Field label="p99" value={`${latency.p99_ms}ms`} mono />
+            <p style={{
+              fontSize: '28px',
+              fontWeight: 500,
+              color: meetingP95 ? '#34d399' : 'var(--amber)',
+              marginBottom: '8px',
+            }}>
+              {latency.p95_ms}ms
+            </p>
+            <p>p50: {latency.p50_ms}ms · p99: {latency.p99_ms}ms</p>
+            <p>{latency.count} samples</p>
           </>
         ) : (
-          <p className="text-sm text-fd-muted-foreground">
-            No samples yet — backend just booted or has seen no traffic.
-          </p>
+          <p>No samples yet — backend just booted.</p>
         )}
-      </Card>
+      </div>
 
-      <Card title="Historical worst p95 (30-day window)">
+      <div className="v2-feature">
+        <h3>30-day worst p95</h3>
         {latency?.window_30d_max_p95_ms != null ? (
-          <Metric
-            value={`${latency.window_30d_max_p95_ms}ms`}
-            caption="max p95 across persisted snapshots"
-            tone={
-              latency.window_30d_max_p95_ms <= SLA_TARGET_P95_MS ? 'ok' : 'warn'
-            }
-          />
-        ) : (
-          <p className="text-sm text-fd-muted-foreground">
-            No persisted snapshots in the 30-day window. This serve may be
-            self-hosted (no DB-backed store wired) or recently restarted.
+          <p style={{
+            fontSize: '28px',
+            fontWeight: 500,
+            color: latency.window_30d_max_p95_ms <= SLA_TARGET_P95_MS ? '#34d399' : 'var(--amber)',
+            marginBottom: '8px',
+          }}>
+            {latency.window_30d_max_p95_ms}ms
           </p>
+        ) : (
+          <p>No persisted snapshots in the 30-day window.</p>
         )}
-      </Card>
+      </div>
 
-      <Card title="SLA contract">
-        <Field label="Uptime target" value={`≥ ${SLA_TARGET_UPTIME_PCT}%`} />
-        <Field label="p95 target" value={`≤ ${SLA_TARGET_P95_MS}ms`} />
-        <p className="mt-2 text-xs text-fd-muted-foreground">
-          The 30-day rolling worst p95 above is the contractual measurement
-          point — sustained breaches trigger SLA credits per the Enterprise
-          agreement.
+      <div className="v2-feature">
+        <h3>SLA contract</h3>
+        <p>Uptime target: ≥{SLA_TARGET_UPTIME_PCT}%</p>
+        <p>p95 target: ≤{SLA_TARGET_P95_MS}ms</p>
+        <p style={{ marginTop: '8px', fontSize: '13px' }}>
+          Sustained breaches trigger SLA credits per the Enterprise agreement.
         </p>
-      </Card>
+      </div>
     </div>
   );
 }
 
 function DegradedState({ baseUrl }: { baseUrl: string }) {
   return (
-    <section className="rounded-lg border border-fd-border bg-fd-muted/40 p-6">
-      <h2 className="text-lg font-medium">Backend unreachable</h2>
-      <p className="mt-2 text-sm text-fd-muted-foreground">
-        The /sla endpoint at <code className="font-mono">{baseUrl}/sla</code>{' '}
-        did not respond with valid JSON. This could be a transient backend
-        blip, a maintenance window, or a misconfigured deployment. Check back
-        in 30 seconds.
-      </p>
-    </section>
-  );
-}
-
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="flex flex-col gap-3 rounded-lg border border-fd-border p-6">
-      <h2 className="text-sm font-medium uppercase tracking-wide text-fd-muted-foreground">
-        {title}
+    <div style={{
+      border: '1px solid var(--rule)',
+      padding: '32px',
+      color: 'var(--ink-2)',
+    }}>
+      <h2 style={{ color: 'var(--amber)', fontSize: '16px', fontWeight: 500, marginBottom: '14px' }}>
+        Backend unreachable
       </h2>
-      {children}
-    </section>
-  );
-}
-
-function Metric({
-  value,
-  caption,
-  tone,
-}: {
-  value: string;
-  caption: string;
-  tone?: 'ok' | 'warn';
-}) {
-  const toneClass =
-    tone === 'warn'
-      ? 'text-amber-600 dark:text-amber-400'
-      : tone === 'ok'
-        ? 'text-emerald-600 dark:text-emerald-400'
-        : '';
-  return (
-    <div className="flex flex-col gap-1">
-      <span className={`text-3xl font-semibold ${toneClass}`}>{value}</span>
-      <span className="text-xs text-fd-muted-foreground">{caption}</span>
+      <p>
+        The /sla endpoint at <code>{baseUrl}/sla</code> did not respond.
+        Check back in 30 seconds.
+      </p>
     </div>
   );
 }
 
-function Field({
-  label,
-  value,
-  mono,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
-  return (
-    <div className="flex items-center justify-between text-sm">
-      <span className="text-fd-muted-foreground">{label}</span>
-      <span className={mono ? 'font-mono text-xs' : ''}>{value}</span>
-    </div>
-  );
-}
+export const metadata = {
+  title: 'Status — ministr',
+  description:
+    'ministr cloud SLA snapshot: uptime, latency percentiles, and historical worst p95.',
+};
