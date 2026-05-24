@@ -1183,7 +1183,11 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
   - [x] ~250 lines of scoped CSS under `.ministr-v2` in `global.css` — responsive breakpoint at 600px (grid collapses, font sizes scale, CTA stacks). Scoped so fumadocs docs pages are unaffected.
   - **Validation:** `npm run types:check` + `npm run build` clean; all pages prerender as Static.
 
-- [ ] **F8.4 Integrate operator docs into fumadocs** — move `docs/operator/*.md` (license-mint, oidc-real-idp, saml-via-oidc-bridge, mcp-migration) into `web/content/docs/operator/` so they're served at `/docs/operator/*` with the same search and nav as the developer docs. Keep the markdown files as-is; fumadocs handles rendering.
+- [x] **F8.4 Integrate operator docs into fumadocs** *(2026-05-23, complete)*
+  - [x] Created `web/content/docs/operator/` with `meta.json` (4-page nav: license-mint, oidc-real-idp, saml-via-oidc-bridge, mcp-migration).
+  - [x] Each doc converted to `.mdx` with YAML frontmatter (`title` + `description`). Content unchanged.
+  - [x] Main `web/content/docs/meta.json` updated with `---Operator---` section linking to the new folder.
+  - **Validation:** `npm run build` generates 4 new SSG pages at `/docs/operator/*`. Type-check clean.
 
 - [ ] **F8.5 Folder cleanup** — consolidate top-level folders: move `installer/` into `deploy/installer/` (macOS .pkg resources belong with other deployment configs); assess whether `windsurf/`, `workers/`, `examples/` need cleanup or can stay. Document the resulting folder structure in `CONTRIBUTING.md`.
 
