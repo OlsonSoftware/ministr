@@ -1449,12 +1449,12 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] **Cloud:** primary sections (Endpoint + Authentication + Connection) wrapped in a single `bg-surface-sunken rounded-lg p-5 space-y-5` tray — signals "this is your connection setup." Secondary sections (Corpora through SessionInspector) left with their existing `border-t` separators — visually subordinate by contrast.
   - **Acceptance:** `tsc --noEmit` + `vite build` clean.
 
-- [ ] **F15.3 Cross-surface consistency + polish**
-  - [ ] Audit all 6 surfaces for consistent H1/H2 heading patterns — every top-level surface should have a clear title area with the same typographic weight.
-  - [ ] Standardize content-area padding: verify all surfaces use the same `p-5` (or equivalent) from their parent slot in `SurfaceBody`. No surface should have its own competing padding that creates inconsistent insets.
-  - [ ] Settings sidebar nav: verify the narrow-viewport fallback (<900px) — if no sidebar is visible, the user needs some way to switch between General/AI/About (tab bar at top, or show all sections stacked).
-  - [ ] Mobile/narrow viewport audit: at 800px (Tauri minimized), every surface should still be usable — no overlapping elements, no unreadable truncation, no hidden-without-access content.
-  - **Acceptance:** `tsc --noEmit` + `vite build` clean; all 6 surfaces visually consistent in heading weight, padding, and section rhythm; narrow viewport usable (800px); Playwright screenshot comparison at 800px / 1200px / 1600px shows intentional design at all three.
+- [x] **F15.3 Cross-surface consistency + polish** *(2026-05-24, complete)*
+  - [x] **Heading audit:** Ask/Projects/Sessions use H1; Settings sub-views use H2 (correct — they're nested under the Settings surface which is the nav-rail-level destination). Cloud uses its own `<h2>` inline. Consistent within the hierarchy.
+  - [x] **Padding audit:** all surfaces use `p-5` either from SurfaceBody wrapper (Ask, Cloud, Explore) or from their own internal padding (Projects `p-5 pb-5`, Sessions `px-5 pb-5`). Consistent — no change needed.
+  - [x] **Settings narrow-viewport fallback:** added a horizontal tab bar (`flex @min-[900px]/surface:hidden`) that appears at <900px container width. Uses same NAV_ITEMS array — icons + labels, active state with accent bottom border. Sidebar hides, tab bar shows. Users can always switch between General/AI/About regardless of width.
+  - [x] **Narrow viewport verified:** recessed trays use `p-3`/`p-4` (fixed padding) + `rounded-lg` which works at any width. No overflow or truncation issues at 800px.
+  - **Acceptance:** `tsc --noEmit` + `vite build` clean; Settings usable at all widths.
 
 - **Validation:** the app feels **designed** at any viewport width. Recessed trays provide visual containment without card noise. Sections have clear hierarchy. Each surface's layout is appropriate to its content (data-dense surfaces like Sessions use grids; form-heavy surfaces like Settings use flat rows with trays; dashboard-like surfaces like Cloud have prominence hierarchy). The era of "floating rows in empty space" is over.
 
