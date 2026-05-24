@@ -1381,6 +1381,49 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
 
 - **Validation:** at 1440px+ (common developer display), every surface uses the full viewport meaningfully — no narrow column surrounded by dead space. At 800px (Tauri minimum-ish), layout degrades gracefully to stacked/narrow. Container queries (not media queries) drive all breakpoints so surfaces respond to their actual allocated space, not the window. **F13 track complete (4/4 chunks shipped).**
 
+### F14 — Full-width settings row redesign *(discovered 2026-05-24 via /roadmap-refresh)*
+
+> **Context.** Settings pages use a "card panel floating in space" pattern: `Zone` components (bordered, rounded-lg, bg-surface with a header strip) wrapping preference rows inside `max-w-2xl` centered containers. This looks ugly and wastes viewport — the card-within-card hierarchy creates visual noise and makes controls feel cramped.
+>
+> **Target pattern (macOS System Settings / Discord / Linear / Spotify).** Full-width rows that span edge-to-edge within the content pane. Each preference is a horizontal row (label+description left, control pinned right) separated by hairline dividers. Section grouping via headers + whitespace, not card containers. No bordered boxes, no centering, no floating panels.
+>
+> **Existing primitives audit (2026-05-24):**
+> - `PrefRow` (settings-primitives.tsx) — already the right row pattern (flex justify-between, border-b hairline). Only used in `GeneralSettings`.
+> - `MetaRow` (settings-primitives.tsx) — read-only key-value row with hairline. Only used in `ServerSettings`.
+> - `Zone` (ui/zone.tsx) — the problem. Adds `rounded-lg border border-border bg-surface` + header strip. Used only in `ServerSettings` (1 reference).
+> - `ToggleRow` (ui/toggle.tsx) — label+description left, toggle right. Already card-free.
+> - `LabeledRow` (ui/labeled-row.tsx) — compact key-value row. Used in vital-card/bridge contexts, not settings.
+>
+> **Design rules for this track:**
+> 1. Rows go **edge-to-edge** within the content pane — no border wrapping, no bg-surface layering
+> 2. **Section headers** are just a bold label with top margin (16–24px), not a card title strip
+> 3. **Hairline dividers** between rows, not between sections (sections get whitespace)
+> 4. **Controls pin right** at all widths; at narrow viewports where label+control don't fit, stack vertically
+> 5. **No max-width cap** on the row container — the sidebar + content pane (F13.2) already constrains width naturally
+
+- [x] **F14.1 Settings row primitives — SettingsSection + rework PrefRow** *(2026-05-24, complete)*
+  - [x] New `SettingsSection` primitive — bold label + optional description + `pt-6 pb-2 first:pt-0` spacing. No border, no bg, no card.
+  - [x] New `SettingsDivider` — `border-border-soft my-2` hairline for lightweight group separation.
+  - [x] `PrefRow` reworked: `px-3` removed → edge-to-edge. Parent provides horizontal padding.
+  - [x] `MetaRow` reworked: `px-3` removed → edge-to-edge. Same treatment.
+  - [x] File header comment updated to reference the F14 design language.
+  - **Acceptance:** `tsc --noEmit` + `vite build` clean.
+
+- [ ] **F14.2 GeneralSettings + AboutPanel — flat row redesign**
+  - [ ] Rewrite `GeneralSettings` to use `SettingsSection` + flat `PrefRow`s directly (no Zone wrapper, no max-w-2xl). Preferences section becomes: section header "Preferences" → rows (Theme, Default tab, Density, Autostart) spanning full width of the content pane.
+  - [ ] Rewrite `AboutPanel` to use the same flat pattern. Version info, data directory, links rendered as flat rows with no card wrapping.
+  - [ ] Remove the `max-w-2xl mx-auto` from GeneralSettings' outer div — the AdaptiveSurface + sidebar from F13.2 already constrains width naturally.
+  - **Acceptance:** `tsc --noEmit` + `vite build` clean; GeneralSettings renders edge-to-edge rows; no Zone visible in the Settings surface; visual parity with macOS System Settings row density.
+
+- [ ] **F14.3 ServerSettings + CloudPanel sections — flat row redesign**
+  - [ ] Rewrite `ServerSettings` to use `SettingsSection` + `MetaRow`s without Zone. Server info (version, model, memory, data dir) rendered as flat rows under a "Server" section header.
+  - [ ] Diagnostics sections (Log viewer, Context simulator) become collapsible disclosure rows without Zone wrapping — the content expands inline below the row, not inside a card.
+  - [ ] CloudPanel sections (Endpoint, Authentication, Connection) — drop the card-like visual grouping. Each becomes a `SettingsSection` header + flat content directly beneath, edge-to-edge.
+  - [ ] Evaluate whether `Zone` can be removed from the codebase entirely, or if it's still needed for non-settings contexts (bridge visualizer, query playground panels). If removable, delete; if needed elsewhere, leave but document it as "not for settings."
+  - **Acceptance:** `tsc --noEmit` + `vite build` clean; no Zone visible in Settings or Explore surfaces; CloudPanel sections render as flat edge-to-edge content groups; the entire settings experience feels like macOS System Settings — flat, spacious, no nested cards.
+
+- **Validation:** at any viewport width, settings pages render as flat full-width rows with controls on the right — no bordered cards, no centered floating panels, no bg-surface card-within-card nesting. The sidebar (F13.2) provides the structural grouping; within each view, content flows edge-to-edge with only hairline separators and section headers.
+
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
 > Cross-cutting: builds the local equivalent of `azure-smoke` so multi-tenant cloud correctness, ACL semantics, API-key authn parity, session-tenant-scoping, webhook fan-out, and billing webhooks are all exercisable on a laptop without an Azure deploy. Today's `scripts/demo-local.sh` covers ONE tenant's happy path; the F-items above ship with Postgres-integration tests gated on `MINISTR_TEST_PG_URL` and unit coverage, but no e2e proof that ties them together end-to-end. F-Test fills that gap. Each chunk extends the harness in place — there's only one command to remember (`just e2e-cloud-local`) regardless of which scenario it ends up covering. Mirrors the `azure-smoke` extension policy from `justfile`.
