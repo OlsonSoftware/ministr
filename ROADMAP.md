@@ -1296,7 +1296,7 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 
 - [x] **F12.4 Architecture page** *(2026-05-24)* — audited architecture.mdx. Page is an intentional black-box overview (says so explicitly) with no crate-level detail to drift. All factual claims verified correct: 13 bridge kinds, 40+ languages, two query surfaces, local-only, stdio/HTTP transport. No edits needed.
 
-- [ ] **F12.5 Operator guides** — audit `docs/operator/` (license-mint.md, oidc-real-idp.md, saml-via-oidc-bridge.md, mcp-2026-07-28-migration.md) + their `web/content/docs/operator/*.mdx` mirrors against the current Rust implementations. Verify: env var names, SQL schemas, CLI flags, and step-by-step procedures match the live code.
+- [x] **F12.5 Operator guides** *(2026-05-24)* — audited 4 guides + 3 web mirrors. All env vars, CLI flags, SQL schemas, and API endpoints verified correct. Fixed one broken sentence in license-mint.md/mdx (missing "to"). mcp-2026-07-28-migration.md is an internal planning doc with no web mirror (intentional). `npm run types:check` + `npm run build` clean.
 
 - [ ] **F12.6 Root markdown** — audit `README.md`, `CONTRIBUTING.md`, `DEMO.md`, `RELEASE.md`, `SECURITY.md`, `STEWARDSHIP.md` against the current project state. Verify: workspace shape, install instructions, demo procedures, CI commands, and security contact info are current.
 
