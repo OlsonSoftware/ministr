@@ -3,17 +3,17 @@ title: License Key Management
 description: Generate, mint, audit, revoke, and rotate Enterprise license JWTs for on-prem deployments.
 ---
 
-# F5.4-e-mint — issuing Enterprise license JWTs
+# Issuing Enterprise license JWTs
 
-ministr's on-prem distribution (F5.4) is license-gated: customers
+ministr's on-prem distribution is license-gated: customers
 configure `MINISTR_LICENSE_KEY` (the JWT) + `MINISTR_LICENSE_PUBLIC_KEY`
-(the verification key) and the serve's F5.4-a boot gate validates
+(the verification key) and the serve's boot gate validates
 the JWT against the pubkey before starting. This doc covers the
 ops-side flow: how YOU generate the signing keypair and mint
 licenses for customers.
 
-The F5.4-e-mint chunk ships the CLI primitives; F5.4-e-ui (deferred)
-will add an admin UI on top; F5.4-e-audit + F5.4-e-revoke (deferred)
+The CLI primitives are available today; an admin UI
+is planned
 add the audit log + revocation table.
 
 ## One-time setup: generate the signing keypair
@@ -58,7 +58,7 @@ The flags:
 |------|---------|------------|
 | `--private-key` | Path to the keypair's private side | File must exist |
 | `--enterprise-id` | Identifies the customer in their boot log | Must be non-empty |
-| `--seat-count` | F5.4-b's invite-cap | u32 |
+| `--seat-count` | seat-cap enforcement | u32 |
 | `--valid-days` | Days from now to `exp` | Must be > 0 (use `mint-test-license` for expired fixtures) |
 | `--out` | Optional file path to write the JWT to | Defaults to stdout |
 
@@ -70,7 +70,7 @@ key from the keypair-generation step.
 ## Customer-side setup
 
 The customer pastes both values into their `MINISTR_LICENSE_KEY` +
-`MINISTR_LICENSE_PUBLIC_KEY` env vars. Helm chart (`F5.4-c`,
+`MINISTR_LICENSE_PUBLIC_KEY` env vars. Helm chart (
 `deploy/helm/ministr-enterprise/`) takes them via `values.yaml`:
 
 ```yaml
@@ -82,10 +82,10 @@ license:
     -----END PUBLIC KEY-----
 ```
 
-Docker Compose (`F5.4-d`, `deploy/compose/`) takes them via `.env`.
+Docker Compose ( `deploy/compose/`) takes them via `.env`.
 
 The customer's serve boot logs an "Enterprise license validated"
-line on success (per F5.4-a) — confirms they pasted the right
+line on success — confirms they pasted the right
 values. Wrong-signature or expired tokens refuse boot with a clear
 miette error identifying the license gate as the cause.
 
@@ -95,7 +95,7 @@ There's no separate renewal command — issue a fresh JWT against
 the same keypair with a new `--valid-days`. The customer
 overwrites `MINISTR_LICENSE_KEY` and restarts their pods.
 
-## Audit log (F5.4-e-audit)
+## Audit log
 
 Pass `--audit-log PATH` to `mint-license` and a JSONL line is
 appended per successful mint:
@@ -138,7 +138,7 @@ operationally-sensitive (the audit log reveals who-bought-what; the
 private key signs JWTs). Customer's secrets manager handles
 disk-level encryption.
 
-## Revocation flow (F5.4-e-revoke)
+## Revocation flow
 
 When a customer contract terminates or a license key is compromised,
 revoke the JWT so the customer's serve refuses to boot under it even
@@ -174,7 +174,7 @@ and restarts their pods. On boot, the serve refuses to start with:
 license revoked at gate: hash=abcdef0123456789 reason=contract terminated 2026-12-01
 ```
 
-Helm chart (`F5.4-c`) reads the path from `values.yaml`:
+Helm chart reads the path from `values.yaml`:
 
 ```yaml
 license:
@@ -183,15 +183,15 @@ license:
   revocationsPath: /etc/ministr/revocations.jsonl
 ```
 
-Docker Compose (`F5.4-d`) reads it from `.env` as
+Docker Compose reads it from `.env` as
 `MINISTR_LICENSE_REVOCATIONS`. The env var is **opt-in**: customers
 who never receive a revocation list operate unchanged from the
-F5.4-a boot shape — only customers whose ops contact has been told
+The boot validator — only customers whose ops contact has been told
 "point at this file" enable the enforcement path.
 
 Hash-stability guarantee: `jwt_id_hash` is computed as the first 16
 hex characters of `sha256(jwt)`, identical to the hash in the
-F5.4-e-audit log. Revoke from either source (the JWT file or the
+the audit log. Revoke from either source (the JWT file or the
 audit log) and you get the same record.
 
 Stash the revocation list alongside your license private key + audit
@@ -199,9 +199,9 @@ log — all three are operationally sensitive (private key signs JWTs,
 audit log reveals who-bought-what, revocation list reveals contract
 churn). Customer's secrets manager handles disk-level encryption.
 
-## Customer-side HTTP fetch (F5.4-e-revoke-api-fetch)
+## Customer-side HTTP fetch
 
-The complement to `F5.4-e-revoke-api-serve` on the customer side.
+The complement to the server-side revocation endpoint.
 When the customer sets `MINISTR_LICENSE_REVOCATIONS_URL`, the boot
 validator fetches the operator's revocation list over HTTP, caches
 it locally, falls back to the cache within a grace window if the
@@ -246,7 +246,7 @@ opted into URL-based fetch. Operators transitioning from
 file-based to network-fetched can simply add the URL env without
 unsetting the old one.
 
-### Background refresh (F5.4-e-revoke-api-refresh)
+### Background refresh
 
 When `MINISTR_LICENSE_REVOCATIONS_URL` is set, the customer's serve
 spawns a background tokio task that re-fetches the URL every
@@ -256,7 +256,7 @@ cache warm so the NEXT pod restart's boot validator sees fresh
 revocations even if the portal is briefly unreachable at restart
 time.
 
-### Mid-flight enforcement (F5.4-e-revoke-mid-flight)
+### Mid-flight enforcement
 
 The background refresh task ALSO re-checks the running license's
 hash against the just-fetched cache. If the operator revokes the
@@ -282,7 +282,7 @@ orchestrator must restart to pick up new license
 
 Honest scope: `std::process::exit` is brutal — in-flight HTTP
 requests get connection-reset rather than HTTP-503'd gracefully.
-For graceful 503 + drain, a future chunk would wire
+For graceful 503 + drain, a future release would wire
 `axum::serve(...).with_graceful_shutdown(signal)` and a top-level
 middleware reading a "license revoked" state flag. Today's
 posture is the k8s-friendly one: pod dies → orchestrator notices
@@ -293,7 +293,7 @@ Refresh task errors log `warn` and the loop continues — a transient
 portal blip doesn't crash the background task; the cache simply
 stays at whatever it was last refreshed to until the portal recovers.
 
-## Serving the revocation list via HTTP (F5.4-e-revoke-api-serve)
+## Serving the revocation list via HTTP
 
 Customers' on-prem serves can fetch the revocation list dynamically
 instead of mounting the JSONL file directly. Two opt-ins:
@@ -317,8 +317,8 @@ instead of mounting the JSONL file directly. Two opt-ins:
    `revoke-license --revocation-list PATH`) takes effect on the
    next HTTP request without bouncing the serve.
 
-2. **Customer side** *(F5.4-e-revoke-api-fetch, deferred)* — once
-   that chunk lands, customers will set
+2. **Customer side** — once
+   the customer-side fetch feature lands, customers will set
    `MINISTR_LICENSE_REVOCATIONS_URL=https://mcp.ministr.ai/api/v1/license-revocations.jsonl`
    and the boot validator will fetch + cache + grace-window-fall-back.
    Today, the customer-side fetcher hasn't shipped; customers still
@@ -342,12 +342,12 @@ ministr cloud revoke-license \
   --reason "contract terminated 2026-12-01" \
   --revocation-list /secure/ministr-license-revocations.jsonl
 
-# Customer's serve (when F5.4-e-revoke-api-fetch lands) polls the URL,
+# Customer's serve polls the URL,
 # pulls the updated list, and refuses to boot under the revoked hash
 # on next restart. Until then, distribute the file by hand.
 ```
 
-## Multi-operator setup (F5.4-e-audit-db)
+## Multi-operator setup
 
 When several operators issue licenses from different machines, each
 one's local JSONL audit log is invisible to the others. The DB-backed
@@ -404,7 +404,7 @@ DB-mirror's rows could double-count. The CLI surfaces one or the
 other per invocation (mutually exclusive flags), so the operator
 chooses which source to consume per query.
 
-## Key rotation flow (F5.4-e-rotate)
+## Key rotation flow
 
 Rotate your signing keypair when (a) you're on a scheduled rotation
 cycle (annual is typical), or (b) the old private key is compromised
@@ -460,7 +460,7 @@ and you need to invalidate every license signed with it. The flow:
      (replaces the `MINISTR_LICENSE_KEY`).
 
 4. **Customers paste both new values** and restart their pods. The
-   F5.4-a boot check accepts the fresh JWT against the new public
+   The boot check accepts the fresh JWT against the new public
    key; the old key + JWT no longer pass validation against the new
    public key (mismatched signature). Customers who haven't pulled
    the new pubkey yet will see boot failures — communicate the
@@ -483,9 +483,9 @@ What this command **does NOT do**:
   need per-customer horizons, run multiple rotations with different
   audit-log subsets.
 
-## Honest gaps in this chunk
+## Current limitations
 
-- **No admin UI** — F5.4-e-ui will surface this flow as a webapp
+- **No admin UI yet** — an admin webapp will surface this flow
   with templated email distribution. Today it's CLI-only.
 
 These gaps are tractable but not blocking today — operators can issue,
