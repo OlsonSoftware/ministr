@@ -1292,7 +1292,7 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 
 - [x] **F12.2 Concept pages** *(2026-05-24)* — audited 5 concept pages against `ministr-core`. All accurate — "13 kinds" confirmed via BridgeKind enum, "40+ languages" confirmed via grammar count, "re-ranking pass" confirmed via QueryService::rerank_results. Cross-chunk fix: bridge.mdx tool page `bridge_kind` filter expanded 7→13 kinds, Supported Frameworks table 5→13 rows. `npm run types:check` + `npm run build` clean.
 
-- [ ] **F12.3 Getting-started + installation + configuration** — audit `web/content/docs/getting-started.mdx`, `installation.mdx`, `configuration.mdx`, `client-setup.mdx` against the current CLI (`ministr init`, `ministr serve`), config format (`.ministr.toml`), and client-setup procedures. Verify: commands produce the described output, paths exist, env vars are current.
+- [x] **F12.3 Getting-started + installation + configuration** *(2026-05-24)* — audited 4 pages. Fixed: `getting-started.mdx` tool table expanded 15→20 (added solid/dead/impact/task/projects); `configuration.mdx` gained `[[linked]]` section documenting cross-project query config (was entirely missing despite `project` param on 15+ tool pages). installation.mdx + client-setup.mdx verified accurate, unchanged. `npm run types:check` + `npm run build` clean.
 
 - [ ] **F12.4 Architecture page** — audit `web/content/docs/architecture.mdx` against the current workspace layout (8 crates + web/ + deploy/). Verify: crate descriptions, dependency diagram, and feature-flag documentation match `Cargo.toml` and actual module structure.
 
