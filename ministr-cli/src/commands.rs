@@ -89,6 +89,12 @@ struct CloudEnv {
     /// layer mounted ⇒ self-hosted serve has zero browser exposure.
     /// Each entry is a full origin (`https://ministr.ai`).
     cors_allowed_origins: Option<String>,
+    /// F11.4 — comma-separated web-origin allowlist for the GitHub
+    /// sign-in redirect (`MINISTR_WEB_ALLOWED_ORIGINS`). When set,
+    /// `/auth/github/start` accepts `loopback_redirect` values whose
+    /// origin matches an entry (alongside the RFC 8252 loopback
+    /// addresses). Example: `https://ministr.ai`.
+    web_allowed_origins: Option<String>,
     resend_webhook_secret: Option<String>,
 }
 
@@ -117,6 +123,7 @@ fn read_cloud_env() -> CloudEnv {
         stripe_price_pro: trimmed("MINISTR_STRIPE_PRICE_PRO"),
         stripe_price_team: trimmed("MINISTR_STRIPE_PRICE_TEAM"),
         cors_allowed_origins: trimmed("MINISTR_CORS_ALLOWED_ORIGINS"),
+        web_allowed_origins: trimmed("MINISTR_WEB_ALLOWED_ORIGINS"),
         resend_webhook_secret: trimmed("MINISTR_RESEND_WEBHOOK_SECRET"),
     }
 }
@@ -1500,6 +1507,22 @@ pub(crate) async fn cmd_serve_http(
                         // F3.7b — wire the audit sink so invite
                         // acceptance fires a `member.added` row.
                         state = state.with_audit(Arc::clone(&audit_sink));
+                        // F11.4 — allow non-loopback redirect origins
+                        // for the web sign-in flow.
+                        if let Some(ref raw) = cloud_env.web_allowed_origins {
+                            let origins: Vec<String> = raw
+                                .split(',')
+                                .map(|s| s.trim().to_owned())
+                                .filter(|s| !s.is_empty())
+                                .collect();
+                            if !origins.is_empty() {
+                                tracing::info!(
+                                    count = origins.len(),
+                                    "web sign-in redirect origins configured"
+                                );
+                                state = state.with_web_allowed_origins(origins);
+                            }
+                        }
                         composed = composed.merge(ministr_cloud::github_signin_routes(state));
                         tracing::info!(
                             base_url = %base_url,
