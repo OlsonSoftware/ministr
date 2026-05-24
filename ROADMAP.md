@@ -1214,7 +1214,11 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 >
 > The fix: thread the **brand identity** (amber-gradient logo SVG, "ministr." wordmark with amber dot, amber as a secondary accent color) through the desktop app without overriding Cockpit's primary violet accent.
 
-- [ ] **F9.1 Amber brand thread in Tauri app** — add the amber-gradient logo SVG to the Onboarding component (currently renders "ministr." in grey). Thread amber (`#F59E0B`) as a `--color-brand` CSS variable alongside the existing violet `--color-accent`. Use brand-amber for the logo, wordmark dot, and system tray icon; keep violet for interactive elements (buttons, focus rings, glow). Small, well-scoped.
+- [x] **F9.1 Amber brand thread in Tauri app** *(2026-05-24, complete)*
+  - [x] `--color-brand: #F59E0B` + `--color-brand-hover: #FBB833` in both light and dark themes in `app.css`. Tailwind v4 auto-maps to `text-brand` / `bg-brand` utilities.
+  - [x] Onboarding screen: amber-gradient logo SVG (same as web v2 homepage) + wordmark dot rendered in `var(--color-brand)` instead of `text-text-dim`.
+  - [x] Violet `--color-accent` unchanged for interactive elements (buttons, focus rings, glow).
+  - **Validation:** `tsc --noEmit` clean.
 
 - [ ] **F9.2 Shared brand tokens** — extract the logo SVG, wordmark font config, and brand-amber color into a shared location both `web/` and `ministr-app/` consume. Prevents the two surfaces from drifting on the brand identity while keeping their design systems independent. Could be a `brand/` directory at the repo root or an npm workspace package.
 
