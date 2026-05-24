@@ -309,6 +309,281 @@ pub fn build_mail_sender_from_env() -> Arc<dyn MailSender> {
     Arc::new(LogOnlyMailSender::new())
 }
 
+// ---------------------------------------------------------------------------
+// Bounce tracking
+// ---------------------------------------------------------------------------
+
+type Pool = deadpool_postgres::Pool;
+
+/// Record a bounced email address so future sends can warn.
+///
+/// # Errors
+///
+/// Database errors (pool / SQL).
+pub async fn record_bounce(pool: &Pool, email: &str, reason: &str) -> Result<(), String> {
+    let conn = pool.get().await.map_err(|e| format!("pool: {e}"))?;
+    conn.execute(
+        "INSERT INTO bounced_emails (email, reason)
+         VALUES ($1, $2)
+         ON CONFLICT (email) DO UPDATE SET bounced_at = now(), reason = $2",
+        &[&email, &reason],
+    )
+    .await
+    .map_err(|e| format!("insert bounce: {e}"))?;
+    Ok(())
+}
+
+/// Check whether an email address has previously bounced.
+///
+/// # Errors
+///
+/// Database errors (pool / SQL).
+pub async fn is_bounced(pool: &Pool, email: &str) -> Result<bool, String> {
+    let conn = pool.get().await.map_err(|e| format!("pool: {e}"))?;
+    let row = conn
+        .query_opt(
+            "SELECT 1 FROM bounced_emails WHERE email = $1",
+            &[&email],
+        )
+        .await
+        .map_err(|e| format!("check bounce: {e}"))?;
+    Ok(row.is_some())
+}
+
+// ---------------------------------------------------------------------------
+// Resend webhook handler
+// ---------------------------------------------------------------------------
+
+/// Svix-style signature verification for Resend webhooks.
+///
+/// Resend uses the Standard Webhooks / Svix signature scheme:
+/// - Headers: `svix-id`, `svix-timestamp`, `svix-signature`
+/// - Signed content: `{svix-id}.{svix-timestamp}.{body}`
+/// - Signature: `v1,{base64(HMAC-SHA256(secret, signed_content))}`
+/// - Secret is base64-encoded with a `whsec_` prefix.
+fn verify_svix_signature(
+    svix_id: &str,
+    svix_timestamp: &str,
+    body: &[u8],
+    svix_signature: &str,
+    secret: &str,
+) -> bool {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    let key_b64 = secret.strip_prefix("whsec_").unwrap_or(secret);
+    let Ok(key_bytes) = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        key_b64,
+    ) else {
+        return false;
+    };
+
+    let mut signed_content = Vec::with_capacity(svix_id.len() + 1 + svix_timestamp.len() + 1 + body.len());
+    signed_content.extend_from_slice(svix_id.as_bytes());
+    signed_content.push(b'.');
+    signed_content.extend_from_slice(svix_timestamp.as_bytes());
+    signed_content.push(b'.');
+    signed_content.extend_from_slice(body);
+
+    let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(&key_bytes) else {
+        return false;
+    };
+    mac.update(&signed_content);
+    let expected = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        mac.finalize().into_bytes(),
+    );
+    let expected_tagged = format!("v1,{expected}");
+
+    for sig in svix_signature.split(' ') {
+        if sig == expected_tagged {
+            return true;
+        }
+    }
+    false
+}
+
+#[derive(Clone)]
+pub struct ResendWebhookState {
+    pool: std::sync::Arc<Pool>,
+    secret: String,
+}
+
+impl ResendWebhookState {
+    #[must_use]
+    pub fn new(pool: std::sync::Arc<Pool>, secret: impl Into<String>) -> Self {
+        Self {
+            pool,
+            secret: secret.into(),
+        }
+    }
+}
+
+pub fn resend_webhook_routes(
+    state: ResendWebhookState,
+) -> axum::Router {
+    use axum::routing::post;
+    axum::Router::new()
+        .route("/webhooks/resend", post(handle_resend_webhook))
+        .with_state(state)
+}
+
+async fn handle_resend_webhook(
+    axum::extract::State(state): axum::extract::State<ResendWebhookState>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let svix_id = headers
+        .get("svix-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let svix_timestamp = headers
+        .get("svix-timestamp")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let svix_signature = headers
+        .get("svix-signature")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if svix_id.is_empty() || svix_timestamp.is_empty() || svix_signature.is_empty() {
+        return (StatusCode::BAD_REQUEST, "missing svix headers").into_response();
+    }
+
+    if !verify_svix_signature(svix_id, svix_timestamp, &body, svix_signature, &state.secret) {
+        return (StatusCode::UNAUTHORIZED, "invalid signature").into_response();
+    }
+
+    let payload: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(_) => return (StatusCode::BAD_REQUEST, "invalid JSON").into_response(),
+    };
+
+    let event_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    if event_type == "email.bounced"
+        && let Some(email) = payload
+            .get("data")
+            .and_then(|d| d.get("to"))
+            .and_then(|t| t.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+    {
+        let reason = payload
+            .get("data")
+            .and_then(|d| d.get("bounce"))
+            .and_then(|b| b.get("message"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("bounce");
+        match record_bounce(&state.pool, email, reason).await {
+            Ok(()) => {
+                info!(
+                    email = %email,
+                    reason = %reason,
+                    "resend webhook: bounce recorded"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    email = %email,
+                    error = %e,
+                    "resend webhook: failed to record bounce"
+                );
+            }
+        }
+    }
+
+    (StatusCode::OK, "ok").into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Tests — svix signature verification
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod svix_tests {
+    use super::*;
+
+    fn test_secret() -> String {
+        use base64::Engine;
+        let key = b"test-signing-key-32-bytes-long!!";
+        format!(
+            "whsec_{}",
+            base64::engine::general_purpose::STANDARD.encode(key)
+        )
+    }
+
+    fn sign(id: &str, ts: &str, body: &[u8], secret: &str) -> String {
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+
+        let key_b64 = secret.strip_prefix("whsec_").unwrap();
+        let key_bytes =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, key_b64).unwrap();
+        let mut content = Vec::new();
+        content.extend_from_slice(id.as_bytes());
+        content.push(b'.');
+        content.extend_from_slice(ts.as_bytes());
+        content.push(b'.');
+        content.extend_from_slice(body);
+        let mut mac = Hmac::<Sha256>::new_from_slice(&key_bytes).unwrap();
+        mac.update(&content);
+        let sig = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            mac.finalize().into_bytes(),
+        );
+        format!("v1,{sig}")
+    }
+
+    #[test]
+    fn verify_valid_signature() {
+        let secret = test_secret();
+        let body = b"{\"type\":\"email.bounced\"}";
+        let sig = sign("msg_123", "1700000000", body, &secret);
+        assert!(verify_svix_signature("msg_123", "1700000000", body, &sig, &secret));
+    }
+
+    #[test]
+    fn reject_wrong_secret() {
+        let secret = test_secret();
+        let body = b"{\"type\":\"email.bounced\"}";
+        let sig = sign("msg_123", "1700000000", body, &secret);
+        assert!(!verify_svix_signature(
+            "msg_123",
+            "1700000000",
+            body,
+            &sig,
+            "whsec_d3JvbmctLWtleS0tLW5vdC10aGUtcmlnaHQtb25l"
+        ));
+    }
+
+    #[test]
+    fn reject_tampered_body() {
+        let secret = test_secret();
+        let body = b"{\"type\":\"email.bounced\"}";
+        let sig = sign("msg_123", "1700000000", body, &secret);
+        assert!(!verify_svix_signature(
+            "msg_123",
+            "1700000000",
+            b"{\"type\":\"email.delivered\"}",
+            &sig,
+            &secret
+        ));
+    }
+
+    #[test]
+    fn accept_multi_signature_header() {
+        let secret = test_secret();
+        let body = b"{}";
+        let real = sign("msg_x", "123", body, &secret);
+        let multi = format!("v1,fakesig {real}");
+        assert!(verify_svix_signature("msg_x", "123", body, &multi, &secret));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
