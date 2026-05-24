@@ -1,48 +1,43 @@
 @import "tailwindcss";
 
 /* ==================================================================
-   ministr — "Cockpit" design language.
+   ministr — v2 design language.
 
-   A dark-first observability cockpit for watching live LLM-agent
-   sessions and corpora. Depth comes from layered elevation tiers +
-   soft shadow + hairline borders (not hard 2px brutalist edges).
-   Single violet accent with a live "glow". Motion is a first-class
-   citizen (see lib/motion.ts) — this file owns only the easing /
-   duration tokens and the reduced-motion kill-switch.
+   Warm-dark palette with amber accent, matching the ministr.ai web
+   design. Depth from layered elevation tiers + soft shadow + hairline
+   borders. Motion is a first-class citizen (see lib/motion.ts).
    ================================================================== */
 
 :root {
-  /* ---- Elevation tiers (light theme — inverted structure of dark) ---- */
-  --color-bg: #f6f6f4;          /* app canvas */
+  /* ---- Elevation tiers (light theme) ---- */
+  --color-bg: #FAF9F7;          /* warm off-white canvas */
   --color-surface: #ffffff;     /* tier 1 — panels */
   --color-surface-raised: #ffffff;
-  --color-surface-overlay: #eeeeec; /* tier 2 — headers, hover */
-  --color-surface-sunken: #e7e7e3;  /* inset — code, voids */
-  --color-surface-pinned: #f1eefb;  /* "kept" tint */
+  --color-surface-overlay: #F0EDE8; /* tier 2 — headers, hover */
+  --color-surface-sunken: #E8E5DF;  /* inset — code, voids */
+  --color-surface-pinned: #FEF7E8;  /* amber tint for "kept" */
 
-  --color-border: #d6d6d2;      /* hairline */
-  --color-border-soft: #e3e3df; /* faintest divider */
-  --color-border-hover: #b9b9b3;
+  --color-border: #D6D2CC;      /* hairline */
+  --color-border-soft: #E3DFD9; /* faintest divider */
+  --color-border-hover: #B9B3AB;
 
-  --color-text: #16161a;
-  --color-text-muted: #4a4a52;
-  --color-text-dim: #76767e;
+  --color-text: #16130E;
+  --color-text-muted: #524E47;
+  --color-text-dim: #7A766F;
 
   --color-brand: #F59E0B;
   --color-brand-hover: #FBB833;
 
-  --color-accent: #6b3aff;
-  --color-accent-hover: #5325f5;
+  --color-accent: #D97706;
+  --color-accent-hover: #B45309;
   --color-accent-fg-on: #ffffff;
-  /* Live glow — a soft accent halo for active/streaming elements. */
-  --color-accent-glow: 107 58 255;        /* rgb triplet for box-shadow */
+  --color-accent-glow: 245 158 11;
   --glow-soft: 0 0 0 1px rgb(var(--color-accent-glow) / 0.35),
                0 0 16px -2px rgb(var(--color-accent-glow) / 0.45);
-  /* Legacy shims so unmigrated callers don't crash mid-refactor. */
   --color-accent-ring: var(--color-accent);
   --color-accent-soft: color-mix(in oklab, var(--color-accent) 16%, transparent);
 
-  /* ---- Semantic tones (carried over from status.ts contract) ---- */
+  /* ---- Semantic tones ---- */
   --color-success: #1f8a5b;
   --color-warning: #b07400;
   --color-danger: #d23b46;
@@ -91,28 +86,28 @@
 }
 
 .dark {
-  --color-bg: #08080b;          /* near-black canvas */
-  --color-surface: #111116;     /* tier 1 */
-  --color-surface-raised: #16161c;
-  --color-surface-overlay: #1d1d25; /* tier 2 */
-  --color-surface-sunken: #060608;  /* inset */
-  --color-surface-pinned: #1a1730;
+  --color-bg: #16130E;          /* warm dark — matches ministr.ai */
+  --color-surface: #1E1B15;     /* tier 1 */
+  --color-surface-raised: #24211A;
+  --color-surface-overlay: #28241C; /* tier 2 */
+  --color-surface-sunken: #100E0A;  /* inset */
+  --color-surface-pinned: #2A2410;  /* amber tint */
 
-  --color-border: #2a2a33;
-  --color-border-soft: #1f1f27;
-  --color-border-hover: #3a3a46;
+  --color-border: #2A2620;
+  --color-border-soft: #221F19;
+  --color-border-hover: #38332B;
 
-  --color-text: #f4f4f7;
-  --color-text-muted: #b4b4c0;
-  --color-text-dim: #7c7c8a;
+  --color-text: #EDEAE4;
+  --color-text-muted: #C0BCB4;
+  --color-text-dim: #7A766F;
 
   --color-brand: #F59E0B;
   --color-brand-hover: #FBB833;
 
-  --color-accent: #9d7bff;
-  --color-accent-hover: #b298ff;
-  --color-accent-fg-on: #0a0712;
-  --color-accent-glow: 157 123 255;
+  --color-accent: #F59E0B;
+  --color-accent-hover: #FBB833;
+  --color-accent-fg-on: #16130E;
+  --color-accent-glow: 245 158 11;
   --color-accent-soft: color-mix(in oklab, var(--color-accent) 22%, transparent);
 
   --color-success: #3fcf8e;
@@ -120,7 +115,6 @@
   --color-danger: #ef5d68;
   --color-info: #5ec9e8;
 
-  /* Dark depth: shadows go darker + an accent rim picks up the glow. */
   --shadow-color: 0 0 0;
   --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
   --shadow-sm: 0 2px 8px rgb(0 0 0 / 0.45);
@@ -178,10 +172,10 @@ html { font-size: 14px; }
   --text-display: var(--text-display);
 
   --font-sans:
-    "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
   --font-serif:
-    "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
   --font-mono:
     "JetBrains Mono", "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas,
