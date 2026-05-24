@@ -1174,9 +1174,14 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
   - [x] Zero remaining `docs-next` references outside ROADMAP.md/CHANGELOG.md.
   - **Validation:** `npm run types:check --prefix web` clean; `cargo check -p ministr-atlas` clean.
 
-- [ ] **F8.2 Extract design tokens** — pull the v2 color palette, typography, and spacing into a shared CSS variables file (`web/app/tokens.css`) that both marketing pages and fumadocs docs can reference. Map the v2 design system: `--bg: #16130E`, `--ink: #EDEAE4`, `--amber: #F59E0B`, Geist for prose, JetBrains Mono for code. The fumadocs docs pages can keep their current layout while inheriting the dark theme.
+- [x] **F8.2 Extract design tokens** *(2026-05-23, complete — combined with F8.3)*
+  - [x] `web/app/tokens.css` with v2 CSS custom properties: `--bg: #16130E`, `--ink: #EDEAE4`, `--amber: #F59E0B`, + `--bg-2`, `--bg-3`, `--ink-2`, `--muted`, `--rule`, `--rule-2`, `--amber-2`.
+  - [x] Root layout (`web/app/layout.tsx`) updated to load Geist + JetBrains Mono via `next/font/google` (CSS variables `--font-geist` + `--font-mono`).
 
-- [ ] **F8.3 Homepage v2 implementation** — replace the current `(home)/page.tsx` (357-line fumadocs-styled manuscript layout) with the v2 design from the reference HTML. Four sections: hero (wordmark + "give your AI agent eyes for code" + install CTA), features grid (structural / semantic / cross-language / instant), "why ministr" stat callout, install steps. Static export friendly (zero client JS on the page, matching v2's approach). Reuse existing `INSTALL_COMMANDS` from `lib/install.ts`.
+- [x] **F8.3 Homepage v2 implementation** *(2026-05-23, complete)*
+  - [x] `web/app/(home)/page.tsx` completely rewritten — 4 sections matching the v2 reference HTML: hero (SVG logo, wordmark, "Give your AI agent eyes for code", install CTA + command block), features grid (structural / semantic / cross-language / instant with hover states), "Why ministr" stat callout, install steps (numbered, with copy button).
+  - [x] ~250 lines of scoped CSS under `.ministr-v2` in `global.css` — responsive breakpoint at 600px (grid collapses, font sizes scale, CTA stacks). Scoped so fumadocs docs pages are unaffected.
+  - **Validation:** `npm run types:check` + `npm run build` clean; all pages prerender as Static.
 
 - [ ] **F8.4 Integrate operator docs into fumadocs** — move `docs/operator/*.md` (license-mint, oidc-real-idp, saml-via-oidc-bridge, mcp-migration) into `web/content/docs/operator/` so they're served at `/docs/operator/*` with the same search and nav as the developer docs. Keep the markdown files as-is; fumadocs handles rendering.
 
