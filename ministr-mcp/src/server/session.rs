@@ -89,7 +89,7 @@ impl MinistrServer {
     /// Resolve the active session entry, bootstrapping it lazily if missing.
     ///
     /// Tool handlers used to call
-    /// `reg.get_session_mut(&self.active_session_id).expect("active session exists")`,
+    /// `reg.get_session_mut(&self.effective_session_id()).expect("active session exists")`,
     /// which assumed the session was eagerly registered at server
     /// construction. After [`Self::fork_for_new_session`] (which runs
     /// inside the sync rmcp factory closure and so cannot lock the
@@ -109,7 +109,7 @@ impl MinistrServer {
         &self,
         reg: &'a mut SessionRegistry,
     ) -> &'a mut SessionEntry {
-        let entry = reg.get_or_create(&self.active_session_id, None, AccessMode::ReadWrite);
+        let entry = reg.get_or_create(&self.effective_session_id(), None, AccessMode::ReadWrite);
         if entry.parent_session_id.is_none()
             && let Some(parent) = self.parent_session_id_hint.as_deref()
         {
@@ -160,7 +160,7 @@ impl MinistrServer {
         let content_id = ContentId(section_id.to_string());
         let mut reg = self.registry.lock().await;
         // F6.1-f — hydrate from durable storage on first access this pod.
-        try_restore_session(&mut reg, &self.active_session_id).await;
+        try_restore_session(&mut reg, &self.effective_session_id()).await;
         let entry = self.ensure_session_mut(&mut reg);
         let turn = entry.session.current_turn() + 1;
         entry.session.record_delivery(
@@ -176,11 +176,11 @@ impl MinistrServer {
 
         // F6.1-d-c — persist eviction events to the drops ledger before
         // releasing the registry lock.
-        emit_section_drops(&reg, &self.active_session_id, &evicted_ids);
+        emit_section_drops(&reg, &self.effective_session_id(), &evicted_ids);
 
         // F6.1-e — checkpoint the session snapshot (budget_used + timestamps)
         // so a fresh pod can lazy-restore it via SessionRegistry::try_restore.
-        emit_session_snapshot(&reg, &self.active_session_id, &status);
+        emit_session_snapshot(&reg, &self.effective_session_id(), &status);
 
         drop(reg);
 
@@ -197,7 +197,7 @@ impl MinistrServer {
                 heading_paths.push(service.section_heading_path(evicted_id).await);
             }
             let mut reg = self.registry.lock().await;
-            if let Some(entry) = reg.get_session_mut(&self.active_session_id) {
+            if let Some(entry) = reg.get_session_mut(&self.effective_session_id()) {
                 for (evicted_id, heading_path) in evicted_ids.iter().zip(&heading_paths) {
                     let evicted_cid = ContentId(evicted_id.clone());
                     entry.session.mask_to_bookmark(&evicted_cid, heading_path);
@@ -267,7 +267,7 @@ impl MinistrServer {
     ) -> ToolResponse<T> {
         let mut reg = self.registry.lock().await;
         // F6.1-f — hydrate from durable storage on first access this pod.
-        try_restore_session(&mut reg, &self.active_session_id).await;
+        try_restore_session(&mut reg, &self.effective_session_id()).await;
         let entry = self.ensure_session_mut(&mut reg);
         let alerts = entry.session.drain_alerts();
         drop(reg);

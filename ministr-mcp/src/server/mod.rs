@@ -492,6 +492,16 @@ pub struct MinistrServer {
     registry: Arc<Mutex<SessionRegistry>>,
     /// ID of the active session for this MCP connection.
     active_session_id: String,
+    /// F7.3 — per-request session ID override for stateless MCP.
+    ///
+    /// In stateless mode (no `initialize`, no `Mcp-Session-Id`), rmcp
+    /// calls the factory per-request, giving each request a random
+    /// `uuid_v4` `active_session_id`. This field lets `call_tool`
+    /// override it with a deterministic ID derived from the tenant
+    /// subject, so the same agent gets the same session across
+    /// requests. When `Some`, `effective_session_id()` returns this
+    /// instead of `active_session_id`.
+    session_id_override: Arc<std::sync::Mutex<Option<String>>>,
     prefetch: Arc<Mutex<PrefetchEngine>>,
     storage: Option<Arc<SqliteStorage>>,
     analytics: Option<Arc<Analytics>>,
@@ -965,7 +975,7 @@ impl ServerHandler for MinistrServer {
 
 #[tool_router]
 impl MinistrServer {
-    // F7.2 — per-request tenant capture for stateless MCP.
+    // F7.2 + F7.3 — per-request tenant + session capture for stateless MCP.
     //
     // The macro-generated `call_tool` is suppressed when we define our
     // own. We capture the tenant from the HTTP `Parts` that rmcp 1.7
@@ -974,6 +984,12 @@ impl MinistrServer {
     // work on EVERY tool call regardless of whether `initialize` ran
     // (stateless mode) or whether the tokio task-local survived rmcp's
     // internal `tokio::spawn` boundary.
+    //
+    // F7.3: derive a deterministic session ID from the tenant subject
+    // so the same agent gets the same session across stateless requests.
+    // In stateful mode (with initialize), the fork-assigned uuid_v4
+    // still wins because the override stays None until a tenant is
+    // captured without a prior initialize.
     async fn call_tool(
         &self,
         request: rmcp::model::CallToolRequestParams,
@@ -981,9 +997,24 @@ impl MinistrServer {
     ) -> Result<rmcp::model::CallToolResult, rmcp::model::ErrorData> {
         if let Some(parts) = context.extensions.get::<axum::http::request::Parts>()
             && let Some(tenant) = parts.extensions.get::<crate::auth::tenant::Tenant>()
-            && let Ok(mut guard) = self.tenant_id_hint.lock()
         {
-            *guard = Some(tenant.subject.clone());
+            if let Ok(mut guard) = self.tenant_id_hint.lock() {
+                *guard = Some(tenant.subject.clone());
+            }
+            // F7.3 — deterministic session ID for stateless continuity.
+            // SHA-256 of the tenant subject, truncated to 32 hex chars,
+            // prefixed with "ministr-" to match the existing session ID
+            // format from infra.rs::generate_session_id.
+            if let Ok(mut guard) = self.session_id_override.lock() {
+                use sha2::Digest as _;
+                let hash = sha2::Sha256::digest(tenant.subject.as_bytes());
+                let mut hex = String::with_capacity(32);
+                for b in &hash[..16] {
+                    use std::fmt::Write as _;
+                    let _ = write!(hex, "{b:02x}");
+                }
+                *guard = Some(format!("ministr-{hex}"));
+            }
         }
 
         let tcc =
@@ -2246,7 +2277,7 @@ impl MinistrServer {
             // Track query for task-aware salience scoring
             if let Some(ref q) = params.query {
                 let mut reg = self.registry.lock().await;
-                if let Some(entry) = reg.get_session_mut(&self.active_session_id) {
+                if let Some(entry) = reg.get_session_mut(&self.effective_session_id()) {
                     entry.session.record_query(q);
                 }
             }

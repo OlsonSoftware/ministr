@@ -161,7 +161,7 @@ impl MinistrServer {
     pub(super) async fn persist_session(&self) {
         if let Some(ref storage) = self.storage {
             let mut reg = self.registry.lock().await;
-            let Some(entry) = reg.get_session_mut(&self.active_session_id) else {
+            let Some(entry) = reg.get_session_mut(&self.effective_session_id()) else {
                 return;
             };
             if let Err(e) = storage.save_session(&entry.session).await {
