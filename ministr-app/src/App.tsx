@@ -23,6 +23,7 @@ import { SettingsSurface } from "./components/surfaces/SettingsSurface";
 import { CloudPanel } from "./components/surfaces/CloudPanel";
 import { DeveloperPanel } from "./components/surfaces/DeveloperPanel";
 import { ServerSettings } from "./components/surfaces/ServerSettings";
+import { AdaptiveSurface } from "./components/ui/adaptive-surface";
 import { corpusLabel } from "./lib/corpus";
 import { useLiveEvents } from "./lib/liveBus";
 import { fade } from "./lib/motion";
@@ -471,9 +472,11 @@ function SurfaceBody({
 
   if (surface === "cloud") {
     return (
-      <div className="h-full overflow-y-auto p-5">
-        <CloudPanel />
-      </div>
+      <AdaptiveSurface>
+        <div className="h-full overflow-y-auto p-5">
+          <CloudPanel />
+        </div>
+      </AdaptiveSurface>
     );
   }
 

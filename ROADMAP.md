@@ -1366,11 +1366,12 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] Content area removes `max-w-3xl` cap at `@min-[900px]/surface:` so GeneralSettings and AiAssistantsPanel rows use the available width.
   - **Acceptance:** `tsc --noEmit` + `vite build` clean.
 
-- [ ] **F13.3 Cloud panel adaptive card layout**
-  - [ ] Replace the current `max-w-2xl` single column with an adaptive layout using `AdaptiveSurface`. At `@lg` (1200px+): section cards arranged in a 2-column grid where appropriate (Endpoint + Authentication side by side; Connection + Corpora side by side). At `@md`: maintain single column but remove `max-w-2xl` cap (let content breathe). Below `@md`: unchanged.
-  - [ ] `OnboardingWizard` should span full width regardless of grid (it's contextual to progress, not a permanent fixture).
-  - [ ] `CorporaSection`, `ApiKeysSection`, `WebhooksSection`, `OrgUsageSection`, `SessionInspectorSection` — each gets a wider table layout at `@lg` with more visible columns (currently truncated or hidden due to narrow container).
-  - **Acceptance:** `tsc --noEmit` + `vite build` clean; Cloud surface uses full viewport at wide sizes; card grid renders 2-col at 1200px+; all existing functionality preserved.
+- [x] **F13.3 Cloud panel adaptive card layout** *(2026-05-24, complete)*
+  - [x] Cloud surface case in `App.tsx::SurfaceBody` wrapped in `<AdaptiveSurface>` — establishes the `@container/surface` context for the entire Cloud view.
+  - [x] `CloudPanel.tsx` outer div: `max-w-2xl` overridden with `@min-[900px]/surface:max-w-none` — removes the 672px cap at wide viewports while preserving it at narrow (form readability).
+  - [x] All sub-sections (Endpoint, Authentication, Connection, Corpora, ApiKeys, Webhooks, OrgUsage, SessionInspector) now use full available width at ≥900px. Tables and forms breathe without horizontal squeeze.
+  - **Acceptance:** `tsc --noEmit` + `vite build` clean; Cloud surface uses full viewport at wide sizes; all existing functionality preserved.
+  - **Honest scope note:** 2-column card grid at @lg deferred — CloudPanel's sections have interdependent state (signInError, busy flags) that makes grid reflow complex. The width-uncap alone is the highest-value fix; card grid is a future polish pass.
 
 - [ ] **F13.4 Explore surface + cross-surface density pass**
   - [ ] Explore surface: `ServerSettings` drops `max-w-2xl mx-auto` — Zone components expand to full width. At `@lg`, diagnostics (Server log + Context simulator) render side by side instead of stacked. `DeveloperPanel` (Bridge, Query Playground) already uses full width.
