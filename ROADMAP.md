@@ -1189,7 +1189,10 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
   - [x] Main `web/content/docs/meta.json` updated with `---Operator---` section linking to the new folder.
   - **Validation:** `npm run build` generates 4 new SSG pages at `/docs/operator/*`. Type-check clean.
 
-- [ ] **F8.5 Folder cleanup** — consolidate top-level folders: move `installer/` into `deploy/installer/` (macOS .pkg resources belong with other deployment configs); assess whether `windsurf/`, `workers/`, `examples/` need cleanup or can stay. Document the resulting folder structure in `CONTRIBUTING.md`.
+- [x] **F8.5 Folder cleanup** *(2026-05-23, complete)*
+  - [x] `git mv installer deploy/installer` — macOS .pkg resources now alongside Helm + Docker Compose.
+  - [x] `windsurf/` (IDE rules), `workers/` (Cloudflare release-proxy), `examples/` (sample .ministr.toml) assessed and kept at root — correctly positioned for discoverability.
+  - [x] CONTRIBUTING.md architecture section expanded from 6-line crate list to 13-line full project layout (web/, deploy/, workers/, examples/, docs/operator/, scripts/).
 
 - **Validation:** `ministr.ai` renders the v2 homepage design; `/docs` still works with fumadocs nav; `/pricing`, `/status`, `/stewardship` render with the new dark theme; operator docs are accessible at `/docs/operator/*`; Lighthouse ≥ 95 on the landing page.
 
