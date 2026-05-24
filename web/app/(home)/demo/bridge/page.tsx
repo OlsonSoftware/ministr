@@ -82,7 +82,7 @@ export default function DemoBridgePage() {
         <p className="text-fd-muted-foreground">
           Append <code className="font-mono">?api=&lt;daemon-base&gt;&amp;id=&lt;corpus-id&gt;</code>
           {' '}to the URL. The daemon must opt into CORS for this origin via{' '}
-          <code className="font-mono">MINISTR_CORS_ALLOWED_ORIGINS</code> (F3.6-b-ii-a). For
+          <code className="font-mono">MINISTR_CORS_ALLOWED_ORIGINS</code>. For
           authenticated cloud endpoints, add{' '}
           <code className="font-mono">&amp;token=&lt;bearer&gt;</code>.
         </p>

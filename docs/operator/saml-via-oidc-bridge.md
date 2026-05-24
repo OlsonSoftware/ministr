@@ -1,6 +1,7 @@
+
 # SAML SSO via OIDC Bridge
 
-ministr's enterprise SSO uses OIDC natively (F5.2). If your
+ministr's enterprise SSO uses OIDC natively. If your
 organisation mandates SAML and cannot switch to OIDC directly,
 route through an OIDC bridge — a service that consumes your SAML
 IdP's assertions and exposes them over OIDC to ministr.
