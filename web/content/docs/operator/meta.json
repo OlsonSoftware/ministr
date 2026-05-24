@@ -3,7 +3,6 @@
   "pages": [
     "license-mint",
     "oidc-real-idp",
-    "saml-via-oidc-bridge",
-    "mcp-migration"
+    "saml-via-oidc-bridge"
   ]
 }
