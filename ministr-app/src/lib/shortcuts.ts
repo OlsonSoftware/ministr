@@ -20,6 +20,7 @@ export type ShortcutAction =
   | "nav:projects"
   | "nav:sessions"
   | "nav:cloud"
+  | "nav:explore"
   | "nav:settings"
   // chrome toggles
   | "toggle:palette"
@@ -85,6 +86,13 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
     id: "nav:cloud",
     keys: ["g", "c"],
     label: "Cloud",
+    group: "Navigation",
+    prefixed: true,
+  },
+  {
+    id: "nav:explore",
+    keys: ["g", "e"],
+    label: "Explore",
     group: "Navigation",
     prefixed: true,
   },

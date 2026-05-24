@@ -15,6 +15,7 @@ import {
   Activity,
   Cloud,
   Eye,
+  Terminal,
   FileText,
   FolderOpen,
   MessageSquare,
@@ -142,6 +143,15 @@ export function CommandPalette({
         icon: Cloud,
         mode: "",
         run: () => onNavigate("cloud"),
+      },
+      {
+        id: "nav:explore",
+        label: "Go to Explore",
+        hint: "Logs, query playground, server diagnostics",
+        keywords: "explore developer logs query playground server debug",
+        icon: Terminal,
+        mode: "",
+        run: () => onNavigate("explore"),
       },
       {
         id: "nav:settings",
