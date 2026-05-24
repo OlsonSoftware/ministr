@@ -153,57 +153,75 @@ impl ResendMailSender {
     }
 }
 
+const RETRY_DELAYS_SECS: &[u64] = &[0, 5, 30];
+
+async fn send_with_retry(
+    client: &reqwest::Client,
+    api_key: &str,
+    body: &serde_json::Value,
+    label: &str,
+    recipient: &str,
+) -> bool {
+    for (attempt, &delay) in RETRY_DELAYS_SECS.iter().enumerate() {
+        if delay > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+        }
+        match client
+            .post(RESEND_API_URL)
+            .header("Authorization", format!("Bearer {api_key}"))
+            .json(body)
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                info!(recipient, label, "mail:resend — sent");
+                return true;
+            }
+            Ok(resp) if resp.status().is_client_error() => {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                warn!(recipient, label, %status, body = %text, "mail:resend — client error (not retrying)");
+                return false;
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                warn!(
+                    recipient, label, %status, body = %text,
+                    attempt = attempt + 1,
+                    max_attempts = RETRY_DELAYS_SECS.len(),
+                    "mail:resend — server error, will retry"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    recipient, label, error = %e,
+                    attempt = attempt + 1,
+                    max_attempts = RETRY_DELAYS_SECS.len(),
+                    "mail:resend — request failed, will retry"
+                );
+            }
+        }
+    }
+    warn!(recipient, label, "mail:resend — all retries exhausted");
+    false
+}
+
 impl MailSender for ResendMailSender {
     fn send_invite(&self, message: InviteMessage) {
         let client = self.client.clone();
         let api_key = self.api_key.clone();
         let from = self.from_address.clone();
         let to = message.to_email.clone();
-        let subject = format!(
-            "You've been invited to {} on ministr",
-            message.org_name
-        );
+        let subject = format!("You've been invited to {} on ministr", message.org_name);
         let html = Self::render_html(&message);
 
         tokio::spawn(async move {
             let body = serde_json::json!({
-                "from": from,
-                "to": [to],
-                "subject": subject,
-                "html": html,
+                "from": from, "to": [&to], "subject": subject, "html": html,
             });
-            match client
-                .post(RESEND_API_URL)
-                .header("Authorization", format!("Bearer {api_key}"))
-                .json(&body)
-                .timeout(std::time::Duration::from_secs(10))
-                .send()
-                .await
-            {
-                Ok(resp) if resp.status().is_success() => {
-                    info!(
-                        recipient = %to,
-                        "mail:resend — invite email sent"
-                    );
-                }
-                Ok(resp) => {
-                    let status = resp.status();
-                    let body_text = resp.text().await.unwrap_or_default();
-                    warn!(
-                        recipient = %to,
-                        %status,
-                        body = %body_text,
-                        "mail:resend — API returned non-success"
-                    );
-                }
-                Err(e) => {
-                    warn!(
-                        recipient = %to,
-                        error = %e,
-                        "mail:resend — failed to send invite email"
-                    );
-                }
-            }
+            send_with_retry(&client, &api_key, &body, "invite", &to).await;
         });
     }
 
@@ -221,44 +239,9 @@ impl MailSender for ResendMailSender {
 
         tokio::spawn(async move {
             let body = serde_json::json!({
-                "from": from,
-                "to": [to],
-                "subject": subject,
-                "html": html,
+                "from": from, "to": [&to], "subject": subject, "html": html,
             });
-            match client
-                .post(RESEND_API_URL)
-                .header("Authorization", format!("Bearer {api_key}"))
-                .json(&body)
-                .timeout(std::time::Duration::from_secs(10))
-                .send()
-                .await
-            {
-                Ok(resp) if resp.status().is_success() => {
-                    info!(
-                        recipient = %to,
-                        stale_key_count = count,
-                        "mail:resend — stale-key digest sent"
-                    );
-                }
-                Ok(resp) => {
-                    let status = resp.status();
-                    let body_text = resp.text().await.unwrap_or_default();
-                    warn!(
-                        recipient = %to,
-                        %status,
-                        body = %body_text,
-                        "mail:resend — stale-key digest API returned non-success"
-                    );
-                }
-                Err(e) => {
-                    warn!(
-                        recipient = %to,
-                        error = %e,
-                        "mail:resend — failed to send stale-key digest"
-                    );
-                }
-            }
+            send_with_retry(&client, &api_key, &body, "stale-key-digest", &to).await;
         });
     }
 }

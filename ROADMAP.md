@@ -1201,7 +1201,10 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
   - [x] `/install` — wrapped in ministr-v2 container. InstallClient component preserved (client component with its own layout).
   - **Validation:** `npm run types:check` + `npm run build` clean; all 4 pages prerender as Static.
 
-- [ ] **F8.7 Resend retry policy** — `ResendMailSender::send_invite` fires once with no retry. Add exponential backoff (3 attempts at 0/5/30s, mirroring the F3.5 webhook dispatcher shape). Small, well-scoped.
+- [x] **F8.7 Resend retry policy** *(2026-05-23, complete)*
+  - [x] Extracted `send_with_retry(client, api_key, body, label, recipient)` async helper with 3 attempts at 0/5/30s delays (`RETRY_DELAYS_SECS`). Client errors (4xx) abort immediately (no retry — bad request won't fix itself). Server errors (5xx) and network failures retry with the next delay.
+  - [x] Both `send_invite` and `send_stale_key_digest` refactored to use `send_with_retry`, eliminating the duplicated HTTP + error-handling code.
+  - **Validation:** cargo test 17 mail tests pass; clippy `--pedantic` clean.
 
 - **Validation:** `ministr.ai` renders the v2 homepage design; `/docs` still works with fumadocs nav; `/pricing`, `/status`, `/stewardship` render with the v2 dark theme; operator docs are accessible at `/docs/operator/*`; Lighthouse ≥ 95 on the landing page.
 
