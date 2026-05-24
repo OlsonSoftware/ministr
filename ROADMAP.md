@@ -1290,7 +1290,7 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 
 - [x] **F12.1d Project-management tools** *(2026-05-24)* — audited 3 MDX pages + index. clone/fetch/refresh all correct (no drift). `index.mdx` was missing `ministr_task` and `ministr_projects` (2 of 20 tools) — added both. `npm run types:check` + `npm run build` clean. Discovered: neither task nor projects has a dedicated doc page (backlog).
 
-- [ ] **F12.2 Concept pages** — audit `web/content/docs/concepts/*.mdx` (bridges, references, search, symbols) against the current `ministr-core` implementation. Verify: described algorithms, data structures, and flows match the actual code paths. Fix any conceptual drift.
+- [x] **F12.2 Concept pages** *(2026-05-24)* — audited 5 concept pages against `ministr-core`. All accurate — "13 kinds" confirmed via BridgeKind enum, "40+ languages" confirmed via grammar count, "re-ranking pass" confirmed via QueryService::rerank_results. Cross-chunk fix: bridge.mdx tool page `bridge_kind` filter expanded 7→13 kinds, Supported Frameworks table 5→13 rows. `npm run types:check` + `npm run build` clean.
 
 - [ ] **F12.3 Getting-started + installation + configuration** — audit `web/content/docs/getting-started.mdx`, `installation.mdx`, `configuration.mdx`, `client-setup.mdx` against the current CLI (`ministr init`, `ministr serve`), config format (`.ministr.toml`), and client-setup procedures. Verify: commands produce the described output, paths exist, env vars are current.
 
