@@ -1286,7 +1286,7 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 
 - [x] **F12.1b Session + budget tools** *(2026-05-24)* — audited 5 MDX pages. Fixed: extract, compress, dead missing `project` param; `usage.mdx` complete response rewrite (old docs had wrong field names — `tokens_used`/`utilization` vs actual `estimated_used`/`total_budget`/`drop_candidates`/`session_metrics`/etc.). `dropped.mdx` was already correct. `npm run types:check` + `npm run build` clean.
 
-- [ ] **F12.1c Code-intelligence tools** — audit `web/content/docs/tools/{bridge,solid,impact,related}.mdx` (4 pages). Highest-drift risk: `bridge.mdx` (F3.6-c-ii-b added `symbol_id` to BridgeNode), `solid.mdx` (many params added including `cyclic_dependency`, `shotgun_surgery`), `impact.mdx` (verify blast-radius description).
+- [x] **F12.1c Code-intelligence tools** *(2026-05-24)* — audited 4 MDX pages. Fixed: all 4 missing `project` param; `solid.mdx` prose said "four detectors" in 3 places + frontmatter — updated to "six" (shotgun_surgery + cyclic_dependency). Bridge `symbol_id` concern was false alarm (only on graph viz API, not MCP tool response). `npm run types:check` + `npm run build` clean.
 
 - [ ] **F12.1d Project-management tools** — audit `web/content/docs/tools/{clone,fetch,refresh}.mdx` (3 pages) + `index.mdx` (tool listing page). Verify: described parameters match the daemon handlers in `ministr-daemon/src/daemon.rs`.
 
