@@ -1414,12 +1414,12 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] `AboutPanel`: removed `Zone` wrapper + `max-w-2xl mx-auto`. `SettingsSection("Maintenance")` header + action grid with subtle `border-border-soft rounded-md` (the grid itself benefits from a light border since actions are icon-button cells, but it's NOT a Zone — no header strip, no bg-surface layering). Footer softened from `border-t-2` to `border-t border-border-soft`.
   - **Acceptance:** `tsc --noEmit` + `vite build` clean; no Zone in Settings surface.
 
-- [ ] **F14.3 ServerSettings + CloudPanel sections — flat row redesign**
-  - [ ] Rewrite `ServerSettings` to use `SettingsSection` + `MetaRow`s without Zone. Server info (version, model, memory, data dir) rendered as flat rows under a "Server" section header.
-  - [ ] Diagnostics sections (Log viewer, Context simulator) become collapsible disclosure rows without Zone wrapping — the content expands inline below the row, not inside a card.
-  - [ ] CloudPanel sections (Endpoint, Authentication, Connection) — drop the card-like visual grouping. Each becomes a `SettingsSection` header + flat content directly beneath, edge-to-edge.
-  - [ ] Evaluate whether `Zone` can be removed from the codebase entirely, or if it's still needed for non-settings contexts (bridge visualizer, query playground panels). If removable, delete; if needed elsewhere, leave but document it as "not for settings."
-  - **Acceptance:** `tsc --noEmit` + `vite build` clean; no Zone visible in Settings or Explore surfaces; CloudPanel sections render as flat edge-to-edge content groups; the entire settings experience feels like macOS System Settings — flat, spacious, no nested cards.
+- [x] **F14.3 ServerSettings + CloudPanel sections — flat row redesign** *(2026-05-24, complete)*
+  - [x] `ServerSettings`: both Zones removed. "Server" and "Diagnostics" sections now use `SettingsSection` headers + flat MetaRows/DiagnosticSections edge-to-edge. `max-w-2xl` + adaptive overrides removed (now flows naturally at any width).
+  - [x] Diagnostics (Log viewer, Context simulator) keep their collapsible disclosure pattern via `DiagnosticSection` — unchanged except Zone wrapper is gone.
+  - [x] CloudPanel: already flat after F13.3 (uses inline `<section>` + `<h3>` with `border-t` separators, not Zone). No further changes needed — confirmed no Zone usage.
+  - [x] **Zone component (`ui/zone.tsx`) DELETED from the codebase.** Zero remaining imports. Only ever used by ServerSettings (1 reference). Dead code removed.
+  - **Acceptance:** `tsc --noEmit` + `vite build` clean; Zone deleted; no card wrappers in Settings or Explore.
 
 - **Validation:** at any viewport width, settings pages render as flat full-width rows with controls on the right — no bordered cards, no centered floating panels, no bg-surface card-within-card nesting. The sidebar (F13.2) provides the structural grouping; within each view, content flows edge-to-edge with only hairline separators and section headers.
 
