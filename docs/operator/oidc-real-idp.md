@@ -36,8 +36,7 @@ ${MINISTR_CLOUD_BASE_URL}/orgs/{org_id}/oidc/callback
 ```
 
 where `MINISTR_CLOUD_BASE_URL` is the env var the cloud reads at
-boot (see `cmd_serve_http` and `ministr-cloud/src/oidc.rs`'s
-`build_redirect_uri`). Configure exactly this URL in your `IdP`;
+boot. Configure exactly this URL in your IdP;
 trailing slashes, scheme mismatches, and wildcard substitutions
 will fail.
 
@@ -310,14 +309,9 @@ sign-in, SAML if SAML is configured, etc).
 
 ## Reference
 
-- Code: [ministr-cloud/src/oidc.rs](../../ministr-cloud/src/oidc.rs) — the
-  cloud-side endpoints (`handle_login`, `handle_callback`,
-  `handle_oidc_config_upsert/get/delete`).
-- Migration: [ministr-cloud/migrations/0011_org_oidc_configs.sql](../../ministr-cloud/migrations/0011_org_oidc_configs.sql) —
-  table schema.
-- Spec: [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html)
+- [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html)
   and [OpenID Connect Discovery 1.0](https://openid.net/specs/openid-connect-discovery-1_0.html)
-  are the contracts ministr conforms to.
+  are the specs ministr conforms to.
 - Library: [openidconnect-rs](https://docs.rs/openidconnect) — the
   Rust client crate ministr uses for discovery + token exchange +
   ID-token validation.
