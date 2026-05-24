@@ -1,9 +1,9 @@
 ---
 title: ministr_solid
-description: Deterministic SOLID-violation detector — surfaces DRY/OCP duplicates, SRP low-cohesion containers, ISP fat interfaces, and DIP concrete cross-package dependencies.
+description: Deterministic SOLID-violation detector — surfaces DRY/OCP duplicates, SRP low-cohesion containers, ISP fat interfaces, DIP concrete cross-package dependencies, Shotgun Surgery fan-out smells, and cyclic package dependencies.
 ---
 
-`ministr_solid` runs four deterministic detectors over the symbol, reference, and embedding graph and emits findings labelled by the SOLID principle most likely violated. Every signal is thresholded graph data — no LLM judgement — so results are reproducible across runs.
+`ministr_solid` runs six deterministic detectors over the symbol, reference, and embedding graph and emits findings labelled by the SOLID principle most likely violated. Every signal is thresholded graph data — no LLM judgement — so results are reproducible across runs.
 
 Use it for cleanup sweeps, refactor prep, or to point an agent at concrete structural candidates instead of vague "find duplicates" tasks.
 
@@ -44,6 +44,7 @@ Every detector is language-agnostic — it consumes only normalised graph signal
 | `shotgun_skip_conventional_names` | bool | `true` | Drop groups whose name is a universal idiom (`new`/`default`/`fmt`/`clone`/`as_str`/`parse`/`main`/...). |
 | `cyclic_min_edges_per_direction` | integer | `2` | Minimum distinct cross-package edges per direction before two packages count as mutually dependent. Single-edge "cycles" are usually phantom name-resolution artefacts. |
 | `cyclic_skip_test_paths` | bool | `true` | Skip cycle-graph edges touching `/tests/`, `/fixtures/`, `/spec/` paths. Sample data shouldn't drive the workspace dependency graph. |
+| `project` | string | — | Linked-project label. Omit for the session's primary corpus. |
 
 ## Response
 
@@ -148,7 +149,7 @@ Every list-shaped field on every finding is truncated to `representative_count` 
 ## When to use it
 
 - **Pre-refactor scan** — pick a single principle (`principles: ["srp"]`) and inspect the largest containers before touching them.
-- **Codebase health check** — run all four with `min_lines: 10` to filter noise.
+- **Codebase health check** — run all six with `min_lines: 10` to filter noise.
 - **Cross-language repo** — set `container_kinds` and `interface_kinds` to the host language's tokens (e.g. `["class"]` and `["interface","protocol"]` for TS/Python).
 
 Pair findings with [`ministr_references`](/docs/tools/references) before refactoring — the static graph cannot see dynamic dispatch, so confirm callers before you split or merge symbols.
@@ -158,4 +159,4 @@ Pair findings with [`ministr_references`](/docs/tools/references) before refacto
 - DRY/OCP relies on stored stub embeddings. Symbols without an embedding (e.g. those skipped during ingestion) are excluded from clone clustering.
 - ISP uses name-overlap to detect which interface methods an implementor overrides. Implementors that rename methods at the language boundary won't match.
 - DIP's "same package" check uses the first two path segments of the file path. If your repo layout doesn't follow `crate/<package>/...`, override the detectors with `module` filters instead.
-- All four detectors only see what the static reference graph captures. Macro-generated, function-pointer, and registry-driven dispatch is invisible.
+- All six detectors only see what the static reference graph captures. Macro-generated, function-pointer, and registry-driven dispatch is invisible.
