@@ -3,7 +3,7 @@ import { createMDX } from 'fumadocs-mdx/next';
 const withMDX = createMDX();
 
 // GitHub Pages now serves this site from https://ministr.ai/ at the root
-// via the `docs-next/public/CNAME` file. `DOCS_BASE_PATH` stays available
+// via the `web/public/CNAME` file. `DOCS_BASE_PATH` stays available
 // so a developer can still preview against a sub-path deployment
 // (e.g. `/ministr/`) by exporting the env var locally, but production
 // builds run with an empty basePath.

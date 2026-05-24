@@ -128,7 +128,7 @@ extra asset.
 
 ## 4. Announce
 
-- Update the docs-next landing hero copy if anything changed.
+- Update the web landing hero copy if anything changed.
 - Post the release notes summary to the project README's "What's new"
   section (if it has one).
 

@@ -16,7 +16,7 @@
 //
 // # Static export
 //
-// `docs-next/next.config.mjs` uses `output: 'export'`. That forbids
+// `web/next.config.mjs` uses `output: 'export'`. That forbids
 // per-request rendering, so we can't read `searchParams` server-side
 // (Next 16 fails the build with `dynamic = "error"`). Instead the
 // headline lives in a small client island (`headline-client.tsx`)
