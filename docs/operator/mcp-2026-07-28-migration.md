@@ -1,7 +1,8 @@
+
 # MCP 2026-07-28 Migration Plan
 
 Audit of ministr's MCP surface against the 2026-07-28 specification
-release candidate (stateless protocol core). Produced by F7.1.
+release candidate (stateless protocol core). 
 
 ## Spec changes that affect ministr
 
@@ -15,7 +16,7 @@ release candidate (stateless protocol core). Produced by F7.1.
 
 ## Dependency map
 
-### 1. Tenant capture (HIGH — F7.2)
+### 1. Tenant capture
 
 **Current path:** `initialize` → `context.extensions` → `Parts` →
 `Tenant` → `tenant_id_hint` (F-Test-3b-fix-1).
@@ -37,7 +38,7 @@ If rmcp doesn't, we need a middleware that extracts the tenant from
 the `Authorization` header and injects it into a server-side field
 that tool handlers read.
 
-### 2. Client name capture (LOW — folds into F7.2)
+### 2. Client name capture
 
 **Current:** `initialize` → `request.client_info.name` →
 `client_name_hint`.
@@ -47,7 +48,7 @@ extensions framework, or may be dropped entirely. The hint is
 cosmetic (tray tooltip + session dashboard). Acceptable to lose
 temporarily.
 
-### 3. Extension negotiation (MEDIUM — F7.4)
+### 3. Extension negotiation
 
 **Current:** `NegotiatedExtensions::negotiate` runs in `initialize`
 and stores in `Arc<Mutex<NegotiatedExtensions>>`. The struct has
@@ -62,9 +63,9 @@ but never consumed.
 `initialize`-based negotiation. Since no tool handler reads the
 negotiated state today, the migration is: (a) register ministr's
 extensions via the new framework, (b) remove the `initialize`-based
-negotiation code. **Low urgency** — can be deferred past F7.2/F7.3.
+negotiation code. **Low urgency** — can be deferred to a later release.
 
-### 4. Fork-per-connection (MEDIUM — F7.3)
+### 4. Fork-per-connection
 
 **Current:** `server_factory` at `commands.rs:499` calls
 `server.fork_for_new_session()` which assigns a fresh `uuid_v4`
@@ -77,7 +78,7 @@ per-connection.
 unnecessary entirely if sessions are identified by bearer token +
 explicit session parameter.
 
-### 5. Session binding (MEDIUM — F7.3)
+### 5. Session binding
 
 **Current:** `active_session_id` is assigned per-fork (uuid_v4).
 Session entry is created lazily on first tool call via
@@ -95,7 +96,7 @@ Session entry is created lazily on first tool call via
   tools. Cleaner than A.
 - **Recommended: C** — custom header, fallback to bearer-derived.
 
-### 6. OAuth hardening (LOW — F7.5)
+### 6. OAuth hardening
 
 **Current:** OAuth 2.1 + DCR + PKCE, well-aligned with prior spec.
 
@@ -106,22 +107,22 @@ metadata fields the new spec requires.
 
 ## Recommended execution order
 
-1. **F7.1** (this document) — audit. Done.
-2. **F7.2** — stateless tenant resolution. Highest impact; unblocks
+1. Audit (this document) — done.
+2. Stateless tenant resolution. Highest impact; unblocks
    all tool handlers.
-3. **F7.3** — session continuity. Depends on F7.2's tenant path.
-4. **F7.6** — rmcp version bump. The integration test.
-5. **F7.4** — extensions framework. Can follow the bump.
-6. **F7.5** — OAuth hardening. Lowest urgency; audit-only.
+3. Session continuity. Depends on tenant resolution.
+4. rmcp version bump. The integration test.
+5. Extensions framework. Can follow the bump.
+6. OAuth hardening. Lowest urgency; audit-only.
 
 ## Blocking question
 
 **Does rmcp expose `RequestContext.extensions` (with `Parts`) on
 every tool call in the stateless mode?** This is the single
-load-bearing question for F7.2. If yes, the migration is a
+load-bearing question for the tenant-resolution work. If yes, the migration is a
 ~50-line refactor (read tenant per-request instead of per-init).
 If no, we need an rmcp upstream contribution or a middleware
 workaround.
 
 **Action:** Check rmcp's `main` branch or issue tracker for
-2026-07-28 RC support before starting F7.2.
+2026-07-28 RC support before starting the migration.
