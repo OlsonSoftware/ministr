@@ -3002,8 +3002,8 @@ function UsageBadges({
 function PlanBadge({ plan }: { plan: "pro" | "team" | "enterprise" }) {
   const styles: Record<typeof plan, string> = {
     pro: "border-accent/40 bg-accent/10 text-accent",
-    team: "border-violet-500/40 bg-violet-500/10 text-violet-300",
-    enterprise: "border-amber-500/40 bg-amber-500/10 text-amber-300",
+    team: "border-accent/50 bg-accent/15 text-accent",
+    enterprise: "border-accent/60 bg-accent/20 text-accent",
   };
   const label = plan.charAt(0).toUpperCase() + plan.slice(1);
   return (
