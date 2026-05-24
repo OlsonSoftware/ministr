@@ -1,9 +1,9 @@
-import { MessageSquare, FolderOpen, Activity, Settings as SettingsIcon } from "lucide-react";
+import { MessageSquare, FolderOpen, Activity, Cloud, Settings as SettingsIcon } from "lucide-react";
 import { motion } from "motion/react";
 import { spring } from "../../lib/motion";
 import { cn } from "../../lib/utils";
 
-export type SurfaceId = "ask" | "projects" | "sessions" | "settings";
+export type SurfaceId = "ask" | "projects" | "sessions" | "cloud" | "settings";
 
 interface Item {
   id: SurfaceId;
@@ -16,6 +16,7 @@ const ITEMS: Item[] = [
   { id: "ask", label: "Ask", icon: MessageSquare, chord: "g a" },
   { id: "projects", label: "Projects", icon: FolderOpen, chord: "g p" },
   { id: "sessions", label: "Sessions", icon: Activity, chord: "g s" },
+  { id: "cloud", label: "Cloud", icon: Cloud, chord: "g c" },
   { id: "settings", label: "Settings", icon: SettingsIcon, chord: "g ," },
 ];
 

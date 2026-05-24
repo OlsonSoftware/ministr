@@ -20,6 +20,7 @@ import { TopBar } from "./components/chrome/TopBar";
 import { CommandPalette } from "./components/chrome/CommandPalette";
 import { ProjectsSurface } from "./components/surfaces/ProjectsSurface";
 import { SettingsSurface } from "./components/surfaces/SettingsSurface";
+import { CloudPanel } from "./components/surfaces/CloudPanel";
 import { corpusLabel } from "./lib/corpus";
 import { useLiveEvents } from "./lib/liveBus";
 import { fade } from "./lib/motion";
@@ -30,10 +31,9 @@ import {
 } from "./lib/shortcuts";
 
 /**
- * App shell — the Cockpit. Four top-level surfaces (Ask / Projects /
- * Sessions / Settings) behind a nav rail + context-aware top bar, a
- * global command palette, and a stacked entity inspector. Surface
- * switches animate; a small back/forward history backs ⌘[ / ⌘].
+ * App shell. Five top-level surfaces (Ask / Projects / Sessions /
+ * Cloud / Settings) behind a nav rail + context-aware top bar, a
+ * global command palette, and a stacked entity inspector.
  */
 export function App() {
   return (
@@ -124,6 +124,7 @@ function AppInner() {
         t === "ask" ||
         t === "projects" ||
         t === "sessions" ||
+        t === "cloud" ||
         t === "settings"
       ) {
         navigate(t);
@@ -142,6 +143,7 @@ function AppInner() {
         detail === "ask" ||
         detail === "projects" ||
         detail === "sessions" ||
+        detail === "cloud" ||
         detail === "settings"
       ) {
         navigate(detail);
@@ -224,6 +226,9 @@ function AppInner() {
             return;
           case "nav:sessions":
             navigate("sessions");
+            return;
+          case "nav:cloud":
+            navigate("cloud");
             return;
           case "nav:settings":
             navigate("settings");
@@ -456,6 +461,14 @@ function SurfaceBody({
   if (surface === "sessions") {
     return (
       <SessionsSurface status={status} activeCorpusId={activeCorpusId} />
+    );
+  }
+
+  if (surface === "cloud") {
+    return (
+      <div className="h-full overflow-y-auto p-5">
+        <CloudPanel />
+      </div>
     );
   }
 

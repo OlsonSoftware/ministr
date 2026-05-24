@@ -1238,7 +1238,8 @@ An enterprise customer installs ministr via Helm in their own VPC, federates to 
 > Current: `Ask | Projects | Sessions | Settings(7 tabs)`
 > Proposed: `Ask | Projects | Sessions | Cloud | Explore | Settings(3 tabs)`
 
-- [ ] **F10.1 Promote Cloud to top-level surface** — move CloudPanel (3,314 lines) from `Settings → Cloud` tab to its own nav-rail destination. New `SurfaceId = "cloud"` in `Sidebar.tsx`. Cloud icon (lucide `Cloud`). Keyboard chord `g c`. No content changes — just the routing + nav entry.
+- [x] **F10.1 Promote Cloud to top-level surface** *(2026-05-23, complete)* — moved CloudPanel from `Settings → Cloud` tab to its own nav-rail destination. `SurfaceId = "cloud"` added to `Sidebar.tsx`; lucide `Cloud` icon; keyboard chord `g c`; `ShortcutAction = "nav:cloud"` in `shortcuts.ts`; `SurfaceBody` branch in `App.tsx`; "Go to Cloud" entry in `CommandPalette.tsx`; `DefaultTab` extended in `usePreferences.ts`. SettingsSurface dropped from 7 tabs to 6 (cloud tab + CloudPanel import removed). No content changes — just routing + nav entry.
+  - **Validation:** `tsc --noEmit` + `vite build` clean; nav rail shows 5 icons (Ask / Projects / Sessions / Cloud / Settings); Cloud opens directly without going through Settings; `g c` chord navigates; command palette "Go to Cloud" entry works.
 
 - [ ] **F10.2 Promote Developer tools to 'Explore' surface** — move DeveloperPanel's 3 sub-tools (Logs, Explore, Query playground) + ServerSettings (daemon diagnostics) into a new top-level "Explore" surface. New `SurfaceId = "explore"` in `Sidebar.tsx`. Icon: lucide `Terminal` or `Search`. Chord `g e`. The Bridge visualizer and SymbolGraph components also surface here. This is the power-user debug destination.
 
