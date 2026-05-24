@@ -273,7 +273,7 @@ export function CloudPanel() {
   };
 
   return (
-    <div className="flex flex-col gap-6 max-w-2xl">
+    <div className="flex flex-col gap-6 max-w-2xl @min-[900px]/surface:max-w-none">
       <header className="flex flex-col gap-1">
         <h2 className="font-mono text-sm font-semibold uppercase tracking-[0.08em] text-text">
           ministr Cloud
