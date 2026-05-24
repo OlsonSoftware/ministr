@@ -64,18 +64,21 @@ export function ServerSettings({ status }: Props) {
   return (
     <div>
       <SettingsSection title="Server" description="Read-only" />
-      <MetaRow label="VERSION" value={`v${status.version}`} />
-      <MetaRow label="EMBEDDING MODEL" value={status.model} />
-      <MetaRow
-        label="MEMORY"
-        value={`${status.memory_mb.toFixed(0)} MB RSS`}
-      />
-      <MetaRow label="DATA DIR" value={DATA_DIR} />
-      {status.log_path && (
-        <MetaRow label="LOG FILE" value={status.log_path} truncate />
-      )}
+      <div className="bg-surface-sunken rounded-lg p-4">
+        <MetaRow label="VERSION" value={`v${status.version}`} />
+        <MetaRow label="EMBEDDING MODEL" value={status.model} />
+        <MetaRow
+          label="MEMORY"
+          value={`${status.memory_mb.toFixed(0)} MB RSS`}
+        />
+        <MetaRow label="DATA DIR" value={DATA_DIR} />
+        {status.log_path && (
+          <MetaRow label="LOG FILE" value={status.log_path} truncate />
+        )}
+      </div>
 
       <SettingsSection title="Diagnostics" />
+      <div className="bg-surface-sunken rounded-lg overflow-hidden">
       <div ref={logsRef}>
         <DiagnosticSection
           icon={ScrollText}
@@ -101,6 +104,7 @@ export function ServerSettings({ status }: Props) {
         >
           <ContextSimulator />
         </DiagnosticSection>
+      </div>
       </div>
     </div>
   );
