@@ -52,12 +52,12 @@ export function AiAssistantsPanel({ corpora, activeCorpusId }: Props) {
     return (
       <div className="space-y-4">
         <Header />
-        <div className="border border-border-soft bg-surface p-4">
+        <ContentTray>
           <p className="font-sans text-sm text-text-muted">
             Add a project first — the wizard writes per-project config files
             (and a user-global one for Codex). Visit Projects to add one.
           </p>
-        </div>
+        </ContentTray>
       </div>
     );
   }
@@ -127,7 +127,7 @@ function AgentConfigCard() {
   }, []);
 
   return (
-    <section className="border border-border-soft bg-surface p-4 space-y-3">
+    <ContentTray className="space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1 min-w-0">
           <h3 className="font-mono text-sm font-bold uppercase tracking-[0.08em] text-text">
@@ -178,7 +178,7 @@ function AgentConfigCard() {
           <RepairSummary report={phase.report} at={phase.at} />
         )}
       </div>
-    </section>
+    </ContentTray>
   );
 }
 

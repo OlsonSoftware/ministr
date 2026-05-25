@@ -23,6 +23,7 @@ import type { DaemonStatus } from "../../lib/types";
 import { LogViewer } from "../LogViewer";
 import { ExploreView } from "../ExploreView";
 import { QueryPlayground } from "../QueryPlayground";
+import { SettingsSection } from "./settings-primitives";
 
 type DevTab = "logs" | "explore" | "playground";
 
@@ -56,15 +57,10 @@ export function DeveloperPanel({
 
   return (
     <div className="space-y-4">
-      <header className="space-y-1">
-        <h2 className="font-mono text-sm font-bold uppercase tracking-[0.08em] text-text">
-          Developer tools
-        </h2>
-        <p className="font-sans text-sm text-text-muted">
-          Power-user surfaces that used to be top-level tabs. Hidden here so
-          the main UI stays focused on what most users need day to day.
-        </p>
-      </header>
+      <SettingsSection
+        title="Developer tools"
+        description="Power-user surfaces — logs, code explorer, query playground."
+      />
 
       <nav
         aria-label="Developer sub-sections"
