@@ -274,7 +274,7 @@ export function CloudPanel() {
   };
 
   return (
-    <div className="flex flex-col gap-6 max-w-2xl @min-[900px]/surface:max-w-none">
+    <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1">
         <H1>Cloud</H1>
         <p className="text-sm text-text-muted mt-1">
