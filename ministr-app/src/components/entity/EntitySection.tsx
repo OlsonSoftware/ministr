@@ -39,7 +39,7 @@ export function EntitySection({
             §{chapter}
           </span>
         )}
-        <h3 className="font-sans text-base font-semibold tracking-[-0.005em] text-text leading-snug flex-1 min-w-0">
+        <h3 className="font-sans text-base font-semibold tracking-tight text-text leading-snug flex-1 min-w-0">
           {title}
         </h3>
         {meta !== undefined && (

@@ -201,7 +201,7 @@ export function SymbolView({ entity }: Props) {
       {/* §3 Docs */}
       {definition?.doc_comment && (
         <EntitySection chapter={3} title="Docs">
-          <pre className="m-0 border-l-2 border-border-soft bg-surface-overlay px-3 py-2.5 font-sans text-sm italic text-text-muted whitespace-pre-wrap leading-relaxed">
+          <pre className="m-0 border-l border-border-soft bg-surface-overlay px-3 py-2.5 font-sans text-sm text-text-muted whitespace-pre-wrap leading-relaxed">
             {definition.doc_comment}
           </pre>
         </EntitySection>

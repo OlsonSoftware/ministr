@@ -46,7 +46,7 @@ export function PinnedAnswers({
 
       <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1.5">
         {entries.length === 0 ? (
-          <p className="font-sans text-xs italic text-text-dim leading-snug">
+          <p className="font-sans text-xs text-text-dim leading-snug">
             Pin answers you want to keep — they&apos;ll show up here for
             instant recall.
           </p>

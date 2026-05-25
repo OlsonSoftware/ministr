@@ -1502,6 +1502,24 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] **AiAssistantsPanel.tsx**: removed 2× banned `italic` from manual-verify hint and "not installed" label.
   - **Validation:** `pnpm design:lint` reports **clean** — "UI is on the Cockpit contract". `tsc --noEmit` + `vite build` clean. All primary surfaces now fully comply with DESIGN.md.
 
+### F19 — User-facing component DESIGN.md sweep *(discovered 2026-05-25)*
+
+> **Context.** F18 cleaned the primary surfaces. 24 violations remained across 11 user-facing files — the Onboarding wizard (first-run experience), Ask sub-components, entity panels (session inspector, bridge view, symbol view), and ShortcutSheet. These are all surfaces users see during daily use or first-run. Developer tools (QueryPlayground, Bridge, CorpusTreemap, SymbolGraph, LogViewer) are deferred — they're behind the Explore surface and lower-priority.
+
+- [x] **F19.1 User-facing DESIGN.md compliance sweep** *(2026-05-25, complete)*
+  - [x] **Onboarding.tsx** (12 fixes): 8× banned `italic` removed from step descriptions, hint text, and PrimaryAction/Capability sub-components. 4× `border-b-2`/`border-t-2` → `border-b`/`border-t` on header/footer bars.
+  - [x] **ShortcutSheet.tsx**: `italic` removed from platform hint footer.
+  - [x] **AskAnswer.tsx**: `italic` removed from citation-check disclaimer.
+  - [x] **AskSurface.tsx**: `border-l-2` → `border-l border-l-danger` on error callout.
+  - [x] **PinnedAnswers.tsx**: `italic` removed from empty-state hint.
+  - [x] **BridgeView.tsx**: 2× `italic` removed from loading state and line-number footnote.
+  - [x] **EntitySection.tsx**: `tracking-[-0.005em]` → `tracking-tight` (Tailwind built-in, matches `headingChapter` intent).
+  - [x] **SymbolView.tsx**: `border-l-2` → `border-l` + `italic` removed from doc-comment pre block.
+  - [x] **SessionView.tsx**: `italic` removed from loading state.
+  - [x] **SessionTokenAdvanced.tsx**: 2× `italic` removed from trend hint and no-data state.
+  - [x] **SessionLineageSection.tsx**: `border-l-2 border-accent` intentionally **kept** — it's an active-item accent indicator (visual weight bar on the current session), not a container border. The DESIGN.md rule targets containers.
+  - **Validation:** `tsc --noEmit` + `vite build` clean. Re-scan of all 11 target files: 0 violations. All user-facing components now comply with DESIGN.md.
+
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
 > Cross-cutting: builds the local equivalent of `azure-smoke` so multi-tenant cloud correctness, ACL semantics, API-key authn parity, session-tenant-scoping, webhook fan-out, and billing webhooks are all exercisable on a laptop without an Azure deploy. Today's `scripts/demo-local.sh` covers ONE tenant's happy path; the F-items above ship with Postgres-integration tests gated on `MINISTR_TEST_PG_URL` and unit coverage, but no e2e proof that ties them together end-to-end. F-Test fills that gap. Each chunk extends the harness in place — there's only one command to remember (`just e2e-cloud-local`) regardless of which scenario it ends up covering. Mirrors the `azure-smoke` extension policy from `justfile`.

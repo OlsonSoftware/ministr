@@ -276,7 +276,7 @@ function CodePane({
         </p>
       </div>
       {loading ? (
-        <p className="px-3 py-2 font-sans text-sm italic text-text-dim">
+        <p className="px-3 py-2 font-sans text-sm text-text-dim">
           Loading<span className="ministr-blink">_</span>
         </p>
       ) : (
@@ -284,7 +284,7 @@ function CodePane({
           {source ?? "// (no source)"}
         </pre>
       )}
-      <p className="px-3 py-1 font-sans text-xs italic text-text-dim border-t border-border-soft">
+      <p className="px-3 py-1 font-sans text-xs text-text-dim border-t border-border-soft">
         Starting at line {startLine}.
       </p>
     </div>
