@@ -429,7 +429,7 @@ export function LogViewer() {
       </div>
 
       {/* Footer */}
-      <footer className="flex items-center justify-between gap-3 border-t-2 border-border bg-surface-overlay px-3 py-1 shrink-0 font-mono text-xs uppercase tracking-[0.08em] text-text-dim">
+      <footer className="flex items-center justify-between gap-3 border-t border-border bg-surface-overlay px-3 py-1 shrink-0 font-mono text-xs uppercase tracking-[0.08em] text-text-dim">
         <span>
           TAIL · {filtered.length}/{logs.length} LINES
         </span>

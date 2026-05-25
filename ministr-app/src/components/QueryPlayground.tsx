@@ -357,7 +357,7 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
 
         {/* Error card */}
         {error && (
-          <div className="border border-danger bg-surface p-3 flex items-start gap-3 border-l-2">
+          <div className="border border-danger bg-surface p-3 flex items-start gap-3 border-l border-l-danger">
             <AlertTriangle className="h-4 w-4 text-danger shrink-0 mt-0.5" strokeWidth={2} />
             <div className="flex-1 min-w-0">
               <p className="font-sans text-base font-bold text-danger">
@@ -876,7 +876,7 @@ function SurveyResults({
     <div className="flex flex-col gap-3">
       {/* Score histogram strip */}
       <div className="border border-border-soft bg-surface">
-        <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-2 py-1">
+        <div className="flex items-center justify-between border-b border-border bg-surface-overlay px-2 py-1">
           <span className="font-sans text-xs font-bold tracking-[0.08em] text-text">
             Score distribution
           </span>
@@ -909,7 +909,7 @@ function SurveyResults({
       <div className="flex gap-3 min-h-0">
         {facets.length > 1 && (
           <aside className="w-44 shrink-0 border border-border-soft bg-surface self-start">
-            <div className="border-b-2 border-border bg-surface-overlay px-2 py-1">
+            <div className="border-b border-border bg-surface-overlay px-2 py-1">
               <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text">
                 FACETS
               </span>
@@ -917,7 +917,7 @@ function SurveyResults({
             <button
               onClick={() => setActiveFacet(null)}
               className={cn(
-                "w-full flex items-center justify-between border-b-2 border-border px-2 py-1 cursor-pointer transition-colors duration-150 ease-out",
+                "w-full flex items-center justify-between border-b border-border px-2 py-1 cursor-pointer transition-colors duration-150 ease-out",
                 activeFacet === null
                   ? "bg-accent text-[var(--color-accent-fg-on)]"
                   : "bg-surface text-text hover:bg-surface-overlay",
@@ -938,7 +938,7 @@ function SurveyResults({
                     setActiveFacet(activeFacet === root ? null : root)
                   }
                   className={cn(
-                    "w-full flex items-center justify-between border-b-2 border-border last:border-b-0 px-2 py-1 cursor-pointer transition-colors duration-150 ease-out text-left",
+                    "w-full flex items-center justify-between border-b border-border last:border-b-0 px-2 py-1 cursor-pointer transition-colors duration-150 ease-out text-left",
                     activeFacet === root
                       ? "bg-accent text-[var(--color-accent-fg-on)]"
                       : "bg-surface text-text hover:bg-surface-overlay",
@@ -1025,7 +1025,7 @@ function SymbolsResults({
     <div className="flex flex-col gap-3 h-full min-h-0">
       {/* Kind-count strip */}
       <div className="border border-border-soft bg-surface shrink-0">
-        <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-2 py-1">
+        <div className="flex items-center justify-between border-b border-border bg-surface-overlay px-2 py-1">
           <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text">Kind breakdown</span>
           <span className="font-mono text-xs tabular-nums text-text-dim">
             {visible.length} / {symbols.length} SYMBOLS
@@ -1090,7 +1090,7 @@ function SymbolsResults({
         <div className="flex-1 min-w-0 overflow-y-auto">
           {previewed ? (
             <div className="border border-border-soft bg-surface">
-              <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-3 py-2 sticky top-0 z-10">
+              <div className="flex items-center justify-between border-b border-border bg-surface-overlay px-3 py-2 sticky top-0 z-10">
                 <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent">
                   PREVIEW
                 </span>
@@ -1203,7 +1203,7 @@ function BridgeResults({
     <div className="flex flex-col gap-3 h-full min-h-0">
       {/* Kind summary strip — proportional blocks */}
       <div className="border border-border-soft bg-surface shrink-0">
-        <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-2 py-1">
+        <div className="flex items-center justify-between border-b border-border bg-surface-overlay px-2 py-1">
           <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text">Bridge surface</span>
           <span className="font-mono text-xs tabular-nums text-text-dim">
             {visible.length} / {bridges.length} LINKS
@@ -1240,7 +1240,7 @@ function BridgeResults({
 
       {/* Visual rows: EXPORT — connector — IMPORT, click expands inline */}
       <div className="flex-1 min-h-0 overflow-y-auto border border-border-soft bg-surface">
-        <div className="border-b-2 border-border bg-surface-overlay px-2 py-1 sticky top-0 z-10 flex items-center justify-between">
+        <div className="border-b border-border bg-surface-overlay px-2 py-1 sticky top-0 z-10 flex items-center justify-between">
           <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text">Bridge links</span>
           <span className="font-mono text-xs tabular-nums text-text-dim">
             Click to expand
@@ -1249,7 +1249,7 @@ function BridgeResults({
         {visible.map((b, i) => {
           const expanded = expandedIdx === i;
           return (
-            <div key={`${b.kind}-${i}`} className="border-b-2 border-border">
+            <div key={`${b.kind}-${i}`} className="border-b border-border">
               <button
                 onClick={() => setExpandedIdx(expanded ? null : i)}
                 className={cn(
@@ -1328,7 +1328,7 @@ function CodeExcerptPane({
   const tail = file.replace(/\\/g, "/").split("/").slice(-2).join("/");
   return (
     <div className="border border-border-soft bg-surface">
-      <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-2 py-1">
+      <div className="flex items-center justify-between border-b border-border bg-surface-overlay px-2 py-1">
         <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent">
           {title}
         </span>
@@ -1449,7 +1449,7 @@ function StructureTile({
       />
 
       {langMix.length > 0 && (
-        <div className="mt-3 pt-3 border-t-2 border-border">
+        <div className="mt-3 pt-3 border-t border-border">
           <div className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text-dim mb-1.5">Lang mix</div>
           <div className="flex h-3 border border-border-soft bg-surface-overlay overflow-hidden">
             {langMix.map(({ ext, pct }, i) => (
@@ -1546,7 +1546,7 @@ function BridgesTile({
             <button
               key={kind}
               onClick={() => onJumpToKind(kind)}
-              className="flex items-center gap-2 px-1 py-1 border-b-2 border-border last:border-b-0 hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out -mx-1"
+              className="flex items-center gap-2 px-1 py-1 border-b border-border last:border-b-0 hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out -mx-1"
             >
               <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] w-32 shrink-0 text-left">
                 {kind}
@@ -1611,7 +1611,7 @@ function HotFilesTile({
               key={f.path}
               onClick={() => onJumpToFile(f.path)}
               title={f.path}
-              className="flex items-center gap-2 px-1 py-1 border-b-2 border-border last:border-b-0 hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out -mx-1"
+              className="flex items-center gap-2 px-1 py-1 border-b border-border last:border-b-0 hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out -mx-1"
             >
               <span className="font-mono text-mono-mini truncate flex-1 text-left">
                 {tail}
@@ -1670,7 +1670,7 @@ function RecentChangesTile({
         {filtered.map((ev, i) => (
           <div
             key={`${ev.timestamp_ms}-${i}`}
-            className="flex items-center gap-2 px-1 py-1 border-b-2 border-border last:border-b-0"
+            className="flex items-center gap-2 px-1 py-1 border-b border-border last:border-b-0"
           >
             <span className="font-mono text-xs font-bold w-4 shrink-0">
               {COHERENCE_GLYPH[ev.kind]}
@@ -1732,7 +1732,7 @@ function Tile({
         </h3>
         <div className="flex items-center gap-2">
           {hint && (
-            <span className="font-sans text-xs italic text-text-dim">
+            <span className="font-sans text-xs text-text-dim">
               {hint}
             </span>
           )}
@@ -1750,7 +1750,7 @@ function Tile({
 
 function LoadingRow() {
   return (
-    <p className="font-sans text-base italic text-text-dim">
+    <p className="font-sans text-base text-text-dim">
       Loading<span className="ministr-blink">_</span>
     </p>
   );
@@ -1878,7 +1878,7 @@ function SurveyCard({
       </div>
 
       {result.heading_path.length > 0 && (
-        <div className="flex items-center gap-1 px-2 py-1 border-b-2 border-border font-mono text-xs uppercase tracking-[0.08em] text-text-dim flex-wrap">
+        <div className="flex items-center gap-1 px-2 py-1 border-b border-border font-mono text-xs uppercase tracking-[0.08em] text-text-dim flex-wrap">
           {result.heading_path.map((h, j) => (
             <span key={j} className="flex items-center gap-1">
               {j > 0 && (
@@ -1920,7 +1920,7 @@ function SymbolCard({
     return (
       <button
         onClick={onClick}
-        className="text-left flex items-center gap-2 border-b-2 border-border bg-surface px-2 py-1.5 cursor-pointer transition-colors duration-150 ease-out hover:bg-surface-overlay hover:text-text hover:translate-x-[2px]"
+        className="text-left flex items-center gap-2 border-b border-border bg-surface px-2 py-1.5 cursor-pointer transition-colors duration-150 ease-out hover:bg-surface-overlay hover:text-text hover:translate-x-[2px]"
       >
         <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent w-12 shrink-0">
           {symbol.kind}
@@ -1943,7 +1943,7 @@ function SymbolCard({
       onClick={onClick}
       className="text-left border border-border bg-surface cursor-pointer transition-colors duration-150 ease-out hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-md"
     >
-      <div className="flex items-center gap-2 border-b-2 border-border bg-surface-overlay px-2 py-1.5">
+      <div className="flex items-center gap-2 border-b border-border bg-surface-overlay px-2 py-1.5">
         <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent w-14 shrink-0">
           {symbol.kind}
         </span>
@@ -1958,7 +1958,7 @@ function SymbolCard({
       </div>
 
       {symbol.signature && (
-        <pre className="border-b-2 border-border bg-surface-sunken px-3 py-2 font-mono text-mono-mini leading-relaxed text-text whitespace-pre-wrap break-words m-0">
+        <pre className="border-b border-border bg-surface-sunken px-3 py-2 font-mono text-mono-mini leading-relaxed text-text whitespace-pre-wrap break-words m-0">
           {symbol.signature}
         </pre>
       )}

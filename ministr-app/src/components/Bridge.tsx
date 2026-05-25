@@ -333,7 +333,7 @@ export function Bridge({ status, activeCorpusId }: Props) {
           <button
             onClick={() => exportJson(links)}
             title="Export all visible bridges (ignoring selection)"
-            className="font-sans text-sm italic text-text-dim hover:text-text-muted cursor-pointer transition-colors duration-150 ease-out border-b border-transparent hover:border-text-muted"
+            className="font-sans text-sm text-text-dim hover:text-text-muted cursor-pointer transition-colors duration-150 ease-out border-b border-transparent hover:border-text-muted"
           >
             Export all visible
           </button>
@@ -567,7 +567,7 @@ function BridgeTable({
       </div>
 
       {links.length === 0 ? (
-        <div className="px-3 py-8 font-sans text-base italic text-text-dim text-center">
+        <div className="px-3 py-8 font-sans text-base text-text-dim text-center">
           {loading ? "Querying…" : "No bridges found."}
         </div>
       ) : (
@@ -728,7 +728,7 @@ function ConnectionPreview({
 }) {
   return (
     <section className="flex-1 min-h-0 flex flex-col gap-2 border border-border-soft bg-surface border-l-[6px] border-l-accent">
-      <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-3 py-2 shrink-0">
+      <div className="flex items-center justify-between border-b border-border bg-surface-overlay px-3 py-2 shrink-0">
         <div className="flex items-center gap-2">
           <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent">
             CONNECTION
@@ -788,7 +788,7 @@ function ConnectionPreview({
         />
       </div>
 
-      <div className="border-t-2 border-border bg-surface-overlay px-3 py-1.5 flex items-center justify-between shrink-0">
+      <div className="border-t border-border bg-surface-overlay px-3 py-1.5 flex items-center justify-between shrink-0">
         <span className="font-mono text-xs uppercase tracking-[0.08em] text-text">
           {link.kind} · {link.export_symbol || link.export_binding_key}
         </span>
@@ -840,7 +840,7 @@ function CodePane({
 
   return (
     <div className="flex-1 min-w-0 flex flex-col border border-border-soft bg-surface">
-      <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-2 py-1.5 shrink-0">
+      <div className="flex items-center justify-between border-b border-border bg-surface-overlay px-2 py-1.5 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent shrink-0">
             {title}
@@ -854,7 +854,7 @@ function CodePane({
         </span>
       </div>
 
-      <div className="border-b-2 border-border px-2 py-1 shrink-0">
+      <div className="border-b border-border px-2 py-1 shrink-0">
         <span className="font-mono text-xs font-bold text-text break-words">
           {symbol || binding}
         </span>
@@ -875,7 +875,7 @@ function CodePane({
                     focus && "bg-surface-overlay",
                   )}
                 >
-                  <td className="select-none border-r-2 border-border px-2 text-right text-text-dim tabular-nums w-10 align-top">
+                  <td className="select-none border-r border-border px-2 text-right text-text-dim tabular-nums w-10 align-top">
                     {n}
                   </td>
                   <td className="px-3 whitespace-pre text-text">
@@ -932,7 +932,7 @@ function ConfidenceHelpModal({ onClose }: { onClose: () => void }) {
         className="w-full max-w-md border border-border-soft bg-surface shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-3 py-2">
+        <div className="flex items-center justify-between border-b border-border bg-surface-overlay px-3 py-2">
           <span className="font-mono text-mono-mini font-bold uppercase tracking-[0.08em] text-text">
             CONFIDENCE
           </span>

@@ -375,7 +375,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
               </span>
             </div>
             {visibleSymbols.length === 0 ? (
-              <p className="px-3 py-4 font-sans text-sm italic text-text-dim">
+              <p className="px-3 py-4 font-sans text-sm text-text-dim">
                 {loading ? "Loading_" : query ? "No matches." : "No symbols."}
               </p>
             ) : (
@@ -547,7 +547,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
               </section>
 
               <section className="border border-border-soft bg-surface">
-                <div className="border-b-2 border-border bg-surface-overlay px-2 py-1 flex items-center justify-between">
+                <div className="border-b border-border bg-surface-overlay px-2 py-1 flex items-center justify-between">
                   <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text">
                     REFERENCES
                   </span>
@@ -559,7 +559,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
 
                 {/* Ref-kind filter pills */}
                 {refs.length > 0 && (
-                  <div className="flex flex-wrap gap-1 px-2 py-1 border-b-2 border-border">
+                  <div className="flex flex-wrap gap-1 px-2 py-1 border-b border-border">
                     {Array.from(refKindCounts.entries()).map(([k, c]) => {
                       const active = activeRefKinds.has(k);
                       return (
@@ -591,7 +591,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
                       key={i}
                       onClick={() => pivotToName(r.from_name)}
                       title={`Pivot to ${r.from_name}`}
-                      className="w-full text-left flex items-center gap-2 border-b-2 border-border last:border-b-0 px-2 py-1.5 font-mono text-mono-mini cursor-pointer transition-colors duration-150 ease-out hover:bg-surface-overlay hover:text-text"
+                      className="w-full text-left flex items-center gap-2 border-b border-border last:border-b-0 px-2 py-1.5 font-mono text-mono-mini cursor-pointer transition-colors duration-150 ease-out hover:bg-surface-overlay hover:text-text"
                     >
                       <span className="text-text truncate flex-1">
                         {r.from_name}

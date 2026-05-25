@@ -1520,6 +1520,18 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] **SessionLineageSection.tsx**: `border-l-2 border-accent` intentionally **kept** — it's an active-item accent indicator (visual weight bar on the current session), not a container border. The DESIGN.md rule targets containers.
   - **Validation:** `tsc --noEmit` + `vite build` clean. Re-scan of all 11 target files: 0 violations. All user-facing components now comply with DESIGN.md.
 
+### F20 — Developer tools DESIGN.md sweep *(discovered 2026-05-25)*
+
+> **Context.** F17-F19 fixed all user-facing surfaces. 49 violations remained in the 5 developer tool components behind the Explore surface. 5 of these are intentional accent indicators (`border-l-2 border-accent` on code preview bars, `border-l-2` on log-level bars). The other 44 are genuine violations: `border-X-2` on panel headers/footers/rows (containers, not indicators) + `italic` on hint/loading text.
+
+- [x] **F20.1 Developer tools compliance sweep** *(2026-05-25, complete)*
+  - [x] **QueryPlayground.tsx** (20 fixes): 17× `border-b-2`/`border-t-2` → hairline on section headers, row dividers, sticky bars. 1× error callout `border-l-2` → `border-l border-l-danger`. 2× `italic` removed from hint span and loading text. 3 accent indicators kept (lines 1113, 1290, 1894 — code preview bars with `border-accent`).
+  - [x] **Bridge.tsx** (8 fixes): 4× `border-b-2`, 1× `border-t-2`, 1× `border-r-2` → hairline. 2× `italic` removed.
+  - [x] **CorpusTreemap.tsx** (10 fixes): 3× `border-t-2`, 3× `border-b-2` → hairline. 4× `italic` removed from subtitle, threshold hint, loading state, empty state.
+  - [x] **SymbolGraph.tsx** (4 fixes): 3× `border-b-2` → hairline. 1× `italic` removed. 1 accent indicator kept (line 529 — doc preview bar).
+  - [x] **LogViewer.tsx** (1 fix): `border-t-2` → hairline on footer. 1 accent indicator kept (line 474 — log-level left bar).
+  - **Validation:** `tsc --noEmit` + `vite build` clean. Re-scan: 0 violations, 5 intentional accent indicators preserved. **The entire TSX codebase is now DESIGN.md compliant.**
+
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
 > Cross-cutting: builds the local equivalent of `azure-smoke` so multi-tenant cloud correctness, ACL semantics, API-key authn parity, session-tenant-scoping, webhook fan-out, and billing webhooks are all exercisable on a laptop without an Azure deploy. Today's `scripts/demo-local.sh` covers ONE tenant's happy path; the F-items above ship with Postgres-integration tests gated on `MINISTR_TEST_PG_URL` and unit coverage, but no e2e proof that ties them together end-to-end. F-Test fills that gap. Each chunk extends the harness in place — there's only one command to remember (`just e2e-cloud-local`) regardless of which scenario it ends up covering. Mirrors the `azure-smoke` extension policy from `justfile`.
