@@ -94,7 +94,7 @@ export function ShortcutSheet({ open, onClose }: ShortcutSheetProps) {
           ))}
         </div>
 
-        <div className="px-5 py-3 border-t border-border-soft bg-surface-overlay font-sans text-sm italic text-text-dim">
+        <div className="px-5 py-3 border-t border-border-soft bg-surface-overlay font-sans text-sm text-text-dim">
           On Windows / Linux, use Ctrl where ⌘ is shown.
         </div>
       </div>

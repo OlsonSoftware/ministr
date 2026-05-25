@@ -168,13 +168,13 @@ export function SessionTokenAdvanced({
                 />
               </div>
             </div>
-            <p className="font-sans text-xs italic text-text-dim leading-snug">
+            <p className="font-sans text-xs text-text-dim leading-snug">
               ~{spanMin}m window · {samples.length} samples · sampled on each
               poll
             </p>
           </>
         ) : (
-          <p className="font-sans text-sm italic text-text-dim leading-snug">
+          <p className="font-sans text-sm text-text-dim leading-snug">
             {ended
               ? "No live trend — session is a historical snapshot."
               : "Collecting samples — the trend appears as the session runs."}
