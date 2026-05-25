@@ -1491,6 +1491,17 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] Replaced bare-text detail empty state (`<p>Select a project…</p>`) with `EmptyState` primitive + `MousePointerClick` icon — consistent with the Sessions and Ask empty states.
   - **Validation:** `tsc --noEmit` + `vite build` clean. Zero remaining DESIGN.md violations in ProjectsSurface.
 
+### F18 — Primary surface design-lint compliance *(discovered 2026-05-25)*
+
+> **Context.** `pnpm design:lint` flagged 2 violations in CloudPanel.tsx (`tracking-[0.1em]`, `rounded-sm`). A broader scan found 9 total violations across the primary user-facing surfaces (CloudPanel, ProjectSessions, LinkedProjectsPanel, AiAssistantsPanel). Developer tools (QueryPlayground, Bridge, CorpusTreemap, SymbolGraph, LogViewer) have many more violations but are lower-priority — they're behind the Explore surface and used less frequently.
+
+- [x] **F18.1 Primary surface lint compliance sweep** *(2026-05-25, complete)*
+  - [x] **CloudPanel.tsx**: `border-l-2` → `border-l` (advanced token section), `rounded-sm` → `rounded-md` (stale API key badge), `tracking-[0.1em]` → `tracking-[0.08em]` (PlanBadge), 2× `tracking-[0.06em]` → `tracking-[0.08em]` (UsageChip, SessionBundleView label — these are labels not chips, so they use the label tracking token).
+  - [x] **ProjectSessions.tsx**: removed banned `italic` from loading state.
+  - [x] **LinkedProjectsPanel.tsx**: removed banned `italic` from "path not found" warning.
+  - [x] **AiAssistantsPanel.tsx**: removed 2× banned `italic` from manual-verify hint and "not installed" label.
+  - **Validation:** `pnpm design:lint` reports **clean** — "UI is on the Cockpit contract". `tsc --noEmit` + `vite build` clean. All primary surfaces now fully comply with DESIGN.md.
+
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
 > Cross-cutting: builds the local equivalent of `azure-smoke` so multi-tenant cloud correctness, ACL semantics, API-key authn parity, session-tenant-scoping, webhook fan-out, and billing webhooks are all exercisable on a laptop without an Azure deploy. Today's `scripts/demo-local.sh` covers ONE tenant's happy path; the F-items above ship with Postgres-integration tests gated on `MINISTR_TEST_PG_URL` and unit coverage, but no e2e proof that ties them together end-to-end. F-Test fills that gap. Each chunk extends the harness in place — there's only one command to remember (`just e2e-cloud-local`) regardless of which scenario it ends up covering. Mirrors the `azure-smoke` extension policy from `justfile`.

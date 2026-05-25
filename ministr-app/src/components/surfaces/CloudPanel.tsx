@@ -452,7 +452,7 @@ export function CloudPanel() {
           Advanced: paste token manually
         </button>
         {advancedOpen && (
-          <div className="flex flex-col gap-2 border-l-2 border-border-soft pl-3 ml-1">
+          <div className="flex flex-col gap-2 border-l border-border-soft pl-3 ml-1">
             <label className="flex flex-col gap-1.5">
               <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
                 Bearer token
@@ -1514,7 +1514,7 @@ function ApiKeysTable({ keys, busy, onRevokeRequest }: ApiKeysTableProps) {
                     <span className="text-xs text-text">{k.name}</span>
                     {stale && (
                       <span
-                        className="rounded-sm border border-warning/40 bg-warning/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-warning"
+                        className="rounded-md border border-warning/40 bg-warning/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-warning"
                         title={`No use in the last ${STALE_API_KEY_THRESHOLD_DAYS} days. The cloud's weekly cron will record an api_key.stale audit event.`}
                       >
                         stale
@@ -3009,7 +3009,7 @@ function PlanBadge({ plan }: { plan: "pro" | "team" | "enterprise" }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] uppercase tracking-[0.1em] font-semibold",
+        "inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] uppercase tracking-[0.08em] font-semibold",
         styles[plan],
       )}
     >
@@ -3021,7 +3021,7 @@ function PlanBadge({ plan }: { plan: "pro" | "team" | "enterprise" }) {
 function UsageChip({ label, value }: { label: string; value: string }) {
   return (
     <span className="flex items-baseline gap-1.5">
-      <span className="font-mono uppercase tracking-[0.06em] text-text-muted">
+      <span className="font-mono uppercase tracking-[0.08em] text-text-muted">
         {label}
       </span>
       <span className="font-mono text-text">{value}</span>
@@ -3203,7 +3203,7 @@ function SessionBundleView({ bundle }: { bundle: CloudSessionBundle }) {
     <div className="flex flex-col gap-3">
       <div className="rounded-md border border-border-soft bg-surface-overlay px-3 py-2 flex flex-col gap-1">
         <div className="flex items-baseline gap-1.5">
-          <span className="font-mono text-xs uppercase tracking-[0.06em] text-text-muted">
+          <span className="font-mono text-xs uppercase tracking-[0.08em] text-text-muted">
             Session
           </span>
           <span className="font-mono text-xs text-text">{manifest.session_id}</span>

@@ -101,7 +101,7 @@ export function ProjectSessions({ corpus }: { corpus: CorpusInfo }) {
       </div>
 
       {!loaded ? (
-        <p className="font-sans text-base italic text-text-dim py-4">
+        <p className="font-sans text-base text-text-dim py-4">
           Loading<span className="ministr-blink">_</span>
         </p>
       ) : sessions.length === 0 ? (
