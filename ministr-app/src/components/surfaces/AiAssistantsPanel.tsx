@@ -33,6 +33,7 @@ import {
   type McpClientView,
 } from "../../hooks/useMcpClients";
 import { Button } from "../ui/button";
+import { ContentTray } from "../ui/content-tray";
 
 interface Props {
   corpora: CorpusInfo[];
@@ -75,7 +76,7 @@ export function AiAssistantsPanel({ corpora, activeCorpusId }: Props) {
         </div>
       )}
 
-      <div className="bg-surface-sunken rounded-lg p-3">
+      <ContentTray compact>
         <ul className="space-y-2.5">
           {views.map((view) => (
             <ClientRow
@@ -87,7 +88,7 @@ export function AiAssistantsPanel({ corpora, activeCorpusId }: Props) {
             />
           ))}
         </ul>
-      </div>
+      </ContentTray>
 
       <AgentConfigCard />
     </div>

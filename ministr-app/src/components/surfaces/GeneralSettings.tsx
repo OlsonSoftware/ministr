@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { MonitorSmartphone, Moon, Power, Sun } from "lucide-react";
 
 import type { DaemonStatus } from "../../lib/types";
+import { ContentTray } from "../ui/content-tray";
 import { cn } from "../../lib/utils";
 import {
   DEFAULT_TAB_OPTIONS,
@@ -49,7 +50,7 @@ export function GeneralSettings({
   return (
     <div>
       <SettingsSection title="Preferences" />
-      <div className="bg-surface-sunken rounded-lg p-4 space-y-0">
+      <ContentTray className="space-y-0">
         <PrefRow label="THEME" description="Adapts to OS by default.">
           <div className="flex gap-0">
             {(
@@ -137,7 +138,7 @@ export function GeneralSettings({
             ariaLabel="Start at login"
           />
         </PrefRow>
-      </div>
+      </ContentTray>
     </div>
   );
 }
