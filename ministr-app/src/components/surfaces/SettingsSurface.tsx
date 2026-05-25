@@ -32,7 +32,11 @@ export function SettingsSurface(props: Props) {
     <AdaptiveSurface>
       <div className="h-full flex flex-col @min-[900px]/surface:flex-row min-h-0">
         {/* Sidebar nav — wide viewports */}
-        <nav className="hidden @min-[900px]/surface:flex flex-col gap-1 w-[200px] shrink-0 border-r border-border-soft p-4 pt-6">
+        <nav className="hidden @min-[900px]/surface:flex flex-col w-[200px] shrink-0 border-r border-border-soft p-4 pt-5">
+          <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim px-3 mb-3">
+            Settings
+          </span>
+          <div className="flex flex-col gap-1">
           {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
@@ -49,6 +53,7 @@ export function SettingsSurface(props: Props) {
               {label}
             </button>
           ))}
+          </div>
         </nav>
 
         {/* Tab bar — narrow viewports */}
