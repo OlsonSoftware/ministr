@@ -91,11 +91,11 @@ export function AskEmpty(props: Props) {
             onClick={() => props.onApply(s)}
             disabled={props.disabled}
             className={cn(
-              "group flex items-start gap-2.5 border border-border-soft bg-surface",
-              "px-3 py-2.5 text-left",
-              "hover:border-accent hover:bg-surface-overlay",
-              "disabled:opacity-50 disabled:hover:border-border-soft disabled:hover:bg-surface",
-              "cursor-pointer disabled:cursor-not-allowed transition-colors duration-150 ease-out",
+              "group flex items-start gap-2.5 rounded-lg",
+              "bg-surface-sunken px-3.5 py-3 text-left",
+              "hover:bg-surface-overlay hover:shadow-xs",
+              "disabled:opacity-50 disabled:hover:bg-surface-sunken disabled:hover:shadow-none",
+              "cursor-pointer disabled:cursor-not-allowed transition-all duration-150 ease-out",
             )}
           >
             <span className="font-mono text-xs font-bold text-accent shrink-0 mt-0.5">
