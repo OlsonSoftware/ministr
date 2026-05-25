@@ -24,6 +24,7 @@ import { CloudPanel } from "./components/surfaces/CloudPanel";
 import { DeveloperPanel } from "./components/surfaces/DeveloperPanel";
 import { ServerSettings } from "./components/surfaces/ServerSettings";
 import { AdaptiveSurface } from "./components/ui/adaptive-surface";
+import { H1 } from "./components/ui/heading";
 import { corpusLabel } from "./lib/corpus";
 import { useLiveEvents } from "./lib/liveBus";
 import { fade } from "./lib/motion";
@@ -488,6 +489,12 @@ function SurfaceBody({
     return (
       <AdaptiveSurface>
         <div className="h-full flex flex-col min-h-0">
+          <header className="p-5 pb-0 shrink-0">
+            <H1>Explore</H1>
+            <p className="font-sans text-sm text-text-dim mt-1">
+              Server diagnostics and developer tools.
+            </p>
+          </header>
           <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-6">
             <ServerSettings status={status} />
             <DeveloperPanel
