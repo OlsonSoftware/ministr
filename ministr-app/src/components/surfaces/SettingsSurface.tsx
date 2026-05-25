@@ -6,7 +6,6 @@ import { GeneralSettings } from "./GeneralSettings";
 import { AiAssistantsPanel } from "./AiAssistantsPanel";
 import { AboutPanel } from "./AboutPanel";
 import { AdaptiveSurface } from "../ui/adaptive-surface";
-import { H2 } from "../ui/heading";
 
 interface Props {
   status: DaemonStatus;
@@ -75,43 +74,28 @@ export function SettingsSurface(props: Props) {
         {/* Active view */}
         <div className="flex-1 min-h-0 overflow-y-auto p-5">
           {active === "general" && (
-            <div>
-              <H2>General</H2>
-              <div className="mt-4">
-                <GeneralSettings
-                  status={props.status}
-                  theme={props.theme}
-                  onThemeChange={props.onThemeChange}
-                  onRefresh={props.onRefresh}
-                />
-              </div>
-            </div>
+            <GeneralSettings
+              status={props.status}
+              theme={props.theme}
+              onThemeChange={props.onThemeChange}
+              onRefresh={props.onRefresh}
+            />
           )}
 
           {active === "ai" && (
-            <div>
-              <H2>AI assistants</H2>
-              <div className="mt-4">
-                <AiAssistantsPanel
-                  corpora={props.status.corpora}
-                  activeCorpusId={props.activeCorpusId}
-                />
-              </div>
-            </div>
+            <AiAssistantsPanel
+              corpora={props.status.corpora}
+              activeCorpusId={props.activeCorpusId}
+            />
           )}
 
           {active === "about" && (
-            <div>
-              <H2>About</H2>
-              <div className="mt-4">
-                <AboutPanel
-                  status={props.status}
-                  onShowOnboarding={props.onShowOnboarding}
-                  onRefresh={props.onRefresh}
-                  onOpenLogs={props.onOpenLogs}
-                />
-              </div>
-            </div>
+            <AboutPanel
+              status={props.status}
+              onShowOnboarding={props.onShowOnboarding}
+              onRefresh={props.onRefresh}
+              onOpenLogs={props.onOpenLogs}
+            />
           )}
         </div>
       </div>
