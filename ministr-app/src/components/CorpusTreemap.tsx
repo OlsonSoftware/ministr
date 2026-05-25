@@ -164,7 +164,7 @@ export function CorpusTreemap({
             <TreePine className="h-5 w-5 text-text-dim" strokeWidth={2} />
             Structure
           </H1>
-          <p className="font-sans text-sm italic text-text-dim mt-1">
+          <p className="font-sans text-sm text-text-dim mt-1">
             File size proportional to section count · click to drill in.
           </p>
         </div>
@@ -216,7 +216,7 @@ export function CorpusTreemap({
           className="h-7 w-16 border border-border-soft bg-surface px-2 text-sm font-mono tabular-nums text-text focus:outline-none focus:border-accent transition-colors duration-150 ease-out"
         />
         {hiddenCount > 0 && (
-          <span className="font-sans text-xs italic text-text-dim">
+          <span className="font-sans text-xs text-text-dim">
             + {hiddenCount} under threshold
           </span>
         )}
@@ -227,7 +227,7 @@ export function CorpusTreemap({
         {/* Treemap */}
         <div className="relative flex-1 min-h-[280px] bg-surface-sunken">
           {loading ? (
-            <div className="flex items-center justify-center h-full font-sans text-base italic text-text-dim">
+            <div className="flex items-center justify-center h-full font-sans text-base text-text-dim">
               Loading<span className="ministr-blink">_</span>
             </div>
           ) : visibleFiles.length === 0 ? (
@@ -235,7 +235,7 @@ export function CorpusTreemap({
               <p className="font-sans text-lg font-bold text-text">
                 No files indexed
               </p>
-              <p className="font-sans text-sm italic text-text-dim">
+              <p className="font-sans text-sm text-text-dim">
                 Kick off an ingestion run to populate this view.
               </p>
             </div>
@@ -272,7 +272,7 @@ export function CorpusTreemap({
 
         {/* Lang mix ribbon */}
         {langBreakdown.length > 0 && (
-          <div className="border-t-2 border-border">
+          <div className="border-t border-border">
             <div className="flex items-stretch h-6 -mx-[1px]">
               {langBreakdown.map(({ ext, pct }, i) => (
                 <div
@@ -286,7 +286,7 @@ export function CorpusTreemap({
                 />
               ))}
             </div>
-            <div className="flex items-center gap-3 px-2 py-1 border-t-2 border-border bg-surface-overlay overflow-x-auto">
+            <div className="flex items-center gap-3 px-2 py-1 border-t border-border bg-surface-overlay overflow-x-auto">
               <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text-dim shrink-0">Lang mix</span>
               {langBreakdown.slice(0, 8).map(({ ext, pct }) => (
                 <span
@@ -304,8 +304,8 @@ export function CorpusTreemap({
         )}
 
         {/* Top files list */}
-        <div className="border-t-2 border-border max-h-72 overflow-y-auto">
-          <div className="flex items-center justify-between border-b-2 border-border bg-surface-overlay px-3 py-1 sticky top-0 z-10">
+        <div className="border-t border-border max-h-72 overflow-y-auto">
+          <div className="flex items-center justify-between border-b border-border bg-surface-overlay px-3 py-1 sticky top-0 z-10">
             <span className="font-sans text-xs font-bold tracking-[0.08em] text-text">
               Top files by sections
             </span>
@@ -324,7 +324,7 @@ export function CorpusTreemap({
                 onMouseEnter={() => setHoveredFile(f)}
                 onMouseLeave={() => setHoveredFile(null)}
                 title={f.path}
-                className="w-full text-left flex items-center gap-2 border-b-2 border-border last:border-b-0 px-3 py-1 cursor-pointer transition-colors duration-150 ease-out hover:bg-surface-overlay hover:text-text"
+                className="w-full text-left flex items-center gap-2 border-b border-border last:border-b-0 px-3 py-1 cursor-pointer transition-colors duration-150 ease-out hover:bg-surface-overlay hover:text-text"
               >
                 <span
                   className={cn(
@@ -378,7 +378,7 @@ function GroupBlock({
       }}
     >
       {showLabel && (
-        <div className="border-b-2 border-border bg-surface-overlay px-2 py-0.5 flex items-center justify-between">
+        <div className="border-b border-border bg-surface-overlay px-2 py-0.5 flex items-center justify-between">
           <span className="font-mono text-xs font-bold tracking-[0.08em] text-text">
             {group.label}
           </span>
