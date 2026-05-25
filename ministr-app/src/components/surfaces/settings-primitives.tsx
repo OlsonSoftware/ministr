@@ -58,7 +58,7 @@ export function PrefRow({
     ? label.charAt(0) + label.slice(1).toLowerCase()
     : label;
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-border-soft last:border-b-0 py-3">
+    <div className="flex items-center justify-between gap-4 border-b border-border-soft last:border-b-0 py-3 -mx-2 px-2 rounded-md hover:bg-surface-overlay/40 transition-colors duration-150">
       <div className="min-w-0 flex-1 flex items-start gap-2">
         {Icon && (
           <Icon
@@ -95,7 +95,7 @@ export function MetaRow({
   truncate?: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-border-soft last:border-b-0 py-1.5">
+    <div className="flex items-center justify-between gap-3 border-b border-border-soft last:border-b-0 py-1.5 -mx-2 px-2 rounded-md hover:bg-surface-overlay/40 transition-colors duration-150">
       <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim shrink-0">
         {label}
       </span>
@@ -127,11 +127,11 @@ export function MaintAction({
     <button
       onClick={onClick}
       className={cn(
-        "border border-border-soft px-3 py-3 flex flex-col items-center gap-2 cursor-pointer transition-colors duration-150 ease-out -ml-[1px] -mt-[1px] first:ml-0 first:mt-0",
-        "bg-surface text-text-muted",
+        "px-3 py-3.5 flex flex-col items-center gap-2 cursor-pointer transition-colors duration-150 ease-out rounded-md",
+        "text-text-muted",
         danger
-          ? "hover:bg-danger hover:text-white hover:border-danger"
-          : "hover:bg-surface-overlay hover:text-text hover:border-border",
+          ? "hover:bg-danger/15 hover:text-danger"
+          : "hover:bg-surface-overlay hover:text-text",
       )}
     >
       <Icon className="h-4 w-4" strokeWidth={2} />
