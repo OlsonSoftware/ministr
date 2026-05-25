@@ -56,6 +56,7 @@ function GitHubMark({ className }: { className?: string }) {
 }
 
 import { Button } from "../ui/button";
+import { ContentTray } from "../ui/content-tray";
 import { H1 } from "../ui/heading";
 import { ConfirmDialog } from "../ui/confirm-dialog";
 import { OnboardingWizard } from "../onboarding/OnboardingWizard";
@@ -322,7 +323,7 @@ export function CloudPanel() {
         }}
       />
 
-      <div className="bg-surface-sunken rounded-lg p-5 space-y-5">
+      <ContentTray className="space-y-5 !p-5">
       <section className="flex flex-col gap-3">
         <label className="flex flex-col gap-1.5">
           <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
@@ -515,7 +516,7 @@ export function CloudPanel() {
           <UsageBadges usage={usage} latencyMs={health?.latency_ms ?? null} />
         )}
       </section>
-      </div>
+      </ContentTray>
 
       <CorporaSection authenticated={!!status?.authenticated} />
 

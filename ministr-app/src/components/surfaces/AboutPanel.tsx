@@ -21,6 +21,7 @@ import {
 import type { DaemonStatus } from "../../lib/types";
 import { resetPreferences } from "../../hooks/usePreferences";
 import { ConfirmDialog } from "../ui/confirm-dialog";
+import { ContentTray } from "../ui/content-tray";
 import { useToast } from "../shell/ToastTray";
 import { SettingsSection, MaintAction, formatUptime } from "./settings-primitives";
 
@@ -113,7 +114,7 @@ export function AboutPanel({
   return (
     <div className="space-y-4">
       <SettingsSection title="Maintenance" />
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-0 bg-surface-sunken rounded-lg overflow-hidden">
+        <ContentTray className="!p-0 grid grid-cols-2 md:grid-cols-3 gap-0 overflow-hidden">
           <MaintAction
             icon={FolderOpen}
             label="OPEN DATA FOLDER"
@@ -141,7 +142,7 @@ export function AboutPanel({
             danger
             onClick={() => setConfirmClear(true)}
           />
-        </div>
+        </ContentTray>
 
       <footer className="flex items-center justify-between gap-3 border-t border-border-soft pt-4 mt-6 font-mono text-xs uppercase tracking-[0.08em] text-text-dim">
         <button

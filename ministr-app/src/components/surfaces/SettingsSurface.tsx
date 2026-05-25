@@ -39,10 +39,10 @@ export function SettingsSurface(props: Props) {
               type="button"
               onClick={() => setActive(id)}
               className={cn(
-                "flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors duration-150",
+                "flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors duration-150 border-l-2",
                 active === id
-                  ? "bg-surface-overlay text-text"
-                  : "text-text-muted hover:text-text hover:bg-surface-overlay/50",
+                  ? "border-accent bg-surface-overlay text-text"
+                  : "border-transparent text-text-muted hover:text-text hover:bg-surface-overlay/50",
               )}
             >
               <Icon className="h-4 w-4 shrink-0" strokeWidth={1.8} />

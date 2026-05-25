@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { ScrollText, Terminal } from "lucide-react";
 
 import type { DaemonStatus } from "../../lib/types";
+import { ContentTray } from "../ui/content-tray";
 import { LogViewer } from "../LogViewer";
 import { ContextSimulator } from "../ContextSimulator";
 import { SettingsSection, MetaRow, DiagnosticSection } from "./settings-primitives";
@@ -64,7 +65,7 @@ export function ServerSettings({ status }: Props) {
   return (
     <div>
       <SettingsSection title="Server" description="Read-only" />
-      <div className="bg-surface-sunken rounded-lg p-4">
+      <ContentTray>
         <MetaRow label="VERSION" value={`v${status.version}`} />
         <MetaRow label="EMBEDDING MODEL" value={status.model} />
         <MetaRow
@@ -75,10 +76,10 @@ export function ServerSettings({ status }: Props) {
         {status.log_path && (
           <MetaRow label="LOG FILE" value={status.log_path} truncate />
         )}
-      </div>
+      </ContentTray>
 
       <SettingsSection title="Diagnostics" />
-      <div className="bg-surface-sunken rounded-lg overflow-hidden">
+      <ContentTray className="overflow-hidden !p-0">
       <div ref={logsRef}>
         <DiagnosticSection
           icon={ScrollText}
@@ -105,7 +106,7 @@ export function ServerSettings({ status }: Props) {
           <ContextSimulator />
         </DiagnosticSection>
       </div>
-      </div>
+      </ContentTray>
     </div>
   );
 }
