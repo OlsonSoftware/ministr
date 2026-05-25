@@ -4,9 +4,9 @@
 
 <!-- Sections are appended as drafting steps complete. -->
 
-## Shipped this conversation (2026-05-22 / 2026-05-24)
+## Shipped this conversation (2026-05-22 / 2026-05-25)
 
-Sustained `/roadmap` iteration ran 10 chunks back-to-back through the F5 track, then F8 (web restructure), F9 (app redesign), F10 (nav overhaul), and F11 (web auth). Harness moved 181 → 231 PASS (+50). Snapshot of what landed:
+Sustained `/roadmap` iteration ran 10 chunks back-to-back through the F5 track, then F8 (web restructure), F9 (app redesign), F10 (nav overhaul), F11 (web auth), and F16 (Explore surface polish). Harness moved 181 → 231 PASS (+50). Snapshot of what landed:
 
 - **F5.5-a-priority** (181→184) — customer-enqueue stamps tenant priority on `indexer_jobs` (Pro=1, Team=2, Enterprise=**4** bumped from 3 to match roadmap wording).
 - **F5.5-a-plan-lookup** (184→186) — `PlanResolver` trait + `PostgresPlanResolver` wire OAuth tenants to `users.plan_id` (closes the `Tenant::local()`-defaults-to-Pro gap that made the Enterprise=4 lane unreachable through OAuth).
@@ -1457,6 +1457,18 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - **Acceptance:** `tsc --noEmit` + `vite build` clean; Settings usable at all widths.
 
 - **Validation:** the app feels **designed** at any viewport width. Recessed trays provide visual containment without card noise. Sections have clear hierarchy. Each surface's layout is appropriate to its content (data-dense surfaces like Sessions use grids; form-heavy surfaces like Settings use flat rows with trays; dashboard-like surfaces like Cloud have prominence hierarchy). The era of "floating rows in empty space" is over.
+
+### F16 — Explore surface polish *(discovered 2026-05-25)*
+
+> **Context.** The DeveloperPanel on the Explore surface still had pre-v2 design patterns: a `border-b-2` underline tab bar (explicitly banned in DESIGN.md), `italic` hint text (also banned), and no visual containment (no ContentTray). Every other surface received polish in F13–F15 + recent `fix(ui):` commits. The Explore surface was the last holdout.
+
+- [x] **F16.1 DeveloperPanel segmented control + visual containment** *(2026-05-25, complete)*
+  - [x] Replaced the `border-b-2 border-border` underline tab bar with a segmented control matching the Settings theme/density toggle pattern — `border-border-soft`, `border-accent bg-surface-overlay` active state, `first:rounded-l-md last:rounded-r-md`, focus-visible rings. Apple HIG confirms segmented controls for "switching between views within the same context" (the DeveloperPanel's use case).
+  - [x] Added lucide icons to each segment (ScrollText for Logs, Search for Explore, FlaskConical for Playground) for quick visual identification.
+  - [x] Removed banned `italic` from hint text — now rendered as inline `text-xs text-text-dim` next to the segmented control.
+  - [x] Content area wrapped in `ContentTray` with `compact` + `!p-0 overflow-hidden` for visual containment per F15 vocabulary. Explore and Playground sub-views get inner `p-3` padding; LogViewer gets zero padding (its own scrollable chrome provides the edge).
+  - [x] Shortened "Query playground" tab label to "Playground" to fit the segmented control width.
+  - **Validation:** `tsc --noEmit` + `vite build` clean. Zero remaining DESIGN.md violations in the Explore surface. Segmented control pattern consistent with Settings (GeneralSettings theme/density toggles).
 
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
