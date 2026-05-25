@@ -1477,6 +1477,20 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] Framer-motion `layoutId` animation, `whileTap` scale, and accent glow all preserved.
   - **Validation:** `tsc --noEmit` + `vite build` clean. Focus-visible ring visible on keyboard navigation; labels readable at 9px.
 
+### F17 — Projects surface polish *(discovered 2026-05-25)*
+
+> **Context.** F13–F16 polished Settings, Explore, and the nav rail. Recent `fix(ui):` commits added animated transitions, hover states, segmented controls, and ContentTray containment to those surfaces. ProjectsSurface was the last major surface below the new bar — it still had banned `italic` text (2 sites), banned `border-l-2` separators (2 sites), no motion on the master list, no focus-visible rings on project cards, no ContentTray visual containment, and a bare-text detail empty state.
+
+- [x] **F17.1 Projects surface polish** *(2026-05-25, complete)*
+  - [x] Removed 2× banned `italic` — subtitle text + detail empty state now use `text-text-dim` (no italic per DESIGN.md).
+  - [x] Replaced 2× banned `border-l-2` with `border-l border-border-soft` — detail pane separator and empty state border softened to hairline.
+  - [x] Added `AnimatePresence` + `listContainer`/`listItem` staggered entry animation on the master list — project cards fade+rise on mount, matching SessionsSurface's motion pattern.
+  - [x] Added `focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent` + `tabIndex={0}` + keyboard activation (`Enter`/`Space`) on `ProjectCard` — closes the accessibility gap with the recently-polished nav rail and Settings toggles.
+  - [x] Wrapped metric tiles (Files/Sections/Symbols/Vectors) in `ContentTray compact` for visual containment, matching F15's recessed tray vocabulary.
+  - [x] Wrapped indexing progress panel in `ContentTray compact` — replaces the raw `border border-border-soft bg-surface` box with the design system's recessed tray.
+  - [x] Replaced bare-text detail empty state (`<p>Select a project…</p>`) with `EmptyState` primitive + `MousePointerClick` icon — consistent with the Sessions and Ask empty states.
+  - **Validation:** `tsc --noEmit` + `vite build` clean. Zero remaining DESIGN.md violations in ProjectsSurface.
+
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
 > Cross-cutting: builds the local equivalent of `azure-smoke` so multi-tenant cloud correctness, ACL semantics, API-key authn parity, session-tenant-scoping, webhook fan-out, and billing webhooks are all exercisable on a laptop without an Azure deploy. Today's `scripts/demo-local.sh` covers ONE tenant's happy path; the F-items above ship with Postgres-integration tests gated on `MINISTR_TEST_PG_URL` and unit coverage, but no e2e proof that ties them together end-to-end. F-Test fills that gap. Each chunk extends the harness in place — there's only one command to remember (`just e2e-cloud-local`) regardless of which scenario it ends up covering. Mirrors the `azure-smoke` extension policy from `justfile`.

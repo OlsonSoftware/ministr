@@ -20,15 +20,18 @@ import {
   FolderOpen,
   Layers,
   Loader2,
+  MousePointerClick,
   Plus,
   RefreshCw,
   Search,
   Trash2,
 } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 
 import type { CorpusInfo } from "../../lib/types";
 import { corpusLabel, corpusRoot } from "../../lib/corpus";
 import { formatEta, formatRelativeTime } from "../../lib/format";
+import { listContainer, listItem, spring } from "../../lib/motion";
 import { statusBadge } from "../../lib/status";
 import { cn } from "../../lib/utils";
 import {
@@ -40,6 +43,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { ConfirmDialog } from "../ui/confirm-dialog";
+import { ContentTray } from "../ui/content-tray";
 import { EmptyState } from "../ui/empty-state";
 import { H1 } from "../ui/heading";
 import { MetricTile } from "../ui/metric-tile";
@@ -150,7 +154,7 @@ export function ProjectsSurface({
       <header className="flex items-center justify-between gap-4 p-5 pb-3 shrink-0">
         <div className="min-w-0">
           <H1>Projects</H1>
-          <p className="font-sans text-sm italic text-text-dim mt-1">
+          <p className="font-sans text-sm text-text-dim mt-1">
             {corpora.length === 0
               ? "None registered."
               : `${corpora.length} ${corpora.length === 1 ? "project" : "projects"} indexed.`}
@@ -323,23 +327,30 @@ function ProjectMaster({
   }, [activeCorpusId]);
 
   return (
-    <div className="w-[380px] shrink-0 min-h-0 overflow-y-auto pr-1 space-y-2.5">
-      {corpora.map((corpus) => (
-        <ProjectCard
-          key={corpus.id}
-          ref={(el) => {
-            if (el) cardRefs.current.set(corpus.id, el);
-            else cardRefs.current.delete(corpus.id);
-          }}
-          corpus={corpus}
-          progress={progress[corpus.id]}
-          selected={corpus.id === activeCorpusId}
-          onClick={() => onSelect(corpus.id)}
-          onReindex={() => onReindex(corpus)}
-          onRemove={() => onRemove(corpus)}
-        />
-      ))}
-    </div>
+    <motion.div
+      variants={listContainer}
+      initial="initial"
+      animate="animate"
+      className="w-[380px] shrink-0 min-h-0 overflow-y-auto pr-1 space-y-2.5"
+    >
+      <AnimatePresence mode="popLayout">
+        {corpora.map((corpus) => (
+          <ProjectCard
+            key={corpus.id}
+            ref={(el) => {
+              if (el) cardRefs.current.set(corpus.id, el);
+              else cardRefs.current.delete(corpus.id);
+            }}
+            corpus={corpus}
+            progress={progress[corpus.id]}
+            selected={corpus.id === activeCorpusId}
+            onClick={() => onSelect(corpus.id)}
+            onReindex={() => onReindex(corpus)}
+            onRemove={() => onRemove(corpus)}
+          />
+        ))}
+      </AnimatePresence>
+    </motion.div>
   );
 }
 
@@ -371,14 +382,29 @@ function ProjectCard({
   const pct = filesTotal > 0 ? (filesDone / filesTotal) * 100 : 0;
 
   return (
+    <motion.div
+      layout
+      layoutId={`project-${corpus.id}`}
+      variants={listItem}
+      exit="exit"
+      transition={spring}
+    >
     <Card
       ref={ref}
       hover="lift"
       className={cn(
         "group cursor-pointer p-4",
+        "focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent focus-visible:z-20",
         selected && "border-accent shadow-sm",
       )}
       onClick={onClick}
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
     >
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 flex-wrap min-w-0">
@@ -457,6 +483,7 @@ function ProjectCard({
         </p>
       )}
     </Card>
+    </motion.div>
   );
 }
 
@@ -476,10 +503,12 @@ function ProjectDetail({
 }) {
   if (!corpus) {
     return (
-      <div className="flex-1 grid place-items-center min-h-0 border-l-2 border-border-soft">
-        <p className="font-sans italic text-sm text-text-dim">
-          Select a project to see details.
-        </p>
+      <div className="flex-1 grid place-items-center min-h-0 border-l border-border-soft">
+        <EmptyState
+          icon={MousePointerClick}
+          title="No project selected"
+          hint="Select a project from the list to see its details."
+        />
       </div>
     );
   }
@@ -493,7 +522,7 @@ function ProjectDetail({
   );
 
   return (
-    <div className="flex-1 min-w-0 min-h-0 overflow-y-auto border-l-2 border-border-soft pl-5">
+    <div className="flex-1 min-w-0 min-h-0 overflow-y-auto border-l border-border-soft pl-5">
       <div className="space-y-5">
         <div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -516,7 +545,7 @@ function ProjectDetail({
         </div>
 
         {indexing && (
-          <div className="border border-border-soft bg-surface p-3 space-y-2">
+          <ContentTray compact className="space-y-2">
             <div className="flex justify-between text-mono-mini font-mono uppercase tracking-[0.08em] text-warning">
               <span>
                 {progress?.phase ? `${progress.phase} · ` : ""}
@@ -534,31 +563,33 @@ function ProjectDetail({
                 {progress.current_file}
               </p>
             )}
-          </div>
+          </ContentTray>
         )}
 
-        <div className="grid grid-cols-2 gap-2">
-          <MetricTile
-            icon={FileText}
-            value={corpus.files_indexed.toLocaleString()}
-            label="Files"
-          />
-          <MetricTile
-            icon={Layers}
-            value={corpus.sections_count.toLocaleString()}
-            label="Sections"
-          />
-          <MetricTile
-            icon={Code2}
-            value={(corpus.symbols_count ?? 0).toLocaleString()}
-            label="Symbols"
-          />
-          <MetricTile
-            icon={Box}
-            value={corpus.embeddings_count.toLocaleString()}
-            label="Vectors"
-          />
-        </div>
+        <ContentTray compact>
+          <div className="grid grid-cols-2 gap-2">
+            <MetricTile
+              icon={FileText}
+              value={corpus.files_indexed.toLocaleString()}
+              label="Files"
+            />
+            <MetricTile
+              icon={Layers}
+              value={corpus.sections_count.toLocaleString()}
+              label="Sections"
+            />
+            <MetricTile
+              icon={Code2}
+              value={(corpus.symbols_count ?? 0).toLocaleString()}
+              label="Symbols"
+            />
+            <MetricTile
+              icon={Box}
+              value={corpus.embeddings_count.toLocaleString()}
+              label="Vectors"
+            />
+          </div>
+        </ContentTray>
 
         {corpus.last_indexed && (
           <div className="flex items-center gap-2 text-mono-mini font-mono uppercase tracking-[0.08em] text-text-dim">
