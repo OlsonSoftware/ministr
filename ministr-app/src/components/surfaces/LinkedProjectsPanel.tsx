@@ -20,6 +20,7 @@ import type { CorpusInfo } from "../../lib/types";
 import { corpusRoot } from "../../lib/corpus";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { ContentTray } from "../ui/content-tray";
 
 interface LinkedProjectOut {
   path: string;
@@ -101,13 +102,13 @@ export function LinkedProjectsPanel({ corpora, activeCorpusId }: Props) {
     return (
       <div className="space-y-4">
         <Header />
-        <div className="border border-border-soft bg-surface p-4">
+        <ContentTray>
           <p className="font-sans text-sm text-text-muted">
             Add a project first — links are stored in a project's{" "}
             <code className="font-mono text-mono-mini">.ministr.toml</code>.
             Visit Projects to add one.
           </p>
-        </div>
+        </ContentTray>
       </div>
     );
   }
@@ -131,20 +132,22 @@ export function LinkedProjectsPanel({ corpora, activeCorpusId }: Props) {
       )}
 
       {links.length === 0 ? (
-        <div className="border border-border-soft bg-surface p-4 space-y-1">
+        <ContentTray className="space-y-1">
           <p className="font-sans text-sm text-text-muted">
             No linked projects. Link another codebase so an agent working
             here can query it in the same session.
           </p>
-        </div>
+        </ContentTray>
       ) : (
         <ul className="space-y-2.5">
           {links.map((l) => (
             <li
               key={l.path}
               className={cn(
-                "border bg-surface p-4 flex items-start justify-between gap-3",
-                l.exists ? "border-border-soft" : "border-warning",
+                "rounded-lg p-4 flex items-start justify-between gap-3 transition-colors duration-150",
+                l.exists
+                  ? "bg-surface-sunken hover:bg-surface-overlay/50"
+                  : "bg-warning/10 border border-warning/30",
               )}
             >
               <div className="min-w-0">
