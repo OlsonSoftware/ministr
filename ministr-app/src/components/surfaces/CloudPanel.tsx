@@ -56,6 +56,7 @@ function GitHubMark({ className }: { className?: string }) {
 }
 
 import { Button } from "../ui/button";
+import { H1 } from "../ui/heading";
 import { ConfirmDialog } from "../ui/confirm-dialog";
 import { OnboardingWizard } from "../onboarding/OnboardingWizard";
 import {
@@ -275,14 +276,10 @@ export function CloudPanel() {
   return (
     <div className="flex flex-col gap-6 max-w-2xl @min-[900px]/surface:max-w-none">
       <header className="flex flex-col gap-1">
-        <h2 className="font-mono text-sm font-semibold uppercase tracking-[0.08em] text-text">
-          ministr Cloud
-        </h2>
-        <p className="text-sm text-text-muted">
-          Connect this desktop app to a remote ministr deployment (default:
-          <span className="font-mono text-text"> mcp.ministr.ai</span>). The
-          connection is per-machine; nothing is shared with other ministr
-          users.
+        <H1>Cloud</H1>
+        <p className="text-sm text-text-muted mt-1">
+          Connect to a remote ministr deployment (default:{" "}
+          <span className="font-mono text-text">mcp.ministr.ai</span>).
         </p>
       </header>
 
