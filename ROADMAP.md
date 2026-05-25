@@ -1470,6 +1470,13 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] Shortened "Query playground" tab label to "Playground" to fit the segmented control width.
   - **Validation:** `tsc --noEmit` + `vite build` clean. Zero remaining DESIGN.md violations in the Explore surface. Segmented control pattern consistent with Settings (GeneralSettings theme/density toggles).
 
+- [x] **F16.2 Sidebar nav rail labels + focus-visible** *(2026-05-25, complete)*
+  - [x] Added `focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent focus-visible:z-20` to all 6 nav buttons — closes the accessibility gap vs the recently-polished Settings toggles.
+  - [x] Added tiny labels below each icon (`text-[9px] font-medium tracking-tight`) — matches Material Design navigation rail spec (icon+label for 3–7 destinations). Labels are now always visible; tooltip simplified to keyboard chord only.
+  - [x] Rail widened from `w-14` (56px) to `w-[60px]` to accommodate labels. Button height increased from `h-10` to `h-12` for icon+label vertical stack.
+  - [x] Framer-motion `layoutId` animation, `whileTap` scale, and accent glow all preserved.
+  - **Validation:** `tsc --noEmit` + `vite build` clean. Focus-visible ring visible on keyboard navigation; labels readable at 9px.
+
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
 > Cross-cutting: builds the local equivalent of `azure-smoke` so multi-tenant cloud correctness, ACL semantics, API-key authn parity, session-tenant-scoping, webhook fan-out, and billing webhooks are all exercisable on a laptop without an Azure deploy. Today's `scripts/demo-local.sh` covers ONE tenant's happy path; the F-items above ship with Postgres-integration tests gated on `MINISTR_TEST_PG_URL` and unit coverage, but no e2e proof that ties them together end-to-end. F-Test fills that gap. Each chunk extends the harness in place — there's only one command to remember (`just e2e-cloud-local`) regardless of which scenario it ends up covering. Mirrors the `azure-smoke` extension policy from `justfile`.
