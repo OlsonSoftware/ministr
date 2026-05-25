@@ -9,7 +9,7 @@ Build only from:
 
 1. **Primitives** in `src/components/ui/*` — `Card`, `Badge`, `Button`,
    `StatusDot`, `Progress`, `MetricTile`, `EmptyState`, `NumberTicker`,
-   `Sparkline`, `BudgetRing`, `Zone`, `Toggle`, `ConfirmDialog`, …
+   `Sparkline`, `BudgetRing`, `ContentTray`, `Toggle`, `ConfirmDialog`, …
 2. **Role tokens** in `src/lib/ui-tokens.ts` — headings, labels, surfaces,
    borders, dividers, chips, `transitionInteractive`, `focusRing`.
 3. **Motion presets** in `src/lib/motion.ts` — `swift/flow/spring`,
