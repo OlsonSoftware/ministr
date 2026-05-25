@@ -114,7 +114,7 @@ export function AboutPanel({
   return (
     <div className="space-y-4">
       <SettingsSection title="Maintenance" />
-        <ContentTray className="!p-0 grid grid-cols-2 md:grid-cols-3 gap-0 overflow-hidden">
+        <ContentTray className="!p-2 grid grid-cols-2 md:grid-cols-3 gap-1">
           <MaintAction
             icon={FolderOpen}
             label="OPEN DATA FOLDER"
