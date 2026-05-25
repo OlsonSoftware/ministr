@@ -162,7 +162,7 @@ function UnsupportedBanner({ count }: { count: number }) {
         <p className="font-sans text-sm font-medium text-text">
           {count} claim{count === 1 ? "" : "s"} not backed by sources
         </p>
-        <p className="font-sans text-xs italic text-text-dim mt-0.5">
+        <p className="font-sans text-xs text-text-dim mt-0.5">
           Citation-checking flagged statements that don&apos;t appear in the
           retrieved excerpts. Open each source to verify before relying on it.
         </p>

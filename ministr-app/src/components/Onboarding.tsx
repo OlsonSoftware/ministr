@@ -221,7 +221,7 @@ function StepSetup({ onContinue }: { onContinue: () => void }) {
           <span style={{ color: 'var(--color-brand)' }}>.</span>
         </span>
       </h1>
-      <p className="font-sans text-base italic text-text-muted mt-4 max-w-xl leading-relaxed">
+      <p className="font-sans text-base text-text-muted mt-4 max-w-xl leading-relaxed">
         The installer placed the app and wired the{" "}
         <span className="font-mono not-italic text-text">ministr</span> command
         onto your PATH. Same result on macOS, Windows, and Linux — here's the
@@ -229,7 +229,7 @@ function StepSetup({ onContinue }: { onContinue: () => void }) {
       </p>
 
       <div className="mt-8 border border-border bg-surface">
-        <header className="flex items-center justify-between gap-2 border-b-2 border-border bg-surface-overlay px-4 py-2">
+        <header className="flex items-center justify-between gap-2 border-b border-border bg-surface-overlay px-4 py-2">
           <h2 className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text">
             Install status
           </h2>
@@ -262,7 +262,7 @@ function StepSetup({ onContinue }: { onContinue: () => void }) {
         </div>
 
         {!ready && status !== null && (
-          <footer className="flex items-center justify-between gap-2 border-t-2 border-border px-4 py-2">
+          <footer className="flex items-center justify-between gap-2 border-t border-border px-4 py-2">
             <span className="font-mono text-mono-mini text-text-dim">
               CLI not resolvable from this app
             </span>
@@ -459,7 +459,7 @@ function StepPick({ onIndexed }: { onIndexed: (ids: string[]) => void }) {
         <br />
         <span className="text-text-dim">anything.</span>
       </h1>
-      <p className="font-sans text-base italic text-text-muted mt-4 max-w-xl leading-relaxed">
+      <p className="font-sans text-base text-text-muted mt-4 max-w-xl leading-relaxed">
         Pick a folder. ministr indexes it locally — code, docs, symbols,
         cross-language bridges — then answers questions about it with cited
         source.
@@ -487,7 +487,7 @@ function StepPick({ onIndexed }: { onIndexed: (ids: string[]) => void }) {
 
       {detected && (
         <div className="mt-6 border border-border bg-surface">
-          <header className="flex items-center justify-between gap-2 border-b-2 border-border bg-surface-overlay px-4 py-2">
+          <header className="flex items-center justify-between gap-2 border-b border-border bg-surface-overlay px-4 py-2">
             <h2 className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text">
               {detected.length === 0
                 ? "No projects detected"
@@ -510,7 +510,7 @@ function StepPick({ onIndexed }: { onIndexed: (ids: string[]) => void }) {
 
           {detected.length === 0 ? (
             <div className="px-4 py-6">
-              <p className="font-sans text-sm italic text-text-dim mb-3">
+              <p className="font-sans text-sm text-text-dim mb-3">
                 Nothing in the usual places. Try Pick a folder.
               </p>
               <Button
@@ -554,7 +554,7 @@ function StepPick({ onIndexed }: { onIndexed: (ids: string[]) => void }) {
                   );
                 })}
               </ul>
-              <footer className="flex items-center justify-between gap-2 border-t-2 border-border px-4 py-2">
+              <footer className="flex items-center justify-between gap-2 border-t border-border px-4 py-2">
                 <span className="font-mono text-mono-mini text-text-dim">
                   {selected.size} selected
                 </span>
@@ -645,7 +645,7 @@ function StepIndex({
       <h1 className="text-display text-text">
         {allComplete ? "All set." : "Reading your code…"}
       </h1>
-      <p className="font-sans text-base italic text-text-muted mt-4 max-w-xl leading-relaxed">
+      <p className="font-sans text-base text-text-muted mt-4 max-w-xl leading-relaxed">
         ministr scans every file once, extracts symbols + cross-language
         links, and embeds the chunks for retrieval. You can continue in
         the background as soon as the first project is ready.
@@ -653,7 +653,7 @@ function StepIndex({
 
       <ul className="mt-8 space-y-3">
         {watched.length === 0 && (
-          <li className="font-sans italic text-sm text-text-dim">
+          <li className="font-sans text-sm text-text-dim">
             Waiting for the daemon to register your project…
           </li>
         )}
@@ -733,7 +733,7 @@ function StepConnect({ onDone }: { onDone: () => void }) {
         <br />
         <span className="text-text-dim">AI tool.</span>
       </h1>
-      <p className="font-sans text-base italic text-text-muted mt-4 max-w-xl leading-relaxed">
+      <p className="font-sans text-base text-text-muted mt-4 max-w-xl leading-relaxed">
         ministr is most useful when your AI assistant can ask it questions on
         your behalf. Click Connect on any detected client below to write the
         config file — for CLI clients we'll run a live test, for editors
@@ -800,7 +800,7 @@ function PrimaryAction({
           {title}
         </span>
       </div>
-      <p className="font-sans text-sm italic text-text-muted">{hint}</p>
+      <p className="font-sans text-sm text-text-muted">{hint}</p>
       <ArrowRight
         className="absolute top-4 right-4 h-4 w-4 text-text-dim group-hover:text-accent"
         strokeWidth={2.5}
@@ -818,7 +818,7 @@ function Capability({ title, hint }: { title: string; hint: string }) {
           {title}
         </h3>
       </div>
-      <p className="font-sans text-xs italic text-text-dim mt-1 leading-relaxed">
+      <p className="font-sans text-xs text-text-dim mt-1 leading-relaxed">
         {hint}
       </p>
     </div>
