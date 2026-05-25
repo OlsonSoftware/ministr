@@ -164,7 +164,7 @@ export function LinkedProjectsPanel({ corpora, activeCorpusId }: Props) {
                   {l.path}
                 </p>
                 {!l.exists && (
-                  <p className="font-sans italic text-mono-mini text-warning mt-1">
+                  <p className="font-sans text-mono-mini text-warning mt-1">
                     Path not found on disk — the agent can't query it until
                     it exists.
                   </p>

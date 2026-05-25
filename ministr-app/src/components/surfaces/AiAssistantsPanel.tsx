@@ -326,7 +326,7 @@ function ClientRow({
             </p>
           )}
           {lastTest?.manual_verify_needed && (
-            <p className="font-sans italic text-mono-mini text-text-muted mt-1">
+            <p className="font-sans text-mono-mini text-text-muted mt-1">
               Editor clients can't be reached programmatically. Restart{" "}
               {info.display_name} and hit Re-test to confirm it picked up the
               new config.
@@ -363,7 +363,7 @@ function RowActions({
 }) {
   if (state === "not_installed") {
     return (
-      <span className="font-mono text-mono-mini italic text-text-dim">
+      <span className="font-mono text-mono-mini text-text-dim">
         Not installed
       </span>
     );
