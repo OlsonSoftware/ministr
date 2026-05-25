@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Settings, Bot, Info } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { cn } from "../../lib/utils";
+import { swift } from "../../lib/motion";
 import type { DaemonStatus } from "../../lib/types";
 import { GeneralSettings } from "./GeneralSettings";
 import { AiAssistantsPanel } from "./AiAssistantsPanel";
@@ -78,30 +80,40 @@ export function SettingsSurface(props: Props) {
 
         {/* Active view */}
         <div className="flex-1 min-h-0 overflow-y-auto p-5">
-          {active === "general" && (
-            <GeneralSettings
-              status={props.status}
-              theme={props.theme}
-              onThemeChange={props.onThemeChange}
-              onRefresh={props.onRefresh}
-            />
-          )}
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={active}
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={swift}
+            >
+              {active === "general" && (
+                <GeneralSettings
+                  status={props.status}
+                  theme={props.theme}
+                  onThemeChange={props.onThemeChange}
+                  onRefresh={props.onRefresh}
+                />
+              )}
 
-          {active === "ai" && (
-            <AiAssistantsPanel
-              corpora={props.status.corpora}
-              activeCorpusId={props.activeCorpusId}
-            />
-          )}
+              {active === "ai" && (
+                <AiAssistantsPanel
+                  corpora={props.status.corpora}
+                  activeCorpusId={props.activeCorpusId}
+                />
+              )}
 
-          {active === "about" && (
-            <AboutPanel
-              status={props.status}
-              onShowOnboarding={props.onShowOnboarding}
-              onRefresh={props.onRefresh}
-              onOpenLogs={props.onOpenLogs}
-            />
-          )}
+              {active === "about" && (
+                <AboutPanel
+                  status={props.status}
+                  onShowOnboarding={props.onShowOnboarding}
+                  onRefresh={props.onRefresh}
+                  onOpenLogs={props.onOpenLogs}
+                />
+              )}
+            </motion.div>
+          </AnimatePresence>
         </div>
       </div>
     </AdaptiveSurface>
