@@ -298,7 +298,7 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
                 if (e.target.value === "") clearResults();
               }}
               placeholder="search anything · sections, symbols, bridges"
-              className="h-12 flex-1 border border-border-soft bg-surface px-3 text-base font-sans text-text placeholder:text-text-dim placeholder:normal-case focus:outline-none focus:border-accent transition-colors duration-150 ease-out"
+              className="h-12 flex-1 rounded-md border border-border-soft bg-surface px-3 text-base font-sans text-text placeholder:text-text-dim placeholder:normal-case focus:outline-none focus:border-accent transition-colors duration-150 ease-out"
             />
             <Button type="submit" size="lg" disabled={loading}>
               {loading ? "…" : "Run"}
@@ -357,7 +357,7 @@ export function QueryPlayground({ status, activeCorpusId }: Props) {
 
         {/* Error card */}
         {error && (
-          <div className="border border-danger bg-surface p-3 flex items-start gap-3 border-l border-l-danger">
+          <div className="rounded-lg border border-danger/40 bg-danger/5 p-3 flex items-start gap-3">
             <AlertTriangle className="h-4 w-4 text-danger shrink-0 mt-0.5" strokeWidth={2} />
             <div className="flex-1 min-w-0">
               <p className="font-sans text-base font-bold text-danger">
@@ -524,7 +524,7 @@ function KindFilterStrip({
             onClick={() => onChange(key)}
             disabled={key !== "all" && count === 0}
             className={cn(
-              "border border-border-soft px-3 py-1.5 font-sans text-sm font-medium cursor-pointer transition-colors duration-150 ease-out -ml-[1px] first:ml-0 inline-flex items-center gap-1.5",
+              "border border-border-soft px-3 py-1.5 font-sans text-sm font-medium cursor-pointer transition-colors duration-150 ease-out -ml-[1px] first:ml-0 first:rounded-l-md last:rounded-r-md inline-flex items-center gap-1.5 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent focus-visible:z-20",
               active
                 ? "border-accent bg-surface-overlay text-text z-10 relative"
                 : "bg-surface text-text-muted hover:bg-surface-overlay hover:text-text",
@@ -611,12 +611,12 @@ function BlendedResults({
 
       {showBridges && bridges.length > 0 && (
         <BlendedGroup label="Bridges" count={bridges.length} accent="accent">
-          <div className="border border-border-soft bg-surface">
+          <div className="rounded-lg border border-border-soft bg-surface overflow-hidden">
             {bridges.map((b, i) => (
               <button
                 key={`${b.kind}-${i}`}
                 onClick={() => onOpenBridge(b)}
-                className="w-full text-left grid grid-cols-[1fr_auto_1fr_auto_60px] gap-2 px-3 py-2 cursor-pointer transition-colors duration-150 ease-out border-b border-border-soft last:border-b-0 hover:bg-surface-overlay hover:text-text items-center"
+                className="w-full text-left grid grid-cols-[1fr_auto_1fr_auto_60px] gap-2 px-3 py-2 cursor-pointer transition-colors duration-150 ease-out border-b border-border-soft last:border-b-0 hover:bg-surface-overlay hover:text-text items-center focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent focus-visible:z-10"
               >
                 <span className="flex items-center gap-2 min-w-0">
                   <span className="border border-border-soft px-1 font-mono text-mono-micro uppercase tracking-[0.08em] opacity-70 shrink-0">
@@ -675,19 +675,21 @@ function BlendedGroup({
   _blendedGroupIndex += 1;
   const idx = _blendedGroupIndex;
   return (
-    <section>
-      <header className="flex items-baseline gap-3 border-b border-border-soft bg-surface-overlay px-3 py-2 mb-2">
-        <span className="font-sans text-base font-normal text-text-dim tabular-nums shrink-0 w-6">
+    <section className="rounded-lg border border-border-soft overflow-hidden">
+      <header className="flex items-baseline gap-3 border-b border-border-soft bg-surface-overlay px-3 py-2">
+        <span className="font-mono text-xs font-medium text-accent tabular-nums shrink-0">
           §{idx}
         </span>
-        <h3 className="font-sans text-base font-bold text-text flex-1 min-w-0">
+        <h3 className="font-sans text-sm font-semibold text-text flex-1 min-w-0">
           {sentence}
         </h3>
         <span className="font-mono text-xs tabular-nums text-text-dim shrink-0">
-          {count} matches
+          {count}
         </span>
       </header>
-      {children}
+      <div className="p-2">
+        {children}
+      </div>
     </section>
   );
 }
@@ -732,11 +734,11 @@ function SymbolKindDashboard({
 
   return (
     <Tile title="KIND DASHBOARD" subtitle={`${total} SYMBOLS`}>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-0 -m-[1px]">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         {rows.slice(0, 8).map(({ kind, count, pct }) => (
           <div
             key={kind}
-            className="border border-border-soft bg-surface px-3 py-2 -m-[1px] flex flex-col"
+            className="rounded-md bg-surface-sunken px-3 py-2 flex flex-col"
           >
             <div className="flex items-baseline justify-between">
               <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent">
@@ -746,9 +748,9 @@ function SymbolKindDashboard({
                 {count}
               </span>
             </div>
-            <div className="mt-1.5 h-1.5 border border-border-soft bg-surface-overlay overflow-hidden">
+            <div className="mt-1.5 h-1.5 rounded-full bg-surface-overlay overflow-hidden">
               <div
-                className="h-full bg-accent"
+                className="h-full rounded-full bg-accent"
                 style={{ width: `${pct}%` }}
               />
             </div>
@@ -805,10 +807,10 @@ function ConfidenceRibbonTile({
               <span className="font-mono text-xs tabular-nums text-text">
                 {count}
               </span>
-              <div className="w-full border border-border-soft bg-surface-overlay flex-1 flex items-end overflow-hidden">
+              <div className="w-full rounded-sm bg-surface-sunken flex-1 flex items-end overflow-hidden">
                 <div
                   className={cn(
-                    "w-full",
+                    "w-full rounded-sm",
                     i === 4 ? "bg-success" : i >= 2 ? "bg-accent" : "bg-warning",
                   )}
                   style={{ height: `${pct}%` }}
@@ -875,25 +877,25 @@ function SurveyResults({
   return (
     <div className="flex flex-col gap-3">
       {/* Score histogram strip */}
-      <div className="border border-border-soft bg-surface">
-        <div className="flex items-center justify-between border-b border-border bg-surface-overlay px-2 py-1">
-          <span className="font-sans text-xs font-bold tracking-[0.08em] text-text">
+      <div className="rounded-lg border border-border-soft bg-surface overflow-hidden">
+        <div className="flex items-center justify-between border-b border-border-soft bg-surface-overlay px-3 py-1.5">
+          <span className="font-sans text-xs font-semibold text-text">
             Score distribution
           </span>
           <span className="font-mono text-xs tabular-nums text-text-dim">
-            {results.length} MATCHES
+            {results.length} matches
           </span>
         </div>
-        <div className="flex items-end h-12 gap-[2px] p-1">
+        <div className="flex items-end h-12 gap-[2px] p-1.5">
           {histogram.map((count, i) => (
             <div
               key={i}
               title={`${i * 10}-${(i + 1) * 10}% · ${count}`}
-              className="flex-1 flex items-end border border-border-soft bg-surface-overlay overflow-hidden"
+              className="flex-1 flex items-end rounded-sm bg-surface-sunken overflow-hidden"
             >
               <div
                 className={cn(
-                  "w-full",
+                  "w-full rounded-sm",
                   i >= 7 ? "bg-success" : i >= 4 ? "bg-accent" : "bg-text-muted",
                 )}
                 style={{
@@ -908,10 +910,10 @@ function SurveyResults({
       {/* Two-column layout: facets + results */}
       <div className="flex gap-3 min-h-0">
         {facets.length > 1 && (
-          <aside className="w-44 shrink-0 border border-border-soft bg-surface self-start">
-            <div className="border-b border-border bg-surface-overlay px-2 py-1">
-              <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text">
-                FACETS
+          <aside className="w-44 shrink-0 rounded-lg border border-border-soft bg-surface self-start overflow-hidden">
+            <div className="border-b border-border-soft bg-surface-overlay px-3 py-1.5">
+              <span className="font-sans text-xs font-semibold text-text">
+                Facets
               </span>
             </div>
             <button
@@ -1024,7 +1026,7 @@ function SymbolsResults({
   return (
     <div className="flex flex-col gap-3 h-full min-h-0">
       {/* Kind-count strip */}
-      <div className="border border-border-soft bg-surface shrink-0">
+      <div className="rounded-lg border border-border-soft bg-surface shrink-0 overflow-hidden">
         <div className="flex items-center justify-between border-b border-border bg-surface-overlay px-2 py-1">
           <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text">Kind breakdown</span>
           <span className="font-mono text-xs tabular-nums text-text-dim">
@@ -1089,14 +1091,14 @@ function SymbolsResults({
 
         <div className="flex-1 min-w-0 overflow-y-auto">
           {previewed ? (
-            <div className="border border-border-soft bg-surface">
-              <div className="flex items-center justify-between border-b border-border bg-surface-overlay px-3 py-2 sticky top-0 z-10">
+            <div className="rounded-lg border border-border-soft bg-surface overflow-hidden">
+              <div className="flex items-center justify-between border-b border-border-soft bg-surface-overlay px-3 py-2 sticky top-0 z-10">
                 <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent">
                   PREVIEW
                 </span>
                 <button
                   onClick={() => onOpenDetail(previewed)}
-                  className="border border-border bg-surface px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.08em] text-text hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
+                  className="rounded-md border border-border bg-surface px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.08em] text-text hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
                 >Full source →</button>
               </div>
               <div className="p-3 space-y-2">
@@ -1202,7 +1204,7 @@ function BridgeResults({
   return (
     <div className="flex flex-col gap-3 h-full min-h-0">
       {/* Kind summary strip — proportional blocks */}
-      <div className="border border-border-soft bg-surface shrink-0">
+      <div className="rounded-lg border border-border-soft bg-surface shrink-0 overflow-hidden">
         <div className="flex items-center justify-between border-b border-border bg-surface-overlay px-2 py-1">
           <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text">Bridge surface</span>
           <span className="font-mono text-xs tabular-nums text-text-dim">
@@ -1239,9 +1241,9 @@ function BridgeResults({
       </div>
 
       {/* Visual rows: EXPORT — connector — IMPORT, click expands inline */}
-      <div className="flex-1 min-h-0 overflow-y-auto border border-border-soft bg-surface">
-        <div className="border-b border-border bg-surface-overlay px-2 py-1 sticky top-0 z-10 flex items-center justify-between">
-          <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text">Bridge links</span>
+      <div className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-border-soft bg-surface overflow-hidden">
+        <div className="border-b border-border-soft bg-surface-overlay px-3 py-1.5 sticky top-0 z-10 flex items-center justify-between">
+          <span className="font-sans text-xs font-semibold text-text">Bridge links</span>
           <span className="font-mono text-xs tabular-nums text-text-dim">
             Click to expand
           </span>
@@ -1327,8 +1329,8 @@ function CodeExcerptPane({
 }) {
   const tail = file.replace(/\\/g, "/").split("/").slice(-2).join("/");
   return (
-    <div className="border border-border-soft bg-surface">
-      <div className="flex items-center justify-between border-b border-border bg-surface-overlay px-2 py-1">
+    <div className="rounded-lg border border-border-soft bg-surface overflow-hidden">
+      <div className="flex items-center justify-between border-b border-border-soft bg-surface-overlay px-3 py-1.5">
         <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent">
           {title}
         </span>
@@ -1451,7 +1453,7 @@ function StructureTile({
       {langMix.length > 0 && (
         <div className="mt-3 pt-3 border-t border-border">
           <div className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text-dim mb-1.5">Lang mix</div>
-          <div className="flex h-3 border border-border-soft bg-surface-overlay overflow-hidden">
+          <div className="flex h-3 rounded-full bg-surface-sunken overflow-hidden">
             {langMix.map(({ ext, pct }, i) => (
               <div
                 key={ext}
@@ -1495,7 +1497,7 @@ function StatRow({
       <span className="font-mono text-xs font-bold tabular-nums text-text w-16 shrink-0 text-right">
         {value.toLocaleString()}
       </span>
-      <div className="flex-1 h-2 border border-border-soft bg-surface-overlay overflow-hidden">
+      <div className="flex-1 h-2 rounded-full bg-surface-sunken overflow-hidden">
         <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
       </div>
     </div>
@@ -1554,7 +1556,7 @@ function BridgesTile({
               <span className="font-mono text-xs font-bold tabular-nums w-10 shrink-0 text-right">
                 {count}
               </span>
-              <div className="flex-1 h-2 border border-border-soft bg-surface-overlay overflow-hidden">
+              <div className="flex-1 h-2 rounded-full bg-surface-sunken overflow-hidden">
                 <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
               </div>
             </button>
@@ -1616,7 +1618,7 @@ function HotFilesTile({
               <span className="font-mono text-mono-mini truncate flex-1 text-left">
                 {tail}
               </span>
-              <div className="w-20 h-2 border border-border-soft bg-surface-overlay overflow-hidden shrink-0">
+              <div className="w-20 h-2 rounded-full bg-surface-sunken overflow-hidden shrink-0">
                 <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
               </div>
               <span className="font-mono text-xs font-bold tabular-nums w-10 shrink-0 text-right">
@@ -1695,11 +1697,11 @@ function RecentChangesTile({
 
 function EmptyCorpusTile() {
   return (
-    <div className="border border-border-soft bg-surface p-8 text-center">
-      <h3 className="font-sans text-base font-bold tracking-[0.08em] text-text">
+    <div className="rounded-lg border border-border-soft bg-surface-sunken p-8 text-center">
+      <h3 className="font-sans text-sm font-semibold text-text">
         Add a project to begin
       </h3>
-      <p className="mt-3 font-sans text-xs tracking-[0.08em] text-text-dim">
+      <p className="mt-3 font-sans text-xs text-text-dim">
         Open the Projects tab and add a directory — ministr will index it for survey, symbols, and bridge.
       </p>
     </div>
@@ -1725,9 +1727,9 @@ function Tile({
     ? title.charAt(0) + title.slice(1).toLowerCase()
     : title;
   return (
-    <section className="border border-border-soft bg-surface flex flex-col">
+    <section className="rounded-lg border border-border-soft bg-surface flex flex-col overflow-hidden">
       <header className="flex items-baseline justify-between gap-2 border-b border-border-soft bg-surface-overlay px-3 py-2">
-        <h3 className="font-sans text-base font-bold text-text">
+        <h3 className="font-sans text-sm font-semibold text-text">
           {sentence}
         </h3>
         <div className="flex items-center gap-2">
@@ -1847,7 +1849,7 @@ function SurveyCard({
         <span className="font-mono text-xs font-semibold tabular-nums w-10 shrink-0 text-text-dim">
           {pct.toFixed(0)}%
         </span>
-        <div className="w-16 h-1.5 border border-border-soft bg-surface-overlay overflow-hidden shrink-0">
+        <div className="w-16 h-1.5 rounded-full bg-surface-sunken overflow-hidden shrink-0">
           <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
         </div>
         <span className="font-mono text-xs truncate w-48 shrink-0 text-text-dim">
@@ -1863,14 +1865,14 @@ function SurveyCard({
   return (
     <button
       onClick={onClick}
-      className="text-left border border-border-soft bg-surface cursor-pointer transition-colors duration-150 ease-out hover:border-border hover:bg-surface-overlay"
+      className="text-left rounded-lg border border-border-soft bg-surface cursor-pointer transition-colors duration-150 ease-out hover:border-border hover:bg-surface-overlay overflow-hidden focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
     >
       <div className="flex items-center gap-2 border-b border-border-soft bg-surface-overlay px-3 py-1.5">
         <span className="font-mono text-xs font-bold tabular-nums text-text w-10 shrink-0">
           {pct.toFixed(0)}%
         </span>
-        <div className="w-24 h-2 border border-border-soft bg-surface overflow-hidden shrink-0">
-          <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
+        <div className="w-24 h-2 rounded-full bg-surface-sunken overflow-hidden shrink-0">
+          <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
         </div>
         <span className="font-mono text-mono-mini text-text truncate">
           {shortId}
@@ -1941,7 +1943,7 @@ function SymbolCard({
   return (
     <button
       onClick={onClick}
-      className="text-left border border-border bg-surface cursor-pointer transition-colors duration-150 ease-out hover:-translate-x-[2px] hover:-translate-y-[2px] hover:shadow-md"
+      className="text-left rounded-lg border border-border-soft bg-surface cursor-pointer transition-colors duration-150 ease-out hover:border-border hover:bg-surface-overlay overflow-hidden focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
     >
       <div className="flex items-center gap-2 border-b border-border bg-surface-overlay px-2 py-1.5">
         <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent w-14 shrink-0">
