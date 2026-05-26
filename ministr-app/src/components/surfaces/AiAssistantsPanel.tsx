@@ -16,7 +16,6 @@
 import { useCallback, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
-  AlertTriangle,
   Check,
   Loader2,
   RefreshCw,
@@ -34,6 +33,7 @@ import {
 } from "../../hooks/useMcpClients";
 import { Button } from "../ui/button";
 import { ContentTray } from "../ui/content-tray";
+import { ErrorCallout } from "../ui/error-callout";
 
 interface Props {
   corpora: CorpusInfo[];
@@ -66,15 +66,7 @@ export function AiAssistantsPanel({ corpora, activeCorpusId }: Props) {
     <div className="space-y-4">
       <Header projectRoot={projectRoot} onRefresh={refresh} loading={loading} />
 
-      {error && (
-        <div className="border border-danger bg-surface p-3 flex items-start gap-2">
-          <AlertTriangle
-            className="h-4 w-4 text-danger shrink-0 mt-0.5"
-            strokeWidth={2.5}
-          />
-          <p className="font-mono text-mono-mini text-danger">{error}</p>
-        </div>
-      )}
+      {error && <ErrorCallout message={error} />}
 
       <ContentTray compact>
         <ul className="space-y-2.5">
@@ -164,15 +156,7 @@ function AgentConfigCard() {
 
       <div aria-live="polite">
         {phase.kind === "error" && (
-          <div className="border border-danger bg-surface p-3 flex items-start gap-2">
-            <AlertTriangle
-              className="h-4 w-4 text-danger shrink-0 mt-0.5"
-              strokeWidth={2.5}
-            />
-            <p className="font-mono text-mono-mini text-danger">
-              {phase.message}
-            </p>
-          </div>
+          <ErrorCallout message={phase.message} />
         )}
         {phase.kind === "done" && (
           <RepairSummary report={phase.report} at={phase.at} />
