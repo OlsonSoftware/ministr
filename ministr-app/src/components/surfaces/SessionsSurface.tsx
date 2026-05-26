@@ -32,6 +32,7 @@ import { NumberTicker } from "../ui/number-ticker";
 import { Sparkline } from "../ui/sparkline";
 import { StatusDot } from "../ui/status-dot";
 import { H1 } from "../ui/heading";
+import { AdaptiveSurface } from "../ui/adaptive-surface";
 
 const CONNECT_CMD = "npx @modelcontextprotocol/inspector ministr stdio";
 
@@ -75,6 +76,7 @@ export function SessionsSurface({
     });
 
   return (
+    <AdaptiveSurface>
     <div className="h-full flex flex-col min-h-0">
       <header className="flex items-center justify-between gap-4 p-5 pb-3 shrink-0">
         <div className="min-w-0">
@@ -154,6 +156,7 @@ export function SessionsSurface({
         )}
       </div>
     </div>
+    </AdaptiveSurface>
   );
 }
 

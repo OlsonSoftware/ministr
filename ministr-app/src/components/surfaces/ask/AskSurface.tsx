@@ -28,6 +28,7 @@ import { AlertTriangle, RefreshCw, Sparkles } from "lucide-react";
 
 import type { CorpusInfo, DaemonStatus } from "../../../lib/types";
 import { Button } from "../../ui/button";
+import { AdaptiveSurface } from "../../ui/adaptive-surface";
 import { corpusLabel } from "../../../lib/corpus";
 import { cn } from "../../../lib/utils";
 
@@ -228,6 +229,8 @@ export function AskSurface({ status, activeCorpusId }: Props) {
   // ── No project state — surface owns its own empty handling. ────────────
   if (!corpus) {
     return (
+      <AdaptiveSurface>
+      <div className="h-full p-5">
       <AskEmpty
         variant="no-project"
         onAddProject={() => {
@@ -236,13 +239,16 @@ export function AskSurface({ status, activeCorpusId }: Props) {
           );
         }}
       />
+      </div>
+      </AdaptiveSurface>
     );
   }
 
   const inferenceDown = health !== null && !health.available;
 
   return (
-    <div className="@container/page flex h-full gap-4 min-h-0">
+    <AdaptiveSurface>
+    <div className="@container/page flex h-full gap-4 min-h-0 p-5">
       <div className="flex-1 min-w-0 flex flex-col gap-3 min-h-0">
         <Header corpus={corpus} />
 
@@ -323,6 +329,7 @@ export function AskSurface({ status, activeCorpusId }: Props) {
         />
       </aside>
     </div>
+    </AdaptiveSurface>
   );
 }
 
