@@ -1597,13 +1597,13 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
 >
 > **Research sources:** NNGroup (2024): sidebar nav recommended for 5+ items, scalable and easy to scan. UXPlanet (Dec 2024): sidebar width 240-300px, 48-64px collapsed. Eleken (May 2026): effective navigation relies on familiar sidebar patterns. NNGroup (2021): vertical navigation good fit for broad or growing IAs.
 
-- [ ] **F25.1 Extract SurfaceSidebar primitive from SettingsSurface**
-  - [ ] New `components/ui/surface-sidebar.tsx` — extract the sidebar nav + narrow-viewport tab bar pattern from SettingsSurface into a reusable component. Props: `items: {id, label, icon}[]`, `active: string`, `onSelect: (id) => void`, `title?: string`.
-  - [ ] At `@min-[900px]/surface:`: 200px sidebar with icon+label buttons, accent left-bar active indicator, transition on select.
-  - [ ] Below 900px: horizontal tab bar with icon+label, accent bottom-border active indicator.
-  - [ ] `AnimatePresence` view transition on content change (the `motion.div` wrapper with `swift` transition).
-  - [ ] Refactor SettingsSurface to use the new `SurfaceSidebar` — zero visual change, pure extraction.
-  - **Acceptance:** SettingsSurface looks and behaves identically. `SurfaceSidebar` is importable by Cloud and Explore. `tsc --noEmit` + `vite build` clean.
+- [x] **F25.1 Extract SurfaceSidebar primitive from SettingsSurface** *(2026-05-26, complete)*
+  - [x] New `components/ui/surface-sidebar.tsx` (93 lines) — reusable sidebar nav + tab bar + `AnimatePresence` content area. Props: `title`, `items: SidebarItem[]`, `active`, `onSelect`, `children`. Includes `AdaptiveSurface` wrapper internally.
+  - [x] At `@min-[900px]/surface:`: 200px sidebar with icon+label buttons, accent `border-l-2` active indicator.
+  - [x] Below 900px: horizontal tab bar with icon+label, accent `border-b-2` active indicator.
+  - [x] `AnimatePresence mode="wait"` with `swift` transition on content change.
+  - [x] SettingsSurface refactored from 121 to 61 lines — thin wrapper passing `NAV_ITEMS` + rendering 3 sub-views as children.
+  - **Validation:** `tsc --noEmit` + `vite build` clean. Zero visual change. `SurfaceSidebar` ready for F26 (Explore) and F27 (Cloud).
 
 - [ ] **F25.2 Standardize SurfaceBody app shell wrapper**
   - [ ] Every surface in `App.tsx::SurfaceBody` gets the same outer treatment: `<AdaptiveSurface>` wrapper (currently Ask is bare `div` with `p-5`, the only inconsistency).
