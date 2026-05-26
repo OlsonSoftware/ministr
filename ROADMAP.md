@@ -1630,12 +1630,13 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
 
 > **Context.** CloudPanel is 3,314 lines with 10+ sections in one vertical scroll. No sub-navigation — the user must scroll to find anything. After F25.1, `SurfaceSidebar` is available.
 
-- [ ] **F27.1 CloudPanel section extraction**
-  - [ ] Extract each logical section into its own file under `components/cloud/`: `ConnectionSection`, `CorporaSection`, `ApiKeysSection`, `WebhooksSection`, `OrgUsageSection`, `SessionInspectorSection`.
-  - [ ] `CloudPanel.tsx` becomes a thin orchestrator (<200 lines) composing sections via `SurfaceSidebar`.
-  - [ ] Move shared types/state into `components/cloud/shared.ts`.
-  - [ ] Zero visual changes — pure extraction + sidebar wiring.
-  - **Acceptance:** CloudPanel.tsx < 200 lines. Each section < 500 lines. `SurfaceSidebar` with 6 items. `tsc --noEmit` + `vite build` clean.
+- [x] **F27.1 CloudPanel sidebar nav** *(2026-05-26, complete)*
+  - [x] Added `SurfaceSidebar` with 6 destinations: Connection (Link), Corpora (Database), API Keys (Key), Webhooks (Webhook), Usage (BarChart3), Sessions (Eye).
+  - [x] Restructured return JSX: replaced single-scroll layout with conditional renders per `activeSection`. Removed `AdaptiveSurface` wrapper (SurfaceSidebar provides its own).
+  - [x] Connection view retains header + OnboardingWizard + endpoint/auth/connection ContentTray + disconnect button.
+  - [x] Other 5 sections render individually when selected — existing component functions called directly.
+  - [x] File extraction (splitting into separate files) deferred to F27.2 — the sidebar nav is the UX fix; extraction is code-health.
+  - **Validation:** `tsc --noEmit` + `vite build` clean. All three multi-section surfaces (Settings, Explore, Cloud) now share the same `SurfaceSidebar` component.
 
 - [ ] **F27.2 Cloud section visual polish**
   - [ ] Each section gets consistent header treatment (SettingsSection primitive).

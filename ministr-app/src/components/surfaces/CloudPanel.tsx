@@ -19,9 +19,12 @@ import {
   CloudOff,
   Copy,
   CreditCard,
+  Database,
   Download,
+  Eye,
   GitBranch,
   Key,
+  Link,
   Loader2,
   LogIn,
   Plus,
@@ -55,10 +58,10 @@ function GitHubMark({ className }: { className?: string }) {
   );
 }
 
-import { AdaptiveSurface } from "../ui/adaptive-surface";
 import { Button } from "../ui/button";
 import { ContentTray } from "../ui/content-tray";
 import { H1 } from "../ui/heading";
+import { SurfaceSidebar, type SidebarItem } from "../ui/surface-sidebar";
 import { ConfirmDialog } from "../ui/confirm-dialog";
 import { OnboardingWizard } from "../onboarding/OnboardingWizard";
 import {
@@ -83,7 +86,17 @@ import { cn } from "../../lib/utils";
 
 const DEFAULT_ENDPOINT = "https://mcp.ministr.ai";
 
+const CLOUD_NAV: readonly SidebarItem[] = [
+  { id: "connection", label: "Connection", icon: Link },
+  { id: "corpora", label: "Corpora", icon: Database },
+  { id: "api-keys", label: "API Keys", icon: Key },
+  { id: "webhooks", label: "Webhooks", icon: Webhook },
+  { id: "usage", label: "Usage", icon: BarChart3 },
+  { id: "sessions", label: "Sessions", icon: Eye },
+];
+
 export function CloudPanel() {
+  const [activeSection, setActiveSection] = useState("connection");
   const [status, setStatus] = useState<CloudStatus | null>(null);
   const [endpointDraft, setEndpointDraft] = useState("");
   const [tokenDraft, setTokenDraft] = useState("");
@@ -275,17 +288,17 @@ export function CloudPanel() {
     }
   };
 
+  const authenticated = !!status?.authenticated;
+
   return (
-    <AdaptiveSurface>
-    <div className="h-full overflow-y-auto p-5">
-    <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <H1>Cloud</H1>
-        <p className="text-sm text-text-muted mt-1">
-          Connect to a remote ministr deployment (default:{" "}
-          <span className="font-mono text-text">mcp.ministr.ai</span>).
-        </p>
-      </header>
+    <SurfaceSidebar
+      title="Cloud"
+      items={CLOUD_NAV}
+      active={activeSection}
+      onSelect={setActiveSection}
+    >
+      {activeSection === "connection" && (
+      <div className="flex flex-col gap-6">
 
       <OnboardingWizard
         signals={{
@@ -521,16 +534,6 @@ export function CloudPanel() {
       </section>
       </ContentTray>
 
-      <CorporaSection authenticated={!!status?.authenticated} />
-
-      <ApiKeysSection authenticated={!!status?.authenticated} />
-
-      <WebhooksSection authenticated={!!status?.authenticated} />
-
-      <OrgUsageSection authenticated={!!status?.authenticated} />
-
-      <SessionInspectorSection authenticated={!!status?.authenticated} />
-
       <section className="flex flex-col gap-2 border-t border-border-soft pt-5">
         <Button
           size="sm"
@@ -542,9 +545,29 @@ export function CloudPanel() {
           Disconnect & clear local credentials
         </Button>
       </section>
-    </div>
-    </div>
-    </AdaptiveSurface>
+      </div>
+      )}
+
+      {activeSection === "corpora" && (
+        <CorporaSection authenticated={authenticated} />
+      )}
+
+      {activeSection === "api-keys" && (
+        <ApiKeysSection authenticated={authenticated} />
+      )}
+
+      {activeSection === "webhooks" && (
+        <WebhooksSection authenticated={authenticated} />
+      )}
+
+      {activeSection === "usage" && (
+        <OrgUsageSection authenticated={authenticated} />
+      )}
+
+      {activeSection === "sessions" && (
+        <SessionInspectorSection authenticated={authenticated} />
+      )}
+    </SurfaceSidebar>
   );
 }
 
