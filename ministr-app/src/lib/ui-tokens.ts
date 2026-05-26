@@ -1,17 +1,15 @@
 /**
- * Central registry of class-string tokens for the "Cockpit" design
- * language. Every visual decision should resolve through one of these
- * or a primitive in `components/ui/*`.
+ * Role tokens — the class-string registry for the ministr design system.
+ * Every visual decision resolves through one of these or a primitive in
+ * `components/ui/*`. See DESIGN.md for the full design contract.
  *
- * Export names are unchanged from the previous (brutalist) registry so
- * call sites keep compiling; the *semantics* are rebuilt:
- *
- * - Headings: tight sans display scale (no serif).
- * - Labels: mono, uppercase, gently tracked — used sparingly for
- *   stat captions / table headers, never for buttons or prose.
- * - Surfaces: layered elevation tiers.
- * - Borders: hairline by default; accent ring for active.
- * - Radius: soft (use Tailwind `rounded-md|lg`); shadow for elevation.
+ * Token tiers:
+ * - Labels: mono, uppercase, tracked (§ Typography scale step −1/−2)
+ * - Headings: sans, semibold, tight (§ Typography scale step +1/+3)
+ * - Surfaces: layered elevation (§ Color system depth model)
+ * - Borders: hairline by default; accent ring for active
+ * - Interaction: transitionInteractive, focusRing (§ Accessibility)
+ * - Layout: surfaceContainer, content width tokens (§ Layout)
  */
 
 /* ---- Label tier (mono, uppercase, tracked) ----
