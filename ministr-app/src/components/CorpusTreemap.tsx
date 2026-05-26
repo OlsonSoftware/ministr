@@ -213,7 +213,7 @@ export function CorpusTreemap({
           onChange={(e) =>
             setMinSections(Math.max(0, parseInt(e.target.value) || 0))
           }
-          className="h-7 w-16 border border-border-soft bg-surface px-2 text-sm font-mono tabular-nums text-text focus:outline-none focus:border-accent transition-colors duration-150 ease-out"
+          className="h-7 w-16 rounded-md border border-border-soft bg-surface px-2 text-sm font-mono tabular-nums text-text focus:outline-none focus:border-accent transition-colors duration-150 ease-out"
         />
         {hiddenCount > 0 && (
           <span className="font-sans text-xs text-text-dim">
@@ -223,7 +223,7 @@ export function CorpusTreemap({
       </div>
 
       {/* Unified component: treemap (top) · lang ribbon (middle) · top-files (bottom) */}
-      <div className="border border-border-soft bg-surface flex-1 min-h-0 flex flex-col">
+      <div className="rounded-lg border border-border-soft bg-surface flex-1 min-h-0 flex flex-col overflow-hidden">
         {/* Treemap */}
         <div className="relative flex-1 min-h-[280px] bg-surface-sunken">
           {loading ? (
@@ -242,7 +242,7 @@ export function CorpusTreemap({
           ) : (
             <>
               {hoveredFile && (
-                <div className="absolute top-2 right-2 z-20 max-w-[340px] border border-border-soft bg-surface px-2.5 py-1.5 shadow-sm">
+                <div className="absolute top-2 right-2 z-20 max-w-[340px] rounded-lg border border-border-soft bg-surface px-2.5 py-1.5 shadow-sm">
                   <p className="font-mono text-xs text-text break-all">
                     {corpusRelative(hoveredFile.path, corpus)}
                   </p>
@@ -335,8 +335,8 @@ export function CorpusTreemap({
                 <span className="font-mono text-mono-mini truncate flex-1">
                   {corpusRelative(f.path, corpus)}
                 </span>
-                <div className="w-20 h-1.5 border border-border-soft bg-surface-overlay overflow-hidden shrink-0">
-                  <div className="h-full bg-accent" style={{ width: `${pct}%` }} />
+                <div className="w-20 h-1.5 rounded-full bg-surface-sunken overflow-hidden shrink-0">
+                  <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
                 </div>
                 <span className="font-mono text-xs tabular-nums w-12 text-right shrink-0">
                   {f.section_count}
@@ -372,7 +372,7 @@ function GroupBlock({
   const total = group.total || 1;
   return (
     <div
-      className="border border-border-soft bg-surface flex flex-col min-h-0 flex-1"
+      className="rounded-lg border border-border-soft bg-surface flex flex-col min-h-0 flex-1 overflow-hidden"
       style={{
         flexGrow: Math.max(1, group.total),
       }}
