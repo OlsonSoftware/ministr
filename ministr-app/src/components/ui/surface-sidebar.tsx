@@ -30,20 +30,20 @@ export function SurfaceSidebar({
       <div className="h-full flex flex-col @min-[900px]/surface:flex-row min-h-0">
         {/* Sidebar nav — wide viewports */}
         <nav className="hidden @min-[900px]/surface:flex flex-col w-[200px] shrink-0 border-r border-border-soft p-4 pt-5">
-          <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim px-3 mb-3">
+          <span className="font-sans text-xs font-semibold text-text-dim px-3 mb-3 uppercase tracking-wide">
             {title}
           </span>
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-0.5">
             {items.map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
                 type="button"
                 onClick={() => onSelect(id)}
                 className={cn(
-                  "flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors duration-150 border-l-2",
+                  "flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors duration-150",
                   active === id
-                    ? "border-accent bg-surface-overlay text-text"
-                    : "border-transparent text-text-muted hover:text-text hover:bg-surface-overlay/50",
+                    ? "bg-accent/10 text-accent"
+                    : "text-text-muted hover:text-text hover:bg-surface-overlay",
                 )}
               >
                 <Icon className="h-4 w-4 shrink-0" strokeWidth={1.8} />
