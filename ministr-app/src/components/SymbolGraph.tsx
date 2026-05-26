@@ -684,11 +684,20 @@ function JumpableSource({
         return (
           <span
             key={i}
+            role="button"
+            tabIndex={0}
             onClick={(e) => {
               e.stopPropagation();
               onPivot(t.value);
             }}
-            className="underline decoration-2 decoration-accent underline-offset-2 cursor-pointer hover:bg-surface-overlay hover:text-text"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                onPivot(t.value);
+              }
+            }}
+            className="underline decoration-2 decoration-accent underline-offset-2 cursor-pointer hover:bg-surface-overlay hover:text-text focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent rounded-sm"
             title={`Pivot to ${t.value}`}
           >
             {t.value}
