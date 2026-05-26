@@ -3,6 +3,14 @@
 This is the **single source of truth** for UI consistency. Every component
 must obey it; `pnpm design:lint` enforces the hard rules in CI.
 
+**How to read this document.** Start with *Design philosophy* — it
+explains WHY things look the way they do. The four token-system sections
+(Typography, Motion, Spacing, Color) establish the mathematical
+foundations. *The rule* tells you WHAT to build from. Everything after
+that is structural patterns and reference tables. A new contributor
+should read philosophy + the rule on day one; the rest is consulted
+as needed.
+
 ## Design philosophy
 
 ### Product class

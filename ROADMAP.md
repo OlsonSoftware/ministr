@@ -1800,7 +1800,7 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [ ] Implement missing landmarks + aria-labels on SurfaceSidebar and nav rail.
   - **Acceptance:** DESIGN.md accessibility section is a complete inclusive-design guide, not just a keyboard-event checklist; landmarks are in the rendered HTML.
 
-- [ ] **F30.8 DESIGN.md rewrite — integrated document**
+- [x] **F30.8 DESIGN.md rewrite — integrated document** *(2026-05-25, complete)*
   - [ ] Consolidate F30.1-F30.7 outputs into a single coherent DESIGN.md v3. The document should read as a design spec that a human designer would produce — with citations, rationale, visual examples (ASCII diagrams), and explicit "when to break the rules" guidance.
   - [ ] Add a "Reference implementations" section naming the 3-4 apps this design system aspires to match: Linear (density + keyboard-first), Warp (developer-tool color/typography), Arc (motion + spatial awareness), Raycast (speed + minimal chrome). For each: what we take from them and what we reject.
   - [ ] Remove any remaining "AI generated this" artifacts — vague justifications, over-broad rules without exceptions, or rules that exist because "the lint said so" rather than because of a design principle.
