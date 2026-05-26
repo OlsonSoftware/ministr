@@ -1682,12 +1682,16 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
 
 > **Context.** The 4-step Onboarding wizard uses sharp-cornered boxes, no motion on transitions, and predates the v2 design system. It's the first thing new users see.
 
-- [ ] **F29.1 Onboarding visual + structural overhaul**
-  - [ ] Status panels + detected-projects: `rounded-lg` + ContentTray.
-  - [ ] PrimaryAction cards: `rounded-lg` + hover lift + focus-visible.
-  - [ ] Step transitions: `fadeRise` variants.
-  - [ ] Detected-projects list: `AnimatePresence` staggered entry.
-  - **Acceptance:** First-run impression matches the quality of Ask/Sessions/Projects.
+- [x] **F29.1 Onboarding visual + structural overhaul** *(2026-05-26, complete)*
+  - [x] Status panels + detected-projects + index progress: all gained `rounded-lg overflow-hidden`.
+  - [x] PrimaryAction cards: `rounded-lg` + `hover:-translate-y-0.5 hover:shadow-md` lift + `focus-visible:outline-2 focus-visible:outline-accent`.
+  - [x] Step transitions: `AnimatePresence mode="wait"` + `fadeRise` entry + `opacity:0 y:-8` exit.
+  - [x] Detected-projects list: `motion.ul/motion.li` with `listContainer`/`listItem` staggered entry.
+  - [x] Capability cards: `rounded-lg bg-surface-sunken` (recessed tray vocabulary).
+  - [x] StepIndicator badges: `rounded-md`.
+  - [x] Error displays: replaced bare `<p>` text-danger with `ErrorCallout`.
+  - [x] Select-all toggle: gained `focus-visible` ring.
+  - **Validation:** `tsc --noEmit` + `vite build` clean.
 
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
