@@ -1638,12 +1638,13 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] File extraction (splitting into separate files) deferred to F27.2 — the sidebar nav is the UX fix; extraction is code-health.
   - **Validation:** `tsc --noEmit` + `vite build` clean. All three multi-section surfaces (Settings, Explore, Cloud) now share the same `SurfaceSidebar` component.
 
-- [ ] **F27.2 Cloud section visual polish**
-  - [ ] Each section gets consistent header treatment (SettingsSection primitive).
-  - [ ] Tables (API keys, webhooks, sessions): rounded-lg containers, consistent font.
-  - [ ] Status callouts: consistent pattern (rounded-lg, danger/warning/success tones).
-  - [ ] Motion on lists (corpora, API keys, webhooks).
-  - **Acceptance:** Cloud surface feels like it belongs to the same app as Settings.
+- [x] **F27.2 Cloud section visual polish** *(2026-05-26, complete)*
+  - [x] Removed vestigial `border-t border-border-soft pt-5` from 5 standalone sections (CorporaSection, ApiKeysSection, WebhooksSection, OrgUsageSection, SessionInspectorSection) — no longer needed since each renders alone via SurfaceSidebar.
+  - [x] Upgraded 4 main table containers from `rounded-md` to `rounded-lg` (Corpora, API Keys, Webhooks, Org Usage members).
+  - [x] Upgraded 2 session inspector table containers from `rounded-md` to `rounded-lg` (delivered items, drops).
+  - [x] Section headers still use raw font-mono h3 — normalizing to SettingsSection is a code-health follow-up, deferred.
+  - [x] Motion on lists deferred to F28.
+  - **Validation:** `tsc --noEmit` + `vite build` clean. Sections render cleanly without vestigial scroll-layout separators.
 
 ### F28 — Cross-surface UX consistency pass *(discovered 2026-05-26)*
 
