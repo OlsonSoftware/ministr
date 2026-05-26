@@ -1734,7 +1734,7 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [ ] Audit the `text-[9px]` nav label and `text-mono-mini`/`text-mono-micro` custom sizes — either derive them from the scale or document them as intentional exceptions with rationale.
   - **Acceptance:** every font size in the app traces to the declared scale; `ui-tokens.ts` heading/label tokens reference the scale by role name, not raw class.
 
-- [ ] **F30.3 Color system — contrast guarantees + perceptual model**
+- [x] **F30.3 Color system — contrast guarantees + perceptual model** *(2026-05-25, complete)*
   - [ ] Document the perceptual depth model for dark mode surfaces:
     - `bg-background` — deepest (app chrome, behind everything)
     - `bg-surface` — default content background (panels, cards, sections)
