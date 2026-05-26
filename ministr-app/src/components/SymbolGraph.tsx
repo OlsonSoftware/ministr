@@ -297,7 +297,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
     <div className="@container/page flex flex-col gap-3 h-full min-h-0">
       {/* Trail strip — visible only with 1+ entries */}
       {trail.length > 0 && (
-        <div className="flex items-center gap-2 border border-border-soft bg-surface-overlay px-2 py-1 shrink-0">
+        <div className="flex items-center gap-2 rounded-lg border border-border-soft bg-surface-overlay px-2 py-1 shrink-0">
           <span className="font-sans text-sm font-bold text-text-dim shrink-0">
             Trail
           </span>
@@ -338,7 +338,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="search symbols"
-              className="h-9 flex-1 border border-border-soft bg-surface px-2 text-sm font-sans text-text placeholder:text-text-dim focus:outline-none focus:border-accent transition-colors duration-150 ease-out"
+              className="h-9 flex-1 rounded-md border border-border-soft bg-surface px-2 text-sm font-sans text-text placeholder:text-text-dim focus:outline-none focus:border-accent transition-colors duration-150 ease-out"
             />
             <Button type="submit" disabled={loading} size="default">
               {loading ? "…" : "Go"}
@@ -365,9 +365,9 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
             })}
           </div>
 
-          <div className="flex-1 min-h-0 overflow-y-auto border border-border-soft bg-surface">
+          <div className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-border-soft bg-surface overflow-hidden">
             <div className="flex items-baseline justify-between gap-3 border-b border-border-soft bg-surface-overlay px-3 py-1.5 sticky top-0">
-              <h3 className="font-sans text-sm font-bold text-text">
+              <h3 className="font-sans text-sm font-semibold text-text">
                 {symbols.length === 0 && !query ? "Browse" : "Matches"}
               </h3>
               <span className="font-mono text-xs tabular-nums text-text-dim">
@@ -409,7 +409,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
         </div>
 
         {/* CENTER: graph (clickable nodes). min-w-0 so the SVG doesn't push the grid. */}
-        <div className="border border-border-soft bg-surface min-h-0 min-w-0 overflow-hidden">
+        <div className="rounded-lg border border-border-soft bg-surface min-h-0 min-w-0 overflow-hidden">
           {selected ? (
             <svg viewBox="0 0 500 350" className="w-full h-full">
               {edges.map((e, i) => {
@@ -472,7 +472,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
             </svg>
           ) : (
             <div className="flex flex-col items-center justify-center gap-2 h-full text-center">
-              <div className="grid h-12 w-12 place-items-center border border-border-soft bg-surface-overlay text-text-muted">
+              <div className="grid h-12 w-12 place-items-center rounded-md border border-border-soft bg-surface-overlay text-text-muted">
                 ⌺
               </div>
               <p className="font-sans text-xs font-semibold tracking-[0.08em] text-text">
@@ -489,7 +489,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
         <div className="flex flex-col gap-3 min-h-0 min-w-0 overflow-y-auto">
           {selected ? (
             <>
-              <section className="border border-border-soft bg-surface p-3 space-y-2">
+              <section className="rounded-lg border border-border-soft bg-surface p-3 space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent">
                     Definition
@@ -508,7 +508,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
                           symbol: selected,
                         })
                       }
-                      className="inline-flex items-center gap-1 border border-border bg-surface px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.08em] text-text hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
+                      className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.08em] text-text hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
                       title="Open full panel"
                     >
                       <ExternalLink className="h-3 w-3" strokeWidth={2.5} />
@@ -530,7 +530,7 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
                         {definition.doc_comment}
                       </div>
                     )}
-                    <pre className="border border-border-soft bg-surface-sunken p-2 font-mono text-mono-mini leading-relaxed text-text whitespace-pre overflow-x-auto max-h-72 overflow-y-auto">
+                    <pre className="rounded-md border border-border-soft bg-surface-sunken p-2 font-mono text-mono-mini leading-relaxed text-text whitespace-pre overflow-x-auto max-h-72 overflow-y-auto">
                       <JumpableSource
                         source={definition.source_context}
                         symbols={symbols}
@@ -546,10 +546,10 @@ export function SymbolGraph({ status, activeCorpusId }: Props) {
                 )}
               </section>
 
-              <section className="border border-border-soft bg-surface">
-                <div className="border-b border-border bg-surface-overlay px-2 py-1 flex items-center justify-between">
-                  <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-text">
-                    REFERENCES
+              <section className="rounded-lg border border-border-soft bg-surface overflow-hidden">
+                <div className="border-b border-border-soft bg-surface-overlay px-3 py-1.5 flex items-center justify-between">
+                  <span className="font-sans text-xs font-semibold text-text">
+                    References
                   </span>
                   <span className="font-mono text-xs tabular-nums text-text-dim">
                     {visibleRefs.length}
