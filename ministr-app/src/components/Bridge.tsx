@@ -297,7 +297,7 @@ export function Bridge({ status, activeCorpusId }: Props) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="filter (optional)"
-            className="h-9 w-56 border border-border bg-surface px-2 text-xs font-mono text-text placeholder:text-text-dim focus:outline-none focus:bg-surface-overlay focus:text-text transition-colors duration-150 ease-out"
+            className="h-9 w-56 rounded-md border border-border bg-surface px-2 text-xs font-mono text-text placeholder:text-text-dim focus:outline-none focus:border-accent transition-colors duration-150 ease-out"
           />
           <Button type="submit" disabled={loading} size="sm">
             {loading ? "…" : "RUN"}
@@ -308,7 +308,7 @@ export function Bridge({ status, activeCorpusId }: Props) {
       {/* Selection bar — appears once at least one row is checked. Sits on
           top of the table so it's always reachable while scrolling. */}
       {selectedIds.size > 0 && (
-        <div className="flex items-center gap-3 border border-accent bg-surface-overlay px-3 py-2 shrink-0">
+        <div className="flex items-center gap-3 rounded-lg border border-accent bg-surface-overlay px-3 py-2 shrink-0">
           <span className="font-sans text-sm text-text">
             <span className="font-mono tabular-nums font-semibold">
               {selectedIds.size}
@@ -349,7 +349,7 @@ export function Bridge({ status, activeCorpusId }: Props) {
       {/* Table — height-capped so the preview pane can show below it. */}
       <div
         className={cn(
-          "overflow-y-auto border border-border-soft bg-surface",
+          "overflow-y-auto rounded-lg border border-border-soft bg-surface overflow-hidden",
           selected ? "max-h-[40vh]" : "flex-1 min-h-0",
         )}
       >
@@ -415,7 +415,7 @@ function KindSummary({
   if (compact) {
     // 32px ribbon when a row is selected.
     return (
-      <div className="flex items-center gap-2 border border-border-soft bg-surface px-2 py-1 shrink-0 overflow-x-auto">
+      <div className="flex items-center gap-2 rounded-lg border border-border-soft bg-surface px-2 py-1 shrink-0 overflow-x-auto">
         <span className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text-dim shrink-0">
           Surface
         </span>
@@ -443,9 +443,9 @@ function KindSummary({
 
   // Full hero strip — proportional blocks.
   return (
-    <div className="border border-border-soft bg-surface shrink-0">
+    <div className="rounded-lg border border-border-soft bg-surface shrink-0 overflow-hidden">
       <div className="flex items-baseline justify-between border-b border-border-soft bg-surface-overlay px-3 py-2">
-        <h3 className="font-sans text-base font-bold text-text">
+        <h3 className="font-sans text-sm font-semibold text-text">
           Surface
         </h3>
         <span className="font-mono text-xs tabular-nums text-text-dim">
@@ -727,7 +727,7 @@ function ConnectionPreview({
   onOpenFullPanel?: () => void;
 }) {
   return (
-    <section className="flex-1 min-h-0 flex flex-col gap-2 border border-border-soft bg-surface border-l-[6px] border-l-accent">
+    <section className="flex-1 min-h-0 flex flex-col gap-2 rounded-lg border border-border-soft bg-surface border-l-2 border-l-accent overflow-hidden">
       <div className="flex items-center justify-between border-b border-border bg-surface-overlay px-3 py-2 shrink-0">
         <div className="flex items-center gap-2">
           <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent">
@@ -741,7 +741,7 @@ function ConnectionPreview({
           {onOpenFullPanel && (
             <button
               onClick={onOpenFullPanel}
-              className="inline-flex items-center gap-1 border border-border bg-surface px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.08em] text-text hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
+              className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.08em] text-text hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
               title="Open full panel"
             >
               <ExternalLink className="h-3 w-3" strokeWidth={2.5} />
@@ -750,7 +750,7 @@ function ConnectionPreview({
           )}
           <button
             onClick={onClose}
-            className="grid h-6 w-6 place-items-center border border-border hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
+            className="grid h-6 w-6 place-items-center rounded-md border border-border hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
             aria-label="Close preview"
           >
             <X className="h-3 w-3" strokeWidth={2.5} />
@@ -839,8 +839,8 @@ function CodePane({
   }, [source, startLine, line, loading]);
 
   return (
-    <div className="flex-1 min-w-0 flex flex-col border border-border-soft bg-surface">
-      <div className="flex items-center justify-between border-b border-border bg-surface-overlay px-2 py-1.5 shrink-0">
+    <div className="flex-1 min-w-0 flex flex-col rounded-lg border border-border-soft bg-surface overflow-hidden">
+      <div className="flex items-center justify-between border-b border-border-soft bg-surface-overlay px-3 py-1.5 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent shrink-0">
             {title}
@@ -929,7 +929,7 @@ function ConfidenceHelpModal({ onClose }: { onClose: () => void }) {
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md border border-border-soft bg-surface shadow-lg"
+        className="w-full max-w-md rounded-lg border border-border-soft bg-surface shadow-lg overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border bg-surface-overlay px-3 py-2">
@@ -939,7 +939,7 @@ function ConfidenceHelpModal({ onClose }: { onClose: () => void }) {
           <button
             onClick={onClose}
             aria-label="Close"
-            className="grid h-6 w-6 place-items-center border border-border hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
+            className="grid h-6 w-6 place-items-center rounded-md border border-border hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
           >
             <X className="h-3 w-3" strokeWidth={2.5} />
           </button>
