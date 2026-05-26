@@ -14,13 +14,14 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { AlertTriangle, FolderPlus, Link2, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { FolderPlus, Link2, Loader2, RefreshCw, Trash2 } from "lucide-react";
 
 import type { CorpusInfo } from "../../lib/types";
 import { corpusRoot } from "../../lib/corpus";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { ContentTray } from "../ui/content-tray";
+import { ErrorCallout } from "../ui/error-callout";
 
 interface LinkedProjectOut {
   path: string;
@@ -121,15 +122,7 @@ export function LinkedProjectsPanel({ corpora, activeCorpusId }: Props) {
         loading={loading}
       />
 
-      {error && (
-        <div className="border border-danger bg-surface p-3 flex items-start gap-2">
-          <AlertTriangle
-            className="h-4 w-4 text-danger shrink-0 mt-0.5"
-            strokeWidth={2.5}
-          />
-          <p className="font-mono text-mono-mini text-danger">{error}</p>
-        </div>
-      )}
+      {error && <ErrorCallout message={error} />}
 
       {links.length === 0 ? (
         <ContentTray className="space-y-1">

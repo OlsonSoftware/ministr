@@ -1658,10 +1658,11 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] Verified: Projects + Sessions have consistent H1 + subtitle. Ask has no H1 (correct — search-first). Multi-section surfaces use SurfaceSidebar title (correct). Content padding `p-5` consistent.
   - **Validation:** `tsc --noEmit` + `vite build` clean. No redundant headings remain in any SurfaceSidebar view.
 
-- [ ] **F28.2 Empty states + loading states + error callouts**
-  - [ ] Audit every empty state. All use `EmptyState` primitive.
-  - [ ] Audit loading indicators. Standardize patterns.
-  - [ ] Create `ErrorCallout` primitive if needed. Standardize error display.
+- [x] **F28.2 Empty states + loading states + error callouts** *(2026-05-26, complete)*
+  - [x] Audit every empty state. `EmptyState` primitive used in 6 files; remaining inline empty states (LinkedProjectsPanel, CloudPanel) are context-specific ContentTray+text hints — correct for their context.
+  - [x] Audit loading indicators. Two consistent patterns: `EntitySectionLoading` (blinking underscore for async data) and `Loader2 animate-spin` (per-action buttons). Already standardized.
+  - [x] Created `ErrorCallout` primitive (`ui/error-callout.tsx`): `rounded-lg border-danger/40 bg-danger/5` + AlertTriangle + optional title/action. Swept 5 ad-hoc error patterns across 4 files (LinkedProjectsPanel 1×, AiAssistantsPanel 2×, CloudPanel 2×). AskSurface's ErrorCard styling aligned to match.
+  - **Validation:** `tsc --noEmit` + `vite build` clean.
 
 - [ ] **F28.3 Interactive elements + accessibility**
   - [ ] Every clickable non-Button element: focus-visible, hover state, keyboard activation.
