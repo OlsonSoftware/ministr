@@ -14,7 +14,7 @@ const path = require("path");
 const SRC = path.join(__dirname, "..", "src");
 
 // Files allowed to mention banned strings (they define / document them).
-const ALLOW = new Set(["lib/ui-tokens.ts", "lib/motion.ts"]);
+const ALLOW = new Set(["lib/ui-tokens.ts", "lib/motion.ts", "main.tsx"]);
 
 // [label, regex] — regex runs against comment-stripped source.
 const BANNED = [
@@ -22,9 +22,9 @@ const BANNED = [
   ["tracking-[0.1em]", /tracking-\[0\.1em\]/],
   ["transition-none", /\btransition-none\b/],
   ["rounded-none", /\brounded-none\b/],
-  ["rounded-sm", /\brounded-sm\b/],
   ["border-2", /\bborder-2\b/],
   ["font-serif", /\bfont-serif\b/],
+  ["italic (use text-text-dim, not italic)", /(?<!not-)(?<!\w)italic(?!\w)/],
   ["ministr-flash", /\bministr-flash\b/],
   ["motion-data (dead class)", /["'\s]motion-data["'\s]/],
   ["ministr-pin-in (dead class)", /\bministr-pin-in\b/],
