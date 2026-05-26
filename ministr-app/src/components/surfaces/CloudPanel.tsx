@@ -650,7 +650,7 @@ function CorporaSection({ authenticated }: CorporaSectionProps) {
   };
 
   return (
-    <section className="flex flex-col gap-3 border-t border-border-soft pt-5">
+    <section className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <h3 className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
           Corpora
@@ -788,7 +788,7 @@ function CorporaTable({
   onShareRequest,
 }: CorporaTableProps) {
   return (
-    <div className="rounded-md border border-border-soft bg-surface overflow-hidden">
+    <div className="rounded-lg border border-border-soft bg-surface overflow-hidden">
       <table className="w-full text-sm">
         <thead className="bg-surface-overlay border-b border-border-soft">
           <tr className="text-left text-xs font-mono uppercase tracking-[0.08em] text-text-muted">
@@ -1386,7 +1386,7 @@ function ApiKeysSection({ authenticated }: ApiKeysSectionProps) {
   };
 
   return (
-    <section className="flex flex-col gap-3 border-t border-border-soft pt-5">
+    <section className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <h3 className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
           API keys
@@ -1522,7 +1522,7 @@ function ApiKeysTable({ keys, busy, onRevokeRequest }: ApiKeysTableProps) {
   // wall-clock; otherwise borderline cases could flip mid-paint.
   const now = Date.now();
   return (
-    <div className="rounded-md border border-border-soft bg-surface overflow-hidden">
+    <div className="rounded-lg border border-border-soft bg-surface overflow-hidden">
       <table className="w-full text-sm">
         <thead className="bg-surface-overlay border-b border-border-soft">
           <tr className="text-left text-xs font-mono uppercase tracking-[0.08em] text-text-muted">
@@ -1896,7 +1896,7 @@ function WebhooksSection({ authenticated }: WebhooksSectionProps) {
     orgs.find((o) => o.id === selectedOrgId)?.name ?? "(select an org)";
 
   return (
-    <section className="flex flex-col gap-3 border-t border-border-soft pt-5">
+    <section className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <h3 className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
           Webhooks
@@ -2047,7 +2047,7 @@ function WebhooksTable({
   onTest,
 }: WebhooksTableProps) {
   return (
-    <div className="rounded-md border border-border-soft bg-surface overflow-hidden">
+    <div className="rounded-lg border border-border-soft bg-surface overflow-hidden">
       <table className="w-full text-sm">
         <thead className="bg-surface-overlay border-b border-border-soft">
           <tr className="text-left text-xs font-mono uppercase tracking-[0.08em] text-text-muted">
@@ -2468,7 +2468,7 @@ function OrgUsageSection({ authenticated }: OrgUsageSectionProps) {
   }, [selectedOrgId, selectedOrg]);
 
   return (
-    <section className="flex flex-col gap-3 border-t border-border-soft pt-5">
+    <section className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <h3 className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
           Team usage
@@ -2746,7 +2746,7 @@ function UsageProjectionRow({
 
 function UsageMembersTable({ members }: { members: MemberTotals[] }) {
   return (
-    <div className="rounded-md border border-border-soft bg-surface overflow-hidden">
+    <div className="rounded-lg border border-border-soft bg-surface overflow-hidden">
       <table className="w-full text-sm">
         <thead className="bg-surface-overlay border-b border-border-soft">
           <tr className="text-left text-xs font-mono uppercase tracking-[0.08em] text-text-muted">
@@ -3138,7 +3138,7 @@ function SessionInspectorSection({ authenticated }: SessionInspectorProps) {
   }, [sessionId]);
 
   return (
-    <section className="flex flex-col gap-3 border-t border-border-soft pt-5">
+    <section className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <h3 className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
           Session inspector
@@ -3273,7 +3273,7 @@ function SessionBundleView({ bundle }: { bundle: CloudSessionBundle }) {
             No deliveries recorded.
           </div>
         ) : (
-          <div className="max-h-64 overflow-y-auto rounded-md border border-border-soft">
+          <div className="max-h-64 overflow-y-auto rounded-lg border border-border-soft">
             <table className="w-full text-xs font-mono">
               <thead className="bg-surface-overlay text-text-muted">
                 <tr>
@@ -3317,7 +3317,7 @@ function SessionBundleView({ bundle }: { bundle: CloudSessionBundle }) {
             No evictions recorded for this session.
           </div>
         ) : (
-          <div className="max-h-64 overflow-y-auto rounded-md border border-border-soft">
+          <div className="max-h-64 overflow-y-auto rounded-lg border border-border-soft">
             <table className="w-full text-xs font-mono">
               <thead className="bg-surface-overlay text-text-muted">
                 <tr>
