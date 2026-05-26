@@ -1720,7 +1720,7 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [ ] Add an explicit "NOT this" section listing anti-patterns with rationale: no gratuitous hover effects, no parallax, no gradient borders, no glass-morphism, no "creative" loading animations, no illustrations/mascots.
   - **Acceptance:** DESIGN.md has a coherent philosophy section that a new contributor can read and derive correct aesthetic decisions from, without looking at existing components.
 
-- [ ] **F30.2 Typography scale — mathematical grounding**
+- [x] **F30.2 Typography scale — mathematical grounding** *(2026-05-25, complete)*
   - [ ] Establish a modular type scale with a declared ratio. Recommended: **1.2 (minor third)** — tight enough for high-density UI, loose enough for clear hierarchy. Base: 14px (Tailwind `text-sm`).
     - `text-xs` (12px) → micro labels, timestamps
     - `text-sm` (14px) → body, default

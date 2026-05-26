@@ -14,13 +14,15 @@
  * - Radius: soft (use Tailwind `rounded-md|lg`); shadow for elevation.
  */
 
-/* ---- Label tier (mono, uppercase, tracked) ---- */
+/* ---- Label tier (mono, uppercase, tracked) ----
+   Scale: minor-third 1.2× from 14px base.
+   See DESIGN.md "Typography scale" for the full derivation. */
 
-/** Section label (~12px). Header inside compact data panels. */
+/** Scale −1 (micro, ~12px). Section label in compact data panels. */
 export const labelSmallCap =
   "text-xs font-mono font-medium uppercase tracking-[0.08em] text-text-dim";
 
-/** Smallest label (~11px). Stat-cell captions, table headers, chips. */
+/** Scale −2 (nano, ~11px). Stat-cell captions, table headers, chips. */
 export const labelMicro =
   "text-mono-mini font-mono uppercase tracking-[0.08em] text-text-dim";
 
@@ -31,20 +33,21 @@ export const iconBox =
 /** Solid-accent "active" tone fragment for layout-bearing toggles. */
 export const accentTone = "bg-accent text-[var(--color-accent-fg-on)]";
 
-/* ---- Heading tier (sans, tight) ---- */
+/* ---- Heading tier (sans, tight) ----
+   Scale: minor-third 1.2× from 14px base. */
 
-/** Page H1 — display sans, semibold, tight tracking. */
+/** Scale +3 (display, ~24px). Page H1 — sans, semibold, tight. */
 export const headingDisplay =
   "font-sans text-2xl font-semibold tracking-[-0.01em] text-text leading-tight";
 
-/** Chapter / section heading inside panels & drawers. */
+/** Scale +1 (chapter, ~16px). Section heading inside panels & drawers. */
 export const headingChapter =
   "font-sans text-base font-semibold tracking-[-0.005em] text-text leading-snug";
 
-/** Body prose — secondary contrast tier (workhorse for hints/desc). */
+/** Scale 0 (base, 14px). Body prose — secondary contrast. */
 export const bodyMuted = "font-sans text-sm text-text-muted leading-relaxed";
 
-/** Marginalia — faint footnote tier (no longer italic serif). */
+/** Scale −1 (micro, ~12px). Faint footnote tier. */
 export const marginalia = "font-sans text-xs text-text-dim leading-snug";
 
 /** Section index — `§N` marker prefixing a chapter heading. */
