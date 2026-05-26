@@ -1750,7 +1750,7 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [ ] Add a "Color misuse" section to DESIGN.md: no color as the sole differentiator (always pair with shape/icon for color-blind users); no red/green without shape backup.
   - **Acceptance:** `app.css` color tokens documented with their WCAG contrast ratios in a table in DESIGN.md; all pairs meet their declared targets.
 
-- [ ] **F30.4 Motion system — principled timing + purpose mapping**
+- [x] **F30.4 Motion system — principled timing + purpose mapping** *(2026-05-25, complete)*
   - [ ] Replace the current magic-number spring constants with a documented derivation:
     - **swift (140ms):** acknowledgement only — hover feedback, button press, toggle. Short because the user already knows what happened. Maps to Material "standard easing."
     - **flow (240ms):** content transition — page/surface changes, section reveals. Long enough to orient ("what changed?") but not long enough to feel sluggish. Maps to Apple HIG "standard duration" for macOS (200-300ms).
