@@ -1,13 +1,10 @@
 import { useState } from "react";
 import { Settings, Bot, Info } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
-import { cn } from "../../lib/utils";
-import { swift } from "../../lib/motion";
 import type { DaemonStatus } from "../../lib/types";
 import { GeneralSettings } from "./GeneralSettings";
 import { AiAssistantsPanel } from "./AiAssistantsPanel";
 import { AboutPanel } from "./AboutPanel";
-import { AdaptiveSurface } from "../ui/adaptive-surface";
+import { SurfaceSidebar, type SidebarItem } from "../ui/surface-sidebar";
 
 interface Props {
   status: DaemonStatus;
@@ -19,103 +16,46 @@ interface Props {
   onOpenLogs: () => void;
 }
 
-const NAV_ITEMS = [
+const NAV_ITEMS: readonly SidebarItem[] = [
   { id: "general", label: "General", icon: Settings },
   { id: "ai", label: "AI assistants", icon: Bot },
   { id: "about", label: "About", icon: Info },
-] as const;
-
-type SectionId = (typeof NAV_ITEMS)[number]["id"];
+];
 
 export function SettingsSurface(props: Props) {
-  const [active, setActive] = useState<SectionId>("general");
+  const [active, setActive] = useState("general");
 
   return (
-    <AdaptiveSurface>
-      <div className="h-full flex flex-col @min-[900px]/surface:flex-row min-h-0">
-        {/* Sidebar nav — wide viewports */}
-        <nav className="hidden @min-[900px]/surface:flex flex-col w-[200px] shrink-0 border-r border-border-soft p-4 pt-5">
-          <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim px-3 mb-3">
-            Settings
-          </span>
-          <div className="flex flex-col gap-1">
-          {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setActive(id)}
-              className={cn(
-                "flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors duration-150 border-l-2",
-                active === id
-                  ? "border-accent bg-surface-overlay text-text"
-                  : "border-transparent text-text-muted hover:text-text hover:bg-surface-overlay/50",
-              )}
-            >
-              <Icon className="h-4 w-4 shrink-0" strokeWidth={1.8} />
-              {label}
-            </button>
-          ))}
-          </div>
-        </nav>
+    <SurfaceSidebar
+      title="Settings"
+      items={NAV_ITEMS}
+      active={active}
+      onSelect={setActive}
+    >
+      {active === "general" && (
+        <GeneralSettings
+          status={props.status}
+          theme={props.theme}
+          onThemeChange={props.onThemeChange}
+          onRefresh={props.onRefresh}
+        />
+      )}
 
-        {/* Tab bar — narrow viewports */}
-        <div className="flex @min-[900px]/surface:hidden border-b border-border-soft shrink-0">
-          {NAV_ITEMS.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setActive(id)}
-              className={cn(
-                "flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium transition-colors duration-150",
-                active === id
-                  ? "text-text border-b-2 border-accent -mb-[1px]"
-                  : "text-text-muted hover:text-text",
-              )}
-            >
-              <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.8} />
-              {label}
-            </button>
-          ))}
-        </div>
+      {active === "ai" && (
+        <AiAssistantsPanel
+          corpora={props.status.corpora}
+          activeCorpusId={props.activeCorpusId}
+        />
+      )}
 
-        {/* Active view */}
-        <div className="flex-1 min-h-0 overflow-y-auto p-5">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={active}
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={swift}
-            >
-              {active === "general" && (
-                <GeneralSettings
-                  status={props.status}
-                  theme={props.theme}
-                  onThemeChange={props.onThemeChange}
-                  onRefresh={props.onRefresh}
-                />
-              )}
-
-              {active === "ai" && (
-                <AiAssistantsPanel
-                  corpora={props.status.corpora}
-                  activeCorpusId={props.activeCorpusId}
-                />
-              )}
-
-              {active === "about" && (
-                <AboutPanel
-                  status={props.status}
-                  onShowOnboarding={props.onShowOnboarding}
-                  onRefresh={props.onRefresh}
-                  onOpenLogs={props.onOpenLogs}
-                />
-              )}
-            </motion.div>
-          </AnimatePresence>
-        </div>
-      </div>
-    </AdaptiveSurface>
+      {active === "about" && (
+        <AboutPanel
+          status={props.status}
+          onShowOnboarding={props.onShowOnboarding}
+          onRefresh={props.onRefresh}
+          onOpenLogs={props.onOpenLogs}
+        />
+      )}
+    </SurfaceSidebar>
   );
 }
