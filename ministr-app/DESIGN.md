@@ -1,7 +1,83 @@
-# ministr-app — Design contract (v2)
+# ministr-app — Design contract (v3)
 
 This is the **single source of truth** for UI consistency. Every component
 must obey it; `pnpm design:lint` enforces the hard rules in CI.
+
+## Design philosophy
+
+### Product class
+
+ministr is a **professional developer tool**. Its users stare at it for
+hours while navigating code intelligence results, managing corpora, and
+reading structured data. Every design decision flows from this: the UI
+optimizes for *sustained-use information work*, not first-impression wow.
+
+### Density: dense with hierarchy
+
+High information density is a feature, not a bug. Whitespace serves
+structure (grouping related items, separating unrelated sections) — never
+decoration. Every pixel earns its place.
+
+The governing principle: **reduce cycle load**. The fewer interactions
+(scrolls, clicks, eye movements) between the user's question and their
+answer, the better. Density achieves this; hierarchy makes it scannable.
+
+Reference implementations: Linear (density + keyboard-first), Warp
+(developer-tool typography), Arc (spatial motion), Raycast (speed + minimal
+chrome). What we take from each:
+
+| Reference | We adopt | We reject |
+|---|---|---|
+| Linear | Dense tables, keyboard shortcuts everywhere, no wasted rows | Their aggressive whitespace in settings panels |
+| Warp | Monospace-dominant data display, dark-first palette | Their custom renderer (we use standard web tech) |
+| Arc | Purposeful spring animations for spatial transitions | Their creative tab UI (too novel for a tool) |
+| Raycast | Instant feedback, minimal chrome, command palette | Their single-surface constraint (we have 6 surfaces) |
+
+### Dark-first
+
+Dark mode is the design target. Developers work in dark terminals, dark
+IDEs, dark everything. A bright tool window at 2am is hostile. All color
+decisions are made on the dark palette first; light mode is a mechanical
+inversion, not a co-equal design surface.
+
+### Motion: communicate, don't decorate
+
+Every animation must answer one of these questions:
+1. **Where did this come from?** (spatial origin — spring/layout animations)
+2. **Where is this going?** (spatial destination — exit animations)
+3. **What just changed?** (content transition — fade/slide)
+4. **I did something, was it received?** (acknowledgement — swift flash)
+
+An animation that answers none of these is decoration. Remove it.
+_(Apple HIG: "Use motion to provide context, share feedback, and
+communicate relationships between elements.")_
+
+### Typography: mono for data, sans for prose
+
+Monospace is the primary typeface. Symbol names, file paths, counts,
+identifiers, status labels, timestamps — all mono. The user lives in a
+monospace world; the tool should feel native to it.
+
+Sans-serif is reserved for:
+- Surface headings (H1, section titles)
+- Multi-sentence descriptions and empty-state prose
+- Onboarding/marketing-adjacent text
+
+Never mix: a label that's half monospace and half sans is a design bug.
+
+### NOT this (anti-patterns with rationale)
+
+| Don't | Why |
+|---|---|
+| Gratuitous hover effects (scale, glow, parallax) | Developer tools are keyboards-first; hover is secondary feedback, not a reward |
+| Gradient borders / glass-morphism / blur-heavy overlays | These signal "consumer app"; ministr is infrastructure |
+| Creative loading animations (bouncing dots, pulsing rings) | A spinner or skeleton is honest; animation that entertains while you wait implies the wait is acceptable |
+| Illustrations / mascots / emoji in the chrome | These reduce information density and signal "not serious" |
+| Color as sole differentiator | Always pair with shape/icon — ~8% of male users are color-blind |
+| Italic for emphasis | Dim (`text-text-dim`) communicates hierarchy without the readability cost of italic in UI text |
+| Card-within-card nesting | One level of containment maximum; nesting adds visual noise without information |
+
+---
 
 ## The rule
 
