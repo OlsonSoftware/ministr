@@ -1767,7 +1767,7 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [ ] Add `prefers-reduced-motion` documentation: when reduced motion is on, ALL spring/flow/swift animations collapse to `duration: 0` (instant). The `prefersReducedMotion()` utility exists but its enforcement across 31 primitives needs auditing.
   - **Acceptance:** `motion.ts` has doc comments citing the derivation; DESIGN.md has the decision tree; reduced-motion is enforced.
 
-- [ ] **F30.5 Spacing system — canonical scale + rhythm documentation**
+- [x] **F30.5 Spacing system — canonical scale + rhythm documentation** *(2026-05-25, complete)*
   - [ ] Declare the canonical spacing stops (Tailwind units used, why):
     - `0.5` (2px) — micro gap (inline icon-to-text, histogram bar spacing)
     - `1` (4px) — tight (between items in a compact list, chip gap)
