@@ -130,6 +130,65 @@ always paired with an 18px icon and never standalone.
 | `chapterIndex` | −1 (micro) | `text-xs` | mono |
 | `chip` / `chipActive` | −2 (nano) | `text-mono-mini` | mono |
 
+## Color system
+
+### Perceptual depth model (dark mode)
+
+Dark surfaces use **luminance stepping** to communicate depth. Lower
+luminance = further back; higher = closer to the user. Four tiers:
+
+| Tier | Token | Hex (dark) | Role |
+|---|---|---|---|
+| Deepest | `bg-background` | `#16130E` | App chrome, behind all content |
+| Recessed | `bg-surface-sunken` | `#100E0A` | Inset trays, code blocks, grouped content |
+| Default | `bg-surface` | `#1E1B15` | Standard content background (panels, cards) |
+| Elevated | `bg-surface-overlay` | `#28241C` | Hover states, dropdowns, active nav items |
+
+Luminance delta between adjacent tiers: **~0.7%** — subtle but perceivable
+in a dark environment. The warm undertone (amber-shifted neutrals) prevents
+the "cold terminal" feel while maintaining professional restraint.
+
+### Contrast targets (WCAG 2.1)
+
+| Text tier | Target | Measured (on `bg-surface`) | Status |
+|---|---|---|---|
+| `text-text` (primary) | **≥7:1** (AAA) | **14.3:1** | Pass |
+| `text-text-muted` (secondary) | **≥4.5:1** (AA) | **9.1:1** | Pass (exceeds AAA) |
+| `text-text-dim` (tertiary) | **≥3:1** (non-text/large) | **3.8:1** | Acceptable* |
+| `accent` (interactive) | **≥3:1** (non-text) | **8.0:1** | Pass (exceeds AAA) |
+
+*\*`text-dim` is intentionally below AA (4.5:1) for normal text. Justification:
+it is NEVER used for critical information, always accompanies a more prominent
+element (a label next to a value, a timestamp next to a heading), and
+communicates "this is auxiliary — ignore it until you specifically need it."
+If text-dim content were important enough to require AA contrast, it should
+use `text-text-muted` instead.*
+
+### Accent + semantic tones
+
+| Color | Token | Hex (dark) | Contrast on surface | Use |
+|---|---|---|---|---|
+| Amber | `accent` | `#F59E0B` | 8.0:1 | Primary interactive: active nav, links, focus rings |
+| Red | `danger` | `#ef5d68` | 5.3:1 | Errors, destructive actions (always paired with icon) |
+| Green | `success` | `#3fcf8e` | 8.6:1 | Connected, healthy, complete |
+| Yellow | `warning` | `#f2c14e` | 10.2:1 | Stale, degraded, attention-needed |
+
+All tones exceed 3:1 for non-text UI indicators. `danger` at 5.3:1 passes
+AA for normal text but not AAA — acceptable because danger text always
+appears with AlertTriangle icon (shape backup for color-blind users).
+
+### Color-blind safety rules
+
+1. **Never color alone.** Every status indicator pairs color with a
+   distinguishing shape: StatusDot + pulse pattern, Badge + text label,
+   ErrorCallout + AlertTriangle icon, Progress + percentage text.
+2. **Red/green never adjacent without shape.** Success and danger can appear
+   in the same view but are always distinguishable by icon (CheckCircle vs
+   AlertTriangle) or text label, not just hue.
+3. **Accent is one hue.** The amber accent is a single hue used consistently
+   — no blue links, no purple visited, no teal CTAs. One accent = one
+   meaning = "this is interactive or active."
+
 ---
 
 ## The rule
