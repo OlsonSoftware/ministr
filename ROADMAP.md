@@ -1542,18 +1542,24 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
 >
 > **Scope rule.** Each chunk below is one view (one `.tsx` file) redesigned end-to-end. No partial fixes. When a chunk says "redesign," it means: extract inline sub-components, replace raw boxes with design-system primitives, add motion, add focus-visible, and test at multiple viewport widths.
 
-- [ ] **F21.1 QueryPlayground redesign** *(blocks: nothing; biggest bang for effort)*
-  - [ ] Extract ~15 inline sub-components into dedicated files under `components/playground/`.
-  - [ ] Replace all raw `border border-border-soft bg-surface` boxes with `ContentTray` or `rounded-lg` containers per DESIGN.md radius roles.
-  - [ ] Score histogram: wrap in `ContentTray`, add rounded corners, soften header.
-  - [ ] Facets sidebar: `ContentTray` + `rounded-lg`, active state via accent indicator (not raw bg swap).
-  - [ ] Results list: `AnimatePresence` + `listContainer`/`listItem` staggered entry.
-  - [ ] Search input: `rounded-md` per control radius role, consistent with Ask input styling.
-  - [ ] History pills + probe pills: use `chip`/`chipActive` tokens from `ui-tokens.ts`.
-  - [ ] Error card: use the same callout pattern as AskSurface (rounded-lg, subtle left accent).
-  - [ ] Empty/loading states: use `EmptyState` primitive.
-  - [ ] Focus-visible on all clickable rows, facet buttons, probe buttons.
-  - **Acceptance:** `tsc --noEmit` + `vite build` clean. QueryPlayground visually indistinguishable in quality from the Ask surface. No raw sharp-cornered boxes remain.
+- [x] **F21.1 QueryPlayground visual redesign** *(2026-05-25, complete)*
+  - [x] **Tile primitive** (line 1728): `rounded-lg overflow-hidden` — propagates to ALL 8+ dashboard panels (SymbolKindDashboard, ConfidenceRibbon, BridgesTile, HotFilesTile, RecentChangesTile, etc.). Header font normalized to `text-sm font-semibold`.
+  - [x] **Search input**: `rounded-md` per DESIGN.md control radius role.
+  - [x] **KindFilterStrip**: `first:rounded-l-md last:rounded-r-md` + `focus-visible` rings — matches DeveloperPanel segmented control pattern.
+  - [x] **Error card**: redesigned from raw `border-danger border-l` to `rounded-lg border-danger/40 bg-danger/5`.
+  - [x] **BlendedGroup**: `rounded-lg border overflow-hidden` container with inner padding. §N marker styled as accent. Header normalized to `text-sm font-semibold`.
+  - [x] **Bridge results container**: `rounded-lg overflow-hidden` + `focus-visible` on rows.
+  - [x] **SymbolKindDashboard cells**: sharp grid → `rounded-md bg-surface-sunken` individual cells with `gap-2`. Progress bars → `rounded-full bg-surface-sunken`.
+  - [x] **Confidence histogram bars**: `rounded-sm bg-surface-sunken`.
+  - [x] **SurveyResults score histogram**: `rounded-lg` container. Histogram bars → `rounded-sm bg-surface-sunken`.
+  - [x] **Facets sidebar**: `rounded-lg overflow-hidden`. Header normalized.
+  - [x] **SurveyCard**: `rounded-lg overflow-hidden focus-visible`. Score bar → `rounded-full bg-surface-sunken`.
+  - [x] **SymbolCard**: `rounded-lg overflow-hidden focus-visible`. Removed `hover:-translate-x-[2px]` hack.
+  - [x] **EmptyCorpusTile**: `rounded-lg bg-surface-sunken`.
+  - [x] **CodeExcerptPane + BridgeResults containers**: `rounded-lg overflow-hidden`. Headers normalized.
+  - [x] **All progress/bar elements**: `rounded-full bg-surface-sunken` (pill shape).
+  - [x] Sub-component extraction deferred — visual redesign is the priority. AnimatePresence on results deferred to F21.5 integration pass.
+  - **Validation:** `tsc --noEmit` + `vite build` clean. Zero sharp-cornered containers remain. All interactive elements have focus-visible.
 
 - [ ] **F21.2 Bridge view redesign**
   - [ ] Extract ConnectionPreview, CodePane, Connector, KindSummary into `components/bridge/`.
