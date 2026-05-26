@@ -48,6 +48,7 @@ import { EmptyState } from "../ui/empty-state";
 import { H1 } from "../ui/heading";
 import { MetricTile } from "../ui/metric-tile";
 import { Progress } from "../ui/progress";
+import { AdaptiveSurface } from "../ui/adaptive-surface";
 import { ProjectSessions } from "./ProjectSessions";
 import { LinkedProjectsPanel } from "./LinkedProjectsPanel";
 import { useToast } from "../shell/ToastTray";
@@ -150,6 +151,7 @@ export function ProjectsSurface({
   }
 
   return (
+    <AdaptiveSurface>
     <div className="h-full flex flex-col min-h-0">
       <header className="flex items-center justify-between gap-4 p-5 pb-3 shrink-0">
         <div className="min-w-0">
@@ -295,6 +297,7 @@ export function ProjectsSurface({
         onConfirm={performRemove}
       />
     </div>
+    </AdaptiveSurface>
   );
 }
 

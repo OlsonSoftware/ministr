@@ -55,6 +55,7 @@ function GitHubMark({ className }: { className?: string }) {
   );
 }
 
+import { AdaptiveSurface } from "../ui/adaptive-surface";
 import { Button } from "../ui/button";
 import { ContentTray } from "../ui/content-tray";
 import { H1 } from "../ui/heading";
@@ -275,6 +276,8 @@ export function CloudPanel() {
   };
 
   return (
+    <AdaptiveSurface>
+    <div className="h-full overflow-y-auto p-5">
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-1">
         <H1>Cloud</H1>
@@ -540,6 +543,8 @@ export function CloudPanel() {
         </Button>
       </section>
     </div>
+    </div>
+    </AdaptiveSurface>
   );
 }
 
