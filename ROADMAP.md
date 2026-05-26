@@ -1585,71 +1585,100 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] Severity toggle group gains `first:rounded-l-md last:rounded-r-md`. Filter input `rounded-md`. Regex/case toggles gain `focus-visible` + `last:rounded-r-md`.
   - **Validation:** `tsc --noEmit` + `vite build` clean. All controls and containers rounded.
 
-- [ ] **F21.5 Explore navigation redesign — sidebar nav matching Settings**
-  - [ ] **The actual problem (user feedback 2026-05-26):** the Explore surface stacks ServerSettings on top of a segmented-control DeveloperPanel — two different UI patterns in one surface. Settings uses a persistent sidebar navigation (General / AI / About) with scroll-to-section at wide viewports and a tab bar at narrow viewports. Explore should use the same pattern: a sidebar listing Server, Logs, Explore, Playground as navigation destinations, each rendered as its own view (not stacked). This is a **structural** fix, not a visual one.
-  - [ ] Replace the current DeveloperPanel segmented control with a sidebar navigation matching the SettingsSurface pattern: `IntersectionObserver` scroll tracking, lucide icons per section, active highlight, smooth scroll on click.
-  - [ ] At narrow viewports (<900px container width), collapse sidebar to horizontal tab bar (same pattern as Settings).
-  - [ ] ServerSettings, LogViewer, ExploreView, QueryPlayground rendered as scroll-to sections within the Explore surface — NOT stacked with a tab switch.
-  - [ ] Remove the `ContentTray !p-0` wrapper from DeveloperPanel — the sub-views should render directly in the scroll area, not inside a tabbed container.
-  - **Acceptance:** Explore surface navigation is indistinguishable from Settings surface navigation. User can see all sections and scroll between them at wide viewports; tab bar at narrow viewports. No segmented control, no stacked layout.
+~~F21.5-F24 obsoleted 2026-05-26 — replaced by F25-F28 below. The old phases focused on visual polish (rounded corners, lint fixes). The actual problems are structural: inconsistent navigation patterns, missing sub-navigation, inconsistent app shell wrappers, no information architecture.~~
 
-### F22 — CloudPanel decomposition + visual polish *(discovered 2026-05-25)*
+---
 
-> **Context.** CloudPanel is 3,314 lines — the largest component in the app. It contains ~12 logical sections (Endpoint, Auth, Connection, Corpora, API Keys, Webhooks, OrgUsage, SessionInspector, etc.) all inlined in one file. Each section is functional but visually inconsistent: some use ContentTray, some don't; some have proper section headers, some use raw `<h3>` with `border-t`; tables are hand-rolled HTML. The file is too large to maintain or reason about holistically.
+### F25 — Navigation architecture: shared SurfaceSidebar + app shell standardization *(discovered 2026-05-26 via full UX audit)*
 
-- [ ] **F22.1 CloudPanel section extraction**
-  - [ ] Extract each logical section into its own file under `components/cloud/`: `EndpointSection`, `AuthSection`, `ConnectionSection`, `CorporaSection`, `ApiKeysSection`, `WebhooksSection`, `OrgUsageSection`, `SessionInspectorSection`.
-  - [ ] `CloudPanel.tsx` becomes a thin orchestrator that composes the sections.
-  - [ ] Move shared types/helpers into `components/cloud/shared.ts`.
-  - [ ] Zero visual changes — pure extraction refactor.
-  - **Acceptance:** CloudPanel.tsx < 200 lines. Each section file < 500 lines. `tsc --noEmit` + `vite build` clean.
+> **Context (full-app UX audit, 2026-05-26).** A world-class desktop app uses **two-level navigation**: a thin icon rail (Level 1, picks the surface) + a sidebar within each multi-section surface (Level 2, picks the section). Linear, Discord, Slack, VS Code all follow this pattern. ministr has Level 1 correct (the 60px nav rail). But only Settings has Level 2 (sidebar + tab bar). Cloud has NO sub-navigation (10+ sections in one vertical scroll). Explore has a DIFFERENT pattern (segmented control + vertical stacking). Three surfaces, three different navigation systems. This is the fundamental UX problem — not rounded corners.
+>
+> **The rule going forward:** every multi-section surface (Settings, Explore, Cloud) uses the SAME sidebar navigation component. Single-section surfaces (Ask, Projects, Sessions) don't need a sidebar. The sidebar component is extracted from SettingsSurface so all three share one implementation.
+>
+> **Research sources:** NNGroup (2024): sidebar nav recommended for 5+ items, scalable and easy to scan. UXPlanet (Dec 2024): sidebar width 240-300px, 48-64px collapsed. Eleken (May 2026): effective navigation relies on familiar sidebar patterns. NNGroup (2021): vertical navigation good fit for broad or growing IAs.
 
-- [ ] **F22.2 CloudPanel visual consistency pass**
-  - [ ] Every section gets a `SettingsSection` header (consistent with the Settings surface pattern).
-  - [ ] Tables (API keys, webhooks, sessions): redesign with rounded-lg containers, proper header rows, hover states, consistent font treatment.
-  - [ ] Status callouts (ConnectionStatus, error states): consistent pattern using a shared `StatusCallout` primitive.
-  - [ ] Dialogs (CreateApiKeyDialog, ShareDialog, etc.): verify they use the ConfirmDialog/modal patterns consistently.
-  - [ ] Add focus-visible on all interactive elements.
-  - [ ] Add motion on corpora list, API keys list, webhook list.
-  - **Acceptance:** Cloud surface feels like it belongs to the same app as Settings and Ask. No visual discontinuity between sections.
+- [ ] **F25.1 Extract SurfaceSidebar primitive from SettingsSurface**
+  - [ ] New `components/ui/surface-sidebar.tsx` — extract the sidebar nav + narrow-viewport tab bar pattern from SettingsSurface into a reusable component. Props: `items: {id, label, icon}[]`, `active: string`, `onSelect: (id) => void`, `title?: string`.
+  - [ ] At `@min-[900px]/surface:`: 200px sidebar with icon+label buttons, accent left-bar active indicator, transition on select.
+  - [ ] Below 900px: horizontal tab bar with icon+label, accent bottom-border active indicator.
+  - [ ] `AnimatePresence` view transition on content change (the `motion.div` wrapper with `swift` transition).
+  - [ ] Refactor SettingsSurface to use the new `SurfaceSidebar` — zero visual change, pure extraction.
+  - **Acceptance:** SettingsSurface looks and behaves identically. `SurfaceSidebar` is importable by Cloud and Explore. `tsc --noEmit` + `vite build` clean.
 
-### F23 — Onboarding redesign *(discovered 2026-05-25)*
+- [ ] **F25.2 Standardize SurfaceBody app shell wrapper**
+  - [ ] Every surface in `App.tsx::SurfaceBody` gets the same outer treatment: `<AdaptiveSurface>` wrapper (currently Ask is bare `div` with `p-5`, the only inconsistency).
+  - [ ] Page header (H1 + optional subtitle) should be inside each surface component, NOT in `SurfaceBody` (currently Explore's H1 is in `SurfaceBody` while every other surface manages its own header — inconsistent).
+  - [ ] Move Explore's H1 + subtitle into the Explore surface component.
+  - [ ] Document the rule in DESIGN.md: "App.tsx provides AdaptiveSurface. Each surface component owns its own header, layout, and padding."
+  - **Acceptance:** `SurfaceBody` is a uniform thin switch — every branch wraps in `<AdaptiveSurface>` and delegates to the surface component. No layout logic in the switch.
 
-> **Context.** The 4-step Onboarding wizard was built during F2.7 and hasn't been revisited. It uses sharp-cornered boxes for install status panels, detected-projects lists, and progress bars. The PrimaryAction cards and Capability cards are bare-bordered with no rounded corners. The visual quality is below the bar the rest of the app now meets.
+### F26 — Explore surface structural redesign *(discovered 2026-05-26)*
 
-- [ ] **F23.1 Onboarding visual overhaul**
-  - [ ] Status panels (install status, detected projects): `rounded-lg` containers with ContentTray for the interior, proper SettingsSection-style headers.
-  - [ ] PrimaryAction cards: `rounded-lg` + hover lift + focus-visible (match the ProjectCard or SessionCard pattern).
-  - [ ] Capability cards: `ContentTray compact` with `rounded-lg`.
-  - [ ] Progress bars during indexing: same Progress primitive already in use, but wrap the container in `rounded-lg`.
-  - [ ] Detected-projects list: `AnimatePresence` + `listItem` staggered entry on detected items.
-  - [ ] Step transitions: `fadeRise` variants when moving between steps.
-  - **Acceptance:** A new user's first impression of ministr is "this looks polished." No sharp-cornered boxes. Motion on transitions. Consistent with Ask/Sessions/Projects quality.
+> **Context.** Explore currently stacks ServerSettings on top of DeveloperPanel (which uses a segmented control to switch Logs/Explorer/Playground). Two different UI patterns fighting in one surface. The segmented control HIDES 2 of 3 tools at all times. After F25.1, `SurfaceSidebar` is available.
 
-### F24 — Cross-surface consistency audit *(discovered 2026-05-25)*
+- [ ] **F26.1 Rebuild Explore with sidebar nav**
+  - [ ] Replace the current stack (ServerSettings + DeveloperPanel) with `SurfaceSidebar` + content area.
+  - [ ] Sidebar items: `Server` (ServerSettings), `Logs` (LogViewer), `Explorer` (ExploreView), `Playground` (QueryPlayground). Each with a lucide icon.
+  - [ ] Each tool renders as its own full-content view when selected — NOT tabbed inside a ContentTray, NOT stacked vertically.
+  - [ ] Delete `DeveloperPanel.tsx` — it's replaced by the sidebar navigation. The segmented control is gone.
+  - [ ] The Explore surface manages its own H1 (moved from App.tsx in F25.2) + the sidebar layout.
+  - **Acceptance:** Explore navigation is structurally identical to Settings navigation. User sees 4 sidebar items, clicks one, content area updates with animated transition. No segmented control. No vertical stacking. `tsc --noEmit` + `vite build` clean.
 
-> **Context.** After F21-F23, every surface will have been individually redesigned. This final phase is a cross-cutting pass to catch inconsistencies that only show up when you navigate between surfaces: header sizes, spacing, empty state messaging, loading indicators, error callout patterns, section separator styles, and the overall rhythm of the app.
+### F27 — Cloud surface structural redesign *(discovered 2026-05-26)*
 
-- [ ] **F24.1 Header + spacing consistency**
-  - [ ] Audit every surface's H1 (page title) + subtitle treatment. Standardize: H1 size, subtitle class, spacing below header, padding.
-  - [ ] Audit section headers inside each surface. Settings uses `SettingsSection`; Cloud should too; Explore sub-views should use a consistent pattern. Standardize or document the two-tier system (page H1 vs section H2/H3).
-  - [ ] Verify vertical rhythm (spacing between sections) is consistent across all surfaces.
+> **Context.** CloudPanel is 3,314 lines with 10+ sections in one vertical scroll. No sub-navigation — the user must scroll to find anything. After F25.1, `SurfaceSidebar` is available.
 
-- [ ] **F24.2 Empty states + loading states + error callouts**
-  - [ ] Audit every empty state across all surfaces. Catalog which use `EmptyState` primitive vs bare text. Convert all to `EmptyState`.
-  - [ ] Audit loading indicators. Standardize: `<Loader2 className="animate-spin" />` for buttons, `ministr-blink` for inline text, `EmptyState` for full-panel loading.
-  - [ ] Audit error callouts. Create a shared `ErrorCallout` primitive if one doesn't exist. Standardize: rounded-lg, subtle left accent bar, danger tone, retry button placement.
+- [ ] **F27.1 CloudPanel section extraction**
+  - [ ] Extract each logical section into its own file under `components/cloud/`: `ConnectionSection`, `CorporaSection`, `ApiKeysSection`, `WebhooksSection`, `OrgUsageSection`, `SessionInspectorSection`.
+  - [ ] `CloudPanel.tsx` becomes a thin orchestrator (<200 lines) composing sections via `SurfaceSidebar`.
+  - [ ] Move shared types/state into `components/cloud/shared.ts`.
+  - [ ] Zero visual changes — pure extraction + sidebar wiring.
+  - **Acceptance:** CloudPanel.tsx < 200 lines. Each section < 500 lines. `SurfaceSidebar` with 6 items. `tsc --noEmit` + `vite build` clean.
 
-- [ ] **F24.3 Interactive element audit**
-  - [ ] Scan every clickable non-Button element (rows, cards, tabs, pills, table rows). Verify: focus-visible ring, hover state via `transitionInteractive`, keyboard activation (Enter/Space), cursor-pointer.
-  - [ ] Verify all segmented controls / toggle groups use the same pattern (the one from DeveloperPanel + GeneralSettings).
-  - [ ] Verify all dialogs/modals use `ConfirmDialog` or a consistent modal pattern.
+- [ ] **F27.2 Cloud section visual polish**
+  - [ ] Each section gets consistent header treatment (SettingsSection primitive).
+  - [ ] Tables (API keys, webhooks, sessions): rounded-lg containers, consistent font.
+  - [ ] Status callouts: consistent pattern (rounded-lg, danger/warning/success tones).
+  - [ ] Motion on lists (corpora, API keys, webhooks).
+  - **Acceptance:** Cloud surface feels like it belongs to the same app as Settings.
 
-- [ ] **F24.4 DESIGN.md update**
-  - [ ] Update DESIGN.md to document any new primitives or patterns added during F21-F24.
-  - [ ] Add a "Component inventory" section listing every primitive in `ui/` with a one-line description.
-  - [ ] Add a "Surface inventory" section listing each nav-rail destination + what patterns it uses.
-  - [ ] Update `design-lint.cjs` to catch the patterns fixed in F21-F24 (sharp-cornered containers, missing rounded-lg on panels, inline boxes that should be ContentTray).
+### F28 — Cross-surface UX consistency pass *(discovered 2026-05-26)*
+
+> **Context.** After F25-F27, the three multi-section surfaces (Settings, Explore, Cloud) all use `SurfaceSidebar`. This phase catches cross-surface inconsistencies.
+
+- [ ] **F28.1 Page headers + content layout audit**
+  - [ ] Every surface: H1 lives inside the surface component (not in App.tsx).
+  - [ ] Multi-section surfaces: H1 IS the sidebar title (no redundant page heading above the content).
+  - [ ] Single-section surfaces (Ask, Projects, Sessions): H1 as first element inside the content area with consistent size + spacing.
+  - [ ] Content padding: every surface uses `p-5` on the content area. No exceptions.
+
+- [ ] **F28.2 Empty states + loading states + error callouts**
+  - [ ] Audit every empty state. All use `EmptyState` primitive.
+  - [ ] Audit loading indicators. Standardize patterns.
+  - [ ] Create `ErrorCallout` primitive if needed. Standardize error display.
+
+- [ ] **F28.3 Interactive elements + accessibility**
+  - [ ] Every clickable non-Button element: focus-visible, hover state, keyboard activation.
+  - [ ] Every segmented control / toggle group: same pattern (or removed in favor of sidebar nav).
+  - [ ] Every dialog/modal: ConfirmDialog pattern.
+
+- [ ] **F28.4 DESIGN.md overhaul**
+  - [ ] Document the two-level navigation architecture (nav rail → SurfaceSidebar).
+  - [ ] Document when to use SurfaceSidebar (3+ sections) vs single-content (1-2 sections).
+  - [ ] Add component inventory (every primitive in `ui/`).
+  - [ ] Add surface inventory (what each nav-rail destination contains, what patterns it uses).
+  - [ ] Update `design-lint.cjs` with structural rules.
+
+### F29 — Onboarding redesign *(carried forward from old F23)*
+
+> **Context.** The 4-step Onboarding wizard uses sharp-cornered boxes, no motion on transitions, and predates the v2 design system. It's the first thing new users see.
+
+- [ ] **F29.1 Onboarding visual + structural overhaul**
+  - [ ] Status panels + detected-projects: `rounded-lg` + ContentTray.
+  - [ ] PrimaryAction cards: `rounded-lg` + hover lift + focus-visible.
+  - [ ] Step transitions: `fadeRise` variants.
+  - [ ] Detected-projects list: `AnimatePresence` staggered entry.
+  - **Acceptance:** First-run impression matches the quality of Ask/Sessions/Projects.
 
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
