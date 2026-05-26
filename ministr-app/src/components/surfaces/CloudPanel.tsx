@@ -60,7 +60,6 @@ function GitHubMark({ className }: { className?: string }) {
 
 import { Button } from "../ui/button";
 import { ContentTray } from "../ui/content-tray";
-import { H1 } from "../ui/heading";
 import { SurfaceSidebar, type SidebarItem } from "../ui/surface-sidebar";
 import { ConfirmDialog } from "../ui/confirm-dialog";
 import { OnboardingWizard } from "../onboarding/OnboardingWizard";

@@ -247,9 +247,6 @@ function Header({
   return (
     <header className="flex items-start justify-between gap-3">
       <div className="space-y-1">
-        <h2 className="font-mono text-sm font-bold uppercase tracking-[0.08em] text-text">
-          AI assistants
-        </h2>
         <p className="font-sans text-sm text-text-muted">
           Connect ministr to the AI tools you use — one click each.
         </p>
