@@ -60,6 +60,7 @@ function GitHubMark({ className }: { className?: string }) {
 
 import { Button } from "../ui/button";
 import { ContentTray } from "../ui/content-tray";
+import { ErrorCallout } from "../ui/error-callout";
 import { SurfaceSidebar, type SidebarItem } from "../ui/surface-sidebar";
 import { ConfirmDialog } from "../ui/confirm-dialog";
 import { OnboardingWizard } from "../onboarding/OnboardingWizard";
@@ -417,11 +418,7 @@ export function CloudPanel() {
           configured with GitHub credentials. Either flow times out after
           3 minutes.
         </p>
-        {signInError && (
-          <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs font-mono text-text">
-            {signInError}
-          </div>
-        )}
+        {signInError && <ErrorCallout message={signInError} />}
 
         {status?.authenticated && (
           <div className="flex gap-2 flex-wrap pt-1 border-t border-border-soft mt-1">
@@ -2941,15 +2938,7 @@ function ConnectionStatus({ status, health, healthError }: ConnectionStatusProps
     );
   }
   if (healthError) {
-    return (
-      <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-text flex items-start gap-2">
-        <ShieldAlert className="size-4 mt-0.5 shrink-0 text-danger" />
-        <div className="flex flex-col gap-0.5">
-          <span className="font-medium">Probe failed.</span>
-          <span className="font-mono text-xs text-text-muted">{healthError}</span>
-        </div>
-      </div>
-    );
+    return <ErrorCallout title="Probe failed." message={healthError} />;
   }
   if (health) {
     return (

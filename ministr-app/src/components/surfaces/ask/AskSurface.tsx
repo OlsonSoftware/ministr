@@ -365,7 +365,7 @@ function ErrorCard({
     !health?.available || /inference|claude|spawn|ENOENT/i.test(message);
 
   return (
-    <div className="border border-danger bg-surface p-4 flex items-start gap-3 border-l border-l-danger">
+    <div role="alert" className="rounded-lg border border-danger/40 bg-danger/5 p-4 flex items-start gap-3">
       <AlertTriangle
         className="h-4 w-4 text-danger shrink-0 mt-0.5"
         strokeWidth={2}
