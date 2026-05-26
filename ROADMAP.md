@@ -1781,7 +1781,7 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [ ] Audit current components for spacing consistency — flag any that use stops outside the canonical set (e.g., `gap-7`, `p-9`, arbitrary values like `p-[18px]`).
   - **Acceptance:** DESIGN.md spacing section with the canonical scale; no undocumented spacing values in the UI primitives.
 
-- [ ] **F30.6 Component composition theory**
+- [x] **F30.6 Component composition theory** *(2026-05-25, complete)*
   - [ ] Document the composition model in DESIGN.md:
     - **Primitive** (ui/*): zero-opinion building block. Knows only about its own visuals. No data fetching, no routing, no global state. Examples: Card, Button, Badge, EmptyState.
     - **Compound** (surfaces/*): composes primitives with domain logic. Knows about data shape and user intent. Examples: OrgUsageSection (composes MetricTile + table + button), ApiKeysSection (composes table + dialogs + badges).

@@ -414,6 +414,54 @@ Do **not** hand-roll error `<div>`s with `border-danger` and
 - Every dialog/overlay uses `useDialog` for Escape-to-close, focus trap,
   and focus restore.
 
+## Component architecture
+
+### Three-tier model
+
+```
+Surface (route-level)
+  └── Compound (domain section)
+       └── Primitive (ui/*)
+```
+
+| Tier | Location | Knows about | Examples |
+|---|---|---|---|
+| **Primitive** | `src/components/ui/*` | Only its own visuals. No data fetching, no routing, no global state. Props in, render out. | Card, Button, Badge, EmptyState, MetricTile, SurfaceSidebar |
+| **Compound** | `src/components/surfaces/*` | Domain data shape + user intent. Composes primitives with fetch logic and handlers. | OrgUsageSection, ApiKeysSection, CorporaSection, ServerSettings |
+| **Surface** | Top-level (`*Surface.tsx`, `CloudPanel.tsx`) | Route/layout ownership. Picks which compounds to render, provides SurfaceSidebar or bare AdaptiveSurface. | AskSurface, SettingsSurface, ExploreSurface |
+
+### Composition rules
+
+**1. Primitives are data-agnostic.** A `MetricTile` renders a value +
+label + optional sparkline. It doesn't know what a "corpus" is, what an
+"org" is, or where the data came from. If you're passing a fetch function
+to a primitive, extract a compound.
+
+**2. Compounds own their data.** Each compound fetches its own data
+(via Tauri commands or hooks) and manages its own loading/error/empty
+states. The surface above it just mounts it — no prop-drilling of
+fetched data through multiple layers.
+
+**3. Surfaces never import other surfaces.** A surface is a route-level
+boundary. If two surfaces need the same UI, extract a compound or
+primitive — don't nest surfaces.
+
+**4. Dialog ownership.** The component that triggers a dialog owns its
+open/close state. Dialogs are never global. Example: `CreateApiKeyDialog`
+is owned by `ApiKeysSection`, not by `CloudPanel` or a context provider.
+
+**5. Max 2 prop levels.** If data passes through more than 2 component
+layers without being used at intermediate levels, either:
+- Hoist the compound (the intermediate layer shouldn't exist), or
+- Extract a context (rare — only for truly cross-cutting state like auth).
+
+**6. Data-fetching boundary.** Tauri `invoke()` calls live in compounds,
+never in primitives. The boundary is: `cloudClient.ts` (typed wrappers) →
+compound (calls the wrapper, manages state) → primitive (receives data
+as props). This keeps primitives testable without mocking Tauri.
+
+---
+
 ## Component inventory
 
 31 primitives in `src/components/ui/`:
