@@ -1580,18 +1580,18 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] ContentTray usage, motion, and sub-component extraction deferred to F21.5.
   - **Validation:** `tsc --noEmit` + `vite build` clean. Zero sharp-cornered containers remain in either file.
 
-- [ ] **F21.4 LogViewer polish**
-  - [ ] Container: add `rounded-lg overflow-hidden` on the outermost div.
-  - [ ] Empty state icon: replace raw `border border-border-soft bg-surface-overlay` div with `iconBox` token from `ui-tokens.ts`.
-  - [ ] Filter bar header: consistent with the redesigned views' header pattern.
-  - [ ] "New lines" sticky button: `rounded-md` per control radius role.
-  - **Acceptance:** LogViewer consistent with the redesigned Explore sub-views.
+- [x] **F21.4 LogViewer polish** *(2026-05-26, complete)*
+  - [x] Log body container `rounded-lg`. Empty state icon `rounded-md`. Invert button `rounded-md`. Sticky jump button `rounded-md`. Copy button `rounded-md`.
+  - [x] Severity toggle group gains `first:rounded-l-md last:rounded-r-md`. Filter input `rounded-md`. Regex/case toggles gain `focus-visible` + `last:rounded-r-md`.
+  - **Validation:** `tsc --noEmit` + `vite build` clean. All controls and containers rounded.
 
-- [ ] **F21.5 Explore layout integration**
-  - [ ] DeveloperPanel: verify the segmented control + ContentTray wrapper still works with the redesigned sub-views. Adjust padding/overflow if needed.
-  - [ ] ServerSettings: already good — verify no regressions.
-  - [ ] Cross-view consistency pass: all 4 redesigned sub-views + LogViewer + ServerSettings should use identical header weights, spacing, and empty-state patterns when viewed inside the Explore surface.
-  - **Acceptance:** the Explore surface feels designed end-to-end. No "two different apps" feel between ServerSettings (polished) and the dev tools (redesigned).
+- [ ] **F21.5 Explore navigation redesign — sidebar nav matching Settings**
+  - [ ] **The actual problem (user feedback 2026-05-26):** the Explore surface stacks ServerSettings on top of a segmented-control DeveloperPanel — two different UI patterns in one surface. Settings uses a persistent sidebar navigation (General / AI / About) with scroll-to-section at wide viewports and a tab bar at narrow viewports. Explore should use the same pattern: a sidebar listing Server, Logs, Explore, Playground as navigation destinations, each rendered as its own view (not stacked). This is a **structural** fix, not a visual one.
+  - [ ] Replace the current DeveloperPanel segmented control with a sidebar navigation matching the SettingsSurface pattern: `IntersectionObserver` scroll tracking, lucide icons per section, active highlight, smooth scroll on click.
+  - [ ] At narrow viewports (<900px container width), collapse sidebar to horizontal tab bar (same pattern as Settings).
+  - [ ] ServerSettings, LogViewer, ExploreView, QueryPlayground rendered as scroll-to sections within the Explore surface — NOT stacked with a tab switch.
+  - [ ] Remove the `ContentTray !p-0` wrapper from DeveloperPanel — the sub-views should render directly in the scroll area, not inside a tabbed container.
+  - **Acceptance:** Explore surface navigation is indistinguishable from Settings surface navigation. User can see all sections and scroll between them at wide viewports; tab bar at narrow viewports. No segmented control, no stacked layout.
 
 ### F22 — CloudPanel decomposition + visual polish *(discovered 2026-05-25)*
 
