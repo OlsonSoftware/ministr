@@ -1,12 +1,17 @@
 /**
- * Cockpit motion system.
+ * Motion system — principled timing derived from UX intent.
  *
- * Motion is a first-class part of the language now (the old "motion only
- * where data moves" rule is retired). Everything here is gated behind the
- * OS reduced-motion setting via `<MotionProvider>` (MotionConfig
- * reducedMotion="user"), so individual call sites don't each re-check.
+ * Philosophy: "Communicate, don't decorate." Every animation answers one of:
+ *   1. Where did this come from / go to? → spring
+ *   2. What content just changed?        → flow
+ *   3. Was my action received?           → swift
+ *   4. Is a value still resolving?       → springSoft
+ * If none applies, don't animate.
  *
- * Mirrors the easing/duration tokens in App.css.
+ * Reduced-motion: gated via `<MotionConfig reducedMotion="user">` at the
+ * app root. Individual call sites don't re-check — the provider handles it.
+ *
+ * See DESIGN.md "Motion system" for the full derivation + decision tree.
  */
 import type { Transition, Variants } from "motion/react";
 
@@ -25,15 +30,21 @@ export function prefersReducedMotion(): boolean {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-/* ---- Transitions ---- */
+/* ---- Transitions (see DESIGN.md § Motion system for derivation) ---- */
 
-/** Snappy — chrome, hover, nav indicator, tab underline. */
+/** UX role: acknowledgement. "Was my action received?"
+ *  140ms — faster than Apple HIG's 200ms because keyboard-first tools
+ *  need instant feedback. Material "standard" easing (decelerate-dominant). */
 export const swift: Transition = { duration: 0.14, ease: [0.4, 0, 0.2, 1] };
 
-/** Smooth — surface/page transitions, fades. */
+/** UX role: content transition. "What just changed?"
+ *  240ms — enough to orient but never sluggish. Strong deceleration
+ *  (fast entry, gentle settle) matches Apple HIG macOS panel transitions. */
 export const flow: Transition = { duration: 0.24, ease: [0.22, 1, 0.36, 1] };
 
-/** Springy — panels, inspectors, shared-element layout transitions. */
+/** UX role: spatial movement. "Where did this come from / go to?"
+ *  Critically-damped spring (ζ≈0.93, no overshoot). Reaches target ~180ms.
+ *  Physicality without bounce — professional, not playful. */
 export const spring: Transition = {
   type: "spring",
   stiffness: 420,
@@ -41,7 +52,9 @@ export const spring: Transition = {
   mass: 0.9,
 };
 
-/** Soft spring — number tickers, gentle value changes. */
+/** UX role: value resolution. "Is this still computing?"
+ *  Softer spring (ζ≈1.03 at mass=1). Slower arrival ~300ms communicates
+ *  ongoing computation without bouncing. */
 export const springSoft: Transition = {
   type: "spring",
   stiffness: 210,
