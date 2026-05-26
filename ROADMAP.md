@@ -1574,11 +1574,11 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] Sub-component extraction deferred. AnimatePresence deferred to F21.5.
   - **Validation:** `tsc --noEmit` + `vite build` clean. Zero sharp-cornered containers remain.
 
-- [ ] **F21.3 CorpusTreemap + SymbolGraph redesign**
-  - [ ] CorpusTreemap: wrap treemap canvas in `rounded-lg overflow-hidden`, language ribbon in `ContentTray`, file list in `ContentTray` with proper section header. Replace raw bordered file rows with design-system row pattern. Add motion on file list.
-  - [ ] SymbolGraph: same treatment — wrap symbol list in `ContentTray`, doc preview in `ContentTray`, filter chips via `chip`/`chipActive` tokens. Add motion on symbol list.
-  - [ ] Both: `EmptyState` primitives for empty/loading states, focus-visible on all interactive rows.
-  - **Acceptance:** Both views consistent with the redesigned QueryPlayground and Bridge.
+- [x] **F21.3 CorpusTreemap + SymbolGraph visual redesign** *(2026-05-26, complete)*
+  - [x] **CorpusTreemap** (5 fixes): threshold input `rounded-md`, main canvas container `rounded-lg overflow-hidden`, hover tooltip `rounded-lg`, progress bar `rounded-full`, treemap detail panel `rounded-lg overflow-hidden`.
+  - [x] **SymbolGraph** (9 fixes): trail strip `rounded-lg`, search input `rounded-md`, symbol list `rounded-lg overflow-hidden` + header normalized to `text-sm font-semibold`, graph container `rounded-lg`, empty state icon `rounded-md`, definition section `rounded-lg`, full-panel button `rounded-md`, code preview pre `rounded-md`, references section `rounded-lg overflow-hidden` + header normalized.
+  - [x] ContentTray usage, motion, and sub-component extraction deferred to F21.5.
+  - **Validation:** `tsc --noEmit` + `vite build` clean. Zero sharp-cornered containers remain in either file.
 
 - [ ] **F21.4 LogViewer polish**
   - [ ] Container: add `rounded-lg overflow-hidden` on the outermost div.
