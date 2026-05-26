@@ -1671,12 +1671,13 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] Focus-visible: added to 5 bare buttons (ContextSimulator toggle/add/remove, DaemonDot dot/log).
   - **Validation:** `tsc --noEmit` + `vite build` clean.
 
-- [ ] **F28.4 DESIGN.md overhaul**
-  - [ ] Document the two-level navigation architecture (nav rail → SurfaceSidebar).
-  - [ ] Document when to use SurfaceSidebar (3+ sections) vs single-content (1-2 sections).
-  - [ ] Add component inventory (every primitive in `ui/`).
-  - [ ] Add surface inventory (what each nav-rail destination contains, what patterns it uses).
-  - [ ] Update `design-lint.cjs` with structural rules.
+- [x] **F28.4 DESIGN.md overhaul** *(2026-05-26, complete)*
+  - [x] Document the two-level navigation architecture (nav rail → SurfaceSidebar) with decision table (3+ sections → sidebar, single-purpose → no sidebar).
+  - [x] Component inventory: all 31 `ui/` primitives with one-line purpose descriptions.
+  - [x] Surface inventory: 6 nav-rail destinations + 6 sub-surfaces with layout patterns.
+  - [x] New sections: Visual containment (recessed tray vocabulary), Error handling (ErrorCallout), Accessibility (keyboard + focus-visible + useDialog rules).
+  - [x] `design-lint.cjs`: added `italic` ban (lookbehind excludes `not-italic`), removed `rounded-sm` ban (legitimate micro-element role from F21), added `main.tsx` to allow list (font import paths contain `italic`).
+  - **Validation:** `pnpm design:lint` clean + `tsc --noEmit` + `vite build` clean.
 
 ### F29 — Onboarding redesign *(carried forward from old F23)*
 
