@@ -77,6 +77,59 @@ Never mix: a label that's half monospace and half sans is a design bug.
 | Italic for emphasis | Dim (`text-text-dim`) communicates hierarchy without the readability cost of italic in UI text |
 | Card-within-card nesting | One level of containment maximum; nesting adds visual noise without information |
 
+## Typography scale
+
+### Ratio: 1.2 (minor third)
+
+Base size: **14px** (`html { font-size: 14px }`, scaling to 15–22px on
+wide displays via resolution breakpoints). The minor third (1.2×) ratio
+provides tight steps suited to high-density UI — major third (1.25) or
+perfect fourth (1.333) would waste vertical space between hierarchy levels.
+
+| Step | Size | Tailwind | Role | Line-height |
+|---|---|---|---|---|
+| −2 (nano) | ~10px | `text-mono-micro` | Nav rail labels, histogram axis | `leading-none` (1.0) |
+| −1 (micro) | ~11px | `text-mono-mini` | Stat captions, chip labels, table headers | `leading-tight` (1.25) |
+| 0 (base) | 14px | `text-sm` / default | Body text, descriptions, list items | `leading-relaxed` (1.6) |
+| +1 (chapter) | ~16px | `text-base` | Section headings, panel titles | `leading-snug` (1.375) |
+| +2 (title) | ~20px | `text-xl` | Surface-level H1 (rare) | `leading-tight` (1.25) |
+| +3 (display) | ~24px | `text-2xl` | Display headings, onboarding hero | `leading-tight` (1.25) |
+
+**Intentional exception:** nav rail labels at `text-[9px]` — below the
+scale floor. Justified by the 60px rail width constraint; the label is
+always paired with an 18px icon and never standalone.
+
+### Line-height by role
+
+- **Headings** (display, title, chapter): `leading-tight` (1.25). Tight
+  because headings are short, semibold, and don't need inter-line breathing.
+- **Mono labels** (micro, nano): `leading-tight` to `leading-none`. Single
+  lines only; never wrap.
+- **Body prose** (base): `leading-relaxed` (1.6). Multi-line descriptions
+  and hints need generous inter-line spacing for sustained reading.
+- **Compact data** (base in tables/lists): `leading-snug` (1.375). Readable
+  without the vertical cost of `leading-relaxed`.
+
+### Font stacks
+
+| Role | Stack | Rationale |
+|---|---|---|
+| **Mono** (primary) | JetBrains Mono → IBM Plex Mono → system mono | Ligature-free coding font with clear `0O`, `1l` disambiguation; IBM Plex as fallback for similar x-height |
+| **Sans** (secondary) | Geist → system-ui → sans-serif | Geometric sans matching the app's modern density aesthetic; system-ui for zero-FOUT when Geist isn't loaded |
+
+### Token → scale mapping (ui-tokens.ts)
+
+| Token | Scale step | Tailwind class | Face |
+|---|---|---|---|
+| `headingDisplay` | +3 (display) | `text-2xl` | sans |
+| `headingChapter` | +1 (chapter) | `text-base` | sans |
+| `bodyMuted` | 0 (base) | `text-sm` | sans |
+| `marginalia` | −1 (micro) | `text-xs` | sans |
+| `labelSmallCap` | −1 (micro) | `text-xs` | mono |
+| `labelMicro` | −2 (nano) | `text-mono-mini` | mono |
+| `chapterIndex` | −1 (micro) | `text-xs` | mono |
+| `chip` / `chipActive` | −2 (nano) | `text-mono-mini` | mono |
+
 ---
 
 ## The rule
