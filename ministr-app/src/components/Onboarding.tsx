@@ -14,6 +14,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowRight,
   Check,
@@ -26,11 +27,13 @@ import {
 } from "lucide-react";
 
 import { cn } from "../lib/utils";
+import { fadeRise, listContainer, listItem } from "../lib/motion";
 import type { CorpusInfo, DetectedProject } from "../lib/types";
 import { useIndexingProgress } from "../hooks/useIndexingProgress";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { Progress } from "./ui/progress";
 import { Button } from "./ui/button";
+import { ErrorCallout } from "./ui/error-callout";
 import { AiAssistantsPanel } from "./surfaces/AiAssistantsPanel";
 import { formatEtaBare } from "../lib/format";
 
@@ -77,31 +80,41 @@ export function Onboarding({ onDismiss }: OnboardingProps) {
 
       <main className="flex-1 min-h-0 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-8 py-6">
-          {step === "setup" && (
-            <StepSetup onContinue={() => setStep("pick")} />
-          )}
-          {step === "pick" && (
-            <StepPick
-              onIndexed={(ids) => {
-                setWatchIds(ids);
-                setStep("index");
-              }}
-            />
-          )}
-          {step === "index" && (
-            <StepIndex
-              watchIds={watchIds}
-              onContinue={() => setStep("connect")}
-            />
-          )}
-          {step === "connect" && (
-            <StepConnect
-              onDone={async () => {
-                await invoke("dismiss_onboarding");
-                onDismiss();
-              }}
-            />
-          )}
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={step}
+              variants={fadeRise}
+              initial="initial"
+              animate="animate"
+              exit={{ opacity: 0, y: -8, transition: { duration: 0.15 } }}
+            >
+              {step === "setup" && (
+                <StepSetup onContinue={() => setStep("pick")} />
+              )}
+              {step === "pick" && (
+                <StepPick
+                  onIndexed={(ids) => {
+                    setWatchIds(ids);
+                    setStep("index");
+                  }}
+                />
+              )}
+              {step === "index" && (
+                <StepIndex
+                  watchIds={watchIds}
+                  onContinue={() => setStep("connect")}
+                />
+              )}
+              {step === "connect" && (
+                <StepConnect
+                  onDone={async () => {
+                    await invoke("dismiss_onboarding");
+                    onDismiss();
+                  }}
+                />
+              )}
+            </motion.div>
+          </AnimatePresence>
         </div>
       </main>
     </div>
@@ -128,7 +141,7 @@ function StepIndicator({ step }: { step: Step }) {
           <li key={item.key} className="flex items-center gap-2">
             <span
               className={cn(
-                "inline-flex h-5 w-5 items-center justify-center border",
+                "inline-flex h-5 w-5 items-center justify-center border rounded-md",
                 isActive
                   ? "border-accent text-accent bg-surface"
                   : isDone
@@ -228,7 +241,7 @@ function StepSetup({ onContinue }: { onContinue: () => void }) {
         confirmation.
       </p>
 
-      <div className="mt-8 border border-border bg-surface">
+      <div className="mt-8 rounded-lg border border-border bg-surface overflow-hidden">
         <header className="flex items-center justify-between gap-2 border-b border-border bg-surface-overlay px-4 py-2">
           <h2 className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text">
             Install status
@@ -277,7 +290,7 @@ function StepSetup({ onContinue }: { onContinue: () => void }) {
       </div>
 
       {error && (
-        <p className="mt-3 font-mono text-mono-mini text-danger">{error}</p>
+        <ErrorCallout message={error} className="mt-3" />
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-10">
@@ -486,7 +499,7 @@ function StepPick({ onIndexed }: { onIndexed: (ids: string[]) => void }) {
       )}
 
       {detected && (
-        <div className="mt-6 border border-border bg-surface">
+        <div className="mt-6 rounded-lg border border-border bg-surface overflow-hidden">
           <header className="flex items-center justify-between gap-2 border-b border-border bg-surface-overlay px-4 py-2">
             <h2 className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text">
               {detected.length === 0
@@ -498,7 +511,7 @@ function StepPick({ onIndexed }: { onIndexed: (ids: string[]) => void }) {
                 onClick={toggleAll}
                 className={cn(
                   "font-mono text-mono-mini font-semibold uppercase tracking-[0.08em]",
-                  "text-text-dim hover:text-text cursor-pointer transition-colors duration-150 ease-out",
+                  "text-text-dim hover:text-text cursor-pointer transition-colors duration-150 ease-out rounded-md focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent",
                 )}
               >
                 {selected.size === detected.length
@@ -523,11 +536,16 @@ function StepPick({ onIndexed }: { onIndexed: (ids: string[]) => void }) {
             </div>
           ) : (
             <>
-              <ul className="divide-y divide-border-soft max-h-[320px] overflow-y-auto">
+              <motion.ul
+                variants={listContainer}
+                initial="initial"
+                animate="animate"
+                className="divide-y divide-border-soft max-h-[320px] overflow-y-auto"
+              >
                 {detected.map((p) => {
                   const isSelected = selected.has(p.path);
                   return (
-                    <li key={p.path}>
+                    <motion.li key={p.path} variants={listItem}>
                       <label
                         className={cn(
                           "flex items-start gap-3 px-4 py-2.5 cursor-pointer transition-colors duration-150 ease-out",
@@ -550,10 +568,10 @@ function StepPick({ onIndexed }: { onIndexed: (ids: string[]) => void }) {
                           </div>
                         </div>
                       </label>
-                    </li>
+                    </motion.li>
                   );
                 })}
-              </ul>
+              </motion.ul>
               <footer className="flex items-center justify-between gap-2 border-t border-border px-4 py-2">
                 <span className="font-mono text-mono-mini text-text-dim">
                   {selected.size} selected
@@ -586,7 +604,7 @@ function StepPick({ onIndexed }: { onIndexed: (ids: string[]) => void }) {
       )}
 
       {error && (
-        <p className="mt-3 font-mono text-mono-mini text-danger">{error}</p>
+        <ErrorCallout message={error} className="mt-3" />
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-10">
@@ -668,7 +686,7 @@ function StepIndex({
           return (
             <li
               key={c.id}
-              className="border border-border bg-surface px-4 py-3"
+              className="rounded-lg border border-border bg-surface px-4 py-3"
             >
               <div className="flex items-center justify-between gap-3">
                 <span className="font-mono text-sm font-bold text-text truncate">
@@ -780,11 +798,12 @@ function PrimaryAction({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "group relative flex flex-col items-start gap-2 p-5 text-left cursor-pointer transition-colors duration-150 ease-out",
-        "border border-border bg-surface",
-        "hover:bg-surface-overlay hover:border-accent",
-        "disabled:opacity-50 disabled:cursor-not-allowed",
+        "group relative flex flex-col items-start gap-2 p-5 text-left cursor-pointer transition-all duration-150 ease-out",
+        "rounded-lg border border-border bg-surface",
+        "hover:bg-surface-overlay hover:border-accent hover:-translate-y-0.5 hover:shadow-md",
+        "disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0",
         "shadow-sm",
+        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
       )}
     >
       <div className="flex items-center gap-2">
@@ -811,7 +830,7 @@ function PrimaryAction({
 
 function Capability({ title, hint }: { title: string; hint: string }) {
   return (
-    <div className="border border-border-soft bg-surface px-3 py-2.5">
+    <div className="rounded-lg border border-border-soft bg-surface-sunken px-3 py-2.5">
       <div className="flex items-center gap-1.5">
         <Sparkles className="h-3 w-3 text-accent" strokeWidth={2.5} />
         <h3 className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text">
