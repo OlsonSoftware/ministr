@@ -1790,7 +1790,7 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [ ] Document the "dialog ownership" rule: the component that triggers a dialog owns its state. Dialogs are not global.
   - **Acceptance:** DESIGN.md has a component architecture section with the 3-tier model.
 
-- [ ] **F30.7 Accessibility — inclusive design upgrade**
+- [x] **F30.7 Accessibility — inclusive design upgrade** *(2026-05-25, complete)*
   - [ ] Upgrade DESIGN.md accessibility section from checkbox-level to inclusive design:
     - **Reduced motion:** All Framer Motion animations must respect `prefers-reduced-motion`. Audit and enforce.
     - **High contrast:** Document how the color system degrades under Windows High Contrast Mode and macOS Increase Contrast. Ensure all semantic borders are visible (not just `border-border-soft` at 5% opacity).
