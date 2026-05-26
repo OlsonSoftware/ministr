@@ -1532,6 +1532,116 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] **LogViewer.tsx** (1 fix): `border-t-2` → hairline on footer. 1 accent indicator kept (line 474 — log-level left bar).
   - **Validation:** `tsc --noEmit` + `vite build` clean. Re-scan: 0 violations, 5 intentional accent indicators preserved. **The entire TSX codebase is now DESIGN.md compliant.**
 
+---
+
+### F21 — Explore surface redesign *(discovered 2026-05-25 via /roadmap-refresh UI audit)*
+
+> **Context.** F17-F20 fixed lint violations (CSS class names) but never addressed the actual visual problems. The Explore surface hosts 4 developer-tool views — QueryPlayground, Bridge, CorpusTreemap, SymbolGraph — that were vibe-coded with zero design intentionality. Every container is a sharp-cornered raw `border border-border-soft bg-surface` box. No rounded corners anywhere. No ContentTray usage. No motion. No visual hierarchy between headers, content, and footers. Monolithic 1,000-2,000 line files with 10-15 inline sub-components each. The result looks like an AI-generated prototype, not a shipped product.
+>
+> **Design target.** Each view should feel like it belongs to the same app as Ask and Sessions — warm dark theme, rounded-lg containers, ContentTray for recessed grouping, motion on lists/results, consistent section headers via SettingsSection or a purpose-built panel header primitive, focus-visible on all interactive elements, EmptyState primitives for empty/loading states.
+>
+> **Scope rule.** Each chunk below is one view (one `.tsx` file) redesigned end-to-end. No partial fixes. When a chunk says "redesign," it means: extract inline sub-components, replace raw boxes with design-system primitives, add motion, add focus-visible, and test at multiple viewport widths.
+
+- [ ] **F21.1 QueryPlayground redesign** *(blocks: nothing; biggest bang for effort)*
+  - [ ] Extract ~15 inline sub-components into dedicated files under `components/playground/`.
+  - [ ] Replace all raw `border border-border-soft bg-surface` boxes with `ContentTray` or `rounded-lg` containers per DESIGN.md radius roles.
+  - [ ] Score histogram: wrap in `ContentTray`, add rounded corners, soften header.
+  - [ ] Facets sidebar: `ContentTray` + `rounded-lg`, active state via accent indicator (not raw bg swap).
+  - [ ] Results list: `AnimatePresence` + `listContainer`/`listItem` staggered entry.
+  - [ ] Search input: `rounded-md` per control radius role, consistent with Ask input styling.
+  - [ ] History pills + probe pills: use `chip`/`chipActive` tokens from `ui-tokens.ts`.
+  - [ ] Error card: use the same callout pattern as AskSurface (rounded-lg, subtle left accent).
+  - [ ] Empty/loading states: use `EmptyState` primitive.
+  - [ ] Focus-visible on all clickable rows, facet buttons, probe buttons.
+  - **Acceptance:** `tsc --noEmit` + `vite build` clean. QueryPlayground visually indistinguishable in quality from the Ask surface. No raw sharp-cornered boxes remain.
+
+- [ ] **F21.2 Bridge view redesign**
+  - [ ] Extract ConnectionPreview, CodePane, Connector, KindSummary into `components/bridge/`.
+  - [ ] Replace raw `border-l-[6px] border-l-accent` connection preview with a designed panel (ContentTray + rounded-lg + accent left bar via a 3px `border-l border-l-accent` + `rounded-lg overflow-hidden`).
+  - [ ] Bridge table: replace raw bordered rows with the design system's row pattern (hairline separators, hover states with `transitionInteractive`).
+  - [ ] Code panes: `rounded-lg overflow-hidden bg-surface-sunken` with proper header strip (not raw `border-b-2`).
+  - [ ] KindSummary segmented control: match the DeveloperPanel segmented control pattern.
+  - [ ] Empty/loading states: `EmptyState` primitive.
+  - [ ] `AnimatePresence` on the connection preview panel.
+  - **Acceptance:** Bridge view looks designed, not prototyped. Consistent with QueryPlayground's redesigned output.
+
+- [ ] **F21.3 CorpusTreemap + SymbolGraph redesign**
+  - [ ] CorpusTreemap: wrap treemap canvas in `rounded-lg overflow-hidden`, language ribbon in `ContentTray`, file list in `ContentTray` with proper section header. Replace raw bordered file rows with design-system row pattern. Add motion on file list.
+  - [ ] SymbolGraph: same treatment — wrap symbol list in `ContentTray`, doc preview in `ContentTray`, filter chips via `chip`/`chipActive` tokens. Add motion on symbol list.
+  - [ ] Both: `EmptyState` primitives for empty/loading states, focus-visible on all interactive rows.
+  - **Acceptance:** Both views consistent with the redesigned QueryPlayground and Bridge.
+
+- [ ] **F21.4 LogViewer polish**
+  - [ ] Container: add `rounded-lg overflow-hidden` on the outermost div.
+  - [ ] Empty state icon: replace raw `border border-border-soft bg-surface-overlay` div with `iconBox` token from `ui-tokens.ts`.
+  - [ ] Filter bar header: consistent with the redesigned views' header pattern.
+  - [ ] "New lines" sticky button: `rounded-md` per control radius role.
+  - **Acceptance:** LogViewer consistent with the redesigned Explore sub-views.
+
+- [ ] **F21.5 Explore layout integration**
+  - [ ] DeveloperPanel: verify the segmented control + ContentTray wrapper still works with the redesigned sub-views. Adjust padding/overflow if needed.
+  - [ ] ServerSettings: already good — verify no regressions.
+  - [ ] Cross-view consistency pass: all 4 redesigned sub-views + LogViewer + ServerSettings should use identical header weights, spacing, and empty-state patterns when viewed inside the Explore surface.
+  - **Acceptance:** the Explore surface feels designed end-to-end. No "two different apps" feel between ServerSettings (polished) and the dev tools (redesigned).
+
+### F22 — CloudPanel decomposition + visual polish *(discovered 2026-05-25)*
+
+> **Context.** CloudPanel is 3,314 lines — the largest component in the app. It contains ~12 logical sections (Endpoint, Auth, Connection, Corpora, API Keys, Webhooks, OrgUsage, SessionInspector, etc.) all inlined in one file. Each section is functional but visually inconsistent: some use ContentTray, some don't; some have proper section headers, some use raw `<h3>` with `border-t`; tables are hand-rolled HTML. The file is too large to maintain or reason about holistically.
+
+- [ ] **F22.1 CloudPanel section extraction**
+  - [ ] Extract each logical section into its own file under `components/cloud/`: `EndpointSection`, `AuthSection`, `ConnectionSection`, `CorporaSection`, `ApiKeysSection`, `WebhooksSection`, `OrgUsageSection`, `SessionInspectorSection`.
+  - [ ] `CloudPanel.tsx` becomes a thin orchestrator that composes the sections.
+  - [ ] Move shared types/helpers into `components/cloud/shared.ts`.
+  - [ ] Zero visual changes — pure extraction refactor.
+  - **Acceptance:** CloudPanel.tsx < 200 lines. Each section file < 500 lines. `tsc --noEmit` + `vite build` clean.
+
+- [ ] **F22.2 CloudPanel visual consistency pass**
+  - [ ] Every section gets a `SettingsSection` header (consistent with the Settings surface pattern).
+  - [ ] Tables (API keys, webhooks, sessions): redesign with rounded-lg containers, proper header rows, hover states, consistent font treatment.
+  - [ ] Status callouts (ConnectionStatus, error states): consistent pattern using a shared `StatusCallout` primitive.
+  - [ ] Dialogs (CreateApiKeyDialog, ShareDialog, etc.): verify they use the ConfirmDialog/modal patterns consistently.
+  - [ ] Add focus-visible on all interactive elements.
+  - [ ] Add motion on corpora list, API keys list, webhook list.
+  - **Acceptance:** Cloud surface feels like it belongs to the same app as Settings and Ask. No visual discontinuity between sections.
+
+### F23 — Onboarding redesign *(discovered 2026-05-25)*
+
+> **Context.** The 4-step Onboarding wizard was built during F2.7 and hasn't been revisited. It uses sharp-cornered boxes for install status panels, detected-projects lists, and progress bars. The PrimaryAction cards and Capability cards are bare-bordered with no rounded corners. The visual quality is below the bar the rest of the app now meets.
+
+- [ ] **F23.1 Onboarding visual overhaul**
+  - [ ] Status panels (install status, detected projects): `rounded-lg` containers with ContentTray for the interior, proper SettingsSection-style headers.
+  - [ ] PrimaryAction cards: `rounded-lg` + hover lift + focus-visible (match the ProjectCard or SessionCard pattern).
+  - [ ] Capability cards: `ContentTray compact` with `rounded-lg`.
+  - [ ] Progress bars during indexing: same Progress primitive already in use, but wrap the container in `rounded-lg`.
+  - [ ] Detected-projects list: `AnimatePresence` + `listItem` staggered entry on detected items.
+  - [ ] Step transitions: `fadeRise` variants when moving between steps.
+  - **Acceptance:** A new user's first impression of ministr is "this looks polished." No sharp-cornered boxes. Motion on transitions. Consistent with Ask/Sessions/Projects quality.
+
+### F24 — Cross-surface consistency audit *(discovered 2026-05-25)*
+
+> **Context.** After F21-F23, every surface will have been individually redesigned. This final phase is a cross-cutting pass to catch inconsistencies that only show up when you navigate between surfaces: header sizes, spacing, empty state messaging, loading indicators, error callout patterns, section separator styles, and the overall rhythm of the app.
+
+- [ ] **F24.1 Header + spacing consistency**
+  - [ ] Audit every surface's H1 (page title) + subtitle treatment. Standardize: H1 size, subtitle class, spacing below header, padding.
+  - [ ] Audit section headers inside each surface. Settings uses `SettingsSection`; Cloud should too; Explore sub-views should use a consistent pattern. Standardize or document the two-tier system (page H1 vs section H2/H3).
+  - [ ] Verify vertical rhythm (spacing between sections) is consistent across all surfaces.
+
+- [ ] **F24.2 Empty states + loading states + error callouts**
+  - [ ] Audit every empty state across all surfaces. Catalog which use `EmptyState` primitive vs bare text. Convert all to `EmptyState`.
+  - [ ] Audit loading indicators. Standardize: `<Loader2 className="animate-spin" />` for buttons, `ministr-blink` for inline text, `EmptyState` for full-panel loading.
+  - [ ] Audit error callouts. Create a shared `ErrorCallout` primitive if one doesn't exist. Standardize: rounded-lg, subtle left accent bar, danger tone, retry button placement.
+
+- [ ] **F24.3 Interactive element audit**
+  - [ ] Scan every clickable non-Button element (rows, cards, tabs, pills, table rows). Verify: focus-visible ring, hover state via `transitionInteractive`, keyboard activation (Enter/Space), cursor-pointer.
+  - [ ] Verify all segmented controls / toggle groups use the same pattern (the one from DeveloperPanel + GeneralSettings).
+  - [ ] Verify all dialogs/modals use `ConfirmDialog` or a consistent modal pattern.
+
+- [ ] **F24.4 DESIGN.md update**
+  - [ ] Update DESIGN.md to document any new primitives or patterns added during F21-F24.
+  - [ ] Add a "Component inventory" section listing every primitive in `ui/` with a one-line description.
+  - [ ] Add a "Surface inventory" section listing each nav-rail destination + what patterns it uses.
+  - [ ] Update `design-lint.cjs` to catch the patterns fixed in F21-F24 (sharp-cornered containers, missing rounded-lg on panels, inline boxes that should be ContentTray).
+
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
 > Cross-cutting: builds the local equivalent of `azure-smoke` so multi-tenant cloud correctness, ACL semantics, API-key authn parity, session-tenant-scoping, webhook fan-out, and billing webhooks are all exercisable on a laptop without an Azure deploy. Today's `scripts/demo-local.sh` covers ONE tenant's happy path; the F-items above ship with Postgres-integration tests gated on `MINISTR_TEST_PG_URL` and unit coverage, but no e2e proof that ties them together end-to-end. F-Test fills that gap. Each chunk extends the harness in place — there's only one command to remember (`just e2e-cloud-local`) regardless of which scenario it ends up covering. Mirrors the `azure-smoke` extension policy from `justfile`.
