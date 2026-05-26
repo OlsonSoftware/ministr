@@ -1616,13 +1616,13 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
 
 > **Context.** Explore currently stacks ServerSettings on top of DeveloperPanel (which uses a segmented control to switch Logs/Explorer/Playground). Two different UI patterns fighting in one surface. The segmented control HIDES 2 of 3 tools at all times. After F25.1, `SurfaceSidebar` is available.
 
-- [ ] **F26.1 Rebuild Explore with sidebar nav**
-  - [ ] Replace the current stack (ServerSettings + DeveloperPanel) with `SurfaceSidebar` + content area.
-  - [ ] Sidebar items: `Server` (ServerSettings), `Logs` (LogViewer), `Explorer` (ExploreView), `Playground` (QueryPlayground). Each with a lucide icon.
-  - [ ] Each tool renders as its own full-content view when selected — NOT tabbed inside a ContentTray, NOT stacked vertically.
-  - [ ] Delete `DeveloperPanel.tsx` — it's replaced by the sidebar navigation. The segmented control is gone.
-  - [ ] The Explore surface manages its own H1 (moved from App.tsx in F25.2) + the sidebar layout.
-  - **Acceptance:** Explore navigation is structurally identical to Settings navigation. User sees 4 sidebar items, clicks one, content area updates with animated transition. No segmented control. No vertical stacking. `tsc --noEmit` + `vite build` clean.
+- [x] **F26.1 Rebuild Explore with sidebar nav** *(2026-05-26, complete)*
+  - [x] New `ExploreSurface.tsx` (62 lines) using `SurfaceSidebar` with 4 items: Server (`ServerSettings`), Logs (`LogViewer`), Explorer (`ExploreView`), Playground (`QueryPlayground`). Each with a lucide icon (Server, ScrollText, Search, FlaskConical).
+  - [x] Each tool renders as its own full-width view when selected — no segmented control, no ContentTray wrapper, no vertical stacking.
+  - [x] `DeveloperPanel.tsx` **deleted** (115 lines) — the segmented control navigation is gone. Replaced by sidebar nav.
+  - [x] App.tsx explore branch simplified from 18-line inline layout to `<ExploreSurface />` single component call. Removed `DeveloperPanel` + `ServerSettings` imports from App.tsx.
+  - [x] Net: +62 lines (ExploreSurface) - 115 lines (DeveloperPanel) - 18 lines (App.tsx) = **-71 lines** while adding sidebar nav functionality.
+  - **Validation:** `tsc --noEmit` + `vite build` clean. Explore navigation structurally identical to Settings — sidebar at wide viewports, tab bar at narrow, animated transitions between views.
 
 ### F27 — Cloud surface structural redesign *(discovered 2026-05-26)*
 
