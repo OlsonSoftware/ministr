@@ -1694,6 +1694,120 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] Select-all toggle: gained `focus-visible` ring.
   - **Validation:** `tsc --noEmit` + `vite build` clean.
 
+### F30 — Design Philosophy: de-vibecodification *(pending, 2026-05-25 via /roadmap-refresh)*
+
+> **Context.** F13–F29 fixed the **mechanics** of the UI: layout, lint violations, rounded corners, navigation architecture, accessibility basics, component extraction. The app now looks _consistent_. But consistency is not design. Every design decision in the system was made by AI without citing prior art, without mathematical grounding, and without an explicit philosophy. The result passes lint but still feels "vibecoded" — aesthetically arbitrary rather than principled.
+>
+> **What "de-vibecodification" means.** Replace every "it looked good to the AI" choice with a documented, research-backed rationale. The output isn't new features — it's a rewritten DESIGN.md with citations, a mathematically-derived token system, and CSS changes that flow from stated principles rather than vibes.
+>
+> **Scope.** This track ONLY touches `DESIGN.md`, `app.css` (theme tokens), `ui-tokens.ts`, `motion.ts`, and the 31 primitives in `src/components/ui/`. No feature work. No new surfaces. Pure design-system philosophy + implementation.
+>
+> **Research basis (serpapi 2025-2026 + Apple HIG + Material Design + EightShapes + shadcn):**
+> - **Typography:** EightShapes "Typography in Design Systems" establishes that every design system needs a documented type scale with a mathematical ratio. The golden ratio (1.618) or minor third (1.2) provides a harmonic progression. The current system uses ad-hoc sizes (`text-2xl`, `text-base`, `text-xs`, `text-[9px]`) without a declared ratio.
+> - **Color:** LogRocket (Mar 2025) mandates 7:1 contrast for body text in dark mode. The W3C DTCG (Design Tokens Community Group) spec (2024-2025) establishes a 3-tier token architecture: primitive → semantic → component. The current system has semantic tokens but no documented contrast guarantees or primitive-to-semantic mapping.
+> - **Motion:** Apple HIG and the "UX in Motion Manifesto" (12 principles) establish that animation must serve a UX purpose (communicate relationships, provide feedback, orient the user). Material Motion codifies this into specific easing curves for emphasis (decelerate), standard (ease-in-out), and exit (accelerate). The current system has named presets (`swift`, `flow`, `spring`) but no documented mapping from UX intent → preset.
+> - **Spacing:** Material Design's 4px baseline grid and 8px major grid provide a harmonic rhythm. The current system uses Tailwind's default without declaring which stops are canonical or why.
+> - **Density:** Paul Wallas (Medium, Jun 2025): "Whitespace is a tool, not a rule." Matt Ström (May 2024): "UI Density" distinguishes visual, information, and design density. HN discussion (May 2024): developer tools should optimize for _information density with clear hierarchy_, not consumer-app whitespace. The current system has no explicit density philosophy.
+> - **Component philosophy:** shadcn/ui Best Practices 2026 (Medium, Feb 2026): "Treat components as source code", "Create a design token layer early", "Build product-specific abstractions", "Compose blocks, not screens." The current 31 primitives exist but lack a documented composition theory.
+
+- [x] **F30.1 Design philosophy statement + density declaration** *(2026-05-25, complete — blocks F30.2–F30.8)*
+  - [ ] Write a new `DESIGN.md` preamble (replacing the single-sentence intro) that declares:
+    - **Product class:** professional developer tool (NOT a consumer app). High information density is a feature, not a bug.
+    - **Density stance:** "Dense with hierarchy" — every pixel earns its place; whitespace serves structure (grouping, breathing between sections) not decoration. Cite Linear, Warp, Arc as reference implementations.
+    - **Dark-first rationale:** developers stare at screens for 8+ hours; dark surfaces reduce eye strain; light mode exists as a courtesy, dark mode is the design target. All color decisions are made dark-first and mechanically inverted for light.
+    - **Motion philosophy:** "Communicate, don't decorate." Every animation must answer one of: (a) where did this come from? (b) where is this going? (c) what just changed? Animations that answer none of these are decoration and should be removed. Cite Apple HIG: "motion provides context, shares feedback, and communicates relationships."
+    - **Typography philosophy:** "Mono for data, sans for prose." Monospace dominates (symbol names, counts, paths, identifiers, labels). Sans-serif reserved for headings, descriptions, and empty-state prose. Cite: developer tools live in the monospace world; forcing sans on code-adjacent content creates cognitive dissonance.
+  - [ ] Add an explicit "NOT this" section listing anti-patterns with rationale: no gratuitous hover effects, no parallax, no gradient borders, no glass-morphism, no "creative" loading animations, no illustrations/mascots.
+  - **Acceptance:** DESIGN.md has a coherent philosophy section that a new contributor can read and derive correct aesthetic decisions from, without looking at existing components.
+
+- [ ] **F30.2 Typography scale — mathematical grounding**
+  - [ ] Establish a modular type scale with a declared ratio. Recommended: **1.2 (minor third)** — tight enough for high-density UI, loose enough for clear hierarchy. Base: 14px (Tailwind `text-sm`).
+    - `text-xs` (12px) → micro labels, timestamps
+    - `text-sm` (14px) → body, default
+    - `text-base` (16px) → section headings within panels
+    - `text-lg` (18px) → surface headings
+    - `text-xl` (20px) → page-level H1 (rare)
+    - `text-2xl` (24px) → display (onboarding hero only)
+  - [ ] Declare line-height per step (not one global value): tight (1.2) for headings, snug (1.4) for mono labels, relaxed (1.6) for multi-line prose.
+  - [ ] Document the mono/sans font pairing rationale: mono as the primary face (data-dense surfaces), sans as the secondary (prose, descriptions, empty states). Current sans: system font stack. Current mono: JetBrains Mono (if installed) → system mono.
+  - [ ] Rewrite `ui-tokens.ts` heading/label constants to derive from the declared scale (not ad-hoc class assemblies).
+  - [ ] Audit the `text-[9px]` nav label and `text-mono-mini`/`text-mono-micro` custom sizes — either derive them from the scale or document them as intentional exceptions with rationale.
+  - **Acceptance:** every font size in the app traces to the declared scale; `ui-tokens.ts` heading/label tokens reference the scale by role name, not raw class.
+
+- [ ] **F30.3 Color system — contrast guarantees + perceptual model**
+  - [ ] Document the perceptual depth model for dark mode surfaces:
+    - `bg-background` — deepest (app chrome, behind everything)
+    - `bg-surface` — default content background (panels, cards, sections)
+    - `bg-surface-overlay` — elevated/hovered (dropdowns, active nav)
+    - `bg-surface-sunken` — recessed (trays, grouped content, inset)
+    - Each step must have a perceivable but subtle luminance difference (recommend 3-5% lightness delta between adjacent levels).
+  - [ ] Declare WCAG contrast targets in DESIGN.md:
+    - Body text (`text-text` on `bg-surface`): **≥7:1** (AAA)
+    - Muted text (`text-text-dim` on `bg-surface`): **≥4.5:1** (AA)
+    - Interactive indicators (`accent` on `bg-surface`): **≥3:1** (AA for non-text)
+  - [ ] Audit current `app.css` custom properties against these targets. Fix any that fail.
+  - [ ] Document the accent color derivation (currently a purple-ish hue) — is it accessible at all surface levels? Does it have sufficient contrast for both text and background use?
+  - [ ] Add a "Color misuse" section to DESIGN.md: no color as the sole differentiator (always pair with shape/icon for color-blind users); no red/green without shape backup.
+  - **Acceptance:** `app.css` color tokens documented with their WCAG contrast ratios in a table in DESIGN.md; all pairs meet their declared targets.
+
+- [ ] **F30.4 Motion system — principled timing + purpose mapping**
+  - [ ] Replace the current magic-number spring constants with a documented derivation:
+    - **swift (140ms):** acknowledgement only — hover feedback, button press, toggle. Short because the user already knows what happened. Maps to Material "standard easing."
+    - **flow (240ms):** content transition — page/surface changes, section reveals. Long enough to orient ("what changed?") but not long enough to feel sluggish. Maps to Apple HIG "standard duration" for macOS (200-300ms).
+    - **spring (stiffness:420, damping:36):** spatial transition — shared-layout animations where an element moves from one position to another. The spring gives it physicality. Cite: Apple HIG uses critically-damped springs for UI elements; the overdamped (no bounce) behavior at damping ratio ≈0.9 is correct.
+    - **springSoft (stiffness:210, damping:30):** value change — number tickers, progress bars. Slower arrival communicates "this is still computing" without bouncing.
+  - [ ] Add a motion decision tree to DESIGN.md:
+    ```
+    Q: Does this animation communicate spatial origin/destination? → spring
+    Q: Does this animation mark a content change (new view)? → flow (fade+slide)
+    Q: Does this animation acknowledge user action? → swift
+    Q: Does this animation show a value changing? → springSoft
+    Q: None of the above? → DON'T ANIMATE IT.
+    ```
+  - [ ] Add `prefers-reduced-motion` documentation: when reduced motion is on, ALL spring/flow/swift animations collapse to `duration: 0` (instant). The `prefersReducedMotion()` utility exists but its enforcement across 31 primitives needs auditing.
+  - **Acceptance:** `motion.ts` has doc comments citing the derivation; DESIGN.md has the decision tree; reduced-motion is enforced.
+
+- [ ] **F30.5 Spacing system — canonical scale + rhythm documentation**
+  - [ ] Declare the canonical spacing stops (Tailwind units used, why):
+    - `0.5` (2px) — micro gap (inline icon-to-text, histogram bar spacing)
+    - `1` (4px) — tight (between items in a compact list, chip gap)
+    - `1.5` (6px) — compact (PrefRow internal)
+    - `2` (8px) — standard (card internal padding, between rows)
+    - `3` (12px) — loose (section gap within a surface)
+    - `4` (16px) — section (ContentTray padding, between sections)
+    - `5` (20px) — surface (outermost padding on surface body)
+    - `6`+ (24px+) — page-level (between major sections, SettingsSection top margin)
+  - [ ] Document the "container nesting" rule: outer containers use larger spacing, inner containers use smaller. Never pad-inside-pad at the same level.
+  - [ ] Audit current components for spacing consistency — flag any that use stops outside the canonical set (e.g., `gap-7`, `p-9`, arbitrary values like `p-[18px]`).
+  - **Acceptance:** DESIGN.md spacing section with the canonical scale; no undocumented spacing values in the UI primitives.
+
+- [ ] **F30.6 Component composition theory**
+  - [ ] Document the composition model in DESIGN.md:
+    - **Primitive** (ui/*): zero-opinion building block. Knows only about its own visuals. No data fetching, no routing, no global state. Examples: Card, Button, Badge, EmptyState.
+    - **Compound** (surfaces/*): composes primitives with domain logic. Knows about data shape and user intent. Examples: OrgUsageSection (composes MetricTile + table + button), ApiKeysSection (composes table + dialogs + badges).
+    - **Surface** (top-level): route-level container. Owns its layout (SurfaceSidebar or bare AdaptiveSurface), picks which compounds to render. Never imports another surface.
+  - [ ] Document the "no prop-drilling past 2 levels" rule: if data needs to pass through more than 2 component layers, extract a context or hoist the compound.
+  - [ ] Document the "dialog ownership" rule: the component that triggers a dialog owns its state. Dialogs are not global.
+  - **Acceptance:** DESIGN.md has a component architecture section with the 3-tier model.
+
+- [ ] **F30.7 Accessibility — inclusive design upgrade**
+  - [ ] Upgrade DESIGN.md accessibility section from checkbox-level to inclusive design:
+    - **Reduced motion:** All Framer Motion animations must respect `prefers-reduced-motion`. Audit and enforce.
+    - **High contrast:** Document how the color system degrades under Windows High Contrast Mode and macOS Increase Contrast. Ensure all semantic borders are visible (not just `border-border-soft` at 5% opacity).
+    - **Color-blind safety:** Verify that status indicators (success/warning/danger) never rely on color alone — always paired with an icon shape. Document this rule.
+    - **Screen reader landmarks:** Each surface should declare `<main>`, `<nav>` (sidebar), `<section>` (content areas) with `aria-label` where needed.
+    - **Focus order:** Document that focus order follows visual order (top-to-bottom, left-to-right within the surface). SurfaceSidebar items should be in the tab order before content.
+  - [ ] Implement missing landmarks + aria-labels on SurfaceSidebar and nav rail.
+  - **Acceptance:** DESIGN.md accessibility section is a complete inclusive-design guide, not just a keyboard-event checklist; landmarks are in the rendered HTML.
+
+- [ ] **F30.8 DESIGN.md rewrite — integrated document**
+  - [ ] Consolidate F30.1-F30.7 outputs into a single coherent DESIGN.md v3. The document should read as a design spec that a human designer would produce — with citations, rationale, visual examples (ASCII diagrams), and explicit "when to break the rules" guidance.
+  - [ ] Add a "Reference implementations" section naming the 3-4 apps this design system aspires to match: Linear (density + keyboard-first), Warp (developer-tool color/typography), Arc (motion + spatial awareness), Raycast (speed + minimal chrome). For each: what we take from them and what we reject.
+  - [ ] Remove any remaining "AI generated this" artifacts — vague justifications, over-broad rules without exceptions, or rules that exist because "the lint said so" rather than because of a design principle.
+  - **Acceptance:** a new contributor reading DESIGN.md can independently make correct design decisions for a new surface without asking anyone, because the principles + decision trees + reference implementations give them enough context.
+
+> NOTE (refresh 2026-05-25): **Re-prioritization candidate.** F30 should be the NEXT design track after F29 (already complete). It produces no user-visible features but fundamentally upgrades the design system from "consistent but arbitrary" to "principled and defensible." The output (DESIGN.md v3 + refactored tokens) makes all subsequent UI work faster and more coherent. Consider prioritizing before any new feature-surface work.
+
 ### F-Test — Local cloud e2e testing infrastructure *(2026-05-21, new track)*
 
 > Cross-cutting: builds the local equivalent of `azure-smoke` so multi-tenant cloud correctness, ACL semantics, API-key authn parity, session-tenant-scoping, webhook fan-out, and billing webhooks are all exercisable on a laptop without an Azure deploy. Today's `scripts/demo-local.sh` covers ONE tenant's happy path; the F-items above ship with Postgres-integration tests gated on `MINISTR_TEST_PG_URL` and unit coverage, but no e2e proof that ties them together end-to-end. F-Test fills that gap. Each chunk extends the harness in place — there's only one command to remember (`just e2e-cloud-local`) regardless of which scenario it ends up covering. Mirrors the `azure-smoke` extension policy from `justfile`.
@@ -2315,6 +2429,19 @@ Surfaced via `/roadmap-refresh` deliberate + ministr + serpapi research cycle.
 - **rmcp version gap (CLOSED).** ~~ministr pins rmcp 0.14~~ *(stale — was already on 1.5.0)*. F7.6 bumped to 1.7.0 (latest crates.io). Build + clippy + tests clean. **Blocking question answered YES**: rmcp 1.7 injects `Parts` into `Extensions` on every tool call; `NeverSessionManager` provides stateless mode. F7.2 is ~50 lines. 2026-07-28 RC spec support not yet in rmcp 1.7 (shipped May 13, before the May 21 RC) — a future rmcp 1.8+ will add it.
 - **Sampling deprecation.** SEP-2577 deprecates `sampling/createMessage` — "replaced by direct LLM provider API integration." ministr's `SamplingCompressor` (`ministr-mcp/src/sampling.rs`) uses this for abstractive compression. Extractive compression (`ministr_compress`) is the primary path and unaffected. Grace period: 12 months per the new lifecycle policy. Source: RC blog post.
 - **Competitive landscape.** `roam-code` (Cranot/roam-code on GitHub, published ~2026-05-22, PyPI `roam-code` v13.2) positions as "Local codebase intelligence CLI + MCP server" with explicit comparison table against Sourcegraph/Amp and Greptile. LinkedIn post (Apr 2026) counts "60+ code intelligence tools for AI agents on GitHub." The category noise is increasing; R4 risk register entry already covers this. ministr's differentiation (hosted, polyglot bridge, Atlas, agent-aware primitives) holds — none of the new entrants have these.
+
+### 2026-05-25 — UI/UX de-vibecodification: design philosophy audit
+
+Surfaced via `/roadmap-refresh` deliberate + ministr + serpapi comprehensive research cycle. Topic: "total de-vibecodification of all aspects of the Tauri UI/UX design — not the code, the UI/UX itself."
+
+- **Gap analysis (10 findings).** The F13-F29 track fixed mechanical consistency (lint, rounded corners, layout, navigation). But 10 philosophical gaps remain: (1) typography scale is ad-hoc not mathematical; (2) color system lacks documented contrast guarantees; (3) motion values are magic numbers without principled derivation; (4) spacing system is implicit; (5) information density philosophy undeclared; (6) no design philosophy statement with references; (7) component composition theory missing; (8) accessibility is checkbox-level not inclusive-design; (9) dark-mode-first reasoning undocumented; (10) density stance never explicitly chosen.
+- **Typography research.** EightShapes "Typography in Design Systems" (established reference): every design system needs a declared mathematical ratio. Golden ratio (1.618) for dramatic hierarchy; minor third (1.2) for tight/dense UI. Current system uses: `text-2xl` (24px), `text-base` (16px), `text-xs` (12px), `text-[9px]` — these don't follow any ratio.
+- **Color contrast research.** LogRocket (Mar 2025): "Minimum contrast ratio of 7:1 for body text" in dark mode. W3C DTCG spec (2024-2025): 3-tier token architecture (primitive → semantic → component). Current system has semantic tokens but no measured contrast values documented anywhere.
+- **Motion design research.** Apple HIG: "motion provides context, shares feedback, and communicates relationships." UX in Motion Manifesto (12 principles): every animation must serve a functional purpose. Material Motion: codified easing curves for emphasis (decelerate), standard (ease-in-out), exit (accelerate). Current system has `swift: 0.14s`, `flow: 0.24s`, `spring: {stiffness:420, damping:36}` — reasonable values but no documented derivation from principles.
+- **Information density research.** Paul Wallas (Medium, Jun 2025): "Whitespace is a tool, not a rule." Matt Ström (mattstromawn.com, May 2024): distinguishes visual, information, and design density. HN discussion (May 2024): developer tools should optimize for information density with clear hierarchy. Material Design "Applying Density": "Dense UIs help users focus by reducing the space between actions." Current system: no explicit density stance.
+- **Component philosophy research.** shadcn/ui Best Practices 2026 (Medium, Feb 2026): "Treat components as source code", "Create a design token layer early", "Build product-specific abstractions", "Compose blocks, not screens." Current 31 primitives lack a documented composition theory.
+- **Reference implementations.** Linear (density + keyboard-first), Warp (developer-tool color/typography), Arc (motion + spatial awareness), Raycast (speed + minimal chrome) — all dark-first, high-density, developer-focused desktop apps with principled design systems.
+- **Action taken.** Added F30 track (8 chunks: philosophy statement → typography scale → color contrast → motion system → spacing system → composition theory → accessibility upgrade → DESIGN.md v3 rewrite). Re-prioritization candidate surfaced in a NOTE for user review.
 
 ---
 
