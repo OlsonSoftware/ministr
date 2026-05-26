@@ -405,14 +405,89 @@ Visual: `rounded-lg border-danger/40 bg-danger/5` + AlertTriangle icon.
 Do **not** hand-roll error `<div>`s with `border-danger` and
 `AlertTriangle` — the pattern is encoded in the primitive.
 
-## Accessibility
+## Accessibility (inclusive design)
 
-- Every clickable non-`<button>` element needs `role="button"`,
-  `tabIndex={0}`, and `onKeyDown` (Enter/Space).
-- Every bare `<button>` needs `focus-visible:outline-2
-  focus-visible:outline-accent` (or the `focusRing` token).
-- Every dialog/overlay uses `useDialog` for Escape-to-close, focus trap,
-  and focus restore.
+### Principle
+
+Accessibility is not a checklist bolted on after visual design — it's a
+constraint that shapes design decisions from the start. The philosophy
+sections above (color-blind safety in § Color system, reduced motion in
+§ Motion system) are accessibility requirements, not nice-to-haves.
+
+### Keyboard interaction
+
+Every interactive element must be keyboard-operable:
+
+| Element type | Requirements |
+|---|---|
+| Native `<button>` | Works by default. Add `focusRing` token for visible focus. |
+| Clickable `<div>` / `<span>` | `role="button"`, `tabIndex={0}`, `onKeyDown` for Enter + Space |
+| Link-like navigation | Native `<a>` preferred; if not possible, `role="link"` + Enter |
+| Toggle / switch | `role="switch"`, `aria-checked`, Enter + Space |
+| Disclosure / accordion | `aria-expanded`, Enter + Space to toggle |
+
+### Focus management
+
+- **Focus order = visual order.** Tab order follows top-to-bottom,
+  left-to-right within the active surface. SurfaceSidebar items tab
+  before content. The nav rail tabs before any surface.
+- **Focus ring:** `focus-visible:outline-2 focus-visible:outline-accent`
+  (the `focusRing` token). Always visible on keyboard focus; never on
+  mouse click (that's what `focus-visible` vs `focus` achieves).
+- **Focus restore:** when a dialog closes, focus returns to the element
+  that opened it. `useDialog` handles this automatically.
+- **Focus trap:** dialogs and overlays trap focus within themselves.
+  Tab wraps at boundaries. `useDialog` handles this.
+
+### Landmarks
+
+The app should declare semantic landmarks so screen readers can navigate
+by region:
+
+| Element | Landmark | `aria-label` |
+|---|---|---|
+| Nav rail | `<nav aria-label="Main navigation">` | Identifies the 6-surface switcher |
+| SurfaceSidebar | `<nav aria-label="Section navigation">` | Identifies the sub-nav |
+| Surface content | `<main>` | Primary content area |
+| Dialog | `role="dialog"` + `aria-modal="true"` + `aria-labelledby` | Title identifies the dialog |
+
+### Reduced motion
+
+Handled at the app root via `<MotionConfig reducedMotion="user">` from
+Framer Motion. When the OS preference is `prefers-reduced-motion: reduce`:
+- All Framer Motion animations collapse to instant (duration 0).
+- CSS `transitionInteractive` (150ms color transition) remains — this is
+  a state change, not motion.
+
+See § Motion system for the full reduced-motion policy.
+
+### Color and contrast
+
+See § Color system for:
+- Measured WCAG contrast ratios (7:1 AAA for body text)
+- text-dim at 3.8:1 (intentional exception with justification)
+- Color-blind safety rules (never color alone)
+
+### ARIA patterns for key primitives
+
+| Primitive | ARIA pattern |
+|---|---|
+| ConfirmDialog | `role="alertdialog"`, `aria-describedby` on the warning text |
+| CommandPalette | `role="combobox"` + `aria-expanded` + `role="listbox"` on results |
+| SurfaceSidebar | `role="tablist"` at narrow; `role="navigation"` at wide |
+| Toggle | `role="switch"` + `aria-checked` |
+| Disclosure | `aria-expanded` on trigger, `aria-controls` pointing to content |
+| EmptyState | `role="status"` (live region for async-loaded empties) |
+
+### What NOT to do
+
+- Don't use `aria-label` on elements that already have visible text — it
+  overrides the visible label for screen readers, creating a mismatch.
+- Don't add `role="button"` to actual `<button>` elements — it's redundant
+  and some screen readers announce "button button."
+- Don't use `tabIndex` values > 0 — they break natural focus order.
+- Don't hide content with `display: none` that screen readers should
+  announce — use `sr-only` (visually hidden, still in the tree).
 
 ## Component architecture
 
