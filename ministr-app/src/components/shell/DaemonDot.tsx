@@ -67,7 +67,7 @@ export function DaemonDot({ status, error, onOpenLogs }: Props) {
               ? "Indexing"
               : "Daemon connected"
         }
-        className={cn("grid place-items-center h-5 w-5 cursor-pointer")}
+        className={cn("grid place-items-center h-5 w-5 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent")}
       >
         <StatusDot tone={tone} pulse={tone === "warning" ? "live" : "off"} size="md" />
       </button>
@@ -115,7 +115,7 @@ export function DaemonDot({ status, error, onOpenLogs }: Props) {
                 onOpenLogs();
                 setOpen(false);
               }}
-              className="w-full border-t border-border bg-surface text-text-muted hover:text-text hover:bg-surface-overlay cursor-pointer transition-colors duration-150 px-3 py-2 font-sans text-sm font-medium text-left"
+              className="w-full border-t border-border bg-surface text-text-muted hover:text-text hover:bg-surface-overlay cursor-pointer transition-colors duration-150 px-3 py-2 font-sans text-sm font-medium text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
             >
               Open log file →
             </button>

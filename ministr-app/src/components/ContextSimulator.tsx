@@ -191,7 +191,7 @@ export function ContextSimulator() {
         <Card className="p-4">
           <button
             onClick={() => setShowSections(!showSections)}
-            className="flex items-center gap-1.5 text-xs font-semibold text-text-muted mb-3 cursor-pointer"
+            className="flex items-center gap-1.5 text-xs font-semibold text-text-muted mb-3 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent rounded-md"
           >
             <ChevronDown
               className={cn(
@@ -217,7 +217,7 @@ export function ContextSimulator() {
                       "w-full text-left flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-xs transition-all duration-120 border cursor-pointer",
                       inContext
                         ? "border-transparent opacity-40 cursor-not-allowed"
-                        : "border-border/50 bg-surface-raised/40 hover:border-[var(--color-accent-ring)] hover:bg-[var(--color-accent-soft)]",
+                        : "border-border/50 bg-surface-raised/40 hover:border-[var(--color-accent-ring)] hover:bg-[var(--color-accent-soft)] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent",
                     )}
                   >
                     <span className="truncate text-text">{s.name}</span>
@@ -270,7 +270,7 @@ export function ContextSimulator() {
                     </span>
                     <button
                       onClick={() => removeSection(s.id)}
-                      className="text-text-dim hover:text-danger cursor-pointer"
+                      className="text-text-dim hover:text-danger cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent rounded-sm"
                       title="Remove"
                     >
                       <Trash2 className="h-3 w-3" strokeWidth={2.5}/>
