@@ -1650,11 +1650,13 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
 
 > **Context.** After F25-F27, the three multi-section surfaces (Settings, Explore, Cloud) all use `SurfaceSidebar`. This phase catches cross-surface inconsistencies.
 
-- [ ] **F28.1 Page headers + content layout audit**
-  - [ ] Every surface: H1 lives inside the surface component (not in App.tsx).
-  - [ ] Multi-section surfaces: H1 IS the sidebar title (no redundant page heading above the content).
-  - [ ] Single-section surfaces (Ask, Projects, Sessions): H1 as first element inside the content area with consistent size + spacing.
-  - [ ] Content padding: every surface uses `p-5` on the content area. No exceptions.
+- [x] **F28.1 Page headers + content layout audit** *(2026-05-26, complete)*
+  - [x] **CloudPanel**: removed dead `H1` import (unused since F27.1 sidebar replaced the inline header).
+  - [x] **AiAssistantsPanel**: removed redundant `<h2>AI assistants</h2>` from Header component — sidebar already identifies the section. Same fix as GeneralSettings "Preferences" heading. Kept description text + refresh button.
+  - [x] **SurfaceSidebar**: title styling upgraded from `font-mono` → `font-sans` + active state from `border-l-2` → `bg-accent/10 text-accent` (commit `86aa9c8`).
+  - [x] **GeneralSettings**: redundant "Preferences" SettingsSection removed (commit `86aa9c8`).
+  - [x] Verified: Projects + Sessions have consistent H1 + subtitle. Ask has no H1 (correct — search-first). Multi-section surfaces use SurfaceSidebar title (correct). Content padding `p-5` consistent.
+  - **Validation:** `tsc --noEmit` + `vite build` clean. No redundant headings remain in any SurfaceSidebar view.
 
 - [ ] **F28.2 Empty states + loading states + error callouts**
   - [ ] Audit every empty state. All use `EmptyState` primitive.
