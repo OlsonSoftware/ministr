@@ -2007,10 +2007,13 @@ function ResultRow({
 }) {
   return (
     <div
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
       onClick={onClick}
+      onKeyDown={onClick ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
       className={cn(
         "flex items-center gap-2 border-b border-border-soft px-3 py-2 transition-colors duration-150 ease-out",
-        onClick && "cursor-pointer hover:bg-surface-overlay hover:text-text",
+        onClick && "cursor-pointer hover:bg-surface-overlay hover:text-text focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent",
       )}
     >
       {children}

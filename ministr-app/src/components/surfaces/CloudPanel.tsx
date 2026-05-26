@@ -64,6 +64,7 @@ import { ErrorCallout } from "../ui/error-callout";
 import { SurfaceSidebar, type SidebarItem } from "../ui/surface-sidebar";
 import { ConfirmDialog } from "../ui/confirm-dialog";
 import { OnboardingWizard } from "../onboarding/OnboardingWizard";
+import { useDialog } from "../../hooks/useDialog";
 import {
   cloudClient,
   type CloudAclEntry,
@@ -2832,9 +2833,16 @@ interface DialogShellProps {
 }
 
 function DialogShell({ title, hint, onClose, children }: DialogShellProps) {
+  const containerRef = useDialog(true, onClose);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-6">
-      <div className="w-full max-w-md rounded-lg border border-border bg-surface shadow-xl flex flex-col gap-3 p-5">
+      <div
+        ref={containerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="w-full max-w-md rounded-lg border border-border bg-surface shadow-xl flex flex-col gap-3 p-5"
+      >
         <div className="flex items-start justify-between gap-3">
           <h4 className="font-mono text-sm font-semibold uppercase tracking-[0.08em] text-text">
             {title}

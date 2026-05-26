@@ -1664,10 +1664,12 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] Created `ErrorCallout` primitive (`ui/error-callout.tsx`): `rounded-lg border-danger/40 bg-danger/5` + AlertTriangle + optional title/action. Swept 5 ad-hoc error patterns across 4 files (LinkedProjectsPanel 1×, AiAssistantsPanel 2×, CloudPanel 2×). AskSurface's ErrorCard styling aligned to match.
   - **Validation:** `tsc --noEmit` + `vite build` clean.
 
-- [ ] **F28.3 Interactive elements + accessibility**
-  - [ ] Every clickable non-Button element: focus-visible, hover state, keyboard activation.
-  - [ ] Every segmented control / toggle group: same pattern (or removed in favor of sidebar nav).
-  - [ ] Every dialog/modal: ConfirmDialog pattern.
+- [x] **F28.3 Interactive elements + accessibility** *(2026-05-26, complete)*
+  - [x] Clickable non-Button elements: `ResultRow` (div→role=button + tabIndex + onKeyDown + focus-visible), `JumpableSource` (span→same treatment). Both now keyboard accessible.
+  - [x] Segmented controls: GeneralSettings theme/density toggles already use proper `<button>` elements with consistent styling. DeveloperPanel segmented control was deleted in F26.1 (replaced by SurfaceSidebar). No remaining issues.
+  - [x] Dialogs: `DialogShell` in CloudPanel wired with `useDialog` — now has Escape-to-close, focus trap, focus restore, `role=dialog` + `aria-modal`. Consistent with `ConfirmDialog` pattern.
+  - [x] Focus-visible: added to 5 bare buttons (ContextSimulator toggle/add/remove, DaemonDot dot/log).
+  - **Validation:** `tsc --noEmit` + `vite build` clean.
 
 - [ ] **F28.4 DESIGN.md overhaul**
   - [ ] Document the two-level navigation architecture (nav rail → SurfaceSidebar).
