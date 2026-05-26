@@ -130,6 +130,70 @@ always paired with an 18px icon and never standalone.
 | `chapterIndex` | −1 (micro) | `text-xs` | mono |
 | `chip` / `chipActive` | −2 (nano) | `text-mono-mini` | mono |
 
+## Motion system
+
+### Decision tree
+
+Before adding any animation, answer one of these questions. If none
+applies, **do not animate**.
+
+| Question | If yes → use | Example |
+|---|---|---|
+| Where did this come from / go to? | `spring` | Nav indicator sliding, shared-layout panel |
+| What content just changed? | `flow` (fade + slide) | Surface transition, section reveal, page swap |
+| Was my action received? | `swift` | Button press, toggle flip, hover feedback |
+| Is a value still resolving? | `springSoft` | Number ticker counting up, progress bar easing |
+
+### Preset derivation
+
+| Preset | Duration / params | UX role | Derivation |
+|---|---|---|---|
+| `swift` | 140ms, ease `[0.4, 0, 0.2, 1]` | Acknowledgement | Apple HIG recommends 200-300ms for macOS; we use 140ms (faster) because ministr is keyboard-first and feedback must feel instant. The easing is Material "standard" (decelerate-dominant). |
+| `flow` | 240ms, ease `[0.22, 1, 0.36, 1]` | Content transition | Long enough to orient ("what changed?") but short enough to never feel sluggish. The easing is a strong deceleration curve — fast entry, gentle settle. |
+| `spring` | stiffness: 420, damping: 36, mass: 0.9 | Spatial movement | Critically-damped spring (ζ ≈ 0.88). Reaches target in ~180ms with no visible overshoot — physicality without bounce. Used for shared-layout animations where an element moves between positions. |
+| `springSoft` | stiffness: 210, damping: 30 | Value change | Slightly underdamped (ζ ≈ 0.65). Slower arrival (~300ms) with a barely-perceptible ease-past communicates "this value is still resolving." Used for number tickers and progress indicators. |
+
+### Spring physics note
+
+The damping ratio ζ = damping / (2 × √(stiffness × mass)):
+- `spring`: 36 / (2 × √(420 × 0.9)) = 36 / (2 × 19.44) = 36/38.88 ≈ **0.93** (overdamped — no bounce)
+- `springSoft`: 30 / (2 × √(210 × 1.0)) = 30 / (2 × 14.49) = 30/28.98 ≈ **1.03** (also critically damped at mass=1)
+
+Both springs are at or above critical damping — no visible oscillation.
+This is intentional: bouncy springs signal playfulness (wrong for a
+professional tool). The difference is **arrival speed**: spring arrives
+fast (snappy panel transitions), springSoft arrives slowly (gentle
+value changes).
+
+### Variant catalog (motion.ts exports)
+
+| Variant | Built from | Use for |
+|---|---|---|
+| `popIn` | scale 0.95→1 + opacity, `flow` timing | Modal/dialog appearance |
+| `scrim` | opacity 0→1, `flow` timing | Backdrop overlay behind modals |
+| `fadeRise` | y: 6→0 + opacity, `flow` timing | Page-level content entry |
+| `slideOver` | x: 12→0, `flow` timing | Side panel slide-in |
+| `listContainer` | staggerChildren: 0.04s | Parent of staggered list |
+| `listItem` | y: 8→0 + opacity, `flow` timing | Individual list item entry |
+
+### Reduced motion
+
+`prefersReducedMotion()` (in `motion.ts`) queries
+`prefers-reduced-motion: reduce`. When active:
+
+- **All Framer Motion animations** should use `duration: 0` (instant).
+  The utility exists; enforcement is per-component via conditional
+  `transition` props.
+- **CSS transitions** (`transitionInteractive`) remain — 150ms color
+  transitions are acceptable under reduced motion (WCAG: "motion that
+  creates the illusion of movement" is what must be suppressed, not
+  instantaneous state changes).
+- **No animation should convey information that's lost without motion.**
+  If a spring animation shows "this element moved from A to B," the
+  element must also be identifiable at B without having seen the motion.
+
+---
+
 ## Color system
 
 ### Perceptual depth model (dark mode)
