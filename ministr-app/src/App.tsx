@@ -22,8 +22,6 @@ import { ProjectsSurface } from "./components/surfaces/ProjectsSurface";
 import { SettingsSurface } from "./components/surfaces/SettingsSurface";
 import { CloudPanel } from "./components/surfaces/CloudPanel";
 import { ExploreSurface } from "./components/surfaces/ExploreSurface";
-import { AdaptiveSurface } from "./components/ui/adaptive-surface";
-import { H1 } from "./components/ui/heading";
 import { corpusLabel } from "./lib/corpus";
 import { useLiveEvents } from "./lib/liveBus";
 import { fade } from "./lib/motion";
@@ -446,42 +444,26 @@ function SurfaceBody({
   onOpenLogs: () => void;
 }) {
   if (surface === "ask") {
-    return (
-      <div className="h-full overflow-hidden p-5">
-        <AskSurface status={status} activeCorpusId={activeCorpusId} />
-      </div>
-    );
+    return <AskSurface status={status} activeCorpusId={activeCorpusId} />;
   }
 
   if (surface === "projects") {
     return (
-      <AdaptiveSurface>
-        <ProjectsSurface
-          corpora={status.corpora}
-          activeCorpusId={activeCorpusId}
-          onSelectCorpus={onSelectCorpus}
-          onRefresh={onRefresh}
-        />
-      </AdaptiveSurface>
+      <ProjectsSurface
+        corpora={status.corpora}
+        activeCorpusId={activeCorpusId}
+        onSelectCorpus={onSelectCorpus}
+        onRefresh={onRefresh}
+      />
     );
   }
 
   if (surface === "sessions") {
-    return (
-      <AdaptiveSurface>
-        <SessionsSurface status={status} activeCorpusId={activeCorpusId} />
-      </AdaptiveSurface>
-    );
+    return <SessionsSurface status={status} activeCorpusId={activeCorpusId} />;
   }
 
   if (surface === "cloud") {
-    return (
-      <AdaptiveSurface>
-        <div className="h-full overflow-y-auto p-5">
-          <CloudPanel />
-        </div>
-      </AdaptiveSurface>
-    );
+    return <CloudPanel />;
   }
 
   if (surface === "explore") {

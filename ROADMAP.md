@@ -1605,12 +1605,14 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] SettingsSurface refactored from 121 to 61 lines — thin wrapper passing `NAV_ITEMS` + rendering 3 sub-views as children.
   - **Validation:** `tsc --noEmit` + `vite build` clean. Zero visual change. `SurfaceSidebar` ready for F26 (Explore) and F27 (Cloud).
 
-- [ ] **F25.2 Standardize SurfaceBody app shell wrapper**
-  - [ ] Every surface in `App.tsx::SurfaceBody` gets the same outer treatment: `<AdaptiveSurface>` wrapper (currently Ask is bare `div` with `p-5`, the only inconsistency).
-  - [ ] Page header (H1 + optional subtitle) should be inside each surface component, NOT in `SurfaceBody` (currently Explore's H1 is in `SurfaceBody` while every other surface manages its own header — inconsistent).
-  - [ ] Move Explore's H1 + subtitle into the Explore surface component.
-  - [ ] Document the rule in DESIGN.md: "App.tsx provides AdaptiveSurface. Each surface component owns its own header, layout, and padding."
-  - **Acceptance:** `SurfaceBody` is a uniform thin switch — every branch wraps in `<AdaptiveSurface>` and delegates to the surface component. No layout logic in the switch.
+- [x] **F25.2 Standardize SurfaceBody app shell wrapper** *(2026-05-26, complete)*
+  - [x] **ProjectsSurface**: added internal `AdaptiveSurface` wrapper.
+  - [x] **SessionsSurface**: same treatment.
+  - [x] **AskSurface**: added `AdaptiveSurface` + absorbed `p-5` padding from App.tsx (both main return and no-project early return).
+  - [x] **CloudPanel**: added `AdaptiveSurface` + scroll div wrapper internally.
+  - [x] **App.tsx SurfaceBody**: every branch is now a bare component call (`<AskSurface />`, `<ProjectsSurface />`, `<SessionsSurface />`, `<CloudPanel />`, `<ExploreSurface />`, `<SettingsSurface />`). Removed `AdaptiveSurface` and `H1` imports from App.tsx — no longer needed at the shell level.
+  - [x] Explore's H1 already moved inside `ExploreSurface` in F26.1 (it's the SurfaceSidebar title).
+  - **Validation:** `tsc --noEmit` + `vite build` clean. Zero visual change. Rule established: each surface owns its own layout.
 
 ### F26 — Explore surface structural redesign *(discovered 2026-05-26)*
 
