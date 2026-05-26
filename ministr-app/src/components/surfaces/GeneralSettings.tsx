@@ -20,7 +20,7 @@ import {
 } from "../../hooks/usePreferences";
 import { Toggle } from "../ui/toggle";
 import { useToast } from "../shell/ToastTray";
-import { SettingsSection, PrefRow } from "./settings-primitives";
+import { PrefRow } from "./settings-primitives";
 
 interface Props {
   status: DaemonStatus;
@@ -49,7 +49,6 @@ export function GeneralSettings({
 
   return (
     <div>
-      <SettingsSection title="Preferences" />
       <ContentTray className="space-y-0">
         <PrefRow label="THEME" description="Adapts to OS by default.">
           <div className="flex gap-0">
