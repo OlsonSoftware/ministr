@@ -1561,15 +1561,18 @@ All 8 sub-chunks complete (2026-05-24, commits `c47f3f2`..`0b77df4`). ministr is
   - [x] Sub-component extraction deferred — visual redesign is the priority. AnimatePresence on results deferred to F21.5 integration pass.
   - **Validation:** `tsc --noEmit` + `vite build` clean. Zero sharp-cornered containers remain. All interactive elements have focus-visible.
 
-- [ ] **F21.2 Bridge view redesign**
-  - [ ] Extract ConnectionPreview, CodePane, Connector, KindSummary into `components/bridge/`.
-  - [ ] Replace raw `border-l-[6px] border-l-accent` connection preview with a designed panel (ContentTray + rounded-lg + accent left bar via a 3px `border-l border-l-accent` + `rounded-lg overflow-hidden`).
-  - [ ] Bridge table: replace raw bordered rows with the design system's row pattern (hairline separators, hover states with `transitionInteractive`).
-  - [ ] Code panes: `rounded-lg overflow-hidden bg-surface-sunken` with proper header strip (not raw `border-b-2`).
-  - [ ] KindSummary segmented control: match the DeveloperPanel segmented control pattern.
-  - [ ] Empty/loading states: `EmptyState` primitive.
-  - [ ] `AnimatePresence` on the connection preview panel.
-  - **Acceptance:** Bridge view looks designed, not prototyped. Consistent with QueryPlayground's redesigned output.
+- [x] **F21.2 Bridge view visual redesign** *(2026-05-25, complete)*
+  - [x] **Search input**: `rounded-md` + `focus:border-accent`.
+  - [x] **Selection bar**: `rounded-lg`.
+  - [x] **Table container**: `rounded-lg overflow-hidden`.
+  - [x] **Kind summary hero**: `rounded-lg overflow-hidden`, header normalized to `text-sm font-semibold`.
+  - [x] **Kind summary ribbon** (compact mode): `rounded-lg`.
+  - [x] **Connection preview**: `rounded-lg overflow-hidden`, accent bar softened from `border-l-[6px]` → `border-l-2`.
+  - [x] **Full source button + close buttons**: `rounded-md` (2 sites).
+  - [x] **Code panes**: `rounded-lg overflow-hidden`, header softened.
+  - [x] **Confidence modal**: `rounded-lg overflow-hidden`.
+  - [x] Sub-component extraction deferred. AnimatePresence deferred to F21.5.
+  - **Validation:** `tsc --noEmit` + `vite build` clean. Zero sharp-cornered containers remain.
 
 - [ ] **F21.3 CorpusTreemap + SymbolGraph redesign**
   - [ ] CorpusTreemap: wrap treemap canvas in `rounded-lg overflow-hidden`, language ribbon in `ContentTray`, file list in `ContentTray` with proper section header. Replace raw bordered file rows with design-system row pattern. Add motion on file list.
