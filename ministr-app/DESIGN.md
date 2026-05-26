@@ -194,6 +194,52 @@ value changes).
 
 ---
 
+## Spacing system
+
+### Base grid: 4px
+
+All spacing derives from Tailwind's 4px unit grid. The canonical stops
+below are the **only** spacing values that should appear in component
+code. If you reach for a value not on this list, you're inventing a
+new spatial relationship — use an existing stop or justify the addition.
+
+| Tailwind | Pixels | Role | Use for |
+|---|---|---|---|
+| `0.5` | 2px | Micro | Inline icon-to-text gap, histogram bar spacing |
+| `1` | 4px | Tight | Items in a compact list, chip internal gap |
+| `1.5` | 6px | Compact | PrefRow/MetaRow internal spacing |
+| `2` | 8px | Standard | Card internal padding, gap between rows |
+| `3` | 12px | Loose | Gap between related groups within a section |
+| `4` | 16px | Section | ContentTray padding, between sub-sections |
+| `5` | 20px | Surface | Outermost padding on every surface body |
+| `6` | 24px | Page | Between major sections (SettingsSection `pt-6`) |
+
+### Container-nesting rule
+
+Outer containers use larger spacing; inner containers use smaller.
+Never pad-inside-pad at the same level:
+
+```
+Surface (p-5)
+  └── ContentTray (p-4)        ← one step smaller
+       └── row gap (gap-2)     ← two steps smaller
+            └── inline (gap-1) ← micro
+```
+
+If you find yourself writing `p-5` inside a `p-5` parent, something
+is wrong — the inner container should be `p-4` or `p-3`.
+
+### Vertical rhythm
+
+- **Between sections** (SettingsSection, H2 boundaries): `pt-6` top
+  margin on the section header. First section uses `first:pt-0`.
+- **Between rows** (PrefRow, MetaRow, list items): `space-y-0` with
+  hairline `border-b border-border-soft` between. The border IS the
+  spacing; adding gap on top would double-space.
+- **Between groups** (ContentTray clusters): `space-y-4` or `gap-4`.
+
+---
+
 ## Color system
 
 ### Perceptual depth model (dark mode)
