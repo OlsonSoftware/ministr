@@ -100,7 +100,7 @@ export default function HomePage() {
           <Link href="/docs/getting-started">Getting started</Link>
           <Link href="/docs/tools">Tool reference</Link>
           <Link href="/docs/architecture">Architecture</Link>
-          <Link href="/pricing">Pricing</Link>
+          <Link href="/stewardship">Stewardship</Link>
         </div>
       </footer>
     </>

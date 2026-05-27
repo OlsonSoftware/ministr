@@ -18,7 +18,6 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
         </Link>
         <div className="v2-nav-links">
           <Link href="/install">install</Link>
-          <Link href="/pricing">pricing</Link>
           <Link href="/docs">docs</Link>
           <a href="https://github.com/OlsonSoftware/ministr" target="_blank" rel="noopener noreferrer">github</a>
         </div>
