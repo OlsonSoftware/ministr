@@ -1035,6 +1035,7 @@ body:has(.ministr-v2) {
 }
 
 .ministr-v2 {
+  width: 100%;
   max-width: 1200px;
   margin: 0 auto;
   padding: 0 32px;
