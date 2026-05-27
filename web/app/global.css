@@ -784,19 +784,14 @@ h1.ministr-gradient-text,
 
 .install-page {
   min-height: 100vh;
-  background: var(--fd-background);
-  color: var(--fd-foreground);
 }
 
 .install-hero {
   padding: 4rem 0 3rem;
-  border-bottom: 1px solid color-mix(in oklch, var(--fd-foreground) 10%, transparent);
 }
 
 .install-wide {
-  max-width: 72rem;
-  margin: 0 auto;
-  padding: 0 2rem;
+  width: 100%;
 }
 
 .install-body {
@@ -1107,9 +1102,9 @@ body:has(.ministr-v2) {
 }
 
 .ministr-v2 {
-  max-width: 1080px;
+  max-width: 72rem;
   margin: 0 auto;
-  padding: 0 48px;
+  padding: 0 2rem;
   font-family: var(--font-geist), -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 17px;
   line-height: 1.55;
@@ -1233,7 +1228,7 @@ body:has(.ministr-v2) {
 
 /* ── Rule / Section ─────────────────────────────────────────────── */
 .v2-rule { border: 0; border-top: 1px solid var(--rule); margin: 0; }
-.v2-section { padding: 80px 0; }
+.v2-section { padding: 48px 0; }
 .v2-h2 {
   font-weight: 500;
   font-size: clamp(32px, 4.6vw, 44px);
@@ -1241,7 +1236,6 @@ body:has(.ministr-v2) {
   letter-spacing: -0.03em;
   margin: 0 0 44px;
   color: var(--ink);
-  max-width: 20ch;
 }
 
 /* ── Features grid ──────────────────────────────────────────────── */

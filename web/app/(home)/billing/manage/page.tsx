@@ -15,9 +15,9 @@ import Link from 'next/link';
 export default function BillingManagePage() {
   return (
     <div className="ministr-v2">
-      <section className="v2-section" style={{ paddingTop: '64px' }}>
+      <section className="v2-section">
         <p className="v2-meta" style={{ marginBottom: '16px' }}>Billing</p>
-        <h1 className="v2-h2" style={{ maxWidth: 'none' }}>Manage billing</h1>
+        <h1 className="v2-h2">Manage billing</h1>
         <p className="v2-sub">
           Invoices, card on file, plan changes, and cancellation all run
           through Stripe&apos;s Customer Portal.
@@ -29,7 +29,7 @@ export default function BillingManagePage() {
       <section className="v2-section">
         <h2
           className="v2-h2"
-          style={{ maxWidth: 'none', fontSize: '20px', marginBottom: '28px' }}
+         
         >
           Open the portal
         </h2>
