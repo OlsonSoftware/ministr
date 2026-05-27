@@ -639,8 +639,15 @@ pub async fn cmd_serve_http(
     // at warn and the loop continues; a snapshot with no samples is
     // silently skipped so the first row only lands after a request
     // has flowed.
-    if let Some(pool) = cloud_pool.as_ref() {
-        let pool = Arc::clone(pool);
+    // F31.2b-ii-Q — SLA latency flush task. The persister adapter
+    // (CloudAdminAdapters.sla_snapshot_persister) wraps the cloud's
+    // Postgres `request_latency_snapshots` writer. When the mounter
+    // populates the slot, spawn the cadenced flush task. Self-hosted
+    // serve leaves the slot None and no task spawns.
+    if let Some(persister) = cloud
+        .as_ref()
+        .and_then(|c| c.admin_adapters.sla_snapshot_persister.clone())
+    {
         let tracker = latency_tracker.clone();
         let flush_secs = std::env::var("MINISTR_SLA_FLUSH_SECS")
             .ok()
@@ -649,7 +656,7 @@ pub async fn cmd_serve_http(
             .unwrap_or(60);
         tracing::info!(
             interval_secs = flush_secs,
-            "SLA latency flush task spawned (F5.5-b-persist-write)"
+            "SLA latency flush task spawned (F5.5-b-persist-write via CloudRouterMounter)"
         );
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(std::time::Duration::from_secs(flush_secs));
@@ -667,15 +674,15 @@ pub async fn cmd_serve_http(
                 let ts_unix = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
-                if let Err(e) = ministr_cloud::persist_snapshot(
-                    &pool,
-                    ts_unix,
-                    snapshot.count,
-                    snapshot.p50_us,
-                    snapshot.p95_us,
-                    snapshot.p99_us,
-                )
-                .await
+                if let Err(e) = persister
+                    .persist(
+                        ts_unix,
+                        snapshot.count,
+                        u64::from(snapshot.p50_us),
+                        u64::from(snapshot.p95_us),
+                        u64::from(snapshot.p99_us),
+                    )
+                    .await
                 {
                     tracing::warn!(error = %e, "failed to persist SLA latency snapshot");
                 }

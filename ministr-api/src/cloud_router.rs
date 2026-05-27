@@ -228,14 +228,39 @@ impl std::fmt::Debug for CloudOAuthAdapters {
 #[derive(Default)]
 pub struct CloudAdminAdapters {
     pub sla_window_store: Option<Arc<dyn SlaWindowStore>>,
+    /// Persists a latency snapshot row to the cloud SLA store every
+    /// `MINISTR_SLA_FLUSH_SECS` (default 60s). When None, no flush task
+    /// spawns — self-hosted serve has no `request_latency_snapshots`
+    /// table to write to.
+    pub sla_snapshot_persister: Option<Arc<dyn SlaSnapshotPersister>>,
 }
 
 impl std::fmt::Debug for CloudAdminAdapters {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CloudAdminAdapters")
             .field("sla_window_store", &self.sla_window_store.is_some())
+            .field("sla_snapshot_persister", &self.sla_snapshot_persister.is_some())
             .finish()
     }
+}
+
+/// Writes a single latency snapshot row to the cloud SLA store. The
+/// MIT serve spawns a `MINISTR_SLA_FLUSH_SECS`-cadenced task that
+/// drains the in-process `LatencyTracker` into this persister; the
+/// task is gated on whether the cloud mounter populated the slot.
+pub trait SlaSnapshotPersister: Send + Sync + std::fmt::Debug {
+    /// Persist one snapshot. Best-effort — failures are logged at warn
+    /// by the caller and the next tick retries.
+    fn persist<'a>(
+        &'a self,
+        ts_unix: i64,
+        count: usize,
+        p50_us: u64,
+        p95_us: u64,
+        p99_us: u64,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<(), ApiError>> + Send + 'a>,
+    >;
 }
 
 /// License-revocation shutdown signal returned by the cloud mounter.

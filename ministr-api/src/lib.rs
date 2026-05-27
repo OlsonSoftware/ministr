@@ -44,7 +44,7 @@ pub use audit::{AuditEntry, AuditSink};
 pub use cloud_router::{
     CloudAdminAdapters, CloudDaemonAdapters, CloudMountInput, CloudMountOutput,
     CloudOAuthAdapters, CloudRouterMounter, CloudServerAdapters, DaemonWriteLayer,
-    RevocationHandle,
+    RevocationHandle, SlaSnapshotPersister,
 };
 pub use blob_sink::BlobSink;
 pub use drops_ledger::{

@@ -22,7 +22,7 @@ use axum::Router;
 use ministr_api::{
     ApiError, CloudAdminAdapters, CloudDaemonAdapters, CloudMountInput, CloudMountOutput,
     CloudOAuthAdapters, CloudRouterMounter, CloudServerAdapters, DaemonWriteLayer,
-    RevocationHandle,
+    RevocationHandle, SlaSnapshotPersister,
 };
 
 use crate::revocation_fetch::RevocationShutdownHandle;
@@ -277,6 +277,15 @@ pub async fn mount_cloud_routes(
         tracing::info!(
             "PostgresSlaWindowStore wired via CloudRouterMounter"
         );
+    }
+
+    // F5.5-b-persist-write — adapter for the SLA latency flush task
+    // (the actual spawn lives in cmd_serve_http since it needs
+    // `LatencyTracker` ownership). Migrated in F31.2b-ii-Q.
+    {
+        admin_adapters.sla_snapshot_persister = Some(std::sync::Arc::new(
+            ClassicSlaSnapshotPersister { pool: Arc::clone(&pool) },
+        ));
     }
 
     // PHASE3 chunk 1 — `PostgresCorporaRepo` makes Postgres the
@@ -870,6 +879,44 @@ impl ClassicCloudMounter {
     #[must_use]
     pub fn revocation_handle_dyn(handle: RevocationShutdownHandle) -> Arc<dyn RevocationHandle> {
         Arc::new(handle)
+    }
+}
+
+/// F31.2b-ii-Q — concrete `SlaSnapshotPersister` that wraps
+/// `crate::persist_snapshot` over the cloud Postgres pool. The MIT
+/// serve's `MINISTR_SLA_FLUSH_SECS` task drains its `LatencyTracker`
+/// into this persister.
+#[derive(Debug)]
+struct ClassicSlaSnapshotPersister {
+    pool: Arc<deadpool_postgres::Pool>,
+}
+
+impl SlaSnapshotPersister for ClassicSlaSnapshotPersister {
+    fn persist<'a>(
+        &'a self,
+        ts_unix: i64,
+        count: usize,
+        p50_us: u64,
+        p95_us: u64,
+        p99_us: u64,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<(), ApiError>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            crate::persist_snapshot(
+                &self.pool,
+                ts_unix,
+                count,
+                u32::try_from(p50_us).unwrap_or(u32::MAX),
+                u32::try_from(p95_us).unwrap_or(u32::MAX),
+                u32::try_from(p99_us).unwrap_or(u32::MAX),
+            )
+            .await
+            .map_err(|e| ApiError {
+                code: "cloud_persist_sla_snapshot_failed".into(),
+                message: format!("persist sla latency snapshot: {e}"),
+            })
+        })
     }
 }
 
