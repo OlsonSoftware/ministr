@@ -125,7 +125,7 @@ function HeadlineFallback() {
 }
 
 export const metadata = {
-  title: 'Upgrade - ministr',
+  title: 'Upgrade',
   description:
     'Upgrade your ministr Cloud subscription. Stripe-hosted Checkout with full PCI offloading.',
 };

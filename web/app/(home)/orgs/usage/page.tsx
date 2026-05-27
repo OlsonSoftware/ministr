@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { OrgUsagePage } from "./org-usage-page";
 
 export const metadata = {
-  title: "Org usage — ministr",
+  title: 'Org usage',
   description: "Per-member usage dashboard for your ministr org.",
 };
 

@@ -4,7 +4,7 @@ import Link from 'next/link';
 function MinistrLogo() {
   return (
     <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', textDecoration: 'none', color: 'inherit' }}>
-      <svg width="20" height="20" viewBox="0 0 926 926" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <svg width="24" height="24" viewBox="0 0 926 926" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
         <defs>
           <linearGradient id="ministrNavLogo" x1="1098.5" y1="-174" x2="-173.5" y2="1092" gradientUnits="userSpaceOnUse">
             <stop stopColor="#F8AC18"/>

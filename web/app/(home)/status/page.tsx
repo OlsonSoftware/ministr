@@ -116,7 +116,7 @@ function DegradedState({ baseUrl }: { baseUrl: string }) {
 }
 
 export const metadata = {
-  title: 'Status — ministr',
+  title: 'Status',
   description:
     'ministr cloud SLA snapshot: uptime, latency percentiles, and historical worst p95.',
 };
