@@ -67,7 +67,7 @@ aws-credential-types = "1"
 aws-config = { version = "1", default-features = false, features = ["behavior-version-latest"] }
 
 # HTML parsing
-scraper = "0.26"
+scraper = "0.27"
 
 # PDF text extraction
 pdf-extract = "0.10"
