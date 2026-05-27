@@ -151,6 +151,19 @@ pub async fn mount_cloud_routes(
         tracing::info!("resend webhook mounted via CloudRouterMounter — POST /webhooks/resend");
     }
 
+    // F5.1-b — SAML SP endpoints. Public routes (IdP doesn't carry
+    // bearer tokens); per-org config in `saml_configs` gates whether
+    // a given org has SAML SSO enabled. Migrated from cmd_serve_http
+    // inline branch in F31.2b-ii-E.
+    {
+        let saml_router =
+            crate::saml_routes(crate::SamlState::new(Arc::clone(&pool)));
+        router = router.merge(saml_router);
+        tracing::info!(
+            "saml SP routes mounted via CloudRouterMounter — GET /orgs/{{id}}/saml/metadata.xml + /login"
+        );
+    }
+
     Ok(CloudMountOutput {
         router,
         daemon_adapters: CloudDaemonAdapters::default(),

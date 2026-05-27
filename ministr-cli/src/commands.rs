@@ -1562,19 +1562,8 @@ pub async fn cmd_serve_http(
             // wiring was removed here; `ministr-cloud-tools serve` is
             // now the path that mounts both webhooks (via the
             // `CloudRouterMounter` MIT seam).
-            // F5.1-b — SAML SP endpoints. Public routes (IdP doesn't
-            // carry bearer tokens); per-org config gates whether
-            // a given org has SAML SSO enabled. F5.1-c will add the
-            // signed-assertion-receiving POST /orgs/{id}/saml/acs.
-            {
-                let saml_router = ministr_cloud::saml_routes(
-                    ministr_cloud::SamlState::new(Arc::clone(pool)),
-                );
-                composed = composed.merge(saml_router);
-                tracing::info!(
-                    "saml SP routes mounted — GET /orgs/{{id}}/saml/metadata.xml + /login"
-                );
-            }
+            // F31.2b-ii-E — SAML SP endpoints MIGRATED to
+            // `ministr_cloud::cli::mount_cloud_routes`.
             // F5.2-b/c — OIDC RP login + callback endpoints. Public
             // routes (browser-initiated; IdP doesn't carry bearer
             // tokens). The callback handler is wired to the same
