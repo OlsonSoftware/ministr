@@ -26,7 +26,7 @@ export function LoginForm() {
       const valid = await validateToken(target, t);
       if (!valid) {
         setError(
-          "Token rejected — check the key is active and the endpoint is reachable.",
+          "Token rejected -- check the key is active and the endpoint is reachable.",
         );
         setBusy(false);
         return;
@@ -52,14 +52,13 @@ export function LoginForm() {
           style={{
             padding: "1rem",
             border: "1px solid var(--rule)",
-            borderRadius: "0.5rem",
             background: "var(--bg-2)",
           }}
         >
           <p
             style={{
               fontFamily: "var(--font-mono), monospace",
-              fontSize: "0.75rem",
+              fontSize: "13px",
               color: "var(--ink-2)",
             }}
           >
@@ -69,16 +68,8 @@ export function LoginForm() {
         <button
           type="button"
           onClick={logout}
-          style={{
-            fontFamily: "var(--font-mono), monospace",
-            fontSize: "0.75rem",
-            color: "var(--ink-2)",
-            background: "none",
-            border: "1px solid var(--rule)",
-            borderRadius: "0.5rem",
-            padding: "0.5rem 1rem",
-            cursor: "pointer",
-          }}
+          className="v2-btn"
+          style={{ cursor: "pointer" }}
         >
           Sign out
         </button>
@@ -101,22 +92,14 @@ export function LoginForm() {
     <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem", marginBottom: "1.5rem" }}>
       <a
         href={githubUrl}
+        className="v2-btn v2-btn-primary"
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           gap: "0.5rem",
-          fontFamily: "var(--font-mono), monospace",
-          fontSize: "0.875rem",
-          fontWeight: 600,
-          padding: "0.75rem 1.25rem",
-          borderRadius: "0.5rem",
-          border: "1px solid var(--rule)",
-          background: "var(--bg-2)",
-          color: "var(--ink)",
           textDecoration: "none",
           cursor: "pointer",
-          transition: "background 150ms",
         }}
       >
         <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
@@ -127,7 +110,14 @@ export function LoginForm() {
 
       <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
         <hr style={{ flex: 1, border: "none", borderTop: "1px solid var(--rule)" }} />
-        <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: "0.6875rem", color: "var(--muted)" }}>
+        <span
+          style={{
+            fontFamily: "var(--font-mono), monospace",
+            fontSize: "12px",
+            letterSpacing: "0.04em",
+            color: "var(--muted)",
+          }}
+        >
           or paste an API key
         </span>
         <hr style={{ flex: 1, border: "none", borderTop: "1px solid var(--rule)" }} />
@@ -139,18 +129,7 @@ export function LoginForm() {
       style={{ display: "flex", flexDirection: "column", gap: "1rem" }}
     >
       <label style={{ display: "flex", flexDirection: "column", gap: "0.375rem" }}>
-        <span
-          style={{
-            fontFamily: "var(--font-mono), monospace",
-            fontSize: "0.6875rem",
-            fontWeight: 600,
-            textTransform: "uppercase",
-            letterSpacing: "0.08em",
-            color: "var(--ink-2)",
-          }}
-        >
-          API key
-        </span>
+        <span className="v2-meta">API key</span>
         <input
           type="password"
           value={token}
@@ -160,9 +139,8 @@ export function LoginForm() {
           autoComplete="off"
           style={{
             fontFamily: "var(--font-mono), monospace",
-            fontSize: "0.875rem",
+            fontSize: "14px",
             padding: "0.625rem 0.75rem",
-            borderRadius: "0.5rem",
             border: "1px solid var(--rule)",
             background: "var(--bg-2)",
             color: "var(--ink)",
@@ -175,7 +153,7 @@ export function LoginForm() {
         <summary
           style={{
             fontFamily: "var(--font-mono), monospace",
-            fontSize: "0.6875rem",
+            fontSize: "12px",
             color: "var(--muted)",
             cursor: "pointer",
           }}
@@ -189,9 +167,8 @@ export function LoginForm() {
           placeholder="https://mcp.ministr.ai"
           style={{
             fontFamily: "var(--font-mono), monospace",
-            fontSize: "0.875rem",
+            fontSize: "14px",
             padding: "0.625rem 0.75rem",
-            borderRadius: "0.5rem",
             border: "1px solid var(--rule)",
             background: "var(--bg-2)",
             color: "var(--ink)",
@@ -206,7 +183,7 @@ export function LoginForm() {
         <p
           style={{
             fontFamily: "var(--font-mono), monospace",
-            fontSize: "0.75rem",
+            fontSize: "13px",
             color: "#ef4444",
           }}
         >
@@ -217,21 +194,14 @@ export function LoginForm() {
       <button
         type="submit"
         disabled={busy || !token.trim()}
+        className="v2-btn v2-btn-primary"
         style={{
-          fontFamily: "var(--font-mono), monospace",
-          fontSize: "0.875rem",
-          fontWeight: 600,
-          padding: "0.625rem 1.25rem",
-          borderRadius: "0.5rem",
-          border: "none",
-          background: "var(--amber)",
-          color: "var(--bg)",
           cursor: busy ? "wait" : "pointer",
           opacity: busy || !token.trim() ? 0.5 : 1,
           transition: "opacity 150ms",
         }}
       >
-        {busy ? "Validating…" : "Sign in"}
+        {busy ? "Validating..." : "Sign in"}
       </button>
     </form>
     </>
