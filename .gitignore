@@ -50,6 +50,7 @@ launch/
 AGENTS.md
 PRESENTATION.md
 ROADMAP.md
+CI-RUNNER-SETUP.md
 
 # Evaluation artifacts
 eval/model-comparison.json
@@ -64,6 +65,13 @@ eval/lsp-nav/ra.lsif
 
 # Per-machine Azure env (DEMO.md §13) — PULUMI_CONFIG_PASSPHRASE etc.
 .env.azure
+
+# Pulumi stack config (contains prod infra details)
+deploy/azure/Pulumi.prod.yaml
+deploy/azure/Pulumi.*.yaml
+
+# Internal deployment phase docs
+deploy/azure/PHASE*.md
 
 # Design-iteration screenshots (archived, not versioned)
 /design-archive/

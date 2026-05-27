@@ -20,10 +20,9 @@ Releases are **automated by [release-plz](https://release-plz.dev)**
 (config: [`release-plz.toml`](release-plz.toml), workflow:
 [`.github/workflows/release-plz.yml`](.github/workflows/release-plz.yml)).
 You don't hand-bump versions or hand-write the changelog or tag — you
-just merge a bot PR. The repo is private and distribution is
-intentionally limited to a single GitHub Release per version, fronted by
-the `dl.ministr.app` Cloudflare Worker; crates.io publishing and the
-Homebrew tap stay disabled (`publish = false`).
+just merge a bot PR. Distribution is via GitHub Releases; crates.io
+publishing stays disabled (`publish = false`) until the API surface
+stabilises.
 
 ## How it works
 
@@ -93,9 +92,8 @@ three job groups, one GitHub Release:
   Release with `softprops/action-gh-release` (auto-published; tags
   containing `-` are marked prerelease automatically).
 
-Watch the Actions tab until the `release` job goes green. The Cloudflare
-Worker at `dl.ministr.app` will start serving the new tag's assets as
-soon as the Release is published — no manual sync step.
+Watch the Actions tab until the `release` job goes green. Assets are
+available on the GitHub Release as soon as the job completes.
 
 `x86_64-apple-darwin` is intentionally omitted from both matrices.
 `ort-sys` 2.0.0-rc.11 dropped prebuilt binaries for that target, and
@@ -137,7 +135,4 @@ extra asset.
 - A botched `vX.Y.Z` tag can be deleted: `git tag -d vX.Y.Z && git push
   origin :refs/tags/vX.Y.Z`. Also delete the GitHub Release.
 - A bad asset can be replaced by force-pushing the tag to a new commit
-  and letting the workflow recreate the Release. The Cloudflare Worker
-  caches release metadata for 7 days for immutable tags — replacing a
-  tag's assets in place is fine, but if you actually need an older
-  asset to disappear, also call the cache-purge endpoint on the Worker.
+  and letting the workflow recreate the Release.
