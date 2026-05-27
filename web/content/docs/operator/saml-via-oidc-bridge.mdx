@@ -20,12 +20,14 @@ so you can sign in today.
 
 ## Architecture
 
-```
-┌──────────┐   SAML    ┌─────────────────┐   OIDC    ┌─────────┐
-│ Your IdP │ ───────── │ Bridge (Auth0 / │ ───────── │ ministr │
-│ (Okta /  │ assertion │ Okta / Keycloak)│ id_token  │  cloud  │
-│ Entra ID)│           └─────────────────┘           └─────────┘
-└──────────┘
+```mermaid
+flowchart LR
+  idp["Your IdP\n(Okta / Entra ID)"]
+  bridge["Bridge\n(Auth0 / Okta / Keycloak)"]
+  ministr["ministr\ncloud"]
+
+  idp -- "SAML assertion" --> bridge
+  bridge -- "OIDC id_token" --> ministr
 ```
 
 The bridge acts as a SAML SP to your IdP and an OIDC IdP to
