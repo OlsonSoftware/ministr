@@ -641,6 +641,129 @@ pub async fn mount_cloud_routes(
         );
     }
 
+    // F3.5a — outbound webhook subscriptions CRUD + /test. Owner/admin
+    // ACL inside the handlers. Re-uses `webhook_dispatcher` so CRUD
+    // and the audit-fanout sink share TLS pool. Migrated in F31.2b-ii-N.
+    if let Some(dispatcher) = webhook_dispatcher.as_ref() {
+        let webhooks_state = crate::WebhooksState::new(
+            Arc::clone(&pool),
+            std::sync::Arc::clone(dispatcher),
+        );
+        let webhooks_router = crate::webhooks_routes(webhooks_state);
+        let webhooks_protected = ministr_mcp::auth::scope_protected_router(
+            webhooks_router,
+            oauth_store.clone(),
+            "ministr:read",
+        );
+        router = router.merge(webhooks_protected);
+        tracing::info!(
+            "webhook endpoints mounted via CloudRouterMounter — POST/GET/DELETE /api/v1/orgs/{{id}}/webhooks"
+        );
+    }
+
+    // F5.2-b/c — OIDC RP login + callback endpoints. Public routes
+    // (browser-initiated; IdP doesn't carry bearer tokens). Wired to
+    // the cloud's OAuth store (bearer tokens indistinguishable
+    // downstream), the cloud base URL (registered RP redirect_uri),
+    // and the audit chain (`oidc.login` events). Migrated in F31.2b-ii-N.
+    {
+        let mut oidc_state = crate::OidcState::new(Arc::clone(&pool))
+            .with_oauth_store(oauth_store.clone())
+            .with_audit(std::sync::Arc::clone(&cloud_audit_sink));
+        if let Some(base_url) = trimmed_env("MINISTR_CLOUD_BASE_URL") {
+            oidc_state = oidc_state.with_cloud_base_url(base_url);
+        }
+        let oidc_router = crate::oidc_routes(oidc_state);
+        router = router.merge(oidc_router);
+        tracing::info!(
+            "oidc RP routes mounted via CloudRouterMounter — GET /orgs/{{id}}/oidc/{{login,callback}}"
+        );
+    }
+
+    // F2.4 — Stripe Checkout + Customer Portal routes. Requires the
+    // outbound stripe client AND the cloud base URL. Mounted behind
+    // `ministr:read`. Migrated in F31.2b-ii-N.
+    if let (Some(stripe), Some(base_url)) = (
+        stripe_client.as_ref(),
+        trimmed_env("MINISTR_CLOUD_BASE_URL"),
+    ) {
+        let catalog: std::sync::Arc<dyn crate::PriceCatalog> =
+            std::sync::Arc::new(crate::EnvPriceCatalog::new(
+                trimmed_env("MINISTR_STRIPE_PRICE_PRO"),
+                trimmed_env("MINISTR_STRIPE_PRICE_TEAM"),
+            ));
+        let checkout_state = crate::CheckoutState::new(
+            std::sync::Arc::clone(stripe),
+            Arc::clone(&pool),
+            catalog,
+            base_url,
+        );
+        let checkout_router = crate::checkout_routes(checkout_state);
+        let checkout_protected = ministr_mcp::auth::scope_protected_router(
+            checkout_router,
+            oauth_store.clone(),
+            "ministr:read",
+        );
+        router = router.merge(checkout_protected);
+        tracing::info!(
+            "stripe checkout + portal mounted via CloudRouterMounter — POST /api/v1/billing/{{checkout,portal}}"
+        );
+    }
+
+    // F1.3 — GitHub sign-in flow. Mounted when GitHub OAuth App
+    // credentials AND a public base URL are present. Public routes
+    // (sign-in must be reachable without an existing token). Migrated
+    // in F31.2b-ii-N.
+    if let (Some(cid), Some(secret), Some(base_url)) = (
+        trimmed_env("MINISTR_GITHUB_CLIENT_ID"),
+        trimmed_env("MINISTR_GITHUB_CLIENT_SECRET"),
+        trimmed_env("MINISTR_CLOUD_BASE_URL"),
+    ) {
+        match crate::GitHubIdp::new(cid, secret) {
+            Ok(idp) => {
+                let mut state = crate::GitHubSigninState::new(
+                    std::sync::Arc::new(idp),
+                    (*pool).clone(),
+                    oauth_store.clone(),
+                    base_url.clone(),
+                );
+                if let Some(stripe) = stripe_client.as_ref() {
+                    state = state.with_stripe(std::sync::Arc::clone(stripe));
+                }
+                state = state.with_audit(std::sync::Arc::clone(&cloud_audit_sink));
+                if let Some(raw) = trimmed_env("MINISTR_WEB_ALLOWED_ORIGINS") {
+                    let origins: Vec<String> = raw
+                        .split(',')
+                        .map(|s| s.trim().to_owned())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    if !origins.is_empty() {
+                        state = state.with_web_allowed_origins(origins);
+                    }
+                }
+                router = router.merge(crate::github_signin_routes(state));
+                tracing::info!(
+                    base_url = %base_url,
+                    stripe_customer_seed = stripe_client.is_some(),
+                    "github sign-in mounted via CloudRouterMounter — GET /auth/github/{{start,callback}}"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "github sign-in disabled — invalid credentials"
+                );
+            }
+        }
+    } else if trimmed_env("MINISTR_GITHUB_CLIENT_ID").is_some()
+        || trimmed_env("MINISTR_GITHUB_CLIENT_SECRET").is_some()
+        || trimmed_env("MINISTR_CLOUD_BASE_URL").is_some()
+    {
+        tracing::warn!(
+            "github sign-in NOT mounted — MINISTR_GITHUB_CLIENT_ID, MINISTR_GITHUB_CLIENT_SECRET, and MINISTR_CLOUD_BASE_URL must ALL be set"
+        );
+    }
+
     // F3.7a — per-org audit list endpoint (GET /api/v1/orgs/{id}/audit).
     // Owner / admin only; members get 403. Mounted behind `ministr:read`
     // so any authenticated org member's token can call it; the role
