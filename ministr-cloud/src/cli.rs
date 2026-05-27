@@ -63,6 +63,7 @@ impl CloudRouterMounter for ClassicCloudMounter {
 /// Returns an [`ApiError`] when license validation refuses boot, the
 /// Postgres pool fails to open, migrations fail to apply, or any other
 /// cloud resource refuses to come up.
+#[allow(clippy::too_many_lines)] // sequential migration of inline cloud branch — each block is one route/adapter
 pub async fn mount_cloud_routes(
     _input: &CloudMountInput,
 ) -> Result<CloudMountOutput, ApiError> {
@@ -107,6 +108,8 @@ pub async fn mount_cloud_routes(
     let mut router = Router::new();
     let mut daemon_adapters = CloudDaemonAdapters::default();
     let mut server_adapters = CloudServerAdapters::default();
+    let mut oauth_adapters = CloudOAuthAdapters::default();
+    let mut admin_adapters = CloudAdminAdapters::default();
 
     // F2.x-b + F3.2-iii — single PostgresTenantCorpusFilter instance
     // wired into BOTH the MCP server (gates /mcp tool calls) and the
@@ -158,6 +161,87 @@ pub async fn mount_cloud_routes(
             crate::PostgresIndexJobSink::new(Arc::clone(&pool), None),
         );
         daemon_adapters.index_job_sink = Some(sink);
+    }
+
+    // F2.1 — GitHub App installation-token minter for private-repo
+    // cloning. Built independently of the GitHub OAuth IdP (F1.3) so a
+    // deployment can enable App-driven clones without also enabling
+    // the user-facing GitHub sign-in flow (or vice versa). Migrated
+    // from cmd_serve_http inline branch in F31.2b-ii-J.
+    if let (Some(app_id), Some(pem)) = (
+        trimmed_env("MINISTR_GITHUB_APP_ID"),
+        std::env::var("MINISTR_GITHUB_APP_PRIVATE_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+    ) {
+        match crate::GitHubAppClient::new(app_id.clone(), &pem) {
+            Ok(client) => {
+                let minter: std::sync::Arc<dyn ministr_api::InstallationTokenMinter> =
+                    std::sync::Arc::new(client);
+                daemon_adapters.installation_minter = Some(minter);
+                tracing::info!(
+                    app_id = %app_id,
+                    "GitHubAppClient wired via CloudRouterMounter — private-repo cloning via installation tokens"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "GitHubAppClient disabled — MINISTR_GITHUB_APP_ID/PRIVATE_KEY rejected"
+                );
+            }
+        }
+    } else if trimmed_env("MINISTR_GITHUB_APP_ID").is_some()
+        || std::env::var("MINISTR_GITHUB_APP_PRIVATE_KEY")
+            .ok()
+            .is_some_and(|s| !s.trim().is_empty())
+    {
+        tracing::warn!(
+            "GitHub App NOT wired — both MINISTR_GITHUB_APP_ID and MINISTR_GITHUB_APP_PRIVATE_KEY must be set"
+        );
+    }
+
+    // F3.4a + F5.5-a-plan-lookup — OAuth-store extensions.
+    // `PostgresApiKeyResolver` lets `mst_pk_…` service-account tokens
+    // authenticate via the `api_keys` table; `PostgresPlanResolver`
+    // resolves a Tenant's `plan` from `users.plan_id` instead of the
+    // hardcoded Pro default. Both fed via `CloudOAuthAdapters` slots.
+    {
+        let api_key_resolver =
+            crate::PostgresApiKeyResolver::new((*pool).clone()).into_dyn();
+        oauth_adapters.api_key_resolver = Some(api_key_resolver);
+        let plan_resolver =
+            crate::PostgresPlanResolver::new((*pool).clone()).into_dyn();
+        oauth_adapters.plan_resolver = Some(plan_resolver);
+        tracing::info!(
+            "PostgresApiKeyResolver + PostgresPlanResolver wired via CloudRouterMounter"
+        );
+    }
+
+    // F5.5-b-persist-read — `PostgresSlaWindowStore` feeds the /sla
+    // endpoint's `latency.window_30d_max_p95_ms` field. Migrated from
+    // cmd_serve_http inline branch in F31.2b-ii-J.
+    {
+        admin_adapters.sla_window_store = Some(
+            crate::PostgresSlaWindowStore::new((*pool).clone()).into_dyn(),
+        );
+        tracing::info!(
+            "PostgresSlaWindowStore wired via CloudRouterMounter"
+        );
+    }
+
+    // PHASE3 chunk 1 — `PostgresCorporaRepo` makes Postgres the
+    // source of truth for which corpora exist, so the list survives
+    // ACA pod recycling (the on-disk corpora.json is pod-ephemeral).
+    // Migrated from cmd_serve_http inline branch in F31.2b-ii-J.
+    {
+        let repo: std::sync::Arc<dyn ministr_api::CorporaRepo> = std::sync::Arc::new(
+            crate::PostgresCorporaRepo::new(Arc::clone(&pool), None),
+        );
+        server_adapters.corpora_repo = Some(repo);
+        tracing::info!(
+            "PostgresCorporaRepo wired via CloudRouterMounter"
+        );
     }
 
     // F2.6 — Atlas v0 pilot. Manifest + per-slug query stubs.
@@ -333,8 +417,8 @@ pub async fn mount_cloud_routes(
         router,
         daemon_adapters,
         server_adapters,
-        oauth_adapters: CloudOAuthAdapters::default(),
-        admin_adapters: CloudAdminAdapters::default(),
+        oauth_adapters,
+        admin_adapters,
         shutdown: None,
     })
 }
