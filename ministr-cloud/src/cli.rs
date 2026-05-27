@@ -65,7 +65,7 @@ impl CloudRouterMounter for ClassicCloudMounter {
 /// cloud resource refuses to come up.
 #[allow(clippy::too_many_lines)] // sequential migration of inline cloud branch — each block is one route/adapter
 pub async fn mount_cloud_routes(
-    _input: &CloudMountInput,
+    input: &CloudMountInput,
 ) -> Result<CloudMountOutput, ApiError> {
     // F31.2b-ii — `MINISTR_PG_URL` gates the entire cloud overlay.
     // Unset (self-hosted / dev / community) ⇒ no cloud routes mount.
@@ -241,6 +241,87 @@ pub async fn mount_cloud_routes(
         server_adapters.corpora_repo = Some(repo);
         tracing::info!(
             "PostgresCorporaRepo wired via CloudRouterMounter"
+        );
+    }
+
+    // F6.1-g — `PostgresSessionStorage` + `PostgresDropsLedger` for
+    // agent-session persistence across pod recycle. Migrated in
+    // F31.2b-ii-K.
+    {
+        let storage: std::sync::Arc<dyn ministr_api::SessionStorage> = std::sync::Arc::new(
+            crate::PostgresSessionStorage::from_arc(Arc::clone(&pool)),
+        );
+        let ledger: std::sync::Arc<dyn ministr_api::DropsLedger> = std::sync::Arc::new(
+            crate::PostgresDropsLedger::from_arc(Arc::clone(&pool)),
+        );
+        server_adapters.session_storage = Some(storage);
+        server_adapters.drops_ledger = Some(ledger);
+        tracing::info!(
+            "PostgresSessionStorage + PostgresDropsLedger wired via CloudRouterMounter"
+        );
+    }
+
+    // F6.2-c — `CloudSessionBundleStore` for signed-URL bundle export.
+    // Requires Azure account + signing secret + cloud base URL all set;
+    // returns None otherwise (handler falls back to inline-tar shape).
+    match crate::build_session_bundle_store_from_env(
+        trimmed_env("MINISTR_CLOUD_BASE_URL").as_deref(),
+    ) {
+        Ok(Some(store)) => {
+            let store: std::sync::Arc<dyn ministr_api::SessionBundleStore> =
+                std::sync::Arc::new(store);
+            server_adapters.session_bundle_store = Some(store);
+            tracing::info!(
+                "session bundle store wired via CloudRouterMounter — uploads to blob + returns signed URL"
+            );
+        }
+        Ok(None) => {
+            tracing::debug!(
+                "session bundle store disabled — inline-tar export shape continues"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "session bundle store construction failed — falling back to inline tar"
+            );
+        }
+    }
+
+    // PHASE3 chunk 5 — blob backend (Azure Blob / filesystem). Build
+    // once; feeds both the `BlobCorpusRestorer` (lazy bundle downloads
+    // on cold start) and the `BlobBackendSink` (post-ingest uploads).
+    // Migrated from cmd_serve_http inline branch in F31.2b-ii-K.
+    let blob_backend = crate::build_blob_backend_from_env().map_err(|e| ApiError {
+        code: "cloud_blob_backend_open_failed".into(),
+        message: format!("build blob backend from env: {e}"),
+    })?;
+    let blob_backend_arc = blob_backend.map(std::sync::Arc::new);
+
+    if let Some(backend_arc) = blob_backend_arc.as_ref() {
+        // F6.1-f — lazy on-demand bundle restorer. First query that
+        // touches a corpus_id missing from in-memory but present in
+        // `cloud_corpora` triggers `BlobCorpusRestorer::download`.
+        let restorer: std::sync::Arc<dyn ministr_api::CorpusRestorer> = std::sync::Arc::new(
+            crate::BlobCorpusRestorer::new(std::sync::Arc::clone(backend_arc)),
+        );
+        server_adapters.corpus_restorer = Some(restorer);
+        tracing::info!(
+            "BlobCorpusRestorer wired via CloudRouterMounter — first query lazy-downloads bundles"
+        );
+
+        // PHASE2 chunk 4 — durable corpus uploads. cmd_serve_http
+        // owns the completion channel + reactor (BlobSink::enqueue_upload
+        // calls on the mpsc rx); the mounter just supplies the sink.
+        let sink: std::sync::Arc<dyn ministr_api::BlobSink> = std::sync::Arc::new(
+            crate::BlobBackendSink::new(
+                std::sync::Arc::clone(backend_arc),
+                input.resolved_model.clone(),
+            ),
+        );
+        daemon_adapters.blob_sink = Some(sink);
+        tracing::info!(
+            "BlobBackendSink wired via CloudRouterMounter — bundles uploaded after every ingest"
         );
     }
 
