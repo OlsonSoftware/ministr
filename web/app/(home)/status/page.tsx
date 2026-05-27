@@ -18,9 +18,9 @@ export default async function StatusPage() {
   return (
     <div className="ministr-v2">
       {/* -- Header ------------------------------------------------ */}
-      <section className="v2-section" style={{ paddingBottom: 0 }}>
+      <section className="v2-section">
         <p className="v2-label">Status</p>
-        <h1 className="v2-h2" style={{ maxWidth: 'none' }}>Cloud SLA snapshot</h1>
+        <h1 className="v2-h2">Cloud SLA snapshot</h1>
         <p className="v2-sub">
           Live data from <code>{baseUrl}/sla</code>, refreshed every 30 seconds.
           Contractual SLA targets: ≥{SLA_TARGET_UPTIME_PCT}% uptime, p95 ≤{' '}

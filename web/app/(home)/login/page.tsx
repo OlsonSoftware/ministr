@@ -3,9 +3,9 @@ import { LoginForm } from "./login-form";
 export default function LoginPage() {
   return (
     <div className="ministr-v2">
-      <section className="v2-section" style={{ paddingTop: '64px' }}>
+      <section className="v2-section">
         <p className="v2-meta" style={{ marginBottom: '16px' }}>Account</p>
-        <h1 className="v2-h2" style={{ maxWidth: 'none' }}>Sign in to ministr</h1>
+        <h1 className="v2-h2">Sign in to ministr</h1>
         <p className="v2-sub">
           Paste an API key from the ministr desktop app (Settings &rarr; Cloud
           &rarr; API keys) to access authenticated pages.

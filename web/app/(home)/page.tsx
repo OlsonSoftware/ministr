@@ -24,7 +24,7 @@ export default function HomePage() {
 
       {/* ── Features ─────────────────────────────────────── */}
       <section className="v2-section">
-        <h2 className="v2-h2">Four things grep can&apos;t do.</h2>
+        <h2 className="v2-h2" style={{ maxWidth: "20ch" }}>Four things grep can&apos;t do.</h2>
         <div className="v2-features">
           <div className="v2-feature">
             <h3>Structural</h3>
@@ -49,7 +49,7 @@ export default function HomePage() {
 
       {/* ── Why ──────────────────────────────────────────── */}
       <section className="v2-section">
-        <h2 className="v2-h2">Why ministr.</h2>
+        <h2 className="v2-h2" style={{ maxWidth: "20ch" }}>Why ministr.</h2>
         <p className="v2-why-stat">
           Up to <em className="v2-num">90%</em> fewer tokens per task, with answers
           that are <em className="v2-num">structurally correct</em> instead of
@@ -61,7 +61,7 @@ export default function HomePage() {
 
       {/* ── Install ──────────────────────────────────────── */}
       <section className="v2-section" id="install">
-        <h2 className="v2-h2">One installer. Every platform.</h2>
+        <h2 className="v2-h2" style={{ maxWidth: "20ch" }}>One installer. Every platform.</h2>
         <div className="v2-install-block">
           <div className="v2-install-step">
             <div className="v2-step-num">1.</div>

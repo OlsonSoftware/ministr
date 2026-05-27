@@ -25,9 +25,9 @@ export function UpgradeHeadline() {
   const from = (params.get('from') ?? '').toLowerCase();
   const headline = PLAN_HEADLINE[from] ?? PLAN_HEADLINE.pro;
   return (
-    <section className="v2-section" style={{ paddingTop: '64px' }}>
+    <section className="v2-section">
       <p className="v2-meta" style={{ marginBottom: '16px' }}>Billing</p>
-      <h1 className="v2-h2" style={{ maxWidth: 'none' }}>{headline.title}</h1>
+      <h1 className="v2-h2">{headline.title}</h1>
       <p className="v2-sub">
         ministr Cloud -- {headline.price}.
       </p>

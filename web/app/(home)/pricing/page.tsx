@@ -6,9 +6,9 @@ export default function PricingPage() {
   return (
     <div className="ministr-v2">
       {/* -- Header ------------------------------------------------ */}
-      <section className="v2-section" style={{ paddingBottom: 0 }}>
+      <section className="v2-section">
         <p className="v2-label">Pricing</p>
-        <h1 className="v2-h2" style={{ maxWidth: 'none' }}>MIT core. Paid cloud.</h1>
+        <h1 className="v2-h2">MIT core. Paid cloud.</h1>
         <p className="v2-sub">{POSITIONING_LINE}</p>
       </section>
 
