@@ -51,6 +51,19 @@ AGENTS.md
 PRESENTATION.md
 ROADMAP.md
 CI-RUNNER-SETUP.md
+DEMO.md
+ONBOARDING.md
+
+# Internal deployment infra
+deploy/azure/
+fly.toml
+docker-compose.dev.yml
+scripts/azure-env.sh
+scripts/e2e-*
+scripts/demo-*
+scripts/rebrand*
+scripts/dev-loop.sh
+scripts/build-pkg.sh
 
 # Evaluation artifacts
 eval/model-comparison.json
