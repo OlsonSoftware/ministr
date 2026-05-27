@@ -30,30 +30,30 @@ export function CallbackHandler() {
   }, [token, error, login]);
 
   return (
-    <main
-      className="ministr-v2"
-      style={{ padding: "6rem 1.5rem", textAlign: "center" }}
+    <section
+      className="v2-section"
+      style={{ paddingTop: '64px', textAlign: 'center' }}
     >
       {status === "processing" && (
         <p
           style={{
             fontFamily: "var(--font-mono), monospace",
-            fontSize: "0.875rem",
+            fontSize: "14px",
             color: "var(--ink-2)",
           }}
         >
-          Completing sign-in&hellip;
+          Completing sign-in...
         </p>
       )}
       {status === "done" && (
         <p
           style={{
             fontFamily: "var(--font-mono), monospace",
-            fontSize: "0.875rem",
-            color: "#22c55e",
+            fontSize: "14px",
+            color: "#34d399",
           }}
         >
-          Signed in. Redirecting&hellip;
+          Signed in. Redirecting...
         </p>
       )}
       {status === "error" && (
@@ -61,7 +61,7 @@ export function CallbackHandler() {
           <p
             style={{
               fontFamily: "var(--font-mono), monospace",
-              fontSize: "0.875rem",
+              fontSize: "14px",
               color: "#ef4444",
             }}
           >
@@ -71,7 +71,7 @@ export function CallbackHandler() {
             href="/login/"
             style={{
               fontFamily: "var(--font-mono), monospace",
-              fontSize: "0.75rem",
+              fontSize: "13px",
               color: "var(--amber)",
               textDecoration: "underline",
             }}
@@ -80,6 +80,6 @@ export function CallbackHandler() {
           </a>
         </div>
       )}
-    </main>
+    </section>
   );
 }

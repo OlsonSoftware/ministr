@@ -17,8 +17,9 @@ export default async function StatusPage() {
 
   return (
     <div className="ministr-v2">
-      <section className="v2-section" style={{ paddingTop: '64px' }}>
-        <p className="v2-meta" style={{ marginBottom: '16px' }}>Status</p>
+      {/* -- Header ------------------------------------------------ */}
+      <section className="v2-section" style={{ paddingBottom: 0 }}>
+        <p className="v2-label">Status</p>
         <h1 className="v2-h2" style={{ maxWidth: 'none' }}>Cloud SLA snapshot</h1>
         <p className="v2-sub">
           Live data from <code>{baseUrl}/sla</code>, refreshed every 30 seconds.
@@ -29,14 +30,16 @@ export default async function StatusPage() {
 
       <hr className="v2-rule" />
 
+      {/* -- SLA data ---------------------------------------------- */}
       <section className="v2-section">
         {sla ? <SlaCards sla={sla} /> : <DegradedState baseUrl={baseUrl} />}
       </section>
 
+      {/* -- Footer ------------------------------------------------ */}
       <footer className="v2-footer">
-        <div style={{ color: 'var(--muted)', fontSize: '12px', fontFamily: 'var(--font-mono), monospace' }}>
-          Server-side fetch, cached 30s. Pipeline: skeleton → latency → persist-write → persist-read.
-        </div>
+        <p className="v2-footer-note">
+          Server-side fetch, cached 30s. Pipeline: skeleton &rarr; latency &rarr; persist-write &rarr; persist-read.
+        </p>
         <div className="v2-footer-links">
           <a href="/">Home</a>
           <a href="/pricing">Pricing</a>
@@ -55,10 +58,10 @@ function SlaCards({ sla }: { sla: SlaResponse }) {
     <div className="v2-features">
       <div className="v2-feature">
         <h3>Uptime</h3>
-        <p style={{ fontSize: '28px', fontWeight: 500, color: 'var(--ink)', marginBottom: '8px' }}>
+        <p className={'v2-stat-num v2-stat-num-ok'}>
           {formatUptime(sla.uptime_secs)}
         </p>
-        <p>Since boot · {sla.started_at_iso}</p>
+        <p>Since boot &middot; {sla.started_at_iso}</p>
         <p>Version {sla.version}</p>
       </div>
 
@@ -66,15 +69,10 @@ function SlaCards({ sla }: { sla: SlaResponse }) {
         <h3>Current p95</h3>
         {latency ? (
           <>
-            <p style={{
-              fontSize: '28px',
-              fontWeight: 500,
-              color: meetingP95 ? '#34d399' : 'var(--amber)',
-              marginBottom: '8px',
-            }}>
+            <p className={'v2-stat-num' + (meetingP95 ? ' v2-stat-num-ok' : ' v2-stat-num-warn')}>
               {latency.p95_ms}ms
             </p>
-            <p>p50: {latency.p50_ms}ms · p99: {latency.p99_ms}ms</p>
+            <p>p50: {latency.p50_ms}ms &middot; p99: {latency.p99_ms}ms</p>
             <p>{latency.count} samples</p>
           </>
         ) : (
@@ -85,12 +83,7 @@ function SlaCards({ sla }: { sla: SlaResponse }) {
       <div className="v2-feature">
         <h3>30-day worst p95</h3>
         {latency?.window_30d_max_p95_ms != null ? (
-          <p style={{
-            fontSize: '28px',
-            fontWeight: 500,
-            color: latency.window_30d_max_p95_ms <= SLA_TARGET_P95_MS ? '#34d399' : 'var(--amber)',
-            marginBottom: '8px',
-          }}>
+          <p className={'v2-stat-num' + (latency.window_30d_max_p95_ms <= SLA_TARGET_P95_MS ? ' v2-stat-num-ok' : ' v2-stat-num-warn')}>
             {latency.window_30d_max_p95_ms}ms
           </p>
         ) : (
@@ -112,14 +105,8 @@ function SlaCards({ sla }: { sla: SlaResponse }) {
 
 function DegradedState({ baseUrl }: { baseUrl: string }) {
   return (
-    <div style={{
-      border: '1px solid var(--rule)',
-      padding: '32px',
-      color: 'var(--ink-2)',
-    }}>
-      <h2 style={{ color: 'var(--amber)', fontSize: '16px', fontWeight: 500, marginBottom: '14px' }}>
-        Backend unreachable
-      </h2>
+    <div className="v2-callout">
+      <h2 className="v2-callout-title">Backend unreachable</h2>
       <p>
         The /sla endpoint at <code>{baseUrl}/sla</code> did not respond.
         Check back in 30 seconds.

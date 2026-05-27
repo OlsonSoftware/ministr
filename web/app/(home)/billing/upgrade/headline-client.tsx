@@ -1,4 +1,4 @@
-// F2.4 — client island for the `/billing/upgrade` page headline.
+// F2.4 -- client island for the `/billing/upgrade` page headline.
 //
 // We can't read `?from=<plan>` server-side: the site uses
 // `output: 'export'` (static export) which forbids per-request
@@ -8,7 +8,7 @@
 // headline at hydrate via `useSearchParams()`.
 //
 // `useSearchParams()` REQUIRES a `<Suspense>` boundary around it
-// (Next.js fails the build otherwise) — the parent page provides one.
+// (Next.js fails the build otherwise) -- the parent page provides one.
 
 'use client';
 
@@ -17,7 +17,7 @@ import { useSearchParams } from 'next/navigation';
 const PLAN_HEADLINE: Record<string, { title: string; price: string }> = {
   pro: { title: 'Upgrade to Pro', price: '$20 / month' },
   team: { title: 'Upgrade to Team', price: '$30 / seat / month (3-seat min)' },
-  enterprise: { title: 'Enterprise — contact sales', price: 'Custom' },
+  enterprise: { title: 'Enterprise -- contact sales', price: 'Custom' },
 };
 
 export function UpgradeHeadline() {
@@ -25,11 +25,12 @@ export function UpgradeHeadline() {
   const from = (params.get('from') ?? '').toLowerCase();
   const headline = PLAN_HEADLINE[from] ?? PLAN_HEADLINE.pro;
   return (
-    <header className="flex flex-col gap-2">
-      <h1 className="text-3xl font-semibold">{headline.title}</h1>
-      <p className="text-fd-muted-foreground">
-        ministr Cloud — {headline.price}.
+    <section className="v2-section" style={{ paddingTop: '64px' }}>
+      <p className="v2-meta" style={{ marginBottom: '16px' }}>Billing</p>
+      <h1 className="v2-h2" style={{ maxWidth: 'none' }}>{headline.title}</h1>
+      <p className="v2-sub">
+        ministr Cloud -- {headline.price}.
       </p>
-    </header>
+    </section>
   );
 }

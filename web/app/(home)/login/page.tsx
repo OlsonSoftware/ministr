@@ -3,39 +3,34 @@ import { LoginForm } from "./login-form";
 export default function LoginPage() {
   return (
     <div className="ministr-v2">
-      <div
-        style={{
-          maxWidth: "28rem",
-          margin: "0 auto",
-          padding: "6rem 1.5rem 4rem",
-        }}
-      >
-        <h1
-          style={{
-            fontFamily: "var(--font-geist), sans-serif",
-            fontSize: "1.5rem",
-            fontWeight: 600,
-            color: "var(--ink)",
-            marginBottom: "0.5rem",
-          }}
-        >
-          Sign in to ministr
-        </h1>
-        <p
-          style={{
-            fontFamily: "var(--font-geist), sans-serif",
-            fontSize: "0.875rem",
-            color: "var(--ink-2)",
-            marginBottom: "2rem",
-            lineHeight: 1.6,
-          }}
-        >
+      <section className="v2-section" style={{ paddingTop: '64px' }}>
+        <p className="v2-meta" style={{ marginBottom: '16px' }}>Account</p>
+        <h1 className="v2-h2" style={{ maxWidth: 'none' }}>Sign in to ministr</h1>
+        <p className="v2-sub">
           Paste an API key from the ministr desktop app (Settings &rarr; Cloud
           &rarr; API keys) to access authenticated pages.
         </p>
+      </section>
 
-        <LoginForm />
-      </div>
+      <hr className="v2-rule" />
+
+      <section className="v2-section">
+        <div style={{ maxWidth: '28rem' }}>
+          <LoginForm />
+        </div>
+      </section>
+
+      <footer className="v2-footer">
+        <div className="v2-footer-links">
+          <a href="/">Home</a>
+          <a href="/docs">Docs</a>
+        </div>
+      </footer>
     </div>
   );
 }
+
+export const metadata = {
+  title: 'Sign in - ministr',
+  description: 'Sign in to ministr with GitHub or an API key.',
+};

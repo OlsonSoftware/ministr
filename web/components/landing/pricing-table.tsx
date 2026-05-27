@@ -1,19 +1,19 @@
-// F2.5 — pricing table component.
+// F2.5 -- pricing table component.
 //
-// Server component (zero client JS — preserves the Lighthouse ≥ 95
+// Server component (zero client JS -- preserves the Lighthouse >= 95
 // target on /pricing). Reads tiers from `lib/pricing.ts` so the
-// matrix on the page matches ROADMAP §3 byte-for-byte.
+// matrix on the page matches ROADMAP S3 byte-for-byte.
 //
-// SOLID: single responsibility — render the table. Tier shape comes
-// from the data module; the page composes layout (header, hero,
-// footer) around this component.
+// Redesigned to match the v2 landing aesthetic: flat bordered grid
+// cells (like v2-features), amber accent on the highlighted tier,
+// no rounded corners, monospace labels.
 
 import Link from 'next/link';
 import { TIERS, type Tier } from '@/lib/pricing';
 
 export function PricingTable() {
   return (
-    <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="v2-tier-grid">
       {TIERS.map((tier) => (
         <TierCard key={tier.slug} tier={tier} />
       ))}
@@ -23,39 +23,29 @@ export function PricingTable() {
 
 function TierCard({ tier }: { tier: Tier }) {
   const isExternal = /^(https?:|mailto:)/.test(tier.cta.href);
-  const borderClass = tier.highlighted
-    ? 'border-fd-primary'
-    : 'border-fd-border';
   return (
     <article
-      className={`flex flex-col gap-4 rounded-lg border p-5 ${borderClass}`}
+      className={
+        'v2-tier-card' + (tier.highlighted ? ' v2-tier-card-highlight' : '')
+      }
     >
-      <header className="flex flex-col gap-1">
-        <h3 className="text-lg font-semibold">{tier.name}</h3>
-        <p className="text-2xl font-mono">{tier.price}</p>
-        <p className="text-xs text-fd-muted-foreground">{tier.tagline}</p>
-      </header>
-      <ul className="flex flex-col gap-2 text-sm">
+      <div className="v2-tier-head">
+        <h3 className="v2-tier-name">{tier.name}</h3>
+        <p className="v2-tier-price">{tier.price}</p>
+      </div>
+      <p className="v2-tier-tagline">{tier.tagline}</p>
+      <ul className="v2-tier-bullets">
         {tier.bullets.map((b) => (
-          <li key={b} className="flex gap-2">
-            <span aria-hidden className="text-fd-muted-foreground">·</span>
-            <span>{b}</span>
-          </li>
+          <li key={b}>{b}</li>
         ))}
       </ul>
-      <div className="mt-auto pt-2">
+      <div className="v2-tier-cta">
         {isExternal ? (
-          <a
-            className="inline-flex items-center rounded-md border border-fd-border px-3 py-1.5 text-sm hover:border-fd-primary"
-            href={tier.cta.href}
-          >
+          <a className="v2-btn" href={tier.cta.href}>
             {tier.cta.label}
           </a>
         ) : (
-          <Link
-            className="inline-flex items-center rounded-md border border-fd-border px-3 py-1.5 text-sm hover:border-fd-primary"
-            href={tier.cta.href}
-          >
+          <Link className="v2-btn" href={tier.cta.href}>
             {tier.cta.label}
           </Link>
         )}

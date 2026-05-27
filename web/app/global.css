@@ -1349,6 +1349,160 @@ body:has(.ministr-v2) {
 .v2-footer-links a { color: var(--ink-2); text-decoration: none; }
 .v2-footer-links a:hover { color: var(--amber); }
 
+/* ── Pricing tier grid ──────────────────────────────────────────── */
+.v2-tier-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  border-top: 1px solid var(--rule);
+  border-left: 1px solid var(--rule);
+}
+.v2-tier-card {
+  padding: 32px 30px 36px;
+  border-right: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  transition: background 160ms ease;
+}
+.v2-tier-card:hover { background: var(--bg-2); }
+.v2-tier-card-highlight {
+  background: var(--bg-2);
+  border-right-color: var(--rule-2);
+  border-bottom-color: var(--rule-2);
+}
+.v2-tier-head { margin-bottom: 12px; }
+.v2-tier-name {
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--amber);
+  margin: 0 0 6px;
+}
+.v2-tier-price {
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-size: 22px;
+  font-weight: 500;
+  color: var(--ink);
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+.v2-tier-tagline {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  margin: 0 0 16px;
+}
+.v2-tier-bullets {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 20px;
+  flex: 1;
+}
+.v2-tier-bullets li {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  padding: 4px 0 4px 18px;
+  position: relative;
+}
+.v2-tier-bullets li::before {
+  content: '-';
+  position: absolute;
+  left: 0;
+  color: var(--muted);
+}
+.v2-tier-cta { margin-top: auto; }
+
+/* ── Prose block ───────────────────────────────────────────────── */
+.v2-prose {
+  font-size: 17px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  max-width: 58ch;
+}
+.v2-prose + .v2-prose { margin-top: 14px; }
+.v2-prose strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+.v2-prose code {
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-size: 0.86em;
+  color: var(--amber);
+}
+.v2-prose a {
+  color: var(--amber);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+.v2-prose a:hover { color: var(--amber-2); }
+
+/* ── Status big number ─────────────────────────────────────────── */
+.v2-stat-num {
+  font-size: 28px;
+  font-weight: 500;
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  color: var(--ink);
+  margin-bottom: 8px;
+  letter-spacing: -0.02em;
+}
+.v2-stat-num-ok { color: #34d399; }
+.v2-stat-num-warn { color: var(--amber); }
+
+/* ── Degraded state callout ────────────────────────────────────── */
+.v2-callout {
+  border: 1px solid var(--rule);
+  padding: 32px;
+}
+.v2-callout-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--amber);
+  margin: 0 0 14px;
+}
+.v2-callout p {
+  font-size: 16px;
+  color: var(--ink-2);
+  line-height: 1.55;
+  margin: 0;
+}
+.v2-callout code {
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-size: 0.86em;
+  color: var(--ink-2);
+}
+
+/* ── Section label (monospace eyebrow) ─────────────────────────── */
+.v2-label {
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin: 0 0 16px;
+}
+
+/* ── Footer note ───────────────────────────────────────────────── */
+.v2-footer-note {
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+/* ── Lead paragraph (larger than v2-sub, used for hero emphasis) ─ */
+.v2-lead-strong {
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--ink);
+  margin: 0 0 16px;
+  line-height: 1.45;
+}
+
 /* ── Responsive ─────────────────────────────────────────────────── */
 @media (max-width: 640px) {
   .ministr-v2 { font-size: 16px; padding: 0 22px; }
@@ -1365,6 +1519,7 @@ body:has(.ministr-v2) {
   .v2-h2 { font-size: 30px; margin-bottom: 36px; }
   .v2-features { grid-template-columns: 1fr; }
   .v2-feature { padding: 26px 24px 30px; }
+  .v2-tier-grid { grid-template-columns: 1fr; }
   .v2-footer { padding: 44px 0 56px; }
 }
 

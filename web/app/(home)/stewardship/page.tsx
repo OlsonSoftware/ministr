@@ -3,13 +3,14 @@ import Link from 'next/link';
 export default function StewardshipPage() {
   return (
     <div className="ministr-v2">
-      <section className="v2-section" style={{ paddingTop: '64px' }}>
-        <p className="v2-meta" style={{ marginBottom: '16px' }}>Stewardship</p>
+      {/* -- Header ------------------------------------------------ */}
+      <section className="v2-section" style={{ paddingBottom: 0 }}>
+        <p className="v2-label">Stewardship</p>
         <h1 className="v2-h2" style={{ maxWidth: 'none' }}>ministr stewardship</h1>
         <p className="v2-sub">
           Our open-core posture and public commitment to contributors and users.
           Borrowed in shape from{' '}
-          <a href="https://handbook.gitlab.com/handbook/company/stewardship/" style={{ color: 'var(--amber)' }}>
+          <a href="https://handbook.gitlab.com/handbook/company/stewardship/" className="v2-offer" style={{ textDecoration: 'underline', textUnderlineOffset: '3px' }}>
             GitLab&apos;s stewardship handbook
           </a>.
         </p>
@@ -17,12 +18,13 @@ export default function StewardshipPage() {
 
       <hr className="v2-rule" />
 
+      {/* -- The promise ------------------------------------------- */}
       <section className="v2-section">
         <h2 className="v2-h2">The promise</h2>
-        <p style={{ color: 'var(--ink)', fontWeight: 500, fontSize: '18px', marginBottom: '16px' }}>
+        <p className="v2-lead-strong">
           When a feature is open source, we won&apos;t move that feature to a paid tier.
         </p>
-        <p style={{ color: 'var(--ink-2)', lineHeight: '1.55' }}>
+        <p className="v2-prose">
           A feature that ships under MIT in this repository stays under MIT. We may
           remove a feature outright if the underlying capability is being removed from
           the whole product. We will not paywall existing open-source functionality.
@@ -31,9 +33,10 @@ export default function StewardshipPage() {
 
       <hr className="v2-rule" />
 
+      {/* -- What is MIT ------------------------------------------- */}
       <section className="v2-section">
         <h2 className="v2-h2">What is MIT</h2>
-        <p style={{ color: 'var(--ink-2)', lineHeight: '1.55' }}>
+        <p className="v2-prose">
           The local stack — everything that runs on a user&apos;s own machine — is
           MIT-licensed. The six core workspace crates (<code>ministr-core</code>,{' '}
           <code>ministr-api</code>, <code>ministr-daemon</code>,{' '}
@@ -47,9 +50,10 @@ export default function StewardshipPage() {
 
       <hr className="v2-rule" />
 
+      {/* -- What is closed ---------------------------------------- */}
       <section className="v2-section">
         <h2 className="v2-h2">What is closed</h2>
-        <p style={{ color: 'var(--ink-2)', lineHeight: '1.55' }}>
+        <p className="v2-prose">
           The hosted ministr Cloud service at <code>mcp.ministr.ai</code> and
           the Enterprise on-prem image are paid products. The code that exists{' '}
           <em>only because</em> we run a multi-tenant service or sell an enterprise
@@ -62,6 +66,7 @@ export default function StewardshipPage() {
 
       <hr className="v2-rule" />
 
+      {/* -- In practice ------------------------------------------- */}
       <section className="v2-section">
         <h2 className="v2-h2">In practice</h2>
         <div className="v2-features" style={{ gridTemplateColumns: '1fr 1fr' }}>
@@ -71,7 +76,7 @@ export default function StewardshipPage() {
           </div>
           <div className="v2-feature">
             <h3>Tools are open</h3>
-            <p>All 19 MCP tools are MIT and will remain MIT.</p>
+            <p>All 20 MCP tools are MIT and will remain MIT.</p>
           </div>
           <div className="v2-feature">
             <h3>Self-host is full</h3>
@@ -84,10 +89,11 @@ export default function StewardshipPage() {
         </div>
       </section>
 
+      {/* -- Footer ------------------------------------------------ */}
       <footer className="v2-footer">
-        <div style={{ color: 'var(--muted)', fontSize: '12px', fontFamily: 'var(--font-mono), monospace' }}>
+        <p className="v2-footer-note">
           Sourcegraph killed Cody Free/Pro in July 2025 and went Enterprise-only. That move motivates this document.
-        </div>
+        </p>
         <div className="v2-footer-links">
           <Link href="/pricing">Pricing</Link>
           <Link href="/">Home</Link>
