@@ -49,14 +49,12 @@ ministr-daemon/        — HTTP API over Unix domain socket
 ministr-mcp/           — MCP server adapter (rmcp)
 ministr-cli/           — binary entry point
 ministr-app/src-tauri/ — Tauri v2 desktop app with system tray
-ministr-cloud/         — proprietary multi-tenant cloud surface (LicenseRef-Proprietary)
-ministr-atlas/         — proprietary Atlas curated-repo crate (LicenseRef-Proprietary)
-web/                   — Next.js 16 marketing site + fumadocs developer docs
-deploy/                — Azure Pulumi, Helm chart, Docker Compose, Caddy, macOS installer
-workers/               — Cloudflare Workers (release-proxy)
+ministr-cloud/         — multi-tenant cloud surface (proprietary)
+ministr-atlas/         — Atlas curated-repo crate (proprietary)
+web/                   — Next.js marketing site + fumadocs developer docs
+deploy/                — Helm chart, Docker Compose, macOS installer
 examples/              — sample .ministr.toml configs for different project types
 docs/operator/         — operator runbooks (also served via web/ at /docs/operator/*)
-scripts/               — e2e harness, demo scripts, CI helpers
 ```
 
 ### Layered architecture
@@ -74,7 +72,7 @@ No layer may skip a level. Transport calls service; service calls storage.
 | Subsystem | Location | Purpose |
 |-----------|----------|---------|
 | Session Shadow | `ministr-core/src/session/` | Tracks delivered content, skips re-sends, detects drops |
-| Prefetch Engine | `ministr-core/src/session/prefetch/` | Six prefetch strategies. Post-read: sequential, structural, topical (always) plus cross-session (monolithic mode only — daemon-proxy path has it scaffolded, not yet wired). Post-survey: survey-expand, agent-plan (intent-based). |
+| Prefetch Engine | `ministr-core/src/session/prefetch/` | Six prefetch strategies for proactive content delivery |
 | Budget Manager | `ministr-core/src/session/budget.rs` | Advisory token-usage estimate (internal accounting; name pending rename) |
 | Coherence | `ministr-core/src/coherence.rs` | Watches filesystem, invalidates stale content |
 | Bridge Linker | `ministr-core/src/code/bridge/` | Detects cross-language bindings — 13 kinds: Tauri commands + events, napi-rs, PyO3, wasm-bindgen, HTTP routes, FFI, cgo, JNI, UniFFI, gRPC, Flutter channels, Electron IPC |
@@ -82,14 +80,18 @@ No layer may skip a level. Transport calls service; service calls storage.
 ### Dependency rule
 
 ```
-ministr-cli  →  ministr-mcp  →  ministr-core
-                ↑    ↘        ↑
-            uses rmcp  ministr-api (shared types)
-            (MCP SDK)     ↑
-                      ministr-daemon (UDS API)
+ministr-cli ─── ministr-mcp ─── ministr-core
+                    │                 │
+                    │            ministr-api
+                    │           (shared types)
+                  rmcp              │
+                (MCP SDK)     ministr-daemon
+                              (HTTP/UDS API)
 ```
 
-`ministr-core` never imports MCP or transport types. `ministr-api` never depends on `ministr-core`.
+Arrows point from consumer to dependency (left to right, top to
+bottom). `ministr-core` never imports MCP or transport types.
+`ministr-api` never depends on `ministr-core`.
 
 ## Making changes
 
