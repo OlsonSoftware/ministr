@@ -80,6 +80,35 @@ closed is how the cloud and enterprise products fund the open core.
   inbound=outbound model). We will not relicense the OSS crates to a
   source-available or commercial license.
 
+## Release pipeline
+
+F31.5 (2026-05-27): the released `ministr` binary is built in
+ministr-private and published to **this** repo's
+[Releases page](https://github.com/OlsonSoftware/ministr/releases) at
+the same `v<X.Y.Z>` tag. The build chain:
+
+1. The Copilot coding agent authors a `chore: release vX.Y.Z` PR in
+   this repo (bumps Cargo.toml versions + writes CHANGELOG) — version
+   source of truth stays here.
+2. Merging the PR pushes tag `v<X.Y.Z>` on this repo's main and fires
+   a `repository_dispatch` event into ministr-private's
+   `release.yml`.
+3. ministr-private's workflow clones BOTH repos as siblings, builds
+   `ministr-cli-cloud` (binary name `ministr`) against the MIT crates
+   that live here, runs the same macOS signing + notarization path,
+   then uploads the cloud-capable artifacts to this repo's release at
+   `v<X.Y.Z>` via a cross-repo PAT.
+
+`install.sh` (`curl -fsSL https://ministr.ai/install.sh | bash`) and
+`homebrew/ministr.rb` are unchanged — they fetch from this repo's
+releases page. MIT contributors can also build the local-only binary
+directly with `cargo build -p ministr-cli --release` from this
+workspace.
+
+The deterministic "no release artifacts without a green build"
+property is preserved by ministr-private's matrix: every shard must
+pass before the cross-repo upload step runs.
+
 ## Why we publish this
 
 Sourcegraph killed Cody Free and Cody Pro in July 2025 and went

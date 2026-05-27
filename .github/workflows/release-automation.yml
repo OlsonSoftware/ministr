@@ -1,11 +1,7 @@
 name: Release automation
 
 # ===================== THE RELEASE CONTRACT =========================
-# Releases are AGENT-MANAGED. The brittle deterministic step (git-cliff
-# computing a version + concatenating a CHANGELOG from squashed commit
-# subjects) is gone — it collapsed multi-change squashes into one vague
-# line and clobbered hand-written migration notes. The ONLY supported
-# way to cut a release:
+# Releases are AGENT-MANAGED. The ONLY supported way to cut a release:
 #
 #   1. land work on `main` (Conventional Commits)
 #   2. `request-release` detects releasable commits since the last tag
@@ -16,24 +12,34 @@ name: Release automation
 #      Breaking/Migration notes), and opens ONE
 #      `chore: release vX.Y.Z` PR — then requests review.
 #   3. you review + MERGE that PR
-#   4. build-then-tag, on the merge commit (UNCHANGED — this is the
-#      deterministic safety net and must stay deterministic):
-#        gate  → is the manifest version still un-tagged?
-#        build → call release.yml; build EVERY artifact, no tag yet
-#        tag   → ONLY if the build is fully green: push the `vX.Y.Z`
-#                tag, then create the GitHub Release with the
-#                already-built artifacts attached.
+#   4. F31.5 (2026-05-27): on the merge commit, this workflow only
+#      pushes the v<X.Y.Z> tag here and dispatches the build to
+#      ministr-private's release.yml. The PUBLIC repo no longer
+#      builds release artifacts — that work moved to the proprietary
+#      sibling workspace, which clones BOTH repos as siblings, builds
+#      the cloud-capable `ministr-cli-cloud` binary (linked against the
+#      MIT crates that live here), signs + bundles, and uploads to
+#      THIS repo's release at the same v<X.Y.Z> tag via a cross-repo
+#      PAT. install.sh + homebrew see no change — they keep fetching
+#      from github.com/OlsonSoftware/ministr/releases.
 #
-# A failed build never strands a tag (nothing is tagged until green).
-# Tags are a *consequence of a green build* — never hand-made. The
-# agent only ever AUTHORS the release PR; it can merge nothing and tag
-# nothing. Humans gate the merge; CI gates the tag.
+# Failure mode (acceptable trade-off): if private's build fails after
+# the tag lands here, the tag exists in public but the release at that
+# tag has no attached artifacts. Re-dispatch private's release.yml
+# (workflow_dispatch with the same `version` input) — the upload is
+# idempotent (softprops/action-gh-release appends to an existing
+# release rather than replacing).
 #
-# Prerequisites: the GitHub Copilot coding agent must be enabled for
-# this repository, and `secrets.RELEASE_PLZ_TOKEN` must be a user PAT
-# with read/write on issues, pull requests, contents and actions
-# (a user identity is required to start a Copilot agent session — the
-# default GITHUB_TOKEN cannot).
+# Prerequisites:
+#   * GitHub Copilot coding agent enabled for THIS repo
+#   * secrets.RELEASE_PLZ_TOKEN — user PAT, read/write on issues, PRs,
+#     contents, actions (required to start a Copilot agent session)
+#   * secrets.MINISTR_PRIVATE_DISPATCH_TOKEN — fine-grained PAT with
+#     `actions: write` on OlsonSoftware/ministr-private (fires the
+#     repository_dispatch that triggers the private build)
+#   * ministr-private side has its own secrets (Apple signing, R2
+#     sccache, PUBLIC_RELEASE_TOKEN) — see
+#     ministr-private/.github/README.md
 # ====================================================================
 
 on:
@@ -435,20 +441,24 @@ jobs:
             echo "Assigned Copilot coding agent to #$issue (default model — model pin not honored by the API; set the org/Agents default to Claude Opus 4.7)."
           fi
 
-  # ── Deterministic safety net ────────────────────────────────────────
+  # ── F31.5: tag here + dispatch private; build moved out ─────────────
   #
-  # The expensive build runs ONLY on the release-bump commit itself —
-  # `is_release` is true iff `v<manifest>` is still untagged AND this
-  # push is the release commit (HEAD subject `chore: release vX.Y.Z`,
-  # or the push changed ministr-cli's `version`). The earlier
-  # state-only gate ("any untagged manifest") re-ran the whole
-  # multi-platform matrix on EVERY non-path-ignored push during the
-  # merge→tag window (e.g. a CI-only PR), which is the waste this
-  # removes. Trade-off (accepted): a failed release build no longer
-  # auto-retries on the next unrelated push — re-run / re-merge the
-  # `chore: release` PR to retry. `build`/`tag-and-release` are also
-  # version-scoped via `concurrency` so the same release can't run the
-  # matrix twice. Tag-on-green and "no tag until green" are unchanged.
+  # The release-bump commit fires `tag` (push v<X.Y.Z>) +
+  # `dispatch-private` (fire repository_dispatch into ministr-private,
+  # which owns the build matrix + signing + cross-repo artifact upload
+  # back to THIS repo's release). `is_release` is true iff
+  # `v<manifest>` is still untagged AND this push is the release commit
+  # (HEAD subject `chore: release vX.Y.Z`, or the push changed
+  # ministr-cli's `version`).
+  #
+  # The "no tag until green build" property is preserved on the
+  # PRIVATE side now: private's release.yml gates the GitHub Release
+  # create on the entire matrix being green. If the private build
+  # fails after this job pushes the tag here, the tag exists but the
+  # release at that tag has no attached artifacts — re-dispatch
+  # private's workflow with the same `version` input to retry the
+  # upload (idempotent — softprops/action-gh-release appends rather
+  # than replaces).
   gate:
     name: Detect pending release
     needs: state
@@ -483,28 +493,37 @@ jobs:
             echo "is_release=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # Build EVERY artifact for this commit. No tag exists yet. Any failure
-  # here ⇒ tag-and-release is skipped ⇒ nothing tagged/released.
-  build:
-    name: Build release artifacts
-    needs: gate
-    if: ${{ github.repository_owner == 'OlsonSoftware' && needs.gate.outputs.is_release == 'true' }}
-    concurrency:
-      group: release-build-v${{ needs.gate.outputs.version }}
-      cancel-in-progress: true
-    uses: ./.github/workflows/release.yml
-    secrets: inherit
+  # F31.5 (2026-05-27): build + tag-and-release replaced with `tag` +
+  # `dispatch-private`. The PUBLIC repo no longer builds release
+  # artifacts itself — that work moved to ministr-private's release.yml,
+  # which clones both repos as siblings, builds the cloud-capable
+  # `ministr-cli-cloud` binary, signs + bundles, then uploads to THIS
+  # repo's release at the same v<X.Y.Z> tag via a cross-repo PAT. This
+  # repo still OWNS the version + tag (single source of truth for
+  # ministr's version number), but the release-binary artifacts are
+  # populated by the private workflow.
+  #
+  # See STEWARDSHIP.md → "Release pipeline" + ../ministr-private/.github/README.md
+  # for the secret + PAT setup.
 
-  # Green build ⇒ push the tag, then publish the Release with artifacts.
-  tag-and-release:
-    name: Tag + GitHub Release
-    needs: [gate, build]
+  # Push the v<X.Y.Z> tag on a green release-bump commit. NO BUILD here —
+  # the deterministic "no tag without green build" property is now
+  # enforced by ministr-private's release.yml (which only creates the
+  # release after every matrix shard is green). Failure path: if
+  # ministr-private's build fails, the tag still exists here (this job
+  # ran first) but the release at that tag has no artifacts attached.
+  # The user fixes the failure and re-dispatches the private workflow
+  # with the same version input — re-runs are append-only on the
+  # existing release.
+  tag:
+    name: Push tag v<X.Y.Z>
+    needs: gate
     if: ${{ github.repository_owner == 'OlsonSoftware' && needs.gate.outputs.is_release == 'true' }}
     concurrency:
       group: release-tag-v${{ needs.gate.outputs.version }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     permissions:
       contents: write
     steps:
@@ -513,13 +532,11 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
-      - name: Push tag (only reached on a fully green build)
+      - name: Push tag
         env:
           VER: ${{ needs.gate.outputs.version }}
         run: |
           set -euo pipefail
-          # Annotated tags need a committer identity; this fresh
-          # checkout has none.
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if git rev-parse "v$VER" >/dev/null 2>&1; then
@@ -529,19 +546,36 @@ jobs:
             git push origin "refs/tags/v$VER"
           fi
 
-      - name: Download built artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: release-artifacts
-          path: dist
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
-        with:
-          tag_name: v${{ needs.gate.outputs.version }}
-          generate_release_notes: true
-          draft: false
-          prerelease: ${{ contains(needs.gate.outputs.version, '-') }}
-          files: dist/*
+  # Trigger ministr-private's release.yml via repository_dispatch. The
+  # private workflow handles the entire build matrix + signing + upload
+  # back to THIS repo's release. We don't wait for it — the private
+  # workflow is independently observable in github.com/OlsonSoftware/
+  # ministr-private/actions. Resilient: failures there don't block
+  # other work on this branch (the chore: release PR is already
+  # merged, the tag is pushed; only the artifact upload is pending).
+  dispatch-private:
+    name: Trigger ministr-private build
+    needs: [gate, tag]
+    if: ${{ github.repository_owner == 'OlsonSoftware' && needs.gate.outputs.is_release == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: repository_dispatch into ministr-private
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          # F31.5 secret: PAT with `actions: write` on
+          # github.com/OlsonSoftware/ministr-private (lets us fire its
+          # release.yml via repository_dispatch).
+          GH_TOKEN: ${{ secrets.MINISTR_PRIVATE_DISPATCH_TOKEN }}
+          VER: ${{ needs.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::MINISTR_PRIVATE_DISPATCH_TOKEN unset. Configure a fine-grained PAT (actions:write on OlsonSoftware/ministr-private) in this repo's Secrets → Actions."
+            exit 1
+          fi
+          gh api --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "repos/OlsonSoftware/ministr-private/dispatches" \
+            -f event_type="build-release" \
+            -f "client_payload[version]=$VER"
+          echo "::notice::dispatched ministr-private/release.yml for v$VER — watch github.com/OlsonSoftware/ministr-private/actions"
