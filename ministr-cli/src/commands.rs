@@ -1544,24 +1544,13 @@ pub async fn cmd_serve_http(
                 );
             }
 
-            // F2.6 — Atlas v0 pilot. Manifest + per-slug query stubs.
-            // Mounted behind `ministr:read` so any paid-tier token
-            // admits; the F2.3 `AtlasAccessRule` runs higher up in the
-            // composed stack and short-circuits unauthenticated /
-            // free callers with the 402 paywall. Cloud-only —
-            // self-hosted serve leaves Atlas unmounted.
-            let atlas_router =
-                ministr_atlas::atlas_routes(ministr_atlas::AtlasState::from_seed_list());
-            let atlas_protected = ministr_mcp::auth::scope_protected_router(
-                atlas_router,
-                store.clone(),
-                "ministr:read",
-            );
-            composed = composed.merge(atlas_protected);
-            tracing::info!(
-                count = ministr_atlas::ATLAS_SEED_REPOS.len(),
-                "atlas v0 mounted — GET /atlas/manifest.json + /atlas/{{slug}}/*"
-            );
+            // F31.2b-ii-C — atlas v0 pilot MIGRATED to
+            // `ministr_cloud::cli::mount_cloud_routes`. The inline
+            // wiring was removed here; `ministr-cloud-tools serve`
+            // is now the path that mounts atlas (via the
+            // `CloudRouterMounter` MIT seam). The MIT `ministr` binary
+            // never had a legitimate need for atlas routes (atlas is
+            // cloud-only), so this is a correct narrowing.
             // F1.5 sub-bullet 3 — Stripe webhook receiver. Mounted
             // when both the cloud pool AND the Stripe signing secret
             // are present. Public route (Stripe is the caller); the
