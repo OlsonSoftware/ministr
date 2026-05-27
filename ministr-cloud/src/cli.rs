@@ -83,47 +83,48 @@ pub async fn mount_cloud_routes(
     // → refuse to boot. F5.4-e-revoke-* spawns a background refresh
     // task and returns a shutdown handle so graceful_shutdown fires on
     // mid-flight revocation. Migrated from cmd_serve_http inline branch
-    // in F31.2b-ii-L. NOTE: while orgs_routes still lives inline,
-    // cmd_serve_http ALSO runs license_validation — the duplication
-    // sunsets when orgs migrates (next chunk).
+    // in F31.2b-ii-L.
     let mut shutdown: Option<std::sync::Arc<dyn RevocationHandle>> = None;
-    match crate::validate_license_from_env().await {
-        Ok(None) => {
-            tracing::info!(
-                "ClassicCloudMounter: community mode (no MINISTR_LICENSE_KEY / MINISTR_LICENSE_PUBLIC_KEY set)"
-            );
-        }
-        Ok(Some(claims)) => {
-            tracing::info!(
-                license = %crate::render_license_summary(&claims),
-                "Enterprise license validated via CloudRouterMounter"
-            );
-            if let Some((url, cache_path, grace_secs)) = crate::revocation_url_config() {
-                let refresh_secs = crate::revocation_refresh_secs();
-                let jwt = std::env::var("MINISTR_LICENSE_KEY").unwrap_or_default();
-                let hash = crate::license_jwt_id_hash(&jwt);
-                let handle = RevocationShutdownHandle::new();
-                shutdown = Some(std::sync::Arc::new(handle.clone()));
-                crate::spawn_refresh_task(
-                    url,
-                    cache_path,
-                    refresh_secs,
-                    grace_secs,
-                    hash,
-                    Some(handle),
+    let license_claims: Option<std::sync::Arc<crate::LicenseClaims>> =
+        match crate::validate_license_from_env().await {
+            Ok(None) => {
+                tracing::info!(
+                    "ClassicCloudMounter: community mode (no MINISTR_LICENSE_KEY / MINISTR_LICENSE_PUBLIC_KEY set)"
                 );
+                None
             }
-        }
-        Err(e) => {
-            return Err(ApiError {
-                code: "cloud_license_refused_boot".into(),
-                message: format!(
-                    "license gate refused boot: {e}. Set both MINISTR_LICENSE_KEY + \
-                     MINISTR_LICENSE_PUBLIC_KEY, OR unset both to run in community mode."
-                ),
-            });
-        }
-    }
+            Ok(Some(claims)) => {
+                tracing::info!(
+                    license = %crate::render_license_summary(&claims),
+                    "Enterprise license validated via CloudRouterMounter"
+                );
+                if let Some((url, cache_path, grace_secs)) = crate::revocation_url_config() {
+                    let refresh_secs = crate::revocation_refresh_secs();
+                    let jwt = std::env::var("MINISTR_LICENSE_KEY").unwrap_or_default();
+                    let hash = crate::license_jwt_id_hash(&jwt);
+                    let handle = RevocationShutdownHandle::new();
+                    shutdown = Some(std::sync::Arc::new(handle.clone()));
+                    crate::spawn_refresh_task(
+                        url,
+                        cache_path,
+                        refresh_secs,
+                        grace_secs,
+                        hash,
+                        Some(handle),
+                    );
+                }
+                Some(std::sync::Arc::new(claims))
+            }
+            Err(e) => {
+                return Err(ApiError {
+                    code: "cloud_license_refused_boot".into(),
+                    message: format!(
+                        "license gate refused boot: {e}. Set both MINISTR_LICENSE_KEY + \
+                         MINISTR_LICENSE_PUBLIC_KEY, OR unset both to run in community mode."
+                    ),
+                });
+            }
+        };
 
     // Self-contained Postgres pool owned by the cloud impl. Today the
     // MIT serve's inline cloud branch ALSO opens its own pool for the
@@ -515,6 +516,128 @@ pub async fn mount_cloud_routes(
         router = router.merge(siem_config_protected);
         tracing::info!(
             "siem config CRUD mounted via CloudRouterMounter — POST/GET/DELETE /api/v1/orgs/{{id}}/siem/config"
+        );
+    }
+
+    // F3.1c-i + F2.4 — outbound Stripe client. Used by orgs (Customer
+    // creation at org-creation), checkout/portal routes, and the
+    // github-signin Customer-seed hook. Built once when
+    // MINISTR_STRIPE_SECRET_KEY is set. Migrated in F31.2b-ii-M.
+    let stripe_client = trimmed_env("MINISTR_STRIPE_SECRET_KEY").and_then(|key| {
+        match crate::StripeClient::new(key) {
+            Ok(c) => {
+                tracing::info!(
+                    "stripe outbound client built via CloudRouterMounter — Customer creation + Meters API enabled"
+                );
+                Some(std::sync::Arc::new(c))
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "stripe client disabled — STRIPE_SECRET_KEY rejected");
+                None
+            }
+        }
+    });
+
+    // F3.5a — outbound webhook dispatcher. Shared between the
+    // webhook-routes router (CRUD + /test endpoint, chunk N) AND the
+    // F3.5b-i WebhookFanoutSink below so both paths reuse one TLS
+    // connection pool. Migrated in F31.2b-ii-M.
+    let webhook_dispatcher = match crate::WebhookDispatcher::new() {
+        Ok(d) => Some(std::sync::Arc::new(d)),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "webhook dispatcher init failed; webhooks + fan-out disabled"
+            );
+            None
+        }
+    };
+
+    // F3.7a + F3.5b-i + F5.3-d-i — audit sink chain. Postgres always
+    // lands first (durable BEFORE outbound dispatch). WebhookFanoutSink
+    // joins when the dispatcher initialised; SplunkHecSink joins when
+    // SIEM env is set; PerOrgSiemDispatcher always joins (it no-ops
+    // for events without org_id or for orgs without a SIEM config).
+    // Used by orgs_routes/api_keys_routes/oidc/github_signin.
+    let cloud_audit_sink: std::sync::Arc<dyn ministr_api::AuditSink> = {
+        let postgres_audit: std::sync::Arc<dyn ministr_api::AuditSink> = std::sync::Arc::new(
+            crate::PostgresAuditSink::from_arc(Arc::clone(&pool)),
+        );
+        let mut sinks: Vec<std::sync::Arc<dyn ministr_api::AuditSink>> =
+            vec![std::sync::Arc::clone(&postgres_audit)];
+        let mut chain_desc = String::from("PostgresAuditSink");
+        if let Some(d) = webhook_dispatcher.as_ref() {
+            let fanout = crate::WebhookFanoutSink::new(
+                Arc::clone(&pool),
+                std::sync::Arc::clone(d),
+            );
+            sinks.push(std::sync::Arc::new(fanout));
+            chain_desc.push_str(" → WebhookFanoutSink");
+        }
+        if let Some(hec) = crate::SplunkHecSink::from_env() {
+            sinks.push(std::sync::Arc::new(hec));
+            chain_desc.push_str(" → SplunkHecSink");
+        }
+        {
+            let per_org = crate::PerOrgSiemDispatcher::new(Arc::clone(&pool));
+            sinks.push(std::sync::Arc::new(per_org));
+            chain_desc.push_str(" → PerOrgSiemDispatcher");
+        }
+        tracing::info!(chain = %chain_desc, "audit pipeline wired via CloudRouterMounter");
+        if sinks.len() == 1 {
+            postgres_audit
+        } else {
+            std::sync::Arc::new(crate::ChainedAuditSink::new(sinks))
+        }
+    };
+
+    // F3.1a/b — orgs CRUD + member listing + magic-link invites.
+    // Migrated in F31.2b-ii-M.
+    {
+        let mut orgs_state = crate::OrgsState::from_arc(Arc::clone(&pool));
+        if let Some(base) = trimmed_env("MINISTR_CLOUD_BASE_URL") {
+            orgs_state = orgs_state.with_cloud_base_url(&base);
+        }
+        if let Some(stripe) = stripe_client.as_ref() {
+            orgs_state = orgs_state.with_stripe(std::sync::Arc::clone(stripe));
+        }
+        orgs_state = orgs_state.with_audit(std::sync::Arc::clone(&cloud_audit_sink));
+        let mailer = crate::build_mail_sender_from_env();
+        orgs_state = orgs_state.with_mailer(mailer);
+        // F5.4-b — thread the cached license claims so the invite
+        // handler enforces the contracted seat cap. None → community
+        // mode (no cap).
+        if let Some(claims) = license_claims.as_ref() {
+            orgs_state = orgs_state.with_license(std::sync::Arc::clone(claims));
+        }
+        let orgs_router = crate::orgs_routes(orgs_state);
+        let orgs_protected = ministr_mcp::auth::scope_protected_router(
+            orgs_router,
+            oauth_store.clone(),
+            "ministr:read",
+        );
+        router = router.merge(orgs_protected);
+        tracing::info!(
+            "orgs endpoints mounted via CloudRouterMounter — POST/GET /api/v1/orgs, members, invites"
+        );
+    }
+
+    // F3.4a — service-account API keys (mint, list, revoke).
+    // Cloud-only; mounted behind `ministr:read` because every action
+    // targets the caller's own keys. Migrated in F31.2b-ii-M.
+    {
+        let api_keys_router = crate::api_keys_routes(
+            crate::ApiKeysState::new((*pool).clone())
+                .with_audit(std::sync::Arc::clone(&cloud_audit_sink)),
+        );
+        let api_keys_protected = ministr_mcp::auth::scope_protected_router(
+            api_keys_router,
+            oauth_store.clone(),
+            "ministr:read",
+        );
+        router = router.merge(api_keys_protected);
+        tracing::info!(
+            "api_keys endpoints mounted via CloudRouterMounter — POST/GET/DELETE /api/v1/api_keys"
         );
     }
 
