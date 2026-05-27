@@ -38,13 +38,22 @@ will remain true.
 
 The hosted **ministr Cloud** service at `mcp.ministr.ai` and the **Enterprise**
 on-prem image are paid products. The code that exists *only because* we run a
-multi-tenant service or sell an enterprise SKU lives in proprietary crates
-in this repository:
+multi-tenant service or sell an enterprise SKU lives in proprietary crates in
+a separate **private sibling repository** at
+`github.com/OlsonSoftware/ministr-private` (owner-only). That repo hosts:
 
 | Crate | License | Purpose |
 |---|---|---|
-| [`ministr-cloud`](ministr-cloud/) | LicenseRef-Proprietary | Tenant data model, Stripe glue, GitHub-OAuth adapter, quota middleware, billing portal |
-| [`ministr-atlas`](ministr-atlas/) | LicenseRef-Proprietary | Curated repo list, scheduler, re-index cron, license filter, opt-out registry |
+| `ministr-cloud` | LicenseRef-Proprietary | Tenant data model, Stripe glue, GitHub-OAuth adapter, quota middleware, billing portal |
+| `ministr-atlas` | LicenseRef-Proprietary | Curated repo list, scheduler, re-index cron, license filter, opt-out registry |
+| `ministr-cloud-tools` | LicenseRef-Proprietary | Operator CLI: atlas reindex, audit retention, license mint/rotate/revoke, deployment diagnostics |
+| `ministr-cli-cloud` | LicenseRef-Proprietary | Official cloud-capable `ministr` binary (5-line shim over `ministr_cloud_tools::run`) |
+
+The split happened in F31.3–F31.4 (2026-05-27) via `git filter-repo`. Before
+that, the three closed crates were source-available in this repository; they
+were moved out wholesale, with full authorship history, into the private
+sibling. Existing clones from before that date still contain the
+source-available history — the scrub is forward-looking for new clones.
 
 None of this code is useful on the local stack — it only exists because we
 run a multi-tenant service or sell into compliance-bound buyers. Keeping it

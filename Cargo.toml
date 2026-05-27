@@ -1,5 +1,10 @@
 [workspace]
-members = ["ministr-api", "ministr-core", "ministr-daemon", "ministr-mcp", "ministr-cli", "ministr-app/src-tauri", "ministr-cloud", "ministr-atlas", "ministr-cloud-tools"]
+# F31.4 (2026-05-27): ministr-cloud, ministr-atlas, ministr-cloud-tools
+# moved out of this workspace into the private sibling repo at
+# github.com/OlsonSoftware/ministr-private via `git filter-repo`. Their
+# history is preserved there with original authorship + dates; this
+# workspace now ships ONLY the MIT open-core crates. See STEWARDSHIP.md.
+members = ["ministr-api", "ministr-core", "ministr-daemon", "ministr-mcp", "ministr-cli", "ministr-app/src-tauri"]
 resolver = "3"
 
 [workspace.package]
@@ -246,16 +251,15 @@ ministr-api = { path = "ministr-api", version = "0.6.0" }
 ministr-core = { path = "ministr-core", version = "0.6.0" }
 ministr-daemon = { path = "ministr-daemon", version = "0.6.0" }
 ministr-mcp = { path = "ministr-mcp", version = "0.6.0" }
-# F31.2b-ii-B — `ministr-cloud-tools serve` depends on ministr-cli's
-# lib target to share `cmd_serve_http` + `resolve_config`. MIT crate;
-# proprietary consumers are fine.
+# F31.2b-ii-B — `ministr-cloud-tools serve` (which lives in the
+# private sibling repo post-F31.4) depends on ministr-cli's lib
+# target to share `cmd_serve_http` + `resolve_config`. MIT crate;
+# proprietary consumers reach it from the sibling workspace.
 ministr-cli = { path = "ministr-cli", version = "0.6.0" }
-# Closed crate — proprietary, link-time only. Consumers that import
-# this become un-distributable as MIT binaries unless they ship the
-# closed crate alongside; this is intentional. The MIT source stays
-# MIT, but binaries built with this dep included carry the
-# `ministr-cloud` proprietary terms.
-ministr-cloud = { path = "ministr-cloud", version = "0.6.0" }
-# Closed crate — Atlas curated network of pre-indexed OSS repos.
-# Same proprietary-licence rationale as ministr-cloud above.
-ministr-atlas = { path = "ministr-atlas", version = "0.6.0" }
+# F31.4 (2026-05-27): ministr-cloud, ministr-atlas, and
+# ministr-cloud-tools workspace.dependencies entries were removed
+# along with the crates themselves; their full history (123 commits)
+# was moved to github.com/OlsonSoftware/ministr-private via
+# `git filter-repo`. The MIT seams those crates plugged into
+# (CloudRouterMounter trait + adapter sinks in ministr-api) remain
+# here.
