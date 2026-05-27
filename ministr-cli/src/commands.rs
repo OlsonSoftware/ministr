@@ -921,92 +921,26 @@ pub async fn cmd_serve_http(
             store.clone(),
             "ministr:read",
         );
-        // F2.3 — quota enforcement state. Probe selection: when
-        // cloud_pool is Some, use PostgresCorporaProbe so the count is
-        // tenant-scoped against cloud_corpora rows (the source of
-        // truth in cloud mode — register_corpus writes here via
-        // IndexJobSink before the worker indexes anything, so the
-        // in-memory CorpusRegistry trails). Self-hosted serve uses
-        // RegistryProbe over the in-memory registry, which is correct
-        // because every corpus IS in-memory there. Surfaced by
-        // F-Test-1's cloud-registry gap finding + lit up by F-Test-5.
-        let probe: std::sync::Arc<dyn ministr_cloud::UsageProbe> =
-            if let Some(pool) = cloud_pool.as_ref() {
+        // F31.2b-ii-P — F2.2 rate-limit + F2.3 quota middleware on
+        // daemon_write_router moved into ClassicCloudMounter via
+        // CloudMountOutput.daemon_write_layer. When the mounter
+        // populates the slot, wrap the router with cloud layers;
+        // otherwise mount the router unwrapped (self-hosted serve
+        // stays open-core-clean).
+        let daemon_write_wrapped = match cloud
+            .as_ref()
+            .and_then(|c| c.daemon_write_layer.clone())
+        {
+            Some(layer) => {
                 tracing::info!(
-                    "PostgresCorporaProbe wired — quota counts cloud_corpora per-tenant"
+                    "daemon-write quota + rate-limit wrapped via CloudRouterMounter (F31.2b-ii-P)"
                 );
-                std::sync::Arc::new(ministr_cloud::PostgresCorporaProbe::new(Arc::clone(pool)))
-            } else {
-                std::sync::Arc::new(ministr_cloud::RegistryProbe::new(Arc::clone(
-                    &corpus_registry,
-                )))
-            };
-        // Rules are ordered cheapest-first (CorpusCountRule's match
-        // predicate is a string compare). Mounted as a single Tower
-        // layer beneath the scope guards — see the daemon_write_q
-        // binding below.
-        let quota_state = ministr_cloud::QuotaState::new(
-            vec![
-                std::sync::Arc::new(ministr_cloud::CorpusCountRule),
-                std::sync::Arc::new(ministr_cloud::AtlasAccessRule),
-            ],
-            probe,
-        );
-
-        // F2.2 — rate-limit write/clone routes on cloud only. Two
-        // layers stack: per-IP first (rejects pre-auth abuse before
-        // touching the bucket store with a tenant key), then
-        // per-tenant (rejects leaked-key bursts from authenticated
-        // callers). Self-hosted serve mounts neither — the
-        // open-core stack stays untouched.
-        let daemon_write_rl = if cloud_env.pg_url.is_some() {
-            let ip_bucket = std::sync::Arc::new(ministr_cloud::InMemoryBucket::new(
-                /* capacity */ 20.0,
-                /* refill_per_sec */ 0.5,
-            ));
-            let tenant_bucket = std::sync::Arc::new(ministr_cloud::InMemoryBucket::new(
-                /* capacity */ 60.0,
-                /* refill_per_sec */ 1.0,
-            ));
-            let ip_cfg = std::sync::Arc::new(ministr_cloud::RateLimitConfig::new(
-                ip_bucket,
-                ministr_cloud::ip_key::<axum::body::Body>,
-                "per-ip",
-            ));
-            let tenant_cfg = std::sync::Arc::new(ministr_cloud::RateLimitConfig::new(
-                tenant_bucket,
-                ministr_cloud::tenant_key::<axum::body::Body>,
-                "per-tenant",
-            ));
-            daemon_write_router
-                .layer(axum::middleware::from_fn_with_state(
-                    tenant_cfg,
-                    ministr_cloud::rate_limit_middleware,
-                ))
-                .layer(axum::middleware::from_fn_with_state(
-                    ip_cfg,
-                    ministr_cloud::rate_limit_middleware,
-                ))
-        } else {
-            daemon_write_router
-        };
-        // F2.3 — quota check sits BETWEEN the scope guard (auth) and
-        // the rate limit (anti-abuse). Order matters: the request needs
-        // a populated `Tenant` extension (from scope_protected_router)
-        // before the quota middleware can read it, and quota rejection
-        // (402) should preempt rate-limit accounting (429) so an
-        // already-over-cap tenant doesn't also burn rate-limit
-        // tokens on the rejection.
-        let daemon_write_q = if cloud_env.pg_url.is_some() {
-            daemon_write_rl.layer(axum::middleware::from_fn_with_state(
-                quota_state.clone(),
-                ministr_cloud::quota_middleware,
-            ))
-        } else {
-            daemon_write_rl
+                layer.wrap(daemon_write_router)
+            }
+            None => daemon_write_router,
         };
         let daemon_write_p = ministr_mcp::auth::scope_protected_router(
-            daemon_write_q,
+            daemon_write_wrapped,
             store.clone(),
             "ministr:write",
         );

@@ -122,11 +122,28 @@ pub struct CloudMountOutput {
     pub oauth_adapters: CloudOAuthAdapters,
     /// Adapters wired into `ministr_mcp::admin::AdminState`.
     pub admin_adapters: CloudAdminAdapters,
+    /// Wraps daemon-mutation routes (POST /api/v1/corpora, clone, etc.)
+    /// with cloud-only Tower layers — F2.2 rate-limit + F2.3 quota
+    /// enforcement. When None, daemon routes mount unwrapped. When
+    /// Some, the local serve calls [`DaemonWriteLayer::wrap`] on the
+    /// `daemon_write_router` before scope-protecting it.
+    pub daemon_write_layer: Option<Arc<dyn DaemonWriteLayer>>,
     /// Optional license-revocation shutdown handle. When set, the
     /// local serve calls [`RevocationHandle::shutdown_future`] inside
     /// `axum::serve(…).with_graceful_shutdown(…)` and exits 1 on
     /// post-serve [`RevocationHandle::is_revoked`].
     pub shutdown: Option<Arc<dyn RevocationHandle>>,
+}
+
+/// Wraps a Tower-layered router with cloud-only request middleware
+/// (F2.2 per-IP + per-tenant rate limit, F2.3 corpus-count + atlas-access
+/// quota). Used by the daemon-write router so unwrapped self-hosted
+/// callers keep the open-core stack untouched.
+pub trait DaemonWriteLayer: Send + Sync + std::fmt::Debug {
+    /// Apply the cloud middleware to `router` and return the wrapped
+    /// router. Implementations should layer rate-limit then quota so
+    /// quota rejections (402) preempt rate-limit accounting (429).
+    fn wrap(&self, router: Router) -> Router;
 }
 
 impl std::fmt::Debug for CloudMountOutput {
@@ -138,6 +155,7 @@ impl std::fmt::Debug for CloudMountOutput {
             .field("oauth_adapters", &self.oauth_adapters)
             .field("admin_adapters", &self.admin_adapters)
             .field("shutdown_set", &self.shutdown.is_some())
+            .field("daemon_write_layer_set", &self.daemon_write_layer.is_some())
             .finish()
     }
 }

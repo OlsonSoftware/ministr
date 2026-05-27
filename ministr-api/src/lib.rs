@@ -43,7 +43,8 @@ pub use api_key::{
 pub use audit::{AuditEntry, AuditSink};
 pub use cloud_router::{
     CloudAdminAdapters, CloudDaemonAdapters, CloudMountInput, CloudMountOutput,
-    CloudOAuthAdapters, CloudRouterMounter, CloudServerAdapters, RevocationHandle,
+    CloudOAuthAdapters, CloudRouterMounter, CloudServerAdapters, DaemonWriteLayer,
+    RevocationHandle,
 };
 pub use blob_sink::BlobSink;
 pub use drops_ledger::{

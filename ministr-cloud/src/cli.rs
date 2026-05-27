@@ -21,7 +21,8 @@ use axum::Router;
 
 use ministr_api::{
     ApiError, CloudAdminAdapters, CloudDaemonAdapters, CloudMountInput, CloudMountOutput,
-    CloudOAuthAdapters, CloudRouterMounter, CloudServerAdapters, RevocationHandle,
+    CloudOAuthAdapters, CloudRouterMounter, CloudServerAdapters, DaemonWriteLayer,
+    RevocationHandle,
 };
 
 use crate::revocation_fetch::RevocationShutdownHandle;
@@ -787,12 +788,58 @@ pub async fn mount_cloud_routes(
         );
     }
 
+    // F2.3 + F2.2 — daemon-write Tower layers. Probe selection:
+    // PostgresCorporaProbe is the source of truth in cloud mode
+    // (register_corpus writes here via IndexJobSink before the worker
+    // indexes anything, so the in-memory CorpusRegistry trails); a
+    // RegistryProbe-based fallback only exists for the no-cloud-pool
+    // self-hosted case, which won't reach the cloud-side layer at all.
+    let daemon_write_layer: Arc<dyn DaemonWriteLayer> = {
+        let probe: Arc<dyn crate::UsageProbe> = Arc::new(
+            crate::PostgresCorporaProbe::new(Arc::clone(&pool)),
+        );
+        let quota_state = crate::QuotaState::new(
+            vec![
+                Arc::new(crate::CorpusCountRule),
+                Arc::new(crate::AtlasAccessRule),
+            ],
+            probe,
+        );
+        let ip_bucket = Arc::new(crate::InMemoryBucket::new(
+            /* capacity */ 20.0,
+            /* refill_per_sec */ 0.5,
+        ));
+        let tenant_bucket = Arc::new(crate::InMemoryBucket::new(
+            /* capacity */ 60.0,
+            /* refill_per_sec */ 1.0,
+        ));
+        let ip_cfg = Arc::new(crate::RateLimitConfig::new(
+            ip_bucket,
+            crate::ip_key::<axum::body::Body>,
+            "per-ip",
+        ));
+        let tenant_cfg = Arc::new(crate::RateLimitConfig::new(
+            tenant_bucket,
+            crate::tenant_key::<axum::body::Body>,
+            "per-tenant",
+        ));
+        Arc::new(ClassicDaemonWriteLayer {
+            quota_state,
+            ip_cfg,
+            tenant_cfg,
+        })
+    };
+    tracing::info!(
+        "daemon-write rate-limit + quota layer wired via CloudRouterMounter (F2.2 + F2.3)"
+    );
+
     Ok(CloudMountOutput {
         router,
         daemon_adapters,
         server_adapters,
         oauth_adapters,
         admin_adapters,
+        daemon_write_layer: Some(daemon_write_layer),
         shutdown,
     })
 }
@@ -823,5 +870,36 @@ impl ClassicCloudMounter {
     #[must_use]
     pub fn revocation_handle_dyn(handle: RevocationShutdownHandle) -> Arc<dyn RevocationHandle> {
         Arc::new(handle)
+    }
+}
+
+/// F31.2b-ii-P — concrete `DaemonWriteLayer` that wraps the daemon-write
+/// router with F2.2 per-IP + per-tenant rate-limit middleware and the
+/// F2.3 corpus-count + atlas-access quota middleware. Rate-limit is
+/// the outer layer (per-IP first, then per-tenant); quota sits inside
+/// (between scope guard and rate-limit) so 402 quota rejections preempt
+/// 429 rate-limit accounting.
+#[derive(Debug)]
+struct ClassicDaemonWriteLayer {
+    quota_state: crate::QuotaState,
+    ip_cfg: Arc<crate::RateLimitConfig>,
+    tenant_cfg: Arc<crate::RateLimitConfig>,
+}
+
+impl DaemonWriteLayer for ClassicDaemonWriteLayer {
+    fn wrap(&self, router: axum::Router) -> axum::Router {
+        router
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::clone(&self.tenant_cfg),
+                crate::rate_limit_middleware,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::clone(&self.ip_cfg),
+                crate::rate_limit_middleware,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                self.quota_state.clone(),
+                crate::quota_middleware,
+            ))
     }
 }
