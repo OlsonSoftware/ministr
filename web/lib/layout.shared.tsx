@@ -26,7 +26,6 @@ export function baseOptions(): BaseLayoutProps {
     githubUrl: 'https://github.com/OlsonSoftware/ministr',
     links: [
       { text: 'Install', url: '/install' },
-      { text: 'Pricing', url: '/pricing' },
     ],
   };
 }
