@@ -252,6 +252,29 @@ pub async fn mount_cloud_routes(
         );
     }
 
+    // F3.7a — per-org audit list endpoint (GET /api/v1/orgs/{id}/audit).
+    // Owner / admin only; members get 403. Mounted behind `ministr:read`
+    // so any authenticated org member's token can call it; the role
+    // check inside is the actual gate. F5.3-c-ii-archive-read attaches
+    // an optional archive dir for `/audit/archived` lookups.
+    {
+        let mut audit_state = crate::AuditState::from_arc(Arc::clone(&pool));
+        if let Some(dir) = trimmed_env("MINISTR_AUDIT_ARCHIVE_DIR") {
+            audit_state = audit_state.with_archive_dir(dir);
+            tracing::info!("audit archive dir wired (MINISTR_AUDIT_ARCHIVE_DIR)");
+        }
+        let audit_router = crate::audit_routes(audit_state);
+        let audit_protected = ministr_mcp::auth::scope_protected_router(
+            audit_router,
+            oauth_store.clone(),
+            "ministr:read",
+        );
+        router = router.merge(audit_protected);
+        tracing::info!(
+            "audit endpoint mounted via CloudRouterMounter — GET /api/v1/orgs/{{id}}/audit"
+        );
+    }
+
     Ok(CloudMountOutput {
         router,
         daemon_adapters: CloudDaemonAdapters::default(),
