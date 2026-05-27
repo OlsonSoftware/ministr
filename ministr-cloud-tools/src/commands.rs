@@ -1,7 +1,7 @@
 //! Cloud-tool subcommand implementations split from `ministr-cli` in F31.2a.
 //!
 //! Each `pub(crate)` function corresponds to a CLI subcommand dispatched
-//! from [`main`](crate::main). All functions are thin wrappers over
+//! from [`crate::dispatch`]. All functions are thin wrappers over
 //! library code in `ministr-cloud` / `ministr-atlas` / `ministr-mcp::auth`.
 
 use miette::{IntoDiagnostic, WrapErr};

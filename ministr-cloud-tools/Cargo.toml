@@ -16,6 +16,16 @@ homepage.workspace = true
 description = "Operator CLI for ministr-cloud — atlas reindex, audit retention, license mint/rotate, deployment diagnostics. Not part of the MIT open-core."
 readme = "../README.md"
 
+[lib]
+# F31.3 — exposes `run()` + supporting modules so the private-repo
+# `ministr-cli-cloud` binary (in `ministr-private/ministr-cli-cloud/`)
+# can call the same cloud-capable CLI surface without duplicating the
+# ~750-line clap + dispatch + serve logic. The in-tree
+# `ministr-cloud-tools` binary (below) reduces to a thin
+# `#[tokio::main]` wrapper over the same call.
+name = "ministr_cloud_tools"
+path = "src/lib.rs"
+
 [[bin]]
 name = "ministr-cloud-tools"
 path = "src/main.rs"
