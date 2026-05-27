@@ -244,6 +244,26 @@ impl std::fmt::Debug for CloudAdminAdapters {
     }
 }
 
+/// Uploads a freshly-indexed corpus bundle to durable blob storage.
+/// Used by `ministr_cli::worker::IngestionRunner` so the worker no
+/// longer needs `ministr_cloud::BlobBackend` directly. The cloud
+/// impl wraps both `build_manifest_from_corpus_dir` and `upload_corpus`
+/// in one call.
+pub trait BlobUploader: Send + Sync + std::fmt::Debug {
+    /// Build a manifest from `corpus_dir` (reading the `SQLite` + HNSW
+    /// state inside) and upload it under `corpus_id`. Returns the
+    /// version string the blob backend assigned (typically the
+    /// content hash of the bundle).
+    fn upload_corpus<'a>(
+        &'a self,
+        corpus_id: &'a str,
+        corpus_dir: &'a std::path::Path,
+        model_name: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<String, ApiError>> + Send + 'a>,
+    >;
+}
+
 /// Writes a single latency snapshot row to the cloud SLA store. The
 /// MIT serve spawns a `MINISTR_SLA_FLUSH_SECS`-cadenced task that
 /// drains the in-process `LatencyTracker` into this persister; the

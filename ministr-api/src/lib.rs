@@ -42,7 +42,7 @@ pub use api_key::{
 };
 pub use audit::{AuditEntry, AuditSink};
 pub use cloud_router::{
-    CloudAdminAdapters, CloudDaemonAdapters, CloudMountInput, CloudMountOutput,
+    BlobUploader, CloudAdminAdapters, CloudDaemonAdapters, CloudMountInput, CloudMountOutput,
     CloudOAuthAdapters, CloudRouterMounter, CloudServerAdapters, DaemonWriteLayer,
     RevocationHandle, SlaSnapshotPersister,
 };
