@@ -243,6 +243,16 @@ async fn build_oauth_store(
 }
 
 /// `ministr serve --transport http` — Streamable HTTP MCP server.
+///
+/// F31.2b-ii — accepts an optional [`ministr_api::CloudRouterMounter`].
+/// When `Some`, the mounter's `setup()` runs once at the top of this
+/// function and any returned adapters / cloud router are spliced into
+/// the locally-built state ADDITIVELY (the inline cloud branch below
+/// also runs as today — chunks B+ progressively migrate sub-routers
+/// out of the inline path into the mounter). When `None`, no setup
+/// call fires and behaviour is identical to pre-F31.2b-ii. The MIT
+/// `ministr` binary always passes `None`; `ministr-cloud-tools serve`
+/// (lands in chunk B) will pass `Some(&ClassicCloudMounter::new())`.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub async fn cmd_serve_http(
     corpus_paths: &[String],
@@ -256,9 +266,35 @@ pub async fn cmd_serve_http(
     repo_config_dir: Option<&Path>,
     resolved_dimension: Option<usize>,
     rerank_depth: Option<usize>,
+    mounter: Option<&dyn ministr_api::CloudRouterMounter>,
 ) -> Result<()> {
     use rmcp::transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+    };
+
+    // F31.2b-ii — cloud setup. Runs once at top; the inline cloud
+    // branch below also runs (additive during the chunk B+ migration).
+    // When `mounter` is `None` (the MIT `ministr` binary), `cloud`
+    // stays `None` and every adapter-application block below is a
+    // no-op. When `mounter` is `Some` but `ClassicCloudMounter` still
+    // returns an empty `CloudMountOutput` (current state), every
+    // adapter Option is also `None` so the behaviour is the same as
+    // mounter=None — only the cloud `Router` (empty for now) gets
+    // merged into the composed app.
+    let cloud_input = ministr_api::CloudMountInput {
+        resolved_model: resolved_model.to_string(),
+        corpus_count: corpus_paths.len(),
+        data_dir_hint: std::env::var("MINISTR_CLOUD_DATA_DIR")
+            .ok()
+            .map(std::path::PathBuf::from),
+    };
+    let cloud: Option<ministr_api::CloudMountOutput> = match mounter {
+        Some(m) => Some(
+            m.setup(&cloud_input)
+                .await
+                .map_err(|e| miette::miette!("cloud mounter setup failed: {e}"))?,
+        ),
+        None => None,
     };
 
     // F5.4-a — license-key gate. Two env vars unset → community mode
@@ -429,6 +465,24 @@ pub async fn cmd_serve_http(
         tracing::info!("BlobCorpusRestorer wired — first query lazy-downloads bundles from blob");
     }
 
+    // F31.2b-ii — apply mounter-provided server adapters BEFORE
+    // restore(). Currently only fires when ClassicCloudMounter actually
+    // populates these slots (chunks B+); empty output is a no-op.
+    if let Some(c) = cloud.as_ref() {
+        if let Some(repo) = c.server_adapters.corpora_repo.clone() {
+            corpus_registry.set_corpora_repo(repo);
+            tracing::info!(
+                "PostgresCorporaRepo wired via CloudRouterMounter (F31.2b-ii)"
+            );
+        }
+        if let Some(restorer) = c.server_adapters.corpus_restorer.clone() {
+            corpus_registry.set_corpus_restorer(restorer);
+            tracing::info!(
+                "BlobCorpusRestorer wired via CloudRouterMounter (F31.2b-ii)"
+            );
+        }
+    }
+
     corpus_registry.restore().await;
 
     // F2.x-b — wire the tenant-corpus filter so the new `Backend::Registry`
@@ -476,6 +530,33 @@ pub async fn cmd_serve_http(
             "PostgresSessionStorage + PostgresDropsLedger wired — agent sessions persist + restore across pod recycle"
         );
         server
+    } else {
+        server
+    };
+
+    // F31.2b-ii — apply mounter-provided session_storage / drops_ledger.
+    // Empty CloudMountOutput is a no-op.
+    let server = if let Some(c) = cloud.as_ref() {
+        let s = match c.server_adapters.session_storage.clone() {
+            Some(storage) => {
+                let s = server.with_session_storage(storage).await;
+                tracing::info!(
+                    "SessionStorage wired via CloudRouterMounter (F31.2b-ii)"
+                );
+                s
+            }
+            None => server,
+        };
+        match c.server_adapters.drops_ledger.clone() {
+            Some(ledger) => {
+                let s = s.with_session_drops_ledger(ledger).await;
+                tracing::info!(
+                    "DropsLedger wired via CloudRouterMounter (F31.2b-ii)"
+                );
+                s
+            }
+            None => s,
+        }
     } else {
         server
     };
@@ -609,6 +690,23 @@ pub async fn cmd_serve_http(
                 );
             }
         }
+        // F31.2b-ii — mounter-provided drops_ledger / session_bundle_store
+        // take precedence over the inline values above. Empty
+        // CloudMountOutput is a no-op.
+        if let Some(c) = cloud.as_ref() {
+            if let Some(ledger) = c.server_adapters.drops_ledger.clone() {
+                state = state.with_drops_ledger(ledger);
+                tracing::info!(
+                    "session_export drops_ledger wired via CloudRouterMounter (F31.2b-ii)"
+                );
+            }
+            if let Some(store) = c.server_adapters.session_bundle_store.clone() {
+                state = state.with_bundle_store(store);
+                tracing::info!(
+                    "session_export bundle_store wired via CloudRouterMounter (F31.2b-ii)"
+                );
+            }
+        }
         state
     };
     // F-Test-3 finding: handle_list / handle_export read
@@ -639,6 +737,19 @@ pub async fn cmd_serve_http(
         admin_state.with_sla_window_store(
             ministr_cloud::PostgresSlaWindowStore::new((**pool).clone()).into_dyn(),
         )
+    } else {
+        admin_state
+    };
+    // F31.2b-ii — mounter-provided sla_window_store takes precedence
+    // over inline. Empty CloudMountOutput is a no-op.
+    let admin_state = if let Some(sla) = cloud
+        .as_ref()
+        .and_then(|c| c.admin_adapters.sla_window_store.clone())
+    {
+        tracing::info!(
+            "sla_window_store wired via CloudRouterMounter (F31.2b-ii)"
+        );
+        admin_state.with_sla_window_store(sla)
     } else {
         admin_state
     };
@@ -871,6 +982,51 @@ pub async fn cmd_serve_http(
         );
     }
 
+    // F31.2b-ii — apply mounter-provided daemon adapters. These run
+    // AFTER the inline cloud-pool blocks above so a mounter that
+    // provides the same adapter overrides the inline one. Empty
+    // CloudMountOutput is a no-op. Chunks B+ progressively move the
+    // inline wiring into ClassicCloudMounter; once an inline branch
+    // is removed, the mounter slot becomes the only producer.
+    if let Some(c) = cloud.as_ref() {
+        if let Some(v) = c.daemon_adapters.corpus_visibility.clone() {
+            daemon_state = daemon_state.with_corpus_visibility(v);
+            tracing::info!(
+                "corpus_visibility wired via CloudRouterMounter (F31.2b-ii)"
+            );
+        }
+        if let Some(s) = c.daemon_adapters.usage_sink.clone() {
+            daemon_state = daemon_state.with_usage_sink(s);
+            tracing::info!(
+                "usage_sink wired via CloudRouterMounter (F31.2b-ii)"
+            );
+        }
+        if let Some(s) = c.daemon_adapters.audit_sink.clone() {
+            daemon_state = daemon_state.with_audit_sink(s);
+            tracing::info!(
+                "audit_sink wired via CloudRouterMounter (F31.2b-ii)"
+            );
+        }
+        if let Some(s) = c.daemon_adapters.index_job_sink.clone() {
+            daemon_state = daemon_state.with_index_job_sink(s);
+            tracing::info!(
+                "index_job_sink wired via CloudRouterMounter (F31.2b-ii)"
+            );
+        }
+        if let Some(m) = c.daemon_adapters.installation_minter.clone() {
+            daemon_state = daemon_state.with_installation_minter(m);
+            tracing::info!(
+                "installation_minter wired via CloudRouterMounter (F31.2b-ii)"
+            );
+        }
+        if let Some(s) = c.daemon_adapters.blob_sink.clone() {
+            daemon_state = daemon_state.with_blob_sink(s);
+            tracing::info!(
+                "blob_sink wired via CloudRouterMounter (F31.2b-ii)"
+            );
+        }
+    }
+
     let activity_layer = axum::middleware::from_fn_with_state(
         daemon_state.clone(),
         ministr_daemon::activity::record,
@@ -940,6 +1096,30 @@ pub async fn cmd_serve_http(
             store
                 .with_api_key_resolver(api_key_resolver)
                 .with_plan_resolver(plan_resolver)
+        } else {
+            store
+        };
+        // F31.2b-ii — mounter-provided OAuth adapters take precedence
+        // over inline. Empty CloudMountOutput is a no-op.
+        let store = if let Some(c) = cloud.as_ref() {
+            let s = match c.oauth_adapters.api_key_resolver.clone() {
+                Some(r) => {
+                    tracing::info!(
+                        "api_key_resolver wired via CloudRouterMounter (F31.2b-ii)"
+                    );
+                    store.with_api_key_resolver(r)
+                }
+                None => store,
+            };
+            match c.oauth_adapters.plan_resolver.clone() {
+                Some(r) => {
+                    tracing::info!(
+                        "plan_resolver wired via CloudRouterMounter (F31.2b-ii)"
+                    );
+                    s.with_plan_resolver(r)
+                }
+                None => s,
+            }
         } else {
             store
         };
@@ -1563,6 +1743,17 @@ pub async fn cmd_serve_http(
             .merge(session_export_router)
     };
 
+    // F31.2b-ii — merge the cloud-side Router that the mounter built.
+    // Empty CloudMountOutput.router is a no-op merge. Once chunks B+
+    // migrate inline sub-routers into ClassicCloudMounter, the
+    // corresponding inline `composed = composed.merge(...)` calls get
+    // deleted and this merge becomes the sole producer.
+    let app = if let Some(c) = cloud.as_ref() {
+        app.merge(c.router.clone())
+    } else {
+        app
+    };
+
     // F5.5-b-latency — outermost middleware that records every
     // request's elapsed time into the shared LatencyTracker the
     // /sla handler reads from. Mounted INSIDE the CORS layer (i.e.
@@ -1612,10 +1803,28 @@ pub async fn cmd_serve_http(
         )
     });
 
+    // F31.2b-ii — graceful shutdown. Inline `revocation_handle` wins
+    // when present (cloud-mode `ministr serve` today). Otherwise the
+    // mounter's `RevocationHandle` provides the signal, if it returned
+    // one. Both cover the same need: license revocation triggers
+    // shutdown so the orchestrator restarts into the now-refused
+    // license. Only one fires at a time (mutually exclusive across
+    // the chunk B+ migration since the inline path will be deleted
+    // when its mounter equivalent populates).
+    let mounter_shutdown: Option<Arc<dyn ministr_api::RevocationHandle>> =
+        cloud.as_ref().and_then(|c| c.shutdown.clone());
+
     if let Some(ref handle) = revocation_handle {
         let h = handle.clone();
         axum::serve(listener, app)
             .with_graceful_shutdown(async move { h.shutdown.notified().await })
+            .await
+            .into_diagnostic()
+            .wrap_err("HTTP server exited with error")?;
+    } else if let Some(handle) = mounter_shutdown.as_ref() {
+        let h = Arc::clone(handle);
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move { h.shutdown_future().await })
             .await
             .into_diagnostic()
             .wrap_err("HTTP server exited with error")?;
@@ -1626,10 +1835,13 @@ pub async fn cmd_serve_http(
             .wrap_err("HTTP server exited with error")?;
     }
 
-    if revocation_handle
+    let revoked_inline = revocation_handle
         .as_ref()
-        .is_some_and(ministr_cloud::RevocationShutdownHandle::is_revoked)
-    {
+        .is_some_and(ministr_cloud::RevocationShutdownHandle::is_revoked);
+    let revoked_mounter = mounter_shutdown
+        .as_ref()
+        .is_some_and(|h| h.is_revoked());
+    if revoked_inline || revoked_mounter {
         tracing::error!("ministr shutting down — license revoked");
         std::process::exit(1);
     }
