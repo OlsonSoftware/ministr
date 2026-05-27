@@ -17,11 +17,10 @@ so you can sign in today.
 ## Architecture
 
 ```
-┌──────────┐   SAML    ┌─────────────────┐   OIDC    ┌─────────┐
-│ Your IdP │ ───────── │ Bridge (Auth0 / │ ───────── │ ministr │
-│ (Okta /  │ assertion │ Okta / Keycloak)│ id_token  │  cloud  │
-│ Entra ID)│           └─────────────────┘           └─────────┘
-└──────────┘
+Your IdP          Bridge             ministr
+(Okta /     SAML  (Auth0 /    OIDC   cloud
+ Entra ID) -----> Keycloak) ------->
+           assert            id_token
 ```
 
 The bridge acts as a SAML SP to your IdP and an OIDC IdP to
