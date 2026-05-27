@@ -78,6 +78,53 @@ pub async fn mount_cloud_routes(
         return Ok(CloudMountOutput::default());
     };
 
+    // F5.4-a — license-key gate. Two env vars unset → community mode
+    // (no gate, log info). Both set + valid → Enterprise mode. Invalid
+    // → refuse to boot. F5.4-e-revoke-* spawns a background refresh
+    // task and returns a shutdown handle so graceful_shutdown fires on
+    // mid-flight revocation. Migrated from cmd_serve_http inline branch
+    // in F31.2b-ii-L. NOTE: while orgs_routes still lives inline,
+    // cmd_serve_http ALSO runs license_validation — the duplication
+    // sunsets when orgs migrates (next chunk).
+    let mut shutdown: Option<std::sync::Arc<dyn RevocationHandle>> = None;
+    match crate::validate_license_from_env().await {
+        Ok(None) => {
+            tracing::info!(
+                "ClassicCloudMounter: community mode (no MINISTR_LICENSE_KEY / MINISTR_LICENSE_PUBLIC_KEY set)"
+            );
+        }
+        Ok(Some(claims)) => {
+            tracing::info!(
+                license = %crate::render_license_summary(&claims),
+                "Enterprise license validated via CloudRouterMounter"
+            );
+            if let Some((url, cache_path, grace_secs)) = crate::revocation_url_config() {
+                let refresh_secs = crate::revocation_refresh_secs();
+                let jwt = std::env::var("MINISTR_LICENSE_KEY").unwrap_or_default();
+                let hash = crate::license_jwt_id_hash(&jwt);
+                let handle = RevocationShutdownHandle::new();
+                shutdown = Some(std::sync::Arc::new(handle.clone()));
+                crate::spawn_refresh_task(
+                    url,
+                    cache_path,
+                    refresh_secs,
+                    grace_secs,
+                    hash,
+                    Some(handle),
+                );
+            }
+        }
+        Err(e) => {
+            return Err(ApiError {
+                code: "cloud_license_refused_boot".into(),
+                message: format!(
+                    "license gate refused boot: {e}. Set both MINISTR_LICENSE_KEY + \
+                     MINISTR_LICENSE_PUBLIC_KEY, OR unset both to run in community mode."
+                ),
+            });
+        }
+    }
+
     // Self-contained Postgres pool owned by the cloud impl. Today the
     // MIT serve's inline cloud branch ALSO opens its own pool for the
     // adapters/routes still wired there — F31.2b-ii's progressive
@@ -500,7 +547,7 @@ pub async fn mount_cloud_routes(
         server_adapters,
         oauth_adapters,
         admin_adapters,
-        shutdown: None,
+        shutdown,
     })
 }
 
