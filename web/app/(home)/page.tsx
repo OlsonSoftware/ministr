@@ -1,8 +1,4 @@
 import Link from 'next/link';
-import { CopyButton } from '@/components/landing/copy-button';
-import { INSTALL_COMMANDS } from '@/lib/install';
-
-const CLI = INSTALL_COMMANDS.find((c) => c.id === 'macos')!.command;
 
 export default function HomePage() {
   return (
@@ -24,7 +20,7 @@ export default function HomePage() {
         <div className="v2-nav-links">
           <Link href="#install">install</Link>
           <Link href="/docs">docs</Link>
-          <a href="https://github.com/AcaciaLinux/ministr" target="_blank" rel="noopener noreferrer">github</a>
+          <a href="https://github.com/OlsonSoftware/ministr" target="_blank" rel="noopener noreferrer">github</a>
         </div>
       </nav>
 
@@ -40,12 +36,8 @@ export default function HomePage() {
           <em className="v2-offer">bare metal</em> and answered in milliseconds.
         </p>
         <div className="v2-cta">
-          <Link href="#install" className="v2-btn v2-btn-primary">Install ministr →</Link>
+          <Link href="/install" className="v2-btn v2-btn-primary">Install ministr →</Link>
           <Link href="/docs" className="v2-btn">Read the docs</Link>
-        </div>
-        <div className="v2-cmd-row">
-          <pre className="v2-cmd">{CLI}</pre>
-          <CopyButton value={CLI} label="Copy install command" size="sm" />
         </div>
       </section>
 
@@ -96,10 +88,7 @@ export default function HomePage() {
             <div className="v2-step-num">1.</div>
             <div className="v2-step-body">
               <p>Download and double-click. macOS, Windows, Linux. The <code>ministr</code> CLI lands on your PATH automatically.</p>
-              <div className="v2-cmd-row">
-                <pre className="v2-cmd">{CLI}</pre>
-                <CopyButton value={CLI} label="Copy install command" size="sm" />
-              </div>
+              <Link href="/install" className="v2-btn v2-btn-primary" style={{ alignSelf: 'flex-start' }}>Download installer →</Link>
             </div>
           </div>
           <div className="v2-install-step">
