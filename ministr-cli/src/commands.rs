@@ -445,18 +445,9 @@ pub async fn cmd_serve_http(
     // source of truth for what's indexed; restore() runs once.
     let corpus_registry = infra::build_corpus_registry(&ctx, config);
 
-    // PHASE3 chunk 1 — wire the durable corpus registry repo before
-    // `restore()`. In cloud mode this makes Postgres the source of
-    // truth for which corpora exist, so the list survives ACA pod
-    // recycling (the on-disk `corpora.json` is pod-ephemeral). In
-    // self-hosted serve cloud_pool is None and this is a no-op.
-    if let Some(pool) = cloud_pool.as_ref() {
-        let repo: Arc<dyn ministr_api::CorporaRepo> = Arc::new(
-            ministr_cloud::PostgresCorporaRepo::new(Arc::clone(pool), None),
-        );
-        corpus_registry.set_corpora_repo(repo);
-        tracing::info!("PostgresCorporaRepo wired — corpus registry durable across pod recycle");
-    }
+    // F31.2b-ii-J — PostgresCorporaRepo migrated to ClassicCloudMounter
+    // (CloudServerAdapters.corpora_repo). The chunk A adapter-
+    // application stanza below applies it before `restore()`.
 
     // PHASE3 chunk 5 — wire the on-demand bundle restorer. When a
     // query targets a corpus_id whose in-memory handle is absent but
@@ -729,13 +720,9 @@ pub async fn cmd_serve_http(
     // emits latency.window_30d_max_p95_ms. Cloud-only: self-hosted
     // serve (no cloud_pool) leaves the field unwired and the JSON
     // renders the historical field as null.
-    let admin_state = if let Some(pool) = cloud_pool.as_ref() {
-        admin_state.with_sla_window_store(
-            ministr_cloud::PostgresSlaWindowStore::new((**pool).clone()).into_dyn(),
-        )
-    } else {
-        admin_state
-    };
+    // F31.2b-ii-J — PostgresSlaWindowStore migrated to
+    // ClassicCloudMounter (CloudAdminAdapters.sla_window_store).
+    // The chunk A admin_adapters stanza below applies it.
     // F31.2b-ii — mounter-provided sla_window_store takes precedence
     // over inline. Empty CloudMountOutput is a no-op.
     let admin_state = if let Some(sla) = cloud
@@ -872,38 +859,9 @@ pub async fn cmd_serve_http(
         }
     }
 
-    // F2.1 — GitHub App installation-token minter for private-repo
-    // cloning. Built independently of the GitHub OAuth IdP (F1.3) so a
-    // deployment can enable App-driven clones without also enabling the
-    // user-facing GitHub sign-in flow (or vice versa).
-    if let (Some(app_id), Some(pem)) = (
-        cloud_env.github_app_id.as_ref(),
-        cloud_env.github_app_private_key.as_ref(),
-    ) {
-        match ministr_cloud::GitHubAppClient::new(app_id.clone(), pem) {
-            Ok(client) => {
-                let minter: std::sync::Arc<dyn ministr_api::InstallationTokenMinter> =
-                    std::sync::Arc::new(client);
-                daemon_state = daemon_state.with_installation_minter(minter);
-                tracing::info!(
-                    app_id = %app_id,
-                    "GitHubAppClient wired — private-repo cloning via installation tokens enabled"
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "GitHub App disabled — MINISTR_GITHUB_APP_ID/PRIVATE_KEY rejected"
-                );
-            }
-        }
-    } else if cloud_env.github_app_id.is_some() || cloud_env.github_app_private_key.is_some() {
-        tracing::warn!(
-            has_app_id = cloud_env.github_app_id.is_some(),
-            has_private_key = cloud_env.github_app_private_key.is_some(),
-            "GitHub App NOT wired — both MINISTR_GITHUB_APP_ID and MINISTR_GITHUB_APP_PRIVATE_KEY must be set"
-        );
-    }
+    // F31.2b-ii-J — GitHubAppClient migrated to ClassicCloudMounter
+    // (CloudDaemonAdapters.installation_minter). The chunk A
+    // adapter-application stanza below applies it.
 
     // PHASE2 chunk 4 — durable corpus uploads.
     //
@@ -1040,23 +998,9 @@ pub async fn cmd_serve_http(
         // defaulting to Plan::Pro. Same cloud-only gate; the resolver
         // is wasted on self-hosted serve (where validate_token returns
         // OAuth client_ids, not user UUIDs).
-        let store = if let Some(pool) = cloud_pool.as_ref() {
-            let api_key_resolver =
-                ministr_cloud::PostgresApiKeyResolver::new((**pool).clone()).into_dyn();
-            let plan_resolver =
-                ministr_cloud::PostgresPlanResolver::new((**pool).clone()).into_dyn();
-            tracing::info!(
-                "PostgresApiKeyResolver wired — `mst_pk_…` tokens authenticate via api_keys table"
-            );
-            tracing::info!(
-                "PostgresPlanResolver wired — OAuth tenants resolve `Tenant.plan` from users.plan_id (F5.5-a-plan-lookup)"
-            );
-            store
-                .with_api_key_resolver(api_key_resolver)
-                .with_plan_resolver(plan_resolver)
-        } else {
-            store
-        };
+        // F31.2b-ii-J — PostgresApiKeyResolver + PostgresPlanResolver
+        // migrated to ClassicCloudMounter (CloudOAuthAdapters). The
+        // chunk A oauth_adapters stanza below applies both.
         // F31.2b-ii — mounter-provided OAuth adapters take precedence
         // over inline. Empty CloudMountOutput is a no-op.
         let store = if let Some(c) = cloud.as_ref() {
