@@ -303,63 +303,10 @@ pub async fn cmd_serve_http(
         None => None,
     };
 
-    // F5.4-a — license-key gate. Two env vars unset → community mode
-    // (no gate, log info). Both set + valid → Enterprise mode (log
-    // the enterprise_id + seat_count + days-left). Invalid →
-    // refuse to boot with the underlying error. Runs BEFORE
-    // `build_server` so a broken license never reaches indexing.
-    // The captured `license_claims` is threaded into OrgsState
-    // below (F5.4-b seat-cap enforcement reads claims.seat_count).
-    let mut revocation_handle: Option<ministr_cloud::RevocationShutdownHandle> = None;
-    let license_claims: Option<Arc<ministr_cloud::LicenseClaims>> =
-        match ministr_cloud::validate_license_from_env().await {
-            Ok(None) => {
-                tracing::info!(
-                    "running in community mode (no MINISTR_LICENSE_KEY / MINISTR_LICENSE_PUBLIC_KEY set)"
-                );
-                None
-            }
-            Ok(Some(claims)) => {
-                tracing::info!(
-                    license = %ministr_cloud::render_license_summary(&claims),
-                    "Enterprise license validated"
-                );
-                // F5.4-e-revoke-api-refresh — when the customer opted
-                // into URL-based revocation, spawn a background task
-                // that keeps the cache warm between restarts.
-                //
-                // F5.4-e-revoke-mid-flight — the task ALSO re-checks
-                // the current license's hash against the just-
-                // refreshed cache; on revocation, it logs an error
-                // and process::exit so the orchestrator restarts and
-                // the boot validator refuses the now-revoked license.
-                if let Some((url, cache_path, grace_secs)) =
-                    ministr_cloud::revocation_url_config()
-                {
-                    let refresh_secs = ministr_cloud::revocation_refresh_secs();
-                    let jwt = std::env::var("MINISTR_LICENSE_KEY")
-                        .unwrap_or_default();
-                    let hash = ministr_cloud::license_jwt_id_hash(&jwt);
-                    let handle = ministr_cloud::RevocationShutdownHandle::new();
-                    revocation_handle = Some(handle.clone());
-                    ministr_cloud::spawn_refresh_task(
-                        url,
-                        cache_path,
-                        refresh_secs,
-                        grace_secs,
-                        hash,
-                        Some(handle),
-                    );
-                }
-                Some(Arc::new(claims))
-            }
-            Err(e) => {
-                return Err(miette::miette!(
-                    "license gate refused boot: {e}. Set both MINISTR_LICENSE_KEY + \
-                     MINISTR_LICENSE_PUBLIC_KEY, OR unset both to run in community mode."
-                ));
-            }
-        };
+    // F31.2b-ii-L+M — license validation + revocation handle migrated
+    // to ClassicCloudMounter. The mounter returns the shutdown handle
+    // via CloudMountOutput.shutdown; cmd_serve_http's chunk A serve
+    // loop uses it for graceful shutdown.
 
     let (server, ctx, _coherence_handle) = infra::build_server(
         corpus_paths,
@@ -1194,57 +1141,13 @@ pub async fn cmd_serve_http(
                 Arc::new(ministr_cloud::ChainedAuditSink::new(audit_sinks))
             };
 
-            let mut orgs_state =
-                ministr_cloud::OrgsState::from_arc(Arc::clone(pool));
-            if let Some(base) = cloud_env.cloud_base_url.as_deref() {
-                orgs_state = orgs_state.with_cloud_base_url(base);
-            }
-            if let Some(stripe) = stripe_client.as_ref() {
-                orgs_state = orgs_state.with_stripe(Arc::clone(stripe));
-            }
-            orgs_state = orgs_state.with_audit(Arc::clone(&audit_sink));
-            let mailer = ministr_cloud::build_mail_sender_from_env();
-            orgs_state = orgs_state.with_mailer(mailer);
-            // F5.4-b — thread the cached license claims so the invite
-            // handler enforces the contracted seat cap. None →
-            // community mode (no cap).
-            if let Some(claims) = license_claims.as_ref() {
-                orgs_state = orgs_state.with_license(Arc::clone(claims));
-            }
-            let orgs_router = ministr_cloud::orgs_routes(orgs_state);
-            let orgs_protected = ministr_mcp::auth::scope_protected_router(
-                orgs_router,
-                store.clone(),
-                "ministr:read",
-            );
-            composed = composed.merge(orgs_protected);
-            tracing::info!(
-                "orgs endpoints mounted — POST /api/v1/orgs, GET /api/v1/orgs, GET /api/v1/orgs/{{id}}/members, POST /api/v1/orgs/{{id}}/invites"
-            );
-
-            // F31.2b-ii-F — org_usage_routes migrated to mount_cloud_routes.
-
-            // F3.4a — service-account API keys (mint, list, revoke).
-            // Cloud-only: backed by the `api_keys` table. Mounted behind
-            // `ministr:read` because every action targets the caller's
-            // own keys (the WHERE clauses join on the calling tenant's
-            // user_id). Create + revoke are write operations but they
-            // do not touch corpus data, so the `:write` scope's quota
-            // + rate-limit layers are intentionally bypassed — the
-            // same posture as the orgs router.
-            let api_keys_router = ministr_cloud::api_keys_routes(
-                ministr_cloud::ApiKeysState::new((**pool).clone())
-                    .with_audit(Arc::clone(&audit_sink)),
-            );
-            let api_keys_protected = ministr_mcp::auth::scope_protected_router(
-                api_keys_router,
-                store.clone(),
-                "ministr:read",
-            );
-            composed = composed.merge(api_keys_protected);
-            tracing::info!(
-                "api_keys endpoints mounted — POST /api/v1/api_keys, GET /api/v1/api_keys, DELETE /api/v1/api_keys/{{id}}"
-            );
+            // F31.2b-ii-M — orgs_routes + api_keys_routes migrated
+            // to ClassicCloudMounter. The audit_sink chain, StripeClient,
+            // and mailer that orgs needs are also built inside
+            // mount_cloud_routes. license_claims previously fed orgs
+            // here; license validation moved to the mounter in
+            // F31.2b-ii-L and the claims now live alongside orgs in
+            // the cloud impl.
 
             // F31.2b-ii-H — audit_routes (read side) migrated to
             // `ministr_cloud::cli::mount_cloud_routes`.
@@ -1489,25 +1392,15 @@ pub async fn cmd_serve_http(
         )
     });
 
-    // F31.2b-ii — graceful shutdown. Inline `revocation_handle` wins
-    // when present (cloud-mode `ministr serve` today). Otherwise the
-    // mounter's `RevocationHandle` provides the signal, if it returned
-    // one. Both cover the same need: license revocation triggers
-    // shutdown so the orchestrator restarts into the now-refused
-    // license. Only one fires at a time (mutually exclusive across
-    // the chunk B+ migration since the inline path will be deleted
-    // when its mounter equivalent populates).
+    // F31.2b-ii — graceful shutdown driven by the mounter's
+    // `RevocationHandle` (license revocation triggers shutdown so the
+    // orchestrator restarts into the now-refused license). Inline
+    // license validation was removed in chunk L; the mounter owns this
+    // signal now.
     let mounter_shutdown: Option<Arc<dyn ministr_api::RevocationHandle>> =
         cloud.as_ref().and_then(|c| c.shutdown.clone());
 
-    if let Some(ref handle) = revocation_handle {
-        let h = handle.clone();
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async move { h.shutdown.notified().await })
-            .await
-            .into_diagnostic()
-            .wrap_err("HTTP server exited with error")?;
-    } else if let Some(handle) = mounter_shutdown.as_ref() {
+    if let Some(handle) = mounter_shutdown.as_ref() {
         let h = Arc::clone(handle);
         axum::serve(listener, app)
             .with_graceful_shutdown(async move { h.shutdown_future().await })
@@ -1521,13 +1414,7 @@ pub async fn cmd_serve_http(
             .wrap_err("HTTP server exited with error")?;
     }
 
-    let revoked_inline = revocation_handle
-        .as_ref()
-        .is_some_and(ministr_cloud::RevocationShutdownHandle::is_revoked);
-    let revoked_mounter = mounter_shutdown
-        .as_ref()
-        .is_some_and(|h| h.is_revoked());
-    if revoked_inline || revoked_mounter {
+    if mounter_shutdown.as_ref().is_some_and(|h| h.is_revoked()) {
         tracing::error!("ministr shutting down — license revoked");
         std::process::exit(1);
     }
