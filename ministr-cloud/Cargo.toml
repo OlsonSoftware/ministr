@@ -42,6 +42,10 @@ ministr-api.workspace = true
 # to count corpora on a pod. Closed → MIT direction; no cycle (daemon
 # never imports ministr-cloud).
 ministr-daemon.workspace = true
+# F31.2b-ii-C — `cli::mount_cloud_routes` mounts `atlas_routes`
+# (migrated from ministr-cli's inline branch). ministr-atlas is
+# already proprietary so the dep direction is fine.
+ministr-atlas.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tokio.workspace = true

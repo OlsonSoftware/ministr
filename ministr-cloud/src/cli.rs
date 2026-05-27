@@ -63,23 +63,74 @@ impl CloudRouterMounter for ClassicCloudMounter {
 /// Returns an [`ApiError`] when license validation refuses boot, the
 /// Postgres pool fails to open, migrations fail to apply, or any other
 /// cloud resource refuses to come up.
-#[allow(clippy::unused_async)] // stub: real impl in F31.2b-ii becomes async
 pub async fn mount_cloud_routes(
     _input: &CloudMountInput,
 ) -> Result<CloudMountOutput, ApiError> {
-    // F31.2b — initial stub. The real cloud-overlay body lands as the
-    // matching refactor in ministr-cli::cmd_serve_http rips the inline
-    // cloud branch and lifts it into here. Until then this stub returns
-    // an empty CloudMountOutput which is functionally identical to
-    // "no cloud overlay" — useful as the trait contract test fixture.
+    // F31.2b-ii — `MINISTR_PG_URL` gates the entire cloud overlay.
+    // Unset (self-hosted / dev / community) ⇒ no cloud routes mount.
+    // Chunks C+ progressively populate this function with the routers
+    // migrated out of `cmd_serve_http`'s inline branch.
+    let Some(pg_url) = trimmed_env("MINISTR_PG_URL") else {
+        tracing::info!(
+            "ClassicCloudMounter: MINISTR_PG_URL unset — returning empty CloudMountOutput"
+        );
+        return Ok(CloudMountOutput::default());
+    };
+
+    // Self-contained OAuth store for scope-wrapping the cloud routes.
+    // Same Postgres tables as the MIT serve's OAuth store — both
+    // instances stay in sync via shared DB state. Issuer URL doesn't
+    // matter for scope validation; only the metadata endpoints (which
+    // ministr-mcp's MIT serve mounts) use it. Default config is fine.
+    let oauth_store = ministr_mcp::auth::OAuthStore::postgres(
+        ministr_mcp::auth::OAuthConfig::default(),
+        &pg_url,
+    )
+    .await
+    .map_err(|e| ApiError {
+        code: "cloud_oauth_store_open_failed".into(),
+        message: format!("open cloud OAuth store: {e}"),
+    })?;
+
+    let mut router = Router::new();
+
+    // F2.6 — Atlas v0 pilot. Manifest + per-slug query stubs.
+    // Migrated from cmd_serve_http inline branch in F31.2b-ii-C.
+    // Mounted behind `ministr:read` so any paid-tier token admits;
+    // the (still-inline) F2.3 `AtlasAccessRule` runs higher up in the
+    // composed stack and short-circuits unauthenticated / free callers
+    // with the 402 paywall.
+    {
+        let atlas_router =
+            ministr_atlas::atlas_routes(ministr_atlas::AtlasState::from_seed_list());
+        let atlas_protected = ministr_mcp::auth::scope_protected_router(
+            atlas_router,
+            oauth_store.clone(),
+            "ministr:read",
+        );
+        router = router.merge(atlas_protected);
+        tracing::info!(
+            count = ministr_atlas::ATLAS_SEED_REPOS.len(),
+            "atlas v0 mounted via CloudRouterMounter — GET /atlas/manifest.json + /atlas/{{slug}}/*"
+        );
+    }
+
     Ok(CloudMountOutput {
-        router: Router::new(),
+        router,
         daemon_adapters: CloudDaemonAdapters::default(),
         server_adapters: CloudServerAdapters::default(),
         oauth_adapters: CloudOAuthAdapters::default(),
         admin_adapters: CloudAdminAdapters::default(),
         shutdown: None,
     })
+}
+
+/// Read an env var, trim, and treat the empty string as absent.
+fn trimmed_env(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
 }
 
 impl RevocationHandle for RevocationShutdownHandle {
