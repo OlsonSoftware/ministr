@@ -38,6 +38,7 @@
 
 pub mod api_keys;
 pub mod audit;
+pub mod cli;
 pub mod auth;
 pub mod billing;
 pub mod blob;

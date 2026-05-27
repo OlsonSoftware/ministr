@@ -244,7 +244,7 @@ async fn build_oauth_store(
 
 /// `ministr serve --transport http` — Streamable HTTP MCP server.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-pub(crate) async fn cmd_serve_http(
+pub async fn cmd_serve_http(
     corpus_paths: &[String],
     git_includes: &[ministr_core::config::GitInclude],
     config_path: &Path,
@@ -1664,7 +1664,7 @@ pub(crate) async fn cmd_serve_http(
               loop, run cleanup); each step is unique and inlining keeps \
               the startup order auditable"
 )]
-pub(crate) async fn cmd_serve_proxy_stdio(
+pub async fn cmd_serve_proxy_stdio(
     corpus_paths: &[String],
     linked: &[ministr_core::config::ResolvedLinkedProject],
 ) -> Result<()> {
@@ -1816,7 +1816,7 @@ pub(crate) async fn cmd_serve_proxy_stdio(
 // ---------------------------------------------------------------------------
 
 /// `ministr index` — run ingestion synchronously and exit.
-pub(crate) async fn cmd_index(
+pub async fn cmd_index(
     corpus_paths: &[String],
     git_includes: &[ministr_core::config::GitInclude],
     config_path: &Path,
@@ -1863,7 +1863,7 @@ pub(crate) async fn cmd_index(
 // ---------------------------------------------------------------------------
 
 /// `ministr init` — detect project structure and generate `.ministr.toml`.
-pub(crate) fn cmd_init(root: &Path, force: bool) -> Result<()> {
+pub fn cmd_init(root: &Path, force: bool) -> Result<()> {
     let detection = ministr_core::init::write_config(root, force)
         .into_diagnostic()
         .wrap_err("failed to generate .ministr.toml")?;
@@ -1949,7 +1949,7 @@ pub(crate) fn cmd_init(root: &Path, force: bool) -> Result<()> {
 /// offer per-platform or "strictness" choices, because the scaffold is a
 /// single non-blocking steering design (the earlier prompts collected
 /// answers that were never applied; they are gone rather than faked).
-pub(crate) fn cmd_init_interactive(root: &Path, force: bool) -> Result<()> {
+pub fn cmd_init_interactive(root: &Path, force: bool) -> Result<()> {
     use dialoguer::Confirm;
 
     eprintln!("ministr interactive setup\n");
@@ -2015,7 +2015,7 @@ pub(crate) fn cmd_init_interactive(root: &Path, force: bool) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// `ministr export` — export the corpus index to a portable bundle.
-pub(crate) async fn cmd_export(
+pub async fn cmd_export(
     corpus_paths: &[String],
     config: &ministr_core::config::MinistrConfig,
     resolved_model: &str,
@@ -2128,7 +2128,7 @@ pub(crate) async fn cmd_export(
 }
 
 /// `ministr import` — import a `.ministr-index` bundle into local storage.
-pub(crate) fn cmd_import(
+pub fn cmd_import(
     corpus_paths: &[String],
     config: &ministr_core::config::MinistrConfig,
     bundle_path: &Path,
@@ -2181,7 +2181,7 @@ pub(crate) fn cmd_import(
 /// displays document counts, corpus roots, data directory, and index info.
 /// Falls back to the daemon API if available for richer live status.
 #[allow(clippy::too_many_lines)]
-pub(crate) async fn cmd_daemon_status() -> Result<()> {
+pub async fn cmd_daemon_status() -> Result<()> {
     use ministr_core::storage::Storage as _;
 
     // Try daemon first for live status.
@@ -2310,7 +2310,7 @@ pub(crate) async fn cmd_daemon_status() -> Result<()> {
 }
 
 /// `ministr search` — search the corpus via the daemon.
-pub(crate) async fn cmd_daemon_search(
+pub async fn cmd_daemon_search(
     corpus_paths: &[String],
     query: &str,
     top_k: usize,
@@ -2354,7 +2354,7 @@ pub(crate) async fn cmd_daemon_search(
 // ---------------------------------------------------------------------------
 
 /// `ministr hooks test` — validate installed hook files and simulate tool calls.
-pub(crate) fn cmd_hooks_test(root: &Path) {
+pub fn cmd_hooks_test(root: &Path) {
     use std::collections::BTreeMap;
 
     /// A simulated tool call for testing.
@@ -2558,7 +2558,7 @@ pub(crate) fn cmd_hooks_test(root: &Path) {
 ///
 /// `uninstall=true` removes the canonical dir from `PATH` (NSIS
 /// uninstaller hook) and skips staging / legacy refresh.
-pub(crate) fn cmd_setup(bin_dir: Option<&Path>, dry_run: bool, uninstall: bool) -> Result<()> {
+pub fn cmd_setup(bin_dir: Option<&Path>, dry_run: bool, uninstall: bool) -> Result<()> {
     // Canonical, channel-independent install location. `--bin-dir` is
     // intentionally ignored for the target (kept only so existing
     // callers / NSIS hooks don't break) — the whole point of this

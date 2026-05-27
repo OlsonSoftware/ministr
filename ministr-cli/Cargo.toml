@@ -12,6 +12,14 @@ readme = "../README.md"
 categories = ["command-line-utilities", "development-tools"]
 keywords = ["mcp", "code-intelligence", "embeddings", "llm", "rag"]
 
+[lib]
+# F31.2b — exposes commands::cmd_serve_http (and supporting modules) so
+# `ministr-cloud-tools` can call the same serve flow with a
+# `CloudRouterMounter` wired in. The MIT binary `ministr` (below) keeps
+# behaving as before, calling cmd_serve_http with `mounter = None`.
+name = "ministr_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "ministr"
 path = "src/main.rs"

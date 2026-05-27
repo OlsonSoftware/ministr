@@ -24,3 +24,8 @@ tokio = { workspace = true }
 # matches the workspace error convention (`thiserror` for library
 # crates, `miette` for application crates).
 thiserror = { workspace = true }
+# F31.2b — CloudRouterMounter trait passes an axum::Router across the
+# MIT seam so the cloud crate can compose its routes onto the locally-
+# built base router. Same axum version as ministr-mcp / ministr-daemon
+# to keep one Tower middleware tree per binary.
+axum = { workspace = true }
