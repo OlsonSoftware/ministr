@@ -27,7 +27,7 @@ keywords:
   - enterprise
 home: https://ministr.ai
 sources:
-  - https://github.com/ministr-ai/ministr
+  - https://github.com/OlsonSoftware/ministr
 maintainers:
   - name: ministr.ai
     email: support@ministr.ai
