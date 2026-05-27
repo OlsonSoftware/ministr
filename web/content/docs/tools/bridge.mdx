@@ -50,7 +50,7 @@ Wrapped in the [standard response envelope](/docs/tools#response-envelope). The 
 
 | Field | Description |
 |---|---|
-| `links[].kind` | Binding mechanism (`tauri_command`, `tauri_event`, `napi`, `wasm_bindgen`, `pyo3`, `http_route`, `ffi`) |
+| `links[].kind` | Binding mechanism (`tauri_command`, `tauri_event`, `napi`, `wasm_bindgen`, `pyo3`, `http_route`, `ffi`, `cgo`, `jni`, `uni_ffi`, `grpc`, `flutter_channel`, `electron_ipc`) |
 | `links[].confidence` | Combined link confidence (1.0 = exact match; lower values are case-normalized or semantic fallbacks) |
 | `links[].export` | Producing side — see endpoint fields below |
 | `links[].import` | Consuming side — same endpoint shape |

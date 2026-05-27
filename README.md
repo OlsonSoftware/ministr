@@ -168,8 +168,8 @@ runs entirely on your machine; the hosted **ministr Cloud** service at
 `mcp.ministr.ai` and the **Enterprise** on-prem image are paid products built
 on proprietary crates added in later phases.
 
-The six workspace crates in this repository — `ministr-core`, `ministr-api`,
+The six MIT-licensed workspace crates — `ministr-core`, `ministr-api`,
 `ministr-daemon`, `ministr-mcp`, `ministr-cli`, and `ministr-app/src-tauri` —
-are MIT-licensed. See [LICENSE-MIT](LICENSE-MIT) for the canonical text and
+are the local stack. See [LICENSE-MIT](LICENSE-MIT) for the canonical text and
 [STEWARDSHIP.md](STEWARDSHIP.md) for our commitment that **a feature that
 ships open source will not be moved to a paid tier**.

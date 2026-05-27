@@ -37,8 +37,8 @@ export const TIERS: readonly Tier[] = [
     tagline:
       'Everything that runs on your machine. Forever free, never demoted to a paid tier.',
     bullets: [
-      'All 19 MCP tools',
-      'SOLID detector + 12 cross-language bridge detectors',
+      'All 20 MCP tools',
+      'SOLID detector + 13 cross-language bridge detectors',
       '~40 language parsers',
       'Unlimited corpora on your disk',
       'Private repos via PAT-in-URL',

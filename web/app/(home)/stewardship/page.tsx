@@ -39,7 +39,7 @@ export default function StewardshipPage() {
           <code>ministr-api</code>, <code>ministr-daemon</code>,{' '}
           <code>ministr-mcp</code>, <code>ministr-cli</code>,{' '}
           <code>ministr-app/src-tauri</code>) carry MIT licences and will keep them.
-          All 19 MCP tools, the SOLID detector, 12 cross-language bridge detectors,
+          All 20 MCP tools, the SOLID detector, 13 cross-language bridge detectors,
           ~40 language parsers, claim extraction, session shadow, and coherence
           tracking are part of the MIT half.
         </p>

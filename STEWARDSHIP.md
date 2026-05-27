@@ -18,11 +18,11 @@ the whole product. We will not paywall existing open-source functionality.
 ## What is MIT (and stays MIT)
 
 The local stack — everything that runs on a user's own machine — is
-MIT-licensed. The current six workspace crates are:
+MIT-licensed. The six MIT crates are:
 
 | Crate | Role |
 |---|---|
-| [`ministr-core`](ministr-core/) | Domain logic — indexing, embedding, SOLID detector, cross-language bridge graph, 12 bridge detectors, ~40 language parsers, claim extraction, session shadow, coherence |
+| [`ministr-core`](ministr-core/) | Domain logic — indexing, embedding, SOLID detector, cross-language bridge graph, 13 bridge kinds, ~40 language parsers, claim extraction, session shadow, coherence |
 | [`ministr-api`](ministr-api/) | Shared request/response types |
 | [`ministr-daemon`](ministr-daemon/) | HTTP API over Unix domain socket |
 | [`ministr-mcp`](ministr-mcp/) | MCP server adapter (all 20 MCP tools) |
@@ -39,14 +39,12 @@ will remain true.
 The hosted **ministr Cloud** service at `mcp.ministr.ai` and the **Enterprise**
 on-prem image are paid products. The code that exists *only because* we run a
 multi-tenant service or sell an enterprise SKU lives in proprietary crates
-that will be added to this repository as later phases land:
+in this repository:
 
 | Crate | License | Purpose |
 |---|---|---|
-| `ministr-cloud` | LicenseRef-Proprietary | Tenant data model, Stripe glue, GitHub-OAuth adapter, quota middleware, billing portal |
-| `ministr-enterprise` | LicenseRef-Proprietary | SSO/SAML, OIDC federation, immutable audit log + SIEM export, license-key gating, on-prem entrypoint |
-| `ministr-atlas` | LicenseRef-Proprietary | Curated repo list, scheduler, re-index cron, license filter, opt-out registry |
-| `ministr-atlas-mirror` | LicenseRef-Proprietary | Air-gapped Atlas mirror image for in-VPC Enterprise deploys |
+| [`ministr-cloud`](ministr-cloud/) | LicenseRef-Proprietary | Tenant data model, Stripe glue, GitHub-OAuth adapter, quota middleware, billing portal |
+| [`ministr-atlas`](ministr-atlas/) | LicenseRef-Proprietary | Curated repo list, scheduler, re-index cron, license filter, opt-out registry |
 
 None of this code is useful on the local stack — it only exists because we
 run a multi-tenant service or sell into compliance-bound buyers. Keeping it
@@ -56,7 +54,7 @@ closed is how the cloud and enterprise products fund the open core.
 
 - **Forks are welcome.** MIT explicitly permits commercial use, modification,
   and redistribution. We ask only that the copyright notice is preserved.
-- **The MCP tool surface is open.** All 19 tools — `ministr_survey`,
+- **The MCP tool surface is open.** All 20 tools — `ministr_survey`,
   `ministr_symbols`, `ministr_definition`, `ministr_references`,
   `ministr_read`, `ministr_extract`, `ministr_toc`, `ministr_bridge`,
   `ministr_compress`, `ministr_usage`, `ministr_dropped`, `ministr_solid`,
