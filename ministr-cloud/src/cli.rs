@@ -77,6 +77,18 @@ pub async fn mount_cloud_routes(
         return Ok(CloudMountOutput::default());
     };
 
+    // Self-contained Postgres pool owned by the cloud impl. Today the
+    // MIT serve's inline cloud branch ALSO opens its own pool for the
+    // adapters/routes still wired there — F31.2b-ii's progressive
+    // migration sunsets that branch over chunks C+. Two pools is
+    // temporary; both share the same Postgres tables.
+    let pool = Arc::new(
+        crate::connect(&pg_url).map_err(|e| ApiError {
+            code: "cloud_pg_pool_open_failed".into(),
+            message: format!("open cloud postgres pool: {e}"),
+        })?,
+    );
+
     // Self-contained OAuth store for scope-wrapping the cloud routes.
     // Same Postgres tables as the MIT serve's OAuth store — both
     // instances stay in sync via shared DB state. Issuer URL doesn't
@@ -113,6 +125,30 @@ pub async fn mount_cloud_routes(
             count = ministr_atlas::ATLAS_SEED_REPOS.len(),
             "atlas v0 mounted via CloudRouterMounter — GET /atlas/manifest.json + /atlas/{{slug}}/*"
         );
+    }
+
+    // F1.5 sub-bullet 3 — Stripe webhook receiver. Public route
+    // (Stripe is the caller); the signature check inside is the only
+    // auth. Mounts only when MINISTR_STRIPE_WEBHOOK_SECRET is set.
+    // Migrated from cmd_serve_http inline branch in F31.2b-ii-D.
+    if let Some(stripe_secret) = trimmed_env("MINISTR_STRIPE_WEBHOOK_SECRET") {
+        let stripe_router = crate::billing::stripe::stripe_webhook_routes(
+            crate::StripeWebhookState::new(Arc::clone(&pool), stripe_secret),
+        );
+        router = router.merge(stripe_router);
+        tracing::info!("stripe webhook mounted via CloudRouterMounter — POST /webhooks/stripe");
+    }
+
+    // F3.1b-ii-c — Resend bounce webhook. Public route (Resend is the
+    // caller); svix signature is the only auth. Mounts only when
+    // MINISTR_RESEND_WEBHOOK_SECRET is set. Migrated from cmd_serve_http
+    // inline branch in F31.2b-ii-D.
+    if let Some(resend_secret) = trimmed_env("MINISTR_RESEND_WEBHOOK_SECRET") {
+        let resend_router = crate::resend_webhook_routes(
+            crate::ResendWebhookState::new(Arc::clone(&pool), resend_secret),
+        );
+        router = router.merge(resend_router);
+        tracing::info!("resend webhook mounted via CloudRouterMounter — POST /webhooks/resend");
     }
 
     Ok(CloudMountOutput {
