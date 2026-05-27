@@ -104,7 +104,7 @@ export default function StewardshipPage() {
 }
 
 export const metadata = {
-  title: 'Stewardship — ministr',
+  title: 'Stewardship',
   description:
     'ministr stewardship: open-core posture, the never-demote promise, and what stays MIT.',
 };

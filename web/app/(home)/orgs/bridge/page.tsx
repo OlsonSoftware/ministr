@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { AuthBridgePage } from "./auth-bridge-page";
 
 export const metadata = {
-  title: "Bridge graph — ministr",
+  title: 'Bridge graph',
   description:
     "Authenticated cross-language bridge graph visualizer for your org corpora.",
 };

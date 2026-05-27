@@ -45,7 +45,7 @@ export default function PricingPage() {
 }
 
 export const metadata = {
-  title: 'Pricing — ministr',
+  title: 'Pricing',
   description:
     'ministr pricing. Free MIT local stack. Hosted cloud from $20/month. Enterprise on contact.',
 };

@@ -23,7 +23,7 @@ import { BridgeGraphLive } from '@/components/bridge/bridge-graph-live';
 import { BRIDGE_GRAPH_SAMPLE } from '@/components/landing/bridge-graph';
 
 export const metadata = {
-  title: 'Bridge graph — interactive demo · ministr',
+  title: 'Bridge graph demo',
   description:
     'Cross-language bridge graph visualization. Zoom, pan, and hover edges to see Tauri / PyO3 / NAPI links across a polyglot codebase.',
 };

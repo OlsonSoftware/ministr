@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { CallbackHandler } from "./callback-handler";
 
 export const metadata = {
-  title: "Signing in... - ministr",
+  title: 'Signing in',
 };
 
 export default function AuthCallbackPage() {

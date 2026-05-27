@@ -85,7 +85,7 @@ export default function BillingManagePage() {
 }
 
 export const metadata = {
-  title: 'Manage billing - ministr',
+  title: 'Manage billing',
   description:
     'Open the Stripe Customer Portal to manage your ministr Cloud subscription.',
 };

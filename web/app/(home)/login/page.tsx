@@ -2,9 +2,9 @@ import { LoginForm } from "./login-form";
 
 export default function LoginPage() {
   return (
-    <div className="ministr-v2">
-      <section className="v2-section">
-        <p className="v2-meta" style={{ marginBottom: '16px' }}>Account</p>
+    <>
+      <section className="v2-section" style={{ paddingBottom: 0 }}>
+        <p className="v2-meta" style={{ marginBottom: 16 }}>Account</p>
         <h1 className="v2-h2">Sign in to ministr</h1>
         <p className="v2-sub">
           Paste an API key from the ministr desktop app (Settings &rarr; Cloud
@@ -19,18 +19,11 @@ export default function LoginPage() {
           <LoginForm />
         </div>
       </section>
-
-      <footer className="v2-footer">
-        <div className="v2-footer-links">
-          <a href="/">Home</a>
-          <a href="/docs">Docs</a>
-        </div>
-      </footer>
-    </div>
+    </>
   );
 }
 
 export const metadata = {
-  title: 'Sign in - ministr',
+  title: 'Sign in',
   description: 'Sign in to ministr with GitHub or an API key.',
 };
