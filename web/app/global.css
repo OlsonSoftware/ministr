@@ -780,6 +780,285 @@ h1.ministr-gradient-text,
 }
 .ministr-ms .ms-cli .ms-prompt { color: var(--ministr-accent-text); user-select: none; }
 
+/* ── Install page ──────────────────────────────────────────────── */
+
+.install-page {
+  min-height: 100vh;
+  background: var(--fd-background);
+  color: var(--fd-foreground);
+}
+
+.install-hero {
+  padding: 4rem 0 3rem;
+  border-bottom: 1px solid color-mix(in oklch, var(--fd-foreground) 10%, transparent);
+}
+
+.install-wide {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 0 2rem;
+}
+
+.install-body {
+  padding-top: 2.5rem;
+  padding-bottom: 4rem;
+}
+
+.install-version {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--fd-muted-foreground);
+}
+
+.install-title {
+  font-size: clamp(2rem, 5vw, 3rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  margin-top: 0.5rem;
+}
+
+.install-sub {
+  font-size: 0.95rem;
+  color: var(--fd-muted-foreground);
+  margin-top: 0.75rem;
+  line-height: 1.5;
+}
+.install-sub code {
+  font-size: 0.85em;
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  background: color-mix(in oklch, var(--fd-foreground) 8%, transparent);
+}
+
+/* Primary download */
+.install-primary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2rem;
+  padding: 1.5rem;
+  border-radius: 12px;
+  border: 1px solid color-mix(in oklch, var(--fd-foreground) 12%, transparent);
+  background: color-mix(in oklch, var(--fd-foreground) 3%, transparent);
+  margin-bottom: 2.5rem;
+  flex-wrap: wrap;
+}
+.install-primary-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+.install-primary-label {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.install-badge {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  background: color-mix(in oklch, var(--ministr-accent-text, #f59e0b) 15%, transparent);
+  color: var(--ministr-accent-text, #f59e0b);
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}
+
+.install-hint {
+  font-size: 0.85rem;
+  color: var(--fd-muted-foreground);
+  margin-top: 0.25rem;
+  line-height: 1.4;
+}
+.install-filename {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+  color: var(--fd-muted-foreground);
+  margin-top: 0.25rem;
+  opacity: 0.7;
+}
+
+/* Buttons */
+.install-btn {
+  font-size: 0.85rem;
+  font-weight: 500;
+  padding: 0.5rem 1.25rem;
+  border-radius: 8px;
+  border: 1px solid color-mix(in oklch, var(--fd-foreground) 15%, transparent);
+  background: transparent;
+  color: var(--fd-foreground);
+  text-decoration: none;
+  transition: background 120ms, border-color 120ms;
+  white-space: nowrap;
+}
+.install-btn:hover {
+  background: color-mix(in oklch, var(--fd-foreground) 6%, transparent);
+  border-color: color-mix(in oklch, var(--fd-foreground) 25%, transparent);
+}
+.install-btn-primary {
+  background: var(--ministr-accent-text, #f59e0b);
+  color: var(--color-ink-950, #0a0a0a);
+  border-color: transparent;
+  font-weight: 600;
+}
+.install-btn-primary:hover {
+  opacity: 0.9;
+  background: var(--ministr-accent-text, #f59e0b);
+  border-color: transparent;
+}
+
+/* Section titles */
+.install-section-title {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid color-mix(in oklch, var(--fd-foreground) 8%, transparent);
+}
+
+/* Installer grid */
+.install-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2.5rem;
+}
+.install-card {
+  padding: 1.25rem;
+  border-radius: 10px;
+  border: 1px solid color-mix(in oklch, var(--fd-foreground) 10%, transparent);
+  background: color-mix(in oklch, var(--fd-foreground) 2%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  transition: border-color 120ms;
+}
+.install-card:hover {
+  border-color: color-mix(in oklch, var(--fd-foreground) 18%, transparent);
+}
+.install-card-active {
+  border-color: color-mix(in oklch, var(--ministr-accent-text, #f59e0b) 40%, transparent);
+}
+.install-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.install-card-label {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.install-detected {
+  font-size: 0.7rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ministr-accent-text, #f59e0b);
+  margin-left: auto;
+}
+.install-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: auto;
+  padding-top: 0.5rem;
+}
+
+/* CLI tabs */
+.install-cli-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 0;
+  border-bottom: 1px solid color-mix(in oklch, var(--fd-foreground) 10%, transparent);
+}
+.install-cli-tab {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.8rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.6rem 1.25rem;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--fd-muted-foreground);
+  cursor: pointer;
+  transition: color 120ms;
+}
+.install-cli-tab:hover { color: var(--fd-foreground); }
+.install-cli-tab-active {
+  color: var(--fd-foreground);
+  border-bottom-color: var(--ministr-accent-text, #f59e0b);
+}
+.install-cli-block {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border-radius: 0 0 10px 10px;
+  border: 1px solid color-mix(in oklch, var(--fd-foreground) 10%, transparent);
+  border-top: none;
+  background: color-mix(in oklch, var(--fd-foreground) 3%, transparent);
+  margin-bottom: 2.5rem;
+}
+.install-cli-code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.install-prompt {
+  color: var(--ministr-accent-text, #f59e0b);
+  user-select: none;
+}
+
+/* Next steps */
+.install-next-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+.install-next-card {
+  padding: 1.25rem;
+  border-radius: 10px;
+  border: 1px solid color-mix(in oklch, var(--fd-foreground) 8%, transparent);
+}
+.install-next-card h3 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+.install-next-card p {
+  font-size: 0.85rem;
+  color: var(--fd-muted-foreground);
+  line-height: 1.5;
+}
+.install-next-card code {
+  font-size: 0.8em;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: color-mix(in oklch, var(--fd-foreground) 8%, transparent);
+}
+
+.install-link {
+  color: var(--ministr-accent-text, #f59e0b);
+  text-decoration: none;
+}
+.install-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 /* Stage aspect-ratio should match the cast's claimed dimensions so
    asciinema-player fills without pillarbox/letterbox. The cast header
    was rewritten to height=32 rows (from the 50 it was recorded at) —

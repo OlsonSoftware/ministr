@@ -46,7 +46,7 @@ export const TIERS: readonly Tier[] = [
     name: 'Pro',
     price: '$20 / month',
     tagline:
-      ‘Hosted code intelligence for solo devs. The polyglot index and Atlas network, managed for you.’,
+      'Hosted code intelligence for solo devs. The polyglot index and Atlas network, managed for you.',
     bullets: [
       '10 hosted corpora',
       'Shared fast-lane indexing (≤2 min queue p95)',

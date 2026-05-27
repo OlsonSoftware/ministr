@@ -11,9 +11,5 @@ export const metadata: Metadata = {
 };
 
 export default function InstallPage() {
-  return (
-    <div className="ministr-v2" style={{ maxWidth: 'none', padding: 0 }}>
-      <InstallClient />
-    </div>
-  );
+  return <InstallClient />;
 }
