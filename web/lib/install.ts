@@ -14,20 +14,20 @@
 /** Canonical front-door URL for the install page. */
 export const INSTALL_HOST = 'https://ministr.ai';
 
-/** Cloudflare Worker proxy that fronts GitHub Releases. */
-export const DOWNLOAD_HOST = 'https://dl.ministr.app';
+/** GitHub Releases download host. */
+export const DOWNLOAD_HOST = 'https://github.com/OlsonSoftware/ministr/releases/download';
 
-/** Returns the URL the Worker exposes for `latest` release metadata. */
+/** Returns the GitHub API URL for the latest release metadata. */
 export function latestReleaseUrl(): string {
-  return `${DOWNLOAD_HOST}/latest`;
+  return 'https://api.github.com/repos/OlsonSoftware/ministr/releases/latest';
 }
 
-/** Returns the proxy URL for a specific release asset. */
+/** Returns the direct download URL for a specific release asset. */
 export function downloadUrl(tag: string, filename: string): string {
   return `${DOWNLOAD_HOST}/${tag}/${filename}`;
 }
 
-/** Returns the proxy URL pointing at the latest tag for an asset name. */
+/** Returns the download URL for the latest tag for an asset name. */
 export function latestDownloadUrl(filename: string): string {
   return `${DOWNLOAD_HOST}/latest/${filename}`;
 }

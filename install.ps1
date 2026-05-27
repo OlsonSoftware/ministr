@@ -1,17 +1,14 @@
 # ministr installer for Windows — downloads the latest release binary
-# from our release proxy and adds it to PATH.
+# from GitHub and adds it to PATH.
 #
 # Usage:
 #   iwr -useb https://ministr.app/install.ps1 | iex
 #
-# Mirrors install.sh: fetches assets from https://dl.ministr.app, a
-# Cloudflare Worker fronting the private GitHub repo's releases. All
-# downloads are unauthenticated HTTPS GETs.
-#
-# Honors the same env-var contract as install.sh:
-#   MINISTR_DL_HOST  override the download host (testing / mirrors)
-#   INSTALL_DIR      override the install location
-#                    (default: %USERPROFILE%\.ministr\bin)
+# Honors env-var overrides:
+#   MINISTR_GITHUB_REPO  override the repo (default: OlsonSoftware/ministr)
+#   MINISTR_DL_HOST      override the download host (testing / mirrors)
+#   INSTALL_DIR          override the install location
+#                        (default: %USERPROFILE%\.ministr\bin)
 
 [CmdletBinding()]
 param()
@@ -26,7 +23,8 @@ $ErrorActionPreference = 'Stop'
 function Write-Info { param([string]$Msg) Write-Host $Msg -ForegroundColor Blue }
 function Write-Err  { param([string]$Msg) Write-Host "error: $Msg" -ForegroundColor Red; exit 1 }
 
-$DlHost     = if ($env:MINISTR_DL_HOST) { $env:MINISTR_DL_HOST } else { 'https://dl.ministr.app' }
+$Repo       = if ($env:MINISTR_GITHUB_REPO) { $env:MINISTR_GITHUB_REPO } else { 'OlsonSoftware/ministr' }
+$DlHost     = if ($env:MINISTR_DL_HOST) { $env:MINISTR_DL_HOST } else { "https://github.com/$Repo/releases/download" }
 $InstallDir = if ($env:INSTALL_DIR)     { $env:INSTALL_DIR }     else { Join-Path $env:USERPROFILE '.ministr\bin' }
 
 # Detect architecture. We only ship x86_64 Windows today; aarch64 maps
@@ -43,11 +41,11 @@ $archive = "ministr-$target.zip"
 
 Write-Info 'Finding latest ministr release...'
 try {
-    $latest = Invoke-RestMethod -Uri "$DlHost/latest" -UseBasicParsing
+    $latest = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -UseBasicParsing
 } catch {
-    Write-Err "could not reach $DlHost/latest — check your network or set MINISTR_DL_HOST. ($_)"
+    Write-Err "could not reach GitHub API — check your network. ($_)"
 }
-$tag = $latest.tag
+$tag = $latest.tag_name
 if (-not $tag) { Write-Err "could not determine latest release tag from $DlHost/latest" }
 Write-Info "Latest release: $tag"
 
