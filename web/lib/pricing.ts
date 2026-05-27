@@ -1,13 +1,8 @@
 /**
- * F2.5 — single source of truth for the §3 pricing matrix.
+ * Single source of truth for the pricing matrix.
  *
- * Both the marketing `/pricing` page and any landing-page snippet
- * read tiers from this module so the table on the site matches the
- * ROADMAP §3 byte-for-byte (validation requirement). Changes go HERE
- * — never duplicate per-page.
- *
- * Mirror this file when ROADMAP §3 changes; the audit step in
- * `/roadmap` will catch drift.
+ * Both the `/pricing` page and any landing-page snippet read tiers
+ * from this module. Changes go HERE — never duplicate per-page.
  */
 
 export interface Tier {
@@ -51,7 +46,7 @@ export const TIERS: readonly Tier[] = [
     name: 'Pro',
     price: '$20 / month',
     tagline:
-      'Hosted code intelligence for solo devs. Cursor-Pro-parity pricing with the polyglot index Cursor doesn’t ship.',
+      ‘Hosted code intelligence for solo devs. The polyglot index and Atlas network, managed for you.’,
     bullets: [
       '10 hosted corpora',
       'Shared fast-lane indexing (≤2 min queue p95)',
@@ -67,7 +62,7 @@ export const TIERS: readonly Tier[] = [
     name: 'Team',
     price: '$30 / seat / mo',
     tagline:
-      '3-seat minimum ($90/mo floor). Orgs, ACL, named API keys, audit-light. Undercuts Cursor Business by $10.',
+      '3-seat minimum ($90/mo floor). Orgs, ACL, named API keys, webhooks, audit.',
     bullets: [
       '50 corpora per org',
       'Priority queue (jumps Pro)',
@@ -84,7 +79,7 @@ export const TIERS: readonly Tier[] = [
     name: 'Enterprise',
     price: 'Contact us',
     tagline:
-      'For procurement-bound buyers. Targets $50K+/yr; ships SSO, immutable audit, on-prem image, CMK.',
+      'SSO, immutable audit, on-prem image, customer-managed keys. For compliance-bound teams.',
     bullets: [
       'Unlimited corpora + dedicated indexing pool',
       'SSO / SAML, OIDC federation',
@@ -98,10 +93,6 @@ export const TIERS: readonly Tier[] = [
   },
 ];
 
-/**
- * Positioning one-liner — F2.5 sub-bullet 2. Same string is referenced
- * from ROADMAP §1 ("Positioning one-liner") so any drift here is
- * caught at audit time.
- */
+/** Positioning one-liner for the landing page. */
 export const POSITIONING_LINE =
   'Hosted, polyglot, agent-aware code intelligence — the MCP layer every AI agent calls into. MIT core, paid cloud.';

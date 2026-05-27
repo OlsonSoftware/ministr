@@ -625,13 +625,13 @@ pub struct BridgeNode {
     pub symbol_id: Option<String>,
 }
 
-/// F3.6-a — one edge in the bridge graph wire shape.
+/// One edge in the bridge graph wire shape.
 ///
 /// `from` and `to` reference [`BridgeNode::id`] values. `kind` is one
-/// of the 12 bridge detectors (`tauri_command`, `napi`, `pyo3`,
-/// `wasm_bindgen`, `uniffi`, `jni`, `cgo`, `ffi`, `grpc`,
-/// `http_route`, `flutter`, `electron`) — unconstrained string so a
-/// future detector lands without a schema migration.
+/// of the 13 bridge kinds (`tauri_command`, `tauri_event`, `napi`,
+/// `pyo3`, `wasm_bindgen`, `uni_ffi`, `jni`, `cgo`, `ffi`, `grpc`,
+/// `http_route`, `flutter_channel`, `electron_ipc`) — unconstrained
+/// string so a future detector lands without a schema migration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BridgeEdge {
     /// Source node id (the export side).
@@ -644,7 +644,7 @@ pub struct BridgeEdge {
     pub confidence: f32,
 }
 
-/// F3.6-a — bridge graph wire shape returned by
+/// Bridge graph wire shape returned by
 /// `GET /api/v1/corpora/{id}/bridge/graph`. Nodes are unique across
 /// the graph; an edge references exactly two nodes by id.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

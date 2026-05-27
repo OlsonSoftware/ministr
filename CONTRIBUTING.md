@@ -171,7 +171,7 @@ CI runs these automatically on every PR.
 
 ## License
 
-The six workspace crates in this repository are MIT-licensed; see
+The six MIT-licensed workspace crates are described in
 [LICENSE-MIT](LICENSE-MIT). Contributions are accepted under the same MIT
 license as outbound (the standard inbound=outbound model) — you retain
 copyright in your contribution and grant ministr's users the MIT permissions.
