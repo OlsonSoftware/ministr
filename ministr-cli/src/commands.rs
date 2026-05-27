@@ -449,18 +449,9 @@ pub async fn cmd_serve_http(
     // (CloudServerAdapters.corpora_repo). The chunk A adapter-
     // application stanza below applies it before `restore()`.
 
-    // PHASE3 chunk 5 — wire the on-demand bundle restorer. When a
-    // query targets a corpus_id whose in-memory handle is absent but
-    // `cloud_corpora` lists it, `CorpusRegistry::get` calls
-    // `restorer.download` to lazy-fetch the bundle from blob. Replaces
-    // PHASE2's boot-time bulk download.
-    if let Some(backend_arc) = blob_backend_arc.as_ref() {
-        let restorer: Arc<dyn ministr_api::CorpusRestorer> = Arc::new(
-            ministr_cloud::BlobCorpusRestorer::new(Arc::clone(backend_arc)),
-        );
-        corpus_registry.set_corpus_restorer(restorer);
-        tracing::info!("BlobCorpusRestorer wired — first query lazy-downloads bundles from blob");
-    }
+    // F31.2b-ii-K — BlobCorpusRestorer migrated to ClassicCloudMounter
+    // (CloudServerAdapters.corpus_restorer). The chunk A adapter
+    // stanza below applies it before `restore()`.
 
     // F31.2b-ii — apply mounter-provided server adapters BEFORE
     // restore(). Currently only fires when ClassicCloudMounter actually
@@ -504,22 +495,9 @@ pub async fn cmd_serve_http(
     // Self-hosted serve leaves cloud_pool = None and both backends stay
     // None on the registry; the F6.1-* helpers each collapse to a no-op
     // in that branch.
-    let server = if let Some(pool) = cloud_pool.as_ref() {
-        let storage: std::sync::Arc<dyn ministr_api::SessionStorage> = std::sync::Arc::new(
-            ministr_cloud::PostgresSessionStorage::from_arc(Arc::clone(pool)),
-        );
-        let ledger: std::sync::Arc<dyn ministr_api::DropsLedger> = std::sync::Arc::new(
-            ministr_cloud::PostgresDropsLedger::from_arc(Arc::clone(pool)),
-        );
-        let server = server.with_session_storage(storage).await;
-        let server = server.with_session_drops_ledger(ledger).await;
-        tracing::info!(
-            "PostgresSessionStorage + PostgresDropsLedger wired — agent sessions persist + restore across pod recycle"
-        );
-        server
-    } else {
-        server
-    };
+    // F31.2b-ii-K — PostgresSessionStorage + PostgresDropsLedger
+    // migrated to ClassicCloudMounter (CloudServerAdapters). The chunk
+    // A stanza below applies them.
 
     // F31.2b-ii — apply mounter-provided session_storage / drops_ledger.
     // Empty CloudMountOutput is a no-op.
@@ -640,46 +618,12 @@ pub async fn cmd_serve_http(
     // populated from the persisted ledger (F6.1-d). Self-hosted serve
     // leaves the ledger `None` and the bundle ships the F6.2-a shape
     // (manifest + delivered only).
+    // F31.2b-ii-K — session_export_state drops_ledger + bundle_store
+    // migrated entirely to ClassicCloudMounter. No more inline cloud
+    // wiring here — the chunk A stanza below handles the application.
     let session_export_state = {
         let mut state =
             ministr_mcp::sessions::SessionExportState::new(Arc::clone(&a2a_registry));
-        if let Some(pool) = cloud_pool.as_ref() {
-            let ledger: Arc<dyn ministr_api::DropsLedger> = Arc::new(
-                ministr_cloud::PostgresDropsLedger::from_arc(Arc::clone(pool)),
-            );
-            state = state.with_drops_ledger(ledger);
-        }
-        // F6.2-c — when the bundle-store env is configured (Azure
-        // account + signing secret + cloud base URL), attach the
-        // `CloudSessionBundleStore` so `handle_export` uploads + returns
-        // a signed URL JSON response. Self-hosted serve / missing env
-        // leaves `bundle_store = None` and the F6.2-a/b inline-tar
-        // shape continues to ship.
-        match ministr_cloud::build_session_bundle_store_from_env(
-            cloud_env.cloud_base_url.as_deref(),
-        ) {
-            Ok(Some(store)) => {
-                tracing::info!(
-                    "session bundle store wired — uploads to blob + returns signed URL"
-                );
-                let store: Arc<dyn ministr_api::SessionBundleStore> = Arc::new(store);
-                state = state.with_bundle_store(store);
-            }
-            Ok(None) => {
-                tracing::debug!(
-                    "session bundle store disabled — handle_export streams inline tar"
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "session bundle store construction failed — falling back to inline tar"
-                );
-            }
-        }
-        // F31.2b-ii — mounter-provided drops_ledger / session_bundle_store
-        // take precedence over the inline values above. Empty
-        // CloudMountOutput is a no-op.
         if let Some(c) = cloud.as_ref() {
             if let Some(ledger) = c.server_adapters.drops_ledger.clone() {
                 state = state.with_drops_ledger(ledger);
@@ -863,38 +807,27 @@ pub async fn cmd_serve_http(
     // (CloudDaemonAdapters.installation_minter). The chunk A
     // adapter-application stanza below applies it.
 
-    // PHASE2 chunk 4 — durable corpus uploads.
-    //
-    // Build the BlobBackendSink, install a completion channel on the
-    // registry, and spawn the reactor that drains `(corpus_id,
-    // corpus_dir)` events and fires `enqueue_upload`. The reactor is
-    // serial (one upload at a time) so concurrent ingestion + upload
-    // don't compete for fs I/O during the bundle's tar+zstd pass.
-    //
-    // Wiring runs AFTER `restore()` above: if the cloud cold-started
-    // and `restore()` re-registered any corpora, those re-registrations
-    // do NOT fire an upload — we just downloaded the bundle from blob,
-    // it is already the source of truth.
-    if let Some(backend_arc) = blob_backend_arc.as_ref() {
-        let sink: Arc<dyn ministr_api::BlobSink> = Arc::new(
-            ministr_cloud::BlobBackendSink::new(
-                Arc::clone(backend_arc),
-                resolved_model.to_string(),
-            ),
-        );
+    // PHASE2 chunk 4 — durable corpus uploads. The BlobBackendSink
+    // itself is now built inside ClassicCloudMounter
+    // (CloudDaemonAdapters.blob_sink, F31.2b-ii-K). cmd_serve_http
+    // keeps ownership of the completion channel + reactor: it installs
+    // the mpsc rx on the corpus_registry and spawns a task that drains
+    // (corpus_id, corpus_dir) events into the mounter-provided sink.
+    if let Some(blob_sink) = cloud
+        .as_ref()
+        .and_then(|c| c.daemon_adapters.blob_sink.clone())
+    {
         let (tx, mut completion_rx) =
             tokio::sync::mpsc::unbounded_channel::<(String, std::path::PathBuf)>();
         corpus_registry.set_completion_sink(tx);
-        daemon_state = daemon_state.with_blob_sink(Arc::clone(&sink));
-
         tokio::spawn(async move {
             while let Some((corpus_id, corpus_dir)) = completion_rx.recv().await {
-                sink.enqueue_upload(corpus_id, corpus_dir);
+                blob_sink.enqueue_upload(corpus_id, corpus_dir);
             }
             tracing::info!("blob upload reactor exited — completion channel closed");
         });
         tracing::info!(
-            "blob durability wired — bundles downloaded at boot, uploaded after every ingest"
+            "blob upload reactor spawned — bundles uploaded after every ingest"
         );
     }
 
