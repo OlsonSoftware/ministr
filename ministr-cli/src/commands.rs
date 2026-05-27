@@ -1268,16 +1268,7 @@ pub async fn cmd_serve_http(
             .merge(daemon_obs_p)
             .merge(session_export_p);
         if let Some(pool) = cloud_pool.as_ref() {
-            let billing_router = ministr_cloud::billing_routes(
-                ministr_cloud::BillingState::from_arc(Arc::clone(pool)),
-            );
-            let billing_protected = ministr_mcp::auth::scope_protected_router(
-                billing_router,
-                store.clone(),
-                "ministr:read",
-            );
-            composed = composed.merge(billing_protected);
-            tracing::info!("billing endpoint mounted — GET /api/v1/billing/usage");
+            // F31.2b-ii-F — billing_routes migrated to mount_cloud_routes.
 
             // F3.1a/b — orgs CRUD + member listing + magic-link invites.
             // Mounted only when the cloud Postgres pool exists (self-
@@ -1402,21 +1393,7 @@ pub async fn cmd_serve_http(
                 "orgs endpoints mounted — POST /api/v1/orgs, GET /api/v1/orgs, GET /api/v1/orgs/{{id}}/members, POST /api/v1/orgs/{{id}}/invites"
             );
 
-            // F3.3a — per-org usage dashboard endpoint. Aggregates
-            // `usage_rollups` across `org_members`. Owner/admin only.
-            // Mounted behind `ministr:read` alongside the orgs router.
-            let org_usage_router = ministr_cloud::org_usage_routes(
-                ministr_cloud::OrgUsageState::from_arc(Arc::clone(pool)),
-            );
-            let org_usage_protected = ministr_mcp::auth::scope_protected_router(
-                org_usage_router,
-                store.clone(),
-                "ministr:read",
-            );
-            composed = composed.merge(org_usage_protected);
-            tracing::info!(
-                "org usage endpoint mounted — GET /api/v1/orgs/{{id}}/usage"
-            );
+            // F31.2b-ii-F — org_usage_routes migrated to mount_cloud_routes.
 
             // F3.4a — service-account API keys (mint, list, revoke).
             // Cloud-only: backed by the `api_keys` table. Mounted behind

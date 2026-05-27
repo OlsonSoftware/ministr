@@ -164,6 +164,43 @@ pub async fn mount_cloud_routes(
         );
     }
 
+    // F1.4 sub-bullet 4 — billing endpoint (GET /api/v1/billing/usage).
+    // Mounted behind `ministr:read`. Migrated from cmd_serve_http
+    // inline branch in F31.2b-ii-F.
+    {
+        let billing_router = crate::billing_routes(
+            crate::BillingState::from_arc(Arc::clone(&pool)),
+        );
+        let billing_protected = ministr_mcp::auth::scope_protected_router(
+            billing_router,
+            oauth_store.clone(),
+            "ministr:read",
+        );
+        router = router.merge(billing_protected);
+        tracing::info!(
+            "billing endpoint mounted via CloudRouterMounter — GET /api/v1/billing/usage"
+        );
+    }
+
+    // F3.3a — per-org usage dashboard endpoint (GET /api/v1/orgs/{id}/usage).
+    // Aggregates `usage_rollups` across `org_members`. Owner/admin only
+    // (enforced in handler). Mounted behind `ministr:read`. Migrated
+    // from cmd_serve_http inline branch in F31.2b-ii-F.
+    {
+        let org_usage_router = crate::org_usage_routes(
+            crate::orgs::OrgUsageState::from_arc(Arc::clone(&pool)),
+        );
+        let org_usage_protected = ministr_mcp::auth::scope_protected_router(
+            org_usage_router,
+            oauth_store.clone(),
+            "ministr:read",
+        );
+        router = router.merge(org_usage_protected);
+        tracing::info!(
+            "org usage endpoint mounted via CloudRouterMounter — GET /api/v1/orgs/{{id}}/usage"
+        );
+    }
+
     Ok(CloudMountOutput {
         router,
         daemon_adapters: CloudDaemonAdapters::default(),
