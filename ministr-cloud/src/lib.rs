@@ -49,7 +49,10 @@ pub mod corpora_repo;
 pub mod drops_ledger;
 pub mod corpus_restorer;
 pub mod db;
-pub mod embedding;
+// F31.2b-ii-O — `embedding` (Azure OpenAI embedder) moved to
+// `ministr_core::embedding::openai` so the MIT serve infrastructure
+// no longer needs ministr-cloud at compile time for the embedder
+// selection in `build_server`.
 pub mod github;
 pub mod idp;
 pub mod index_job_sink;
@@ -132,7 +135,8 @@ pub use session_bundle_store::{
     DEFAULT_SESSION_BUNDLE_CONTAINER, DEFAULT_SIGNED_URL_TTL_SECS,
 };
 pub use session_storage::PostgresSessionStorage;
-pub use embedding::{OpenAiAuth, OpenAiConfig, OpenAiEmbedder, DEFAULT_DIMENSIONS};
+// F31.2b-ii-O — OpenAi types now live in `ministr_core::embedding::openai`;
+// downstream callers should import from there directly.
 pub use db::{connect, run_migrations, DbError};
 pub use github::{GitHubAppClient, GitHubAppError};
 pub use idp::{GitHubIdp, IdentityProvider, IdpError, ResolvedIdentity, GITHUB_ISSUER};

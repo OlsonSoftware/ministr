@@ -74,8 +74,8 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use ministr_core::embedding::Embedder;
-use ministr_core::error::IndexError;
+use crate::embedding::Embedder;
+use crate::error::IndexError;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};

@@ -5545,6 +5545,7 @@ dependencies = [
  "hmac 0.12.1",
  "jsonwebtoken",
  "ministr-api",
+ "ministr-atlas",
  "ministr-core",
  "ministr-daemon",
  "ministr-mcp",
@@ -5597,6 +5598,7 @@ dependencies = [
 name = "ministr-core"
 version = "0.6.0"
 dependencies = [
+ "axum",
  "blake3",
  "candle-core",
  "candle-nn",

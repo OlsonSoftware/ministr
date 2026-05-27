@@ -31,7 +31,9 @@ schemars.workspace = true
 toml.workspace = true
 toml_edit.workspace = true
 dirs = "6"
-reqwest.workspace = true
+# F31.2b-ii-O — `json` feature needed by the Azure OpenAI embedder
+# moved here from ministr-cloud (uses .json() on the request + response).
+reqwest = { workspace = true, features = ["json"] }
 url.workspace = true
 comrak.workspace = true
 scraper.workspace = true
@@ -198,6 +200,10 @@ lang-make = ["dep:tree-sitter-make"]
 serde_json.workspace = true
 criterion = { version = "0.5", features = ["html_reports"] }
 rand = "0.8"
+# F31.2b-ii-O — OpenAI embedder tests (relocated from ministr-cloud)
+# spin up a fake Azure endpoint via axum to round-trip the request +
+# response. Test-only dep; not pulled into the production binary.
+axum.workspace = true
 
 [[bench]]
 name = "search"
