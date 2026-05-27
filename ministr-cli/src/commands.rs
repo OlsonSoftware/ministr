@@ -491,30 +491,20 @@ pub async fn cmd_serve_http(
 
     corpus_registry.restore().await;
 
-    // F2.x-b — wire the tenant-corpus filter so the new `Backend::Registry`
-    // dispatch path gates `corpus_id` lookups by tenant. Self-hosted serve
-    // (no cloud Postgres pool) keeps the unfiltered constructor; cross-
-    // tenant access there is meaningless because there's only one user.
-    //
-    // F3.2-iii — the same `PostgresTenantCorpusFilter` struct also
-    // implements `TenantCorpusVisibility` (the daemon-side list filter).
-    // Build it once as a concrete `Arc` and cast to both trait objects
-    // so the MCP gate and the daemon list share a single instance —
-    // identical SQL pool, identical visibility semantics.
-    let tenant_filter_concrete = cloud_pool.as_ref().map(|pool| {
-        std::sync::Arc::new(ministr_cloud::PostgresTenantCorpusFilter::new(
-            Arc::clone(pool),
-        ))
-    });
-    let server = if let Some(concrete) = tenant_filter_concrete.as_ref() {
-        let filter: std::sync::Arc<dyn ministr_api::TenantCorpusFilter> =
-            Arc::clone(concrete) as _;
-        tracing::info!(
-            "PostgresTenantCorpusFilter wired — /mcp tool calls gated by cloud_corpora.tenant_id"
-        );
-        server.with_corpus_registry_and_filter(Arc::clone(&corpus_registry), filter)
-    } else {
-        server.with_corpus_registry(Arc::clone(&corpus_registry))
+    // F31.2b-ii-I — tenant_filter migrated to ClassicCloudMounter
+    // (CloudServerAdapters.tenant_filter). When the mounter populates
+    // it (cloud-mode `ministr-cloud-tools serve`), the MCP server is
+    // built with `with_corpus_registry_and_filter`. Otherwise (MIT
+    // `ministr serve` or no cloud_pool), the plain `with_corpus_registry`
+    // path keeps cross-tenant access meaningless (single-user).
+    let server = match cloud.as_ref().and_then(|c| c.server_adapters.tenant_filter.clone()) {
+        Some(filter) => {
+            tracing::info!(
+                "tenant_filter wired via CloudRouterMounter — /mcp tool calls gated by cloud_corpora.tenant_id"
+            );
+            server.with_corpus_registry_and_filter(Arc::clone(&corpus_registry), filter)
+        }
+        None => server.with_corpus_registry(Arc::clone(&corpus_registry)),
     };
 
     // F6.1-g — attach the Postgres-backed agent-session backends so the
@@ -827,49 +817,11 @@ pub async fn cmd_serve_http(
     // (sub-bullet 4) share that same pool.
 
     let mut daemon_state = ministr_daemon::state::AppState::from_arc(Arc::clone(&corpus_registry));
-    // F3.2-iii — wire the visibility filter into the daemon-side
-    // `GET /api/v1/corpora` handler. Same concrete instance as the
-    // MCP gate (constructed above); the cast to `dyn
-    // TenantCorpusVisibility` exposes the list-side method.
-    if let Some(concrete) = tenant_filter_concrete.as_ref() {
-        let visibility: std::sync::Arc<dyn ministr_api::TenantCorpusVisibility> =
-            Arc::clone(concrete) as _;
-        daemon_state = daemon_state.with_corpus_visibility(visibility);
-        tracing::info!(
-            "PostgresTenantCorpusFilter visibility wired — GET /api/v1/corpora filtered by tenant + ACL"
-        );
-    }
-    if let Some(pool) = cloud_pool.as_ref() {
-        let sink: std::sync::Arc<dyn ministr_api::UsageSink> =
-            std::sync::Arc::new(ministr_cloud::PostgresUsageSink::from_arc(Arc::clone(pool)));
-        daemon_state = daemon_state.with_usage_sink(sink);
-        tracing::info!("PostgresUsageSink wired — billable usage events enabled");
-
-        // F3.7b — wire the audit sink so the daemon's corpus-mutation
-        // handlers (register/clone/unregister) emit audit_events rows.
-        // Same Arc<dyn AuditSink> instance is shared with the orgs +
-        // api_keys + GitHub-callback paths below, so every cloud-side
-        // audit lands in the same logical pipeline.
-        let audit_sink: std::sync::Arc<dyn ministr_api::AuditSink> = std::sync::Arc::new(
-            ministr_cloud::PostgresAuditSink::from_arc(Arc::clone(pool)),
-        );
-        daemon_state = daemon_state.with_audit_sink(Arc::clone(&audit_sink));
-        tracing::info!(
-            "PostgresAuditSink wired into daemon — corpus.created/cloned/deleted emit audit_events"
-        );
-
-        // PHASE3 chunk 4 — route POST /api/v1/corpora and the clone
-        // route through the cloud index-job queue instead of running
-        // ingestion inline. The serve pod's in-process WorkerLoop
-        // (PHASE6 chunk 2) drains the queue.
-        let sink = ministr_cloud::PostgresIndexJobSink::new(Arc::clone(pool), None);
-        let index_job_sink: std::sync::Arc<dyn ministr_api::IndexJobSink> =
-            std::sync::Arc::new(sink);
-        daemon_state = daemon_state.with_index_job_sink(index_job_sink);
-        tracing::info!(
-            "PostgresIndexJobSink wired — serve pod enqueues; WorkerLoop drains in-process"
-        );
-
+    // F31.2b-ii-I — daemon corpus_visibility / usage_sink / audit_sink
+    // / index_job_sink migrated to ClassicCloudMounter
+    // (CloudDaemonAdapters). The chunk A adapter-application stanza
+    // below the BlobBackendSink block handles the actual wiring.
+    if cloud_pool.is_some() {
         // PHASE6 chunk 2 — in-process WorkerLoop. The serve pod now
         // drains the same `indexer_jobs` table the ACA Job currently
         // does (which will be deleted in chunk 3). Both compete via

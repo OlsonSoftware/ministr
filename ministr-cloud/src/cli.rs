@@ -105,6 +105,60 @@ pub async fn mount_cloud_routes(
     })?;
 
     let mut router = Router::new();
+    let mut daemon_adapters = CloudDaemonAdapters::default();
+    let mut server_adapters = CloudServerAdapters::default();
+
+    // F2.x-b + F3.2-iii — single PostgresTenantCorpusFilter instance
+    // wired into BOTH the MCP server (gates /mcp tool calls) and the
+    // daemon list endpoint (filters GET /api/v1/corpora by tenant
+    // + ACL). One Arc shared via two trait casts so the SQL pool +
+    // visibility semantics are identical across surfaces.
+    {
+        let concrete = std::sync::Arc::new(
+            crate::PostgresTenantCorpusFilter::new(Arc::clone(&pool)),
+        );
+        let filter: std::sync::Arc<dyn ministr_api::TenantCorpusFilter> =
+            std::sync::Arc::clone(&concrete) as _;
+        let visibility: std::sync::Arc<dyn ministr_api::TenantCorpusVisibility> =
+            std::sync::Arc::clone(&concrete) as _;
+        server_adapters.tenant_filter = Some(filter);
+        daemon_adapters.corpus_visibility = Some(visibility);
+        tracing::info!(
+            "PostgresTenantCorpusFilter wired via CloudRouterMounter — MCP gate + daemon visibility"
+        );
+    }
+
+    // F1.4 — PostgresUsageSink for billable usage events on daemon
+    // mutations.
+    {
+        let sink: std::sync::Arc<dyn ministr_api::UsageSink> = std::sync::Arc::new(
+            crate::PostgresUsageSink::from_arc(Arc::clone(&pool)),
+        );
+        daemon_adapters.usage_sink = Some(sink);
+    }
+
+    // F3.7b — PostgresAuditSink (single sink, not the chain) for
+    // daemon-side corpus-mutation events (corpus.created/cloned/deleted).
+    // The full chain (Postgres → WebhookFanout → Splunk → PerOrgSiem)
+    // used by orgs/api_keys/webhooks routes is built later as those
+    // routes migrate.
+    {
+        let sink: std::sync::Arc<dyn ministr_api::AuditSink> = std::sync::Arc::new(
+            crate::PostgresAuditSink::from_arc(Arc::clone(&pool)),
+        );
+        daemon_adapters.audit_sink = Some(sink);
+    }
+
+    // PHASE3 chunk 4 — PostgresIndexJobSink routes POST /api/v1/corpora
+    // and clone routes through the cloud index-job queue instead of
+    // running ingestion inline. The serve pod's in-process WorkerLoop
+    // (still inline in cmd_serve_http) drains the queue.
+    {
+        let sink: std::sync::Arc<dyn ministr_api::IndexJobSink> = std::sync::Arc::new(
+            crate::PostgresIndexJobSink::new(Arc::clone(&pool), None),
+        );
+        daemon_adapters.index_job_sink = Some(sink);
+    }
 
     // F2.6 — Atlas v0 pilot. Manifest + per-slug query stubs.
     // Migrated from cmd_serve_http inline branch in F31.2b-ii-C.
@@ -277,8 +331,8 @@ pub async fn mount_cloud_routes(
 
     Ok(CloudMountOutput {
         router,
-        daemon_adapters: CloudDaemonAdapters::default(),
-        server_adapters: CloudServerAdapters::default(),
+        daemon_adapters,
+        server_adapters,
         oauth_adapters: CloudOAuthAdapters::default(),
         admin_adapters: CloudAdminAdapters::default(),
         shutdown: None,
