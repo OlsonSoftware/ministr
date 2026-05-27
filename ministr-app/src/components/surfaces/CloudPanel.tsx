@@ -87,13 +87,21 @@ import { cn } from "../../lib/utils";
 
 const DEFAULT_ENDPOINT = "https://mcp.ministr.ai";
 
-const CLOUD_NAV: readonly SidebarItem[] = [
+const CLOUD_NAV_FULL: readonly SidebarItem[] = [
   { id: "connection", label: "Connection", icon: Link },
   { id: "corpora", label: "Corpora", icon: Database },
   { id: "api-keys", label: "API Keys", icon: Key },
   { id: "webhooks", label: "Webhooks", icon: Webhook },
   { id: "usage", label: "Usage", icon: BarChart3 },
   { id: "sessions", label: "Sessions", icon: Eye },
+];
+
+// Sign-in gate: visitors who are not signed in to ministr Cloud only
+// see the Connection sub-section. The full feature surface (Corpora,
+// API Keys, Webhooks, Usage, Sessions) is hidden until they authenticate.
+// The Cloud icon in the nav rail stays visible as the entry point.
+const CLOUD_NAV_GATED: readonly SidebarItem[] = [
+  { id: "connection", label: "Connection", icon: Link },
 ];
 
 export function CloudPanel() {
@@ -290,15 +298,18 @@ export function CloudPanel() {
   };
 
   const authenticated = !!status?.authenticated;
+  const navItems = authenticated ? CLOUD_NAV_FULL : CLOUD_NAV_GATED;
+  // If the user signs out while viewing a gated section, snap back to Connection.
+  const visibleSection = authenticated ? activeSection : "connection";
 
   return (
     <SurfaceSidebar
       title="Cloud"
-      items={CLOUD_NAV}
-      active={activeSection}
+      items={navItems}
+      active={visibleSection}
       onSelect={setActiveSection}
     >
-      {activeSection === "connection" && (
+      {visibleSection === "connection" && (
       <div className="flex flex-col gap-6">
 
       <OnboardingWizard
@@ -545,23 +556,23 @@ export function CloudPanel() {
       </div>
       )}
 
-      {activeSection === "corpora" && (
+      {authenticated && visibleSection === "corpora" && (
         <CorporaSection authenticated={authenticated} />
       )}
 
-      {activeSection === "api-keys" && (
+      {authenticated && visibleSection === "api-keys" && (
         <ApiKeysSection authenticated={authenticated} />
       )}
 
-      {activeSection === "webhooks" && (
+      {authenticated && visibleSection === "webhooks" && (
         <WebhooksSection authenticated={authenticated} />
       )}
 
-      {activeSection === "usage" && (
+      {authenticated && visibleSection === "usage" && (
         <OrgUsageSection authenticated={authenticated} />
       )}
 
-      {activeSection === "sessions" && (
+      {authenticated && visibleSection === "sessions" && (
         <SessionInspectorSection authenticated={authenticated} />
       )}
     </SurfaceSidebar>
