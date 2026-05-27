@@ -57,7 +57,7 @@ export default function HomePage() {
           </div>
           <div className="v2-feature">
             <h3>Cross-language</h3>
-            <p>Follow calls across Rust, Python, TypeScript, and 40+ others, through PyO3, Tauri, napi-rs, FFI, and gRPC.</p>
+            <p>Follow calls across Rust, Python, TypeScript, and dozens more, through 13 bridge kinds including PyO3, Tauri, napi-rs, FFI, and gRPC.</p>
           </div>
           <div className="v2-feature">
             <h3>Instant</h3>
