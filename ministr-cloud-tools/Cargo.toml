@@ -1,0 +1,61 @@
+[package]
+name = "ministr-cloud-tools"
+version = "0.6.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+# Closed-source crate. Hosts the operator-facing CLI for ministr-cloud
+# (atlas reindex, audit prune/archive, api-keys flag-stale, license
+# mint/rotate/revoke, cloud check/demo/watch). Carries proprietary
+# licence for the same reason ministr-cloud does — link-time inclusion
+# of cloud-only code. F31.2a split this out of ministr-cli so the
+# public MIT CLI stops carrying the cloud surface area.
+license = "LicenseRef-Proprietary"
+repository.workspace = true
+homepage.workspace = true
+description = "Operator CLI for ministr-cloud — atlas reindex, audit retention, license mint/rotate, deployment diagnostics. Not part of the MIT open-core."
+readme = "../README.md"
+
+[[bin]]
+name = "ministr-cloud-tools"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# Proprietary cloud surface — the cmd_* fns are thin CLI wrappers
+# over ministr-cloud's library API (postgres pools, audit retention,
+# license signing, blob backends).
+ministr-cloud.workspace = true
+# F2.6 atlas reindex orchestration.
+ministr-atlas.workspace = true
+# OAuthStore::postgres for cmd_cloud_mint_test_bearer.
+ministr-mcp.workspace = true
+# format_unix_secs_iso for license audit JSONL timestamps.
+ministr-api.workspace = true
+# tracing init + workspace utilities.
+ministr-core.workspace = true
+
+# Direct rustls dep — matches ministr-cli's process-wide CryptoProvider
+# install at startup. Required because reqwest + tokio-postgres-rustls
+# pull in both ring and aws-lc-rs transitively, so rustls 0.23+ refuses
+# to auto-pick.
+rustls.workspace = true
+
+clap.workspace = true
+tokio.workspace = true
+miette.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true
+reqwest.workspace = true
+sha2.workspace = true
+# cloud_demo PKCE flow — fresh URL-safe random for the verifier.
+getrandom = "0.3"
+# F5.4-b/-e — license JWT signing path. Same direct deps ministr-cli
+# had for these subcommands. openssl for RSA keygen; jsonwebtoken for
+# RS256 encode.
+openssl = "0.10.80"
+jsonwebtoken = "9"

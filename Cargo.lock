@@ -5568,6 +5568,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "ministr-cloud-tools"
+version = "0.6.0"
+dependencies = [
+ "clap",
+ "getrandom 0.3.4",
+ "jsonwebtoken",
+ "miette",
+ "ministr-api",
+ "ministr-atlas",
+ "ministr-cloud",
+ "ministr-core",
+ "ministr-mcp",
+ "openssl",
+ "reqwest 0.13.2",
+ "rustls 0.23.38",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "ministr-core"
 version = "0.6.0"
 dependencies = [
