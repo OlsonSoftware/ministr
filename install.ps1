@@ -2,7 +2,7 @@
 # from GitHub and adds it to PATH.
 #
 # Usage:
-#   iwr -useb https://ministr.app/install.ps1 | iex
+#   iwr -useb https://ministr.ai/install.ps1 | iex
 #
 # Honors env-var overrides:
 #   MINISTR_GITHUB_REPO  override the repo (default: OlsonSoftware/ministr)

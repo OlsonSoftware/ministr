@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ministr installer — downloads the latest release binary from GitHub.
-# Usage: curl -fsSL https://ministr.app/install.sh | bash
+# Usage: curl -fsSL https://ministr.ai/install.sh | bash
 set -euo pipefail
 
 GITHUB_REPO="${MINISTR_GITHUB_REPO:-OlsonSoftware/ministr}"
