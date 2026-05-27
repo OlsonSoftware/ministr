@@ -318,73 +318,12 @@ pub async fn cmd_serve_http(
     )
     .await?;
 
-    // PHASE3 chunk 5 — replaces PHASE2's boot-time bulk download.
-    //
-    // Build the blob backend once. `None` on self-hosted serve (no
-    // `MINISTR_BLOB_*` env), in which case every blob path below
-    // collapses to a no-op and the binary behaves exactly like before.
-    // The serve pod no longer pulls every bundle at boot; instead the
-    // first query against a corpus_id triggers an on-demand restore
-    // via `CorpusRegistry::get` → `ensure_present` → `BlobCorpusRestorer`.
-    let blob_backend = ministr_cloud::build_blob_backend_from_env()
-        .into_diagnostic()
-        .wrap_err("build blob backend from env")?;
-    let blob_backend_arc = blob_backend.map(Arc::new);
-
-    // Cloud env + Postgres pool. Hoisted above the corpus registry
-    // build so we can wire a `PostgresCorporaRepo` BEFORE `restore()`
-    // and the repo is the source of truth at cold start. Self-hosted
-    // serve leaves cloud_pool = None and skips the repo entirely;
-    // `restore()` falls back to the on-disk `corpora.json` as before.
+    // F31.2b-ii-R — inline blob_backend + cloud_pool construction (with
+    // run_migrations + ensure_audit_partitions) MIGRATED to
+    // `mount_cloud_routes`. `cloud_env` is the only thing still read
+    // here — for CORS allowlist + AdminState webhook secret + the
+    // OAuth-store backend selector.
     let cloud_env = read_cloud_env();
-    let cloud_pool = if let Some(pg_url) = cloud_env.pg_url.as_deref() {
-        let pool = ministr_cloud::connect(pg_url)
-            .into_diagnostic()
-            .wrap_err("open cloud postgres pool")?;
-        // Auto-apply F1.2 + later migrations on every pod boot. The
-        // runner short-circuits when the schema is up to date so this
-        // is cheap on warm starts; on a fresh DB it creates the
-        // users / orgs / corpora / usage_events / audit_events tables
-        // (and PHASE3's `cloud_corpora`) before any handler can query
-        // them. Without this, a brand-new deployment crashes the first
-        // time any tenant-scoped handler runs.
-        ministr_cloud::run_migrations(&pool)
-            .await
-            .into_diagnostic()
-            .wrap_err("apply cloud postgres migrations")?;
-        tracing::info!("cloud postgres migrations applied");
-
-        // F5.3-c-ii — extend the audit_events partition surface
-        // forward to `now() + DEFAULT_PARTITION_LOOKAHEAD_QUARTERS`.
-        // Migration 0013 seeded 16 partitions covering 2024-Q1 ..
-        // 2027-Q4; without this call the pod silently breaks
-        // audit_events INSERT once `now()` crosses into Q1 2028.
-        // The helper is idempotent + cheap (single pg_inherits
-        // query + zero CREATEs on warm starts).
-        match ministr_cloud::ensure_audit_partitions(
-            &pool,
-            ministr_cloud::DEFAULT_PARTITION_LOOKAHEAD_QUARTERS,
-        )
-        .await
-        {
-            Ok(outcome) => tracing::info!(
-                existing = outcome.existing,
-                created = outcome.created,
-                target_end_year = outcome.target_end_year,
-                target_end_quarter = outcome.target_end_quarter,
-                "audit_events partition surface extended"
-            ),
-            Err(e) => tracing::warn!(
-                error = %e,
-                "ensure_audit_partitions failed — boot continues; future audit INSERTs may fail \
-                 if `now()` crosses past the highest seeded partition"
-            ),
-        }
-
-        Some(Arc::new(pool))
-    } else {
-        None
-    };
 
     // F1.2 sub-bullet 3 — build the corpus registry once and hand the
     // same `Arc<CorpusRegistry>` to both the MCP server and the daemon
@@ -706,56 +645,10 @@ pub async fn cmd_serve_http(
     // / index_job_sink migrated to ClassicCloudMounter
     // (CloudDaemonAdapters). The chunk A adapter-application stanza
     // below the BlobBackendSink block handles the actual wiring.
-    if cloud_pool.is_some() {
-        // PHASE6 chunk 2 — in-process WorkerLoop. The serve pod now
-        // drains the same `indexer_jobs` table the ACA Job currently
-        // does (which will be deleted in chunk 3). Both compete via
-        // `FOR UPDATE SKIP LOCKED` so this is safe to run alongside
-        // the legacy Job path during the chunk-2-to-chunk-3 transition.
-        //
-        // The loop is spawned with an always-live cancel token; SIGTERM
-        // handling lands in chunk 4 along with the operator-side deploy.
-        match ministr_mcp::admin::jobs::PostgresJobQueue::open(
-            cloud_env
-                .pg_url
-                .as_deref()
-                .expect("cloud_pool is_some implies pg_url is_some"),
-        )
-        .await
-        {
-            Ok(pg_queue) => {
-                let queue_backend = std::sync::Arc::new(
-                    ministr_mcp::admin::jobs::JobQueueBackend::Postgres(pg_queue),
-                );
-                let runner = std::sync::Arc::new(crate::worker::IngestionRunner {
-                    config: std::sync::Arc::new(config.clone()),
-                    resolved_model: std::sync::Arc::from(resolved_model),
-                    resolved_dimension,
-                    rerank_depth,
-                    blob_backend: blob_backend_arc
-                        .as_ref()
-                        .map(std::sync::Arc::clone),
-                    queue: std::sync::Arc::clone(&queue_backend),
-                });
-                let runner_dyn: std::sync::Arc<dyn crate::worker::JobRunner> = runner;
-                let worker_loop = crate::worker::WorkerLoop::new(
-                    queue_backend,
-                    runner_dyn,
-                    tokio_util::sync::CancellationToken::new(),
-                );
-                tokio::spawn(worker_loop.run());
-                tracing::info!(
-                    "PHASE6 WorkerLoop spawned — serve pod drains indexer_jobs in-process"
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "WorkerLoop disabled — PostgresJobQueue::open failed",
-                );
-            }
-        }
-    }
+    // F31.2b-ii-R — the PHASE6 in-process WorkerLoop spawn that was
+    // here moved to `ministr-cloud-tools::serve`; only the cloud-tools
+    // binary has the construction surface for IngestionRunner +
+    // PostgresJobQueue + the BlobUploader trait impl.
 
     // F31.2b-ii-J — GitHubAppClient migrated to ClassicCloudMounter
     // (CloudDaemonAdapters.installation_minter). The chunk A

@@ -194,7 +194,13 @@ pub struct IngestionRunner {
     pub resolved_model: Arc<str>,
     pub resolved_dimension: Option<usize>,
     pub rerank_depth: Option<usize>,
-    pub blob_backend: Option<Arc<ministr_cloud::BlobBackend>>,
+    /// F31.2b-ii-R — was `Option<Arc<ministr_cloud::BlobBackend>>`;
+    /// now goes through the MIT `ministr_api::BlobUploader` trait so
+    /// ministr-cli no longer references `ministr_cloud::*`. The cloud
+    /// impl (`ministr_cloud::cli::BlobBackendUploader`) wraps a
+    /// `BlobBackend` and is supplied by whichever caller spawns the
+    /// `WorkerLoop` (currently `ministr-cloud-tools serve`).
+    pub blob_backend: Option<Arc<dyn ministr_api::BlobUploader>>,
     pub queue: Arc<JobQueueBackend>,
 }
 
@@ -292,33 +298,19 @@ impl IngestionRunner {
                 "no vectors after ingestion — skipping bundle upload",
             );
         } else if let Some(backend) = &self.blob_backend {
-            let manifest = ministr_cloud::build_manifest_from_corpus_dir(
-                &ctx.corpus_dir,
-                self.resolved_model.as_ref(),
-            )
-            .await
-            .map_err(|e| format!("manifest build failed: {e}"))?;
+            // F31.2b-ii-R — manifest build + upload now ride the
+            // MIT `BlobUploader` trait. The cloud impl
+            // (`BlobBackendUploader`) walks the error source chain
+            // for opaque Azure SDK errors and surfaces the real cause
+            // in `ApiError::message`.
             let version = backend
-                .upload_corpus(&job.corpus_id, &ctx.corpus_dir, &manifest)
+                .upload_corpus(
+                    &job.corpus_id,
+                    &ctx.corpus_dir,
+                    self.resolved_model.as_ref(),
+                )
                 .await
-                .map_err(|e| {
-                    // The Azure SDK's top-level Display is famously
-                    // opaque ("non-transport error occurred which will
-                    // not be retried"). Walk the std::error::Error
-                    // source chain so the real cause (HTTP status,
-                    // serialisation error, IO error) lands in the
-                    // worker's terminal `error` column and is visible
-                    // both in `az containerapp logs` and the demo SSE.
-                    use std::error::Error as _;
-                    use std::fmt::Write as _;
-                    let mut msg = format!("blob upload failed: {e}");
-                    let mut src: Option<&dyn std::error::Error> = e.source();
-                    while let Some(s) = src {
-                        let _ = write!(msg, " — caused by: {s}");
-                        src = s.source();
-                    }
-                    msg
-                })?;
+                .map_err(|e| format!("{e}"))?;
             info!(
                 corpus_id = %job.corpus_id,
                 version,

@@ -547,6 +547,63 @@ async fn serve(
         None
     };
 
+    // F31.2b-ii-R — PHASE6 in-process WorkerLoop. Spawned BEFORE
+    // cmd_serve_http blocks on the HTTP listener. Drains the
+    // `indexer_jobs` table via PostgresJobQueue; runs IngestionRunner
+    // (from ministr-cli's worker module) with the cloud's BlobBackend
+    // wrapped through the `BlobUploader` MIT-seam trait so the worker
+    // itself stays cloud-agnostic.
+    if let Ok(pg_url) = std::env::var("MINISTR_PG_URL")
+        && !pg_url.trim().is_empty()
+    {
+        {
+            match ministr_mcp::admin::jobs::PostgresJobQueue::open(&pg_url).await {
+                Ok(pg_queue) => {
+                    let queue_backend = std::sync::Arc::new(
+                        ministr_mcp::admin::jobs::JobQueueBackend::Postgres(pg_queue),
+                    );
+                    let blob_uploader: Option<std::sync::Arc<dyn ministr_api::BlobUploader>> =
+                        ministr_cloud::build_blob_backend_from_env()
+                            .ok()
+                            .flatten()
+                            .map(|b| {
+                                let arc: std::sync::Arc<dyn ministr_api::BlobUploader> =
+                                    std::sync::Arc::new(
+                                        ministr_cloud::cli::BlobBackendUploader::new(
+                                            std::sync::Arc::new(b),
+                                        ),
+                                    );
+                                arc
+                            });
+                    let runner = std::sync::Arc::new(ministr_cli::worker::IngestionRunner {
+                        config: std::sync::Arc::new(rc.config.clone()),
+                        resolved_model: std::sync::Arc::from(rc.resolved_model.as_str()),
+                        resolved_dimension: rc.resolved_dimension,
+                        rerank_depth: rc.rerank_depth,
+                        blob_backend: blob_uploader,
+                        queue: std::sync::Arc::clone(&queue_backend),
+                    });
+                    let runner_dyn: std::sync::Arc<dyn ministr_cli::worker::JobRunner> = runner;
+                    let worker_loop = ministr_cli::worker::WorkerLoop::new(
+                        queue_backend,
+                        runner_dyn,
+                        tokio_util::sync::CancellationToken::new(),
+                    );
+                    tokio::spawn(worker_loop.run());
+                    tracing::info!(
+                        "PHASE6 WorkerLoop spawned via ministr-cloud-tools serve (F31.2b-ii-R)"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "WorkerLoop disabled — PostgresJobQueue::open failed",
+                    );
+                }
+            }
+        }
+    }
+
     let mounter = ministr_cloud::cli::ClassicCloudMounter::new();
     ministr_cli::commands::cmd_serve_http(
         &rc.corpus_paths,

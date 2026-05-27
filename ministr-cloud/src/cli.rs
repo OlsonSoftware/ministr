@@ -20,9 +20,9 @@ use std::sync::Arc;
 use axum::Router;
 
 use ministr_api::{
-    ApiError, CloudAdminAdapters, CloudDaemonAdapters, CloudMountInput, CloudMountOutput,
-    CloudOAuthAdapters, CloudRouterMounter, CloudServerAdapters, DaemonWriteLayer,
-    RevocationHandle, SlaSnapshotPersister,
+    ApiError, BlobUploader, CloudAdminAdapters, CloudDaemonAdapters, CloudMountInput,
+    CloudMountOutput, CloudOAuthAdapters, CloudRouterMounter, CloudServerAdapters,
+    DaemonWriteLayer, RevocationHandle, SlaSnapshotPersister,
 };
 
 use crate::revocation_fetch::RevocationShutdownHandle;
@@ -127,17 +127,50 @@ pub async fn mount_cloud_routes(
             }
         };
 
-    // Self-contained Postgres pool owned by the cloud impl. Today the
-    // MIT serve's inline cloud branch ALSO opens its own pool for the
-    // adapters/routes still wired there — F31.2b-ii's progressive
-    // migration sunsets that branch over chunks C+. Two pools is
-    // temporary; both share the same Postgres tables.
+    // Self-contained Postgres pool owned by the cloud impl. (F31.2b-ii-R
+    // collapsed the duplicate inline pool from cmd_serve_http; this is
+    // now the only pool the cloud overlay opens.)
     let pool = Arc::new(
         crate::connect(&pg_url).map_err(|e| ApiError {
             code: "cloud_pg_pool_open_failed".into(),
             message: format!("open cloud postgres pool: {e}"),
         })?,
     );
+
+    // F1.2 + later — auto-apply migrations on every pod boot. The runner
+    // short-circuits when the schema is up to date so this is cheap on
+    // warm starts; on a fresh DB it creates the users / orgs / corpora /
+    // usage_events / audit_events tables (and PHASE3's cloud_corpora)
+    // before any handler can query them. Migrated from cmd_serve_http
+    // inline branch in F31.2b-ii-R.
+    crate::run_migrations(&pool).await.map_err(|e| ApiError {
+        code: "cloud_pg_migrations_failed".into(),
+        message: format!("apply cloud postgres migrations: {e}"),
+    })?;
+    tracing::info!("cloud postgres migrations applied via CloudRouterMounter");
+
+    // F5.3-c-ii — extend the audit_events partition surface forward.
+    // Idempotent + cheap on warm starts. Failures here are warned
+    // (boot continues) so a permission glitch doesn't block serve.
+    match crate::ensure_audit_partitions(
+        &pool,
+        crate::DEFAULT_PARTITION_LOOKAHEAD_QUARTERS,
+    )
+    .await
+    {
+        Ok(outcome) => tracing::info!(
+            existing = outcome.existing,
+            created = outcome.created,
+            target_end_year = outcome.target_end_year,
+            target_end_quarter = outcome.target_end_quarter,
+            "audit_events partition surface extended via CloudRouterMounter"
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            "ensure_audit_partitions failed — boot continues; audit INSERTs may fail \
+             once `now()` crosses past the highest seeded partition"
+        ),
+    }
 
     // Self-contained OAuth store for scope-wrapping the cloud routes.
     // Same Postgres tables as the MIT serve's OAuth store — both
@@ -879,6 +912,65 @@ impl ClassicCloudMounter {
     #[must_use]
     pub fn revocation_handle_dyn(handle: RevocationShutdownHandle) -> Arc<dyn RevocationHandle> {
         Arc::new(handle)
+    }
+}
+
+/// F31.2b-ii-R — concrete `BlobUploader` that wraps a `BlobBackend`
+/// (Azure / filesystem). Builds the bundle manifest from the corpus
+/// directory and uploads under the supplied `corpus_id`.
+/// `ministr-cloud-tools::serve` constructs one of these and passes it
+/// to `ministr_cli::worker::IngestionRunner` so the worker no longer
+/// touches `ministr_cloud::*` types directly.
+#[derive(Debug)]
+pub struct BlobBackendUploader {
+    backend: Arc<crate::BlobBackend>,
+}
+
+impl BlobBackendUploader {
+    #[must_use]
+    pub fn new(backend: Arc<crate::BlobBackend>) -> Self {
+        Self { backend }
+    }
+}
+
+impl BlobUploader for BlobBackendUploader {
+    fn upload_corpus<'a>(
+        &'a self,
+        corpus_id: &'a str,
+        corpus_dir: &'a std::path::Path,
+        model_name: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<String, ApiError>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            let manifest =
+                crate::build_manifest_from_corpus_dir(corpus_dir, model_name)
+                    .await
+                    .map_err(|e| ApiError {
+                        code: "cloud_blob_manifest_build_failed".into(),
+                        message: format!("build bundle manifest: {e}"),
+                    })?;
+            // Walk the source chain so the real cause (HTTP status,
+            // serialisation, IO) lands in caller logs — Azure SDK's
+            // top-level Display is famously opaque.
+            self.backend
+                .upload_corpus(corpus_id, corpus_dir, &manifest)
+                .await
+                .map_err(|e| {
+                    use std::error::Error as _;
+                    use std::fmt::Write as _;
+                    let mut msg = format!("blob upload failed: {e}");
+                    let mut src: Option<&dyn std::error::Error> = e.source();
+                    while let Some(s) = src {
+                        let _ = write!(msg, " — caused by: {s}");
+                        src = s.source();
+                    }
+                    ApiError {
+                        code: "cloud_blob_upload_failed".into(),
+                        message: msg,
+                    }
+                })
+        })
     }
 }
 

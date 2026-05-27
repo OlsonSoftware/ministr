@@ -43,6 +43,10 @@ ministr-core.workspace = true
 # wired in, and uses `ministr_cli::resolve_config` for the shared
 # `.ministr.toml` / `MinistrConfig` / corpus-path resolution path.
 ministr-cli.workspace = true
+# F31.2b-ii-R — PHASE6 WorkerLoop's CancellationToken (the spawn moved
+# here from cmd_serve_http so the open-core CLI stops referencing
+# cloud types).
+tokio-util = "0.7"
 
 # Direct rustls dep — matches ministr-cli's process-wide CryptoProvider
 # install at startup. Required because reqwest + tokio-postgres-rustls
