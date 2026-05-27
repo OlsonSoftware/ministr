@@ -71,6 +71,12 @@ use crate::ingestion;
 /// pass it verbatim (Container Apps secrets handle newlines correctly).
 /// Both must be present together. When unset, `clone_repo` requests
 /// carrying `github_installation_id` fail with 400.
+// F31.2b-ii — some fields lose their last reader as the inline cloud
+// branch progressively migrates into `ministr_cloud::cli::mount_cloud_routes`.
+// Suppressed instead of pruning one-by-one — they'll all disappear when
+// the inline branch is deleted and CloudEnv shrinks to just the local-
+// serve fields (data_dir, webhook_secret, pg_url, cors_allowed_origins).
+#[allow(dead_code)]
 struct CloudEnv {
     data_dir: Option<PathBuf>,
     webhook_secret: Option<String>,
@@ -1551,32 +1557,11 @@ pub async fn cmd_serve_http(
             // `CloudRouterMounter` MIT seam). The MIT `ministr` binary
             // never had a legitimate need for atlas routes (atlas is
             // cloud-only), so this is a correct narrowing.
-            // F1.5 sub-bullet 3 — Stripe webhook receiver. Mounted
-            // when both the cloud pool AND the Stripe signing secret
-            // are present. Public route (Stripe is the caller); the
-            // signature check is the only auth.
-            if let Some(stripe_secret) = cloud_env.stripe_webhook_secret.as_ref() {
-                let stripe_router = ministr_cloud::billing::stripe::stripe_webhook_routes(
-                    ministr_cloud::StripeWebhookState::new(
-                        Arc::clone(pool),
-                        stripe_secret.clone(),
-                    ),
-                );
-                composed = composed.merge(stripe_router);
-                tracing::info!("stripe webhook mounted — POST /webhooks/stripe");
-            }
-            // F3.1b-ii-c — Resend bounce webhook. Public route
-            // (Resend is the caller); svix signature is the only auth.
-            if let Some(resend_secret) = cloud_env.resend_webhook_secret.as_ref() {
-                let resend_router = ministr_cloud::resend_webhook_routes(
-                    ministr_cloud::ResendWebhookState::new(
-                        Arc::clone(pool),
-                        resend_secret.clone(),
-                    ),
-                );
-                composed = composed.merge(resend_router);
-                tracing::info!("resend webhook mounted — POST /webhooks/resend");
-            }
+            // F31.2b-ii-D — stripe + resend webhook receivers MIGRATED
+            // to `ministr_cloud::cli::mount_cloud_routes`. The inline
+            // wiring was removed here; `ministr-cloud-tools serve` is
+            // now the path that mounts both webhooks (via the
+            // `CloudRouterMounter` MIT seam).
             // F5.1-b — SAML SP endpoints. Public routes (IdP doesn't
             // carry bearer tokens); per-org config gates whether
             // a given org has SAML SSO enabled. F5.1-c will add the
