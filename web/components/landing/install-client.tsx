@@ -67,7 +67,7 @@ export function InstallClient() {
   }, []);
 
   const tag = latest?.tag_name ?? latest?.tag ?? null;
-  const versionLabel = tag ?? (latestErr ? '—' : '…');
+  const versionLabel = tag ?? (latestErr ? '--' : '...');
 
   const primary = useMemo(
     () => DESKTOP_INSTALLERS.find((d) => d.id === OS_TO_DESKTOP[os])!,
@@ -75,21 +75,21 @@ export function InstallClient() {
   );
 
   return (
-    <main className="install-page">
-      {/* ── Hero strip ──────────────────────────────────── */}
-      <div className="install-hero">
-        <div className="install-wide">
-          <p className="install-version">Release {versionLabel}</p>
-          <h1 className="install-title">Install ministr</h1>
-          <p className="install-sub">
-            Desktop app + CLI in one installer. macOS, Windows, Linux.
-          </p>
-        </div>
-      </div>
+    <>
+      {/* ── Header ──────────────────────────────────────── */}
+      <section className="v2-section" style={{ paddingBottom: 0 }}>
+        <p className="v2-meta" style={{ marginBottom: 12 }}>Release {versionLabel}</p>
+        <h1 className="v2-h2">Install ministr</h1>
+        <p className="v2-sub">
+          Desktop app + CLI in one installer. macOS, Windows, Linux.
+        </p>
+      </section>
 
-      <div className="install-wide install-body">
-        {/* ── Primary download (detected OS) ─────────────── */}
-        <section className="install-primary">
+      <hr className="v2-rule" />
+
+      {/* ── Primary download (detected OS) ─────────────── */}
+      <section className="v2-section">
+        <div className="install-primary">
           <div className="install-primary-info">
             <span className="install-badge">{primary.ext.toUpperCase()}</span>
             <div>
@@ -100,14 +100,18 @@ export function InstallClient() {
           </div>
           <a
             href={latestDownloadUrl(primary.filename)}
-            className="install-btn install-btn-primary"
+            className="v2-btn v2-btn-primary"
           >
             Download {primary.ext.toUpperCase()}
           </a>
-        </section>
+        </div>
+      </section>
 
-        {/* ── All installers grid ────────────────────────── */}
-        <h2 className="install-section-title">All platforms</h2>
+      <hr className="v2-rule" />
+
+      {/* ── All installers grid ────────────────────────── */}
+      <section className="v2-section">
+        <h2 className="v2-h2" style={{ fontSize: 24, marginBottom: 24 }}>All platforms</h2>
         <div className="install-grid">
           {DESKTOP_INSTALLERS.map((d) => {
             const isCurrent = d.id === primary.id;
@@ -148,10 +152,14 @@ export function InstallClient() {
             );
           })}
         </div>
+      </section>
 
-        {/* ── CLI one-liners ─────────────────────────────── */}
-        <h2 className="install-section-title">CLI only</h2>
-        <p className="install-sub" style={{ marginTop: '-0.5rem' }}>
+      <hr className="v2-rule" />
+
+      {/* ── CLI one-liners ─────────────────────────────── */}
+      <section className="v2-section">
+        <h2 className="v2-h2" style={{ fontSize: 24, marginBottom: 16 }}>CLI only</h2>
+        <p className="v2-sub" style={{ marginTop: 0, marginBottom: 24 }}>
           Installs the <code>ministr</code> binary to{' '}
           <code>~/.ministr/bin</code>. No desktop app.
         </p>
@@ -186,8 +194,12 @@ export function InstallClient() {
             />
           </div>
         ))}
+      </section>
 
-        {/* ── Verify + next steps ─────────────────────────── */}
+      <hr className="v2-rule" />
+
+      {/* ── Next steps ────────────────────────────────── */}
+      <section className="v2-section">
         <div className="install-next-row">
           <div className="install-next-card">
             <h3>Verify</h3>
@@ -225,7 +237,7 @@ export function InstallClient() {
             </p>
           </div>
         </div>
-      </div>
-    </main>
+      </section>
+    </>
   );
 }
