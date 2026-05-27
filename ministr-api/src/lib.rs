@@ -15,6 +15,7 @@ pub mod api_key;
 pub mod audit;
 pub mod blob_sink;
 pub mod client;
+pub mod cloud_router;
 pub mod coherence;
 pub mod corpora_repo;
 pub mod corpus;
@@ -40,6 +41,10 @@ pub use api_key::{
     ApiKeyError, ApiKeyResolver, ResolveApiKeyFuture, ResolvedApiKey, TouchLastUsedFuture,
 };
 pub use audit::{AuditEntry, AuditSink};
+pub use cloud_router::{
+    CloudAdminAdapters, CloudDaemonAdapters, CloudMountInput, CloudMountOutput,
+    CloudOAuthAdapters, CloudRouterMounter, CloudServerAdapters, RevocationHandle,
+};
 pub use blob_sink::BlobSink;
 pub use drops_ledger::{
     AppendDropFuture, DropEntry, DropsLedger, DropsLedgerError, ListDropsFuture,

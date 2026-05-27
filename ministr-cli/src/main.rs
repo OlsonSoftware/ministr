@@ -13,15 +13,12 @@
 //! the `ministr-cloud-tools` crate in F31.2a — run `cargo run -p
 //! ministr-cloud-tools -- <subcommand>` for the proprietary operator CLI.
 
-mod commands;
-mod infra;
-mod ingestion;
-mod worker;
-
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use miette::Result;
+
+use ministr_cli::commands;
 
 /// ministr — a code intelligence MCP server for AI coding agents.
 ///
