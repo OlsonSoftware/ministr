@@ -1468,64 +1468,8 @@ pub async fn cmd_serve_http(
                 );
             }
 
-            // F5.1-d — per-org SAML config CRUD. Owner-only ACL
-            // enforced inside each handler via assert_owner_or_admin;
-            // the scope_protected_router wrapper supplies the Tenant
-            // extension that the ACL reads.
-            {
-                let saml_config_state = ministr_cloud::SamlState::new(Arc::clone(pool));
-                let saml_config_router = ministr_cloud::saml_config_routes(saml_config_state);
-                let saml_config_protected = ministr_mcp::auth::scope_protected_router(
-                    saml_config_router,
-                    store.clone(),
-                    "ministr:read",
-                );
-                composed = composed.merge(saml_config_protected);
-                tracing::info!(
-                    "saml config CRUD mounted — POST/GET/DELETE /api/v1/orgs/{{id}}/saml/config"
-                );
-            }
-
-            // F5.2-d — per-org OIDC config CRUD. Same shape as the
-            // F5.1-d SAML block: owner-only ACL inside each handler,
-            // scope_protected_router supplies the Tenant extension.
-            // Uses a fresh OidcState (no need to share with the
-            // /oidc/login + /oidc/callback wiring above — these are
-            // pool-only handlers).
-            {
-                let oidc_config_state =
-                    ministr_cloud::OidcState::new(Arc::clone(pool));
-                let oidc_config_router = ministr_cloud::oidc_config_routes(oidc_config_state);
-                let oidc_config_protected = ministr_mcp::auth::scope_protected_router(
-                    oidc_config_router,
-                    store.clone(),
-                    "ministr:read",
-                );
-                composed = composed.merge(oidc_config_protected);
-                tracing::info!(
-                    "oidc config CRUD mounted — POST/GET/DELETE /api/v1/orgs/{{id}}/oidc/config"
-                );
-            }
-
-            // F5.3-d-ii-config — per-org SIEM config CRUD. Owner-only
-            // ACL inside each handler; scope_protected_router supplies
-            // the Tenant extension. Lookup state for dispatch will
-            // land in F5.3-d-ii-dispatch; this CRUD just persists.
-            {
-                let siem_config_state =
-                    ministr_cloud::SiemConfigState::from_arc(Arc::clone(pool));
-                let siem_config_router =
-                    ministr_cloud::siem_config_routes(siem_config_state);
-                let siem_config_protected = ministr_mcp::auth::scope_protected_router(
-                    siem_config_router,
-                    store.clone(),
-                    "ministr:read",
-                );
-                composed = composed.merge(siem_config_protected);
-                tracing::info!(
-                    "siem config CRUD mounted — POST/GET/DELETE /api/v1/orgs/{{id}}/siem/config"
-                );
-            }
+            // F31.2b-ii-G — SAML/OIDC/SIEM config CRUD endpoints
+            // migrated to `ministr_cloud::cli::mount_cloud_routes`.
 
             // F31.2b-ii-C — atlas v0 pilot MIGRATED to
             // `ministr_cloud::cli::mount_cloud_routes`. The inline

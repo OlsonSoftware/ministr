@@ -201,6 +201,57 @@ pub async fn mount_cloud_routes(
         );
     }
 
+    // F5.1-d — per-org SAML config CRUD. Owner-only ACL enforced
+    // inside each handler via assert_owner_or_admin; the
+    // scope_protected_router wrapper supplies the Tenant extension
+    // that the ACL reads. Migrated from cmd_serve_http inline branch
+    // in F31.2b-ii-G.
+    {
+        let saml_config_state = crate::SamlState::new(Arc::clone(&pool));
+        let saml_config_router = crate::saml_config_routes(saml_config_state);
+        let saml_config_protected = ministr_mcp::auth::scope_protected_router(
+            saml_config_router,
+            oauth_store.clone(),
+            "ministr:read",
+        );
+        router = router.merge(saml_config_protected);
+        tracing::info!(
+            "saml config CRUD mounted via CloudRouterMounter — POST/GET/DELETE /api/v1/orgs/{{id}}/saml/config"
+        );
+    }
+
+    // F5.2-d — per-org OIDC config CRUD. Same shape as the F5.1-d
+    // SAML block: owner-only ACL inside each handler.
+    {
+        let oidc_config_state = crate::OidcState::new(Arc::clone(&pool));
+        let oidc_config_router = crate::oidc_config_routes(oidc_config_state);
+        let oidc_config_protected = ministr_mcp::auth::scope_protected_router(
+            oidc_config_router,
+            oauth_store.clone(),
+            "ministr:read",
+        );
+        router = router.merge(oidc_config_protected);
+        tracing::info!(
+            "oidc config CRUD mounted via CloudRouterMounter — POST/GET/DELETE /api/v1/orgs/{{id}}/oidc/config"
+        );
+    }
+
+    // F5.3-d-ii-config — per-org SIEM config CRUD. Owner-only ACL
+    // inside each handler.
+    {
+        let siem_config_state = crate::SiemConfigState::from_arc(Arc::clone(&pool));
+        let siem_config_router = crate::siem_config_routes(siem_config_state);
+        let siem_config_protected = ministr_mcp::auth::scope_protected_router(
+            siem_config_router,
+            oauth_store.clone(),
+            "ministr:read",
+        );
+        router = router.merge(siem_config_protected);
+        tracing::info!(
+            "siem config CRUD mounted via CloudRouterMounter — POST/GET/DELETE /api/v1/orgs/{{id}}/siem/config"
+        );
+    }
+
     Ok(CloudMountOutput {
         router,
         daemon_adapters: CloudDaemonAdapters::default(),
