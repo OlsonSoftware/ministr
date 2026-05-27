@@ -316,12 +316,11 @@ instead of mounting the JSONL file directly. Two opt-ins:
    `revoke-license --revocation-list PATH`) takes effect on the
    next HTTP request without bouncing the serve.
 
-2. **Customer side** — once
-   the customer-side fetch feature lands, customers will set
+2. **Customer side** — customers set
    `MINISTR_LICENSE_REVOCATIONS_URL=https://mcp.ministr.ai/api/v1/license-revocations.jsonl`
-   and the boot validator will fetch + cache + grace-window-fall-back.
-   Today, the customer-side fetcher hasn't shipped; customers still
-   use the file-based `MINISTR_LICENSE_REVOCATIONS=/path` flow.
+   and the boot validator fetches, caches, and falls back within the
+   grace window. The file-based `MINISTR_LICENSE_REVOCATIONS=/path`
+   flow also works for air-gapped deployments.
 
 Response states:
 

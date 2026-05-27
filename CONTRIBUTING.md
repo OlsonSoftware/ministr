@@ -54,7 +54,6 @@ ministr-atlas/         — Atlas curated-repo crate (proprietary)
 web/                   — Next.js marketing site + fumadocs developer docs
 deploy/                — Helm chart, Docker Compose, macOS installer
 examples/              — sample .ministr.toml configs for different project types
-docs/operator/         — operator runbooks (also served via web/ at /docs/operator/*)
 ```
 
 ### Layered architecture

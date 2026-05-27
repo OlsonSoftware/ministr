@@ -875,7 +875,7 @@ pub struct BridgeParams {
 
     /// Optional bridge kind filter.
     #[schemars(
-        description = "Filter by bridge kind: 'tauri_command', 'tauri_event', 'napi', 'wasm_bindgen', 'pyo3', 'http_route', 'ffi'"
+        description = "Filter by bridge kind: 'tauri_command', 'tauri_event', 'napi', 'wasm_bindgen', 'pyo3', 'http_route', 'ffi', 'cgo', 'jni', 'uni_ffi', 'grpc', 'flutter_channel', 'electron_ipc'"
     )]
     pub bridge_kind: Option<String>,
 

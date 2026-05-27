@@ -14,22 +14,21 @@
 /** Canonical front-door URL for the install page. */
 export const INSTALL_HOST = 'https://ministr.ai';
 
-/** GitHub Releases download host. */
-export const DOWNLOAD_HOST = 'https://github.com/OlsonSoftware/ministr/releases/download';
+const GITHUB_REPO = 'OlsonSoftware/ministr';
 
 /** Returns the GitHub API URL for the latest release metadata. */
 export function latestReleaseUrl(): string {
-  return 'https://api.github.com/repos/OlsonSoftware/ministr/releases/latest';
+  return `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 }
 
 /** Returns the direct download URL for a specific release asset. */
 export function downloadUrl(tag: string, filename: string): string {
-  return `${DOWNLOAD_HOST}/${tag}/${filename}`;
+  return `https://github.com/${GITHUB_REPO}/releases/download/${tag}/${filename}`;
 }
 
-/** Returns the download URL for the latest tag for an asset name. */
+/** Returns the download URL for the latest release of an asset. */
 export function latestDownloadUrl(filename: string): string {
-  return `${DOWNLOAD_HOST}/latest/${filename}`;
+  return `https://github.com/${GITHUB_REPO}/releases/latest/download/${filename}`;
 }
 
 /** Detected OS family. `'unknown'` falls back to the macOS tab. */
