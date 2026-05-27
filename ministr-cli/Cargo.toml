@@ -35,14 +35,12 @@ ministr-mcp.workspace = true
 # Headless daemon host: the `ministr __daemon` subcommand runs the same
 # daemon ministr-app does, so the CLI can self-spawn it (no GUI needed).
 ministr-daemon.workspace = true
-# Cloud-side closed code (LicenseRef-Proprietary). The CLI source
-# stays MIT; the link-time inclusion of ministr-cloud is the natural
-# seam where open-core CLI orchestration meets the cloud's tenancy +
-# billing + IdP impls. F1.4 sub-bullet 2 uses it for PostgresUsageSink.
-ministr-cloud.workspace = true
-# F2.6 — Atlas curated network. Link-time inclusion makes the CLI
-# carry proprietary terms; same rationale as ministr-cloud above.
-ministr-atlas.workspace = true
+# F31.2b/c — `ministr-cloud` + `ministr-atlas` are NO LONGER
+# dependencies of the MIT `ministr` binary. All cloud-mode wiring
+# rides the `ministr_api::CloudRouterMounter` MIT seam — the
+# proprietary impls live in `ministr-cloud-tools` (operator CLI) +
+# `ministr-cloud-tools serve` (cloud-mode HTTP server). Re-adding
+# either dep here would re-introduce the open-core licensing leak.
 # Direct rustls dep — used by main() to install the process-wide
 # CryptoProvider exactly once at startup. Both `ring` and
 # `aws-lc-rs` are pulled in transitively (via reqwest +
@@ -82,13 +80,9 @@ notify.workspace = true
 toml.workspace = true
 dialoguer.workspace = true
 onpath.workspace = true
-# F5.4-b harness helper — `cmd_cloud_mint_test_license` generates a
-# fresh RSA-2048 keypair + signs a license JWT for the e2e harness
-# to feed into the test-serve via env vars. Direct dep on
-# `openssl` + `jsonwebtoken` keeps the dependency contract visible
-# (both are already in tree transitively via ministr-cloud / Atlas).
-openssl = "0.10.80"
-jsonwebtoken = "9"
+# F31.2a moved `cmd_cloud_mint_test_license` to ministr-cloud-tools;
+# `openssl` + `jsonwebtoken` deps moved with it. Removed here to
+# keep ministr-cli's dep tree open-core-clean.
 
 [features]
 # Opt-in DirectML GPU acceleration for Windows (no-op elsewhere).
