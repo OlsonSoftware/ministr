@@ -40,6 +40,16 @@ ministr index             # Pre-warm the index
 ministr serve             # Start MCP server (stdio)
 ```
 
+This builds the **local-only** `ministr` binary — every MCP tool, every
+parser, every detector, full self-hosted serve. It does NOT include
+the cloud-tier surface (multi-tenant Postgres, Stripe billing, GitHub
+App / OIDC / SAML, Atlas curated index, license signing) — those live
+in the private `ministr-private` workspace and are only built into
+the cloud-capable `ministr` binary that
+[`install.sh`](install.sh) downloads from this repo's GitHub Releases
+page. Contributors don't need the proprietary code to develop here;
+all MIT crates compile + test + ship the same way they always have.
+
 ## Architecture overview
 
 ```
@@ -47,14 +57,20 @@ ministr-core/          — domain logic, no transport dependencies
 ministr-api/           — shared request/response types for daemon ↔ MCP/CLI
 ministr-daemon/        — HTTP API over Unix domain socket
 ministr-mcp/           — MCP server adapter (rmcp)
-ministr-cli/           — binary entry point
+ministr-cli/           — binary entry point (the `ministr` CLI you build here)
 ministr-app/src-tauri/ — Tauri v2 desktop app with system tray
-ministr-cloud/         — multi-tenant cloud surface (proprietary)
-ministr-atlas/         — Atlas curated-repo crate (proprietary)
 web/                   — Next.js marketing site + fumadocs developer docs
 deploy/                — Helm chart, Docker Compose, macOS installer
 examples/              — sample .ministr.toml configs for different project types
 ```
+
+The proprietary cloud surface (`ministr-cloud`, `ministr-atlas`,
+`ministr-cloud-tools`) lives in a separate private sibling workspace
+(`github.com/OlsonSoftware/ministr-private`, owner-only) per the F31
+open-core split. The MIT crates above are everything a contributor
+needs to build a fully-functional **local-only** `ministr` binary
+from this repo. See [STEWARDSHIP.md](STEWARDSHIP.md) for the open-core
+thesis and which crates live where.
 
 ### Layered architecture
 
@@ -154,14 +170,30 @@ CI runs these automatically on every PR.
 
 ## Releases
 
-- **Tag/publish checklist** — [RELEASE.md](RELEASE.md) covers the
-  end-to-end flow: pre-flight gates, `just release X.Y.Z`, the two-tag
-  split (`vX.Y.Z` for CLI binaries, `vX.Y.Z-app` for the Tauri
-  installers), crates.io publish order, and Homebrew tap update.
-- **macOS signing & notarization** — the desktop app and CLI binary both
-  need a Developer ID identity before distribution. See
-  [ministr-app/SIGNING.md](ministr-app/SIGNING.md) for env vars, entitlements,
-  and the `just pkg` / `just pkg-dev` workflows.
+Release authoring lives in this repo; the release **build** lives in
+the private sibling. The flow (F31.5, 2026-05-27):
+
+1. Land changes on `main` using [Conventional Commits](#commit-messages).
+2. The Copilot coding agent (triggered by
+   `.github/workflows/release-automation.yml`) detects releasable
+   commits, bumps every crate's `version`, writes a CHANGELOG section,
+   and opens a `chore: release vX.Y.Z` PR.
+3. Reviewing + merging the PR triggers `release-automation.yml` to
+   push the `vX.Y.Z` tag here and fire a `repository_dispatch` event
+   into `OlsonSoftware/ministr-private`.
+4. The private workspace's `release.yml` clones BOTH repos as
+   siblings, builds the cloud-capable `ministr` binary (signed +
+   notarized on macOS), and uploads the artifacts to **this repo's**
+   release page at `v<X.Y.Z>` via a cross-repo PAT.
+5. `install.sh` + the Homebrew tap fetch from this repo's releases as
+   before — they see no change.
+
+For the detailed checklist, secret requirements, and rollback
+procedures see [RELEASE.md](RELEASE.md). The high-level open-core
+framing lives in the
+[Release pipeline](STEWARDSHIP.md#release-pipeline) section of
+STEWARDSHIP.md. macOS signing and notarization details live in
+[ministr-app/SIGNING.md](ministr-app/SIGNING.md).
 
 ## Reporting issues
 
