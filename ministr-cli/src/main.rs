@@ -462,6 +462,11 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
                         rc.repo_config_dir.as_deref(),
                         rc.resolved_dimension,
                         rc.rerank_depth,
+                        // F31.2b-ii — MIT `ministr` binary passes None;
+                        // the inline cloud branch in cmd_serve_http
+                        // still runs unchanged. `ministr-cloud-tools
+                        // serve` (chunk B) passes Some(&mounter).
+                        None,
                     )
                     .await
                 }
