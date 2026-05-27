@@ -32,10 +32,17 @@ ministr-cloud.workspace = true
 ministr-atlas.workspace = true
 # OAuthStore::postgres for cmd_cloud_mint_test_bearer.
 ministr-mcp.workspace = true
-# format_unix_secs_iso for license audit JSONL timestamps.
+# format_unix_secs_iso for license audit JSONL timestamps + the
+# CloudRouterMounter trait the `serve` subcommand passes to
+# `cmd_serve_http` (F31.2b-ii-B).
 ministr-api.workspace = true
-# tracing init + workspace utilities.
+# tracing init + workspace utilities + config resolution helpers.
 ministr-core.workspace = true
+# F31.2b-ii-B — `serve` subcommand delegates to
+# `ministr_cli::commands::cmd_serve_http` with a `ClassicCloudMounter`
+# wired in, and uses `ministr_cli::resolve_config` for the shared
+# `.ministr.toml` / `MinistrConfig` / corpus-path resolution path.
+ministr-cli.workspace = true
 
 # Direct rustls dep — matches ministr-cli's process-wide CryptoProvider
 # install at startup. Required because reqwest + tokio-postgres-rustls

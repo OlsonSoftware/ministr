@@ -29,6 +29,49 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Start the cloud-mode MCP server. Same flags as `ministr serve
+    /// --transport http`. Delegates into
+    /// `ministr_cli::commands::cmd_serve_http` with a
+    /// `ministr_cloud::cli::ClassicCloudMounter` wired in via the
+    /// F31.2b `CloudRouterMounter` MIT seam, so the cloud-only
+    /// router (orgs, billing, atlas, etc.) mounts alongside the
+    /// MIT serve infrastructure.
+    Serve {
+        /// Transport: `http` (Streamable HTTP). `stdio` is rejected — use
+        /// `ministr serve --transport stdio` for the local proxy path.
+        #[arg(short, long, default_value = "http")]
+        transport: String,
+
+        /// Host to bind the HTTP server to.
+        #[arg(long, default_value = "0.0.0.0")]
+        host: String,
+
+        /// Port for the HTTP server.
+        #[arg(short, long, default_value_t = 8080)]
+        port: u16,
+
+        /// Enable OAuth 2.1 authentication on the MCP endpoint. Defaults
+        /// to true for the cloud-tools binary — cloud deployments
+        /// always need OAuth.
+        #[arg(long, default_value_t = true)]
+        oauth: bool,
+
+        /// OAuth issuer URL surfaced in OAuth metadata discovery.
+        /// Defaults to `http://<host>:<port>`; set this to the
+        /// deployment's public URL when running behind a reverse proxy.
+        #[arg(long)]
+        oauth_issuer: Option<String>,
+
+        /// Corpus sources: local paths, `https://` URLs, or
+        /// `github://` URLs. Mirrors the MIT CLI's `--corpus` flag.
+        #[arg(short, long, global = true)]
+        corpus: Vec<String>,
+
+        /// Path to global config (default: `~/.ministr/config.toml`).
+        #[arg(short = 'C', long, global = true)]
+        config: Option<std::path::PathBuf>,
+    },
+
     /// Atlas operator commands (F2.6+). Invoked by the weekly cron
     /// in cloud deployments and by developers locally.
     Atlas {
@@ -464,9 +507,76 @@ async fn main() -> Result<()> {
     dispatch(cli.command).await
 }
 
+/// F31.2b-ii-B — cloud-mode HTTP serve. Delegates to
+/// `ministr_cli::commands::cmd_serve_http` with a `ClassicCloudMounter`
+/// passed via the `CloudRouterMounter` MIT seam.
+#[allow(clippy::too_many_arguments)]
+async fn serve(
+    transport: &str,
+    host: &str,
+    port: u16,
+    oauth: bool,
+    oauth_issuer: Option<String>,
+    corpus: &[String],
+    config: Option<&std::path::Path>,
+) -> Result<()> {
+    if transport != "http" {
+        return Err(miette::miette!(
+            "ministr-cloud-tools serve supports --transport http only (got {transport:?}); \
+             use `ministr serve --transport stdio` for the local MCP proxy path"
+        ));
+    }
+
+    // Same scaffold the MIT `ministr` binary uses for `ministr serve`.
+    // The startup logging + corpus/config resolution stay in
+    // ministr-cli so both binaries see one source of truth.
+    ministr_core::scaffold::scaffold_agent_config_with(
+        &std::env::current_dir()
+            .map_err(|e| miette::miette!("failed to get current directory: {e}"))?,
+        ministr_core::scaffold::ScaffoldMode::CreateOnly,
+    );
+
+    let rc = ministr_cli::resolve_config(corpus, config)?;
+
+    let oauth_config = if oauth {
+        Some(ministr_mcp::auth::OAuthConfig {
+            issuer: oauth_issuer.unwrap_or_else(|| format!("http://{host}:{port}")),
+            ..ministr_mcp::auth::OAuthConfig::default()
+        })
+    } else {
+        None
+    };
+
+    let mounter = ministr_cloud::cli::ClassicCloudMounter::new();
+    ministr_cli::commands::cmd_serve_http(
+        &rc.corpus_paths,
+        &rc.git_includes,
+        &rc.config_path,
+        &rc.config,
+        host,
+        port,
+        oauth_config,
+        &rc.resolved_model,
+        rc.repo_config_dir.as_deref(),
+        rc.resolved_dimension,
+        rc.rerank_depth,
+        Some(&mounter),
+    )
+    .await
+}
+
 #[allow(clippy::too_many_lines)]
 async fn dispatch(command: Command) -> Result<()> {
     match command {
+        Command::Serve {
+            transport,
+            host,
+            port,
+            oauth,
+            oauth_issuer,
+            corpus,
+            config,
+        } => serve(&transport, &host, port, oauth, oauth_issuer, &corpus, config.as_deref()).await,
         Command::Atlas { action } => match action {
             AtlasAction::Reindex => commands::cmd_atlas_reindex().await,
             AtlasAction::Manifest => commands::cmd_atlas_manifest(),

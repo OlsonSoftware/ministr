@@ -16,6 +16,9 @@
 #![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 pub mod commands;
+pub mod config_resolve;
 pub mod infra;
 pub mod ingestion;
 pub mod worker;
+
+pub use config_resolve::{resolve_config, ResolvedConfig};

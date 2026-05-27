@@ -5578,6 +5578,7 @@ dependencies = [
  "miette",
  "ministr-api",
  "ministr-atlas",
+ "ministr-cli",
  "ministr-cloud",
  "ministr-core",
  "ministr-mcp",
