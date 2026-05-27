@@ -166,10 +166,13 @@ Use ministr tools instead of grep / find / Read-to-explore.
 ministr follows an open-core model: the **local stack is MIT-licensed** and
 runs entirely on your machine; the hosted **ministr Cloud** service at
 `mcp.ministr.ai` and the **Enterprise** on-prem image are paid products built
-on proprietary crates added in later phases.
+on proprietary crates that live in a separate private sibling repository
+(`github.com/OlsonSoftware/ministr-private`, owner-only).
 
 The six MIT-licensed workspace crates — `ministr-core`, `ministr-api`,
 `ministr-daemon`, `ministr-mcp`, `ministr-cli`, and `ministr-app/src-tauri` —
-are the local stack. See [LICENSE-MIT](LICENSE-MIT) for the canonical text and
-[STEWARDSHIP.md](STEWARDSHIP.md) for our commitment that **a feature that
-ships open source will not be moved to a paid tier**.
+are the local stack and build a complete, fully-functional `ministr` binary
+from this repo via `cargo build --workspace`. See [LICENSE-MIT](LICENSE-MIT)
+for the canonical text and [STEWARDSHIP.md](STEWARDSHIP.md) for the open-core
+thesis, the dual-repo release pipeline, and our commitment that **a feature
+that ships open source will not be moved to a paid tier**.
