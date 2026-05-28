@@ -725,7 +725,9 @@ impl Backend {
                     .service
                     .find_dead_code(kind, module, min_lines, limit)
                     .await?),
-                Err(default) => Ok(default.find_dead_code(kind, module, min_lines, limit).await?),
+                Err(default) => Ok(default
+                    .find_dead_code(kind, module, min_lines, limit)
+                    .await?),
             },
         }
     }
@@ -976,9 +978,7 @@ mod tests {
                 .unwrap()
                 .push((tenant_subject.to_string(), corpus_id.to_string()));
             let decision = *self.decision.lock().unwrap();
-            Box::pin(async move {
-                decision.map_err(|m| TenantFilterError::Storage(m.into()))
-            })
+            Box::pin(async move { decision.map_err(|m| TenantFilterError::Storage(m.into())) })
         }
 
         fn default_corpus_for_tenant<'a>(
@@ -1038,14 +1038,8 @@ mod tests {
         let filter: Arc<dyn TenantCorpusFilter> = concrete.clone();
         let default = dummy_default_service();
         let registry = dummy_registry();
-        let outcome = Backend::resolve_registry_handle(
-            &default,
-            &registry,
-            Some(&filter),
-            None,
-            None,
-        )
-        .await;
+        let outcome =
+            Backend::resolve_registry_handle(&default, &registry, Some(&filter), None, None).await;
         assert!(outcome.is_err());
         assert!(concrete.default_calls().is_empty());
         assert!(concrete.calls().is_empty());
@@ -1057,14 +1051,8 @@ mod tests {
     async fn project_none_no_filter_falls_back() {
         let default = dummy_default_service();
         let registry = dummy_registry();
-        let outcome = Backend::resolve_registry_handle(
-            &default,
-            &registry,
-            None,
-            Some("alice"),
-            None,
-        )
-        .await;
+        let outcome =
+            Backend::resolve_registry_handle(&default, &registry, None, Some("alice"), None).await;
         assert!(outcome.is_err());
     }
 
@@ -1075,9 +1063,8 @@ mod tests {
     /// methods were exercised.
     #[tokio::test]
     async fn project_none_default_corpus_drives_lookup() {
-        let concrete: Arc<MockFilter> = Arc::new(
-            MockFilter::allow().with_default_corpus(Ok(Some("alice-corpus-1".into()))),
-        );
+        let concrete: Arc<MockFilter> =
+            Arc::new(MockFilter::allow().with_default_corpus(Ok(Some("alice-corpus-1".into()))));
         let filter: Arc<dyn TenantCorpusFilter> = concrete.clone();
         let default = dummy_default_service();
         let registry = dummy_registry();

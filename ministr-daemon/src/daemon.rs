@@ -87,7 +87,10 @@ pub fn corpora_write_router(state: AppState) -> Router {
     Router::new()
         .route("/api/v1/corpora", post(register_corpus))
         .route("/api/v1/corpora/{id}/clone", post(clone_repo))
-        .route("/api/v1/corpora/{id}", axum::routing::delete(unregister_corpus))
+        .route(
+            "/api/v1/corpora/{id}",
+            axum::routing::delete(unregister_corpus),
+        )
         .route("/api/v1/corpora/{id}/paths", put(update_corpus_paths))
         .route(
             "/api/v1/corpora/{id}/sessions",
@@ -492,8 +495,7 @@ async fn register_corpus(
                 .create_pending(&corpus_id, &canonical, req.display_name.as_deref(), None)
                 .await
             {
-                return err(StatusCode::INTERNAL_SERVER_ERROR, "enqueue_failed", e)
-                    .into_response();
+                return err(StatusCode::INTERNAL_SERVER_ERROR, "enqueue_failed", e).into_response();
             }
             true
         } else {
@@ -578,7 +580,8 @@ async fn clone_repo(
                 StatusCode::NOT_IMPLEMENTED,
                 "github_app_clone_not_supported_in_queue_mode",
                 "github-app clones via installation_id not yet supported in cloud queue mode; \
-                 use a PAT-in-URL clone for now".to_string(),
+                 use a PAT-in-URL clone for now"
+                    .to_string(),
             )
             .into_response();
         }
@@ -589,7 +592,9 @@ async fn clone_repo(
         // The deterministic id is derived from the clone URL itself —
         // same URL ⇒ same corpus_id across pods, so a re-POST is
         // idempotent on the canonical id.
-        let canonical = match ministr_core::corpus_id::canonical_corpus_paths(std::slice::from_ref(&req.repo)) {
+        let canonical = match ministr_core::corpus_id::canonical_corpus_paths(std::slice::from_ref(
+            &req.repo,
+        )) {
             Ok(c) => c,
             Err(e) => {
                 return err(StatusCode::BAD_REQUEST, "register_failed", e).into_response();
@@ -602,16 +607,10 @@ async fn clone_repo(
             }
         };
         if let Err(e) = sink
-            .create_pending(
-                &corpus_id,
-                &canonical,
-                Some(&label),
-                Some(&req.repo),
-            )
+            .create_pending(&corpus_id, &canonical, Some(&label), Some(&req.repo))
             .await
         {
-            return err(StatusCode::INTERNAL_SERVER_ERROR, "enqueue_failed", e)
-                .into_response();
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "enqueue_failed", e).into_response();
         }
         // F3.7b — audit corpus.cloned on the cloud-enqueue path.
         audit_corpus_action(&state, tenant.as_ref(), "corpus.cloned", &corpus_id);
@@ -788,14 +787,11 @@ async fn clone_repo(
 /// Returns the rewritten URL on success.
 fn inject_github_app_token(repo: &str, token: &str) -> Result<String, String> {
     let Some(rest) = repo.strip_prefix("https://") else {
-        return Err(
-            "GitHub App installation tokens require an https:// clone URL".to_string(),
-        );
+        return Err("GitHub App installation tokens require an https:// clone URL".to_string());
     };
     if rest.contains('@') {
         return Err(
-            "clone URL already contains credentials — pick PAT or App, not both"
-                .to_string(),
+            "clone URL already contains credentials — pick PAT or App, not both".to_string(),
         );
     }
     Ok(format!("https://x-access-token:{token}@{rest}"))
@@ -980,7 +976,10 @@ async fn list_corpora(
 fn synthesize_pending_corpus_info(
     entry: ministr_api::CorpusRegistrationView,
 ) -> ministr_api::corpus::CorpusInfo {
-    let display_name = entry.display_name.clone().unwrap_or_else(|| entry.id.clone());
+    let display_name = entry
+        .display_name
+        .clone()
+        .unwrap_or_else(|| entry.id.clone());
     ministr_api::corpus::CorpusInfo {
         id: entry.id,
         display_name,
@@ -2478,7 +2477,9 @@ mod tests {
         // POST /api/v1/corpora — register is not on read router.
         assert!(unrouted(status_of(&app, "POST", "/api/v1/corpora").await));
         // DELETE /api/v1/corpora/x — unregister is not on read router.
-        assert!(unrouted(status_of(&app, "DELETE", "/api/v1/corpora/x").await));
+        assert!(unrouted(
+            status_of(&app, "DELETE", "/api/v1/corpora/x").await
+        ));
         // POST /api/v1/corpora/x/clone — clone is not on read router.
         assert!(unrouted(
             status_of(&app, "POST", "/api/v1/corpora/x/clone").await,
@@ -2523,17 +2524,16 @@ mod tests {
     #[tokio::test]
     async fn observability_router_serves_observability_only() {
         let app = observability_router(test_state());
-        assert_eq!(
-            status_of(&app, "GET", "/activity").await,
-            StatusCode::OK,
-        );
+        assert_eq!(status_of(&app, "GET", "/activity").await, StatusCode::OK,);
         assert_eq!(
             status_of(&app, "GET", "/coherence-events").await,
             StatusCode::OK,
         );
         // No corpus paths on observability router.
         assert!(unrouted(status_of(&app, "GET", "/api/v1/corpora").await));
-        assert!(unrouted(status_of(&app, "POST", "/api/v1/corpora/import").await));
+        assert!(unrouted(
+            status_of(&app, "POST", "/api/v1/corpora/import").await
+        ));
     }
 
     #[tokio::test]
@@ -2542,7 +2542,9 @@ mod tests {
         // The ask path is routed. Handler may fail (no `claude` CLI on the
         // test runner), but routing-wise the path exists. Method GET should
         // therefore return 405 (path exists, method doesn't match).
-        assert!(unrouted(status_of(&app, "GET", "/api/v1/corpora/x/ask").await));
+        assert!(unrouted(
+            status_of(&app, "GET", "/api/v1/corpora/x/ask").await
+        ));
         // No other paths on ask router.
         assert!(unrouted(status_of(&app, "GET", "/api/v1/corpora").await));
     }

@@ -404,8 +404,7 @@ impl OpenAiEmbedder {
                 })?;
             }
             if status.as_u16() == 429 && attempts < MAX_429_RETRIES {
-                let wait = retry_after_from_headers(resp.headers())
-                    .unwrap_or(FALLBACK_RETRY_AFTER);
+                let wait = retry_after_from_headers(resp.headers()).unwrap_or(FALLBACK_RETRY_AFTER);
                 attempts += 1;
                 warn!(
                     attempt = attempts,
@@ -473,11 +472,10 @@ impl Embedder for OpenAiEmbedder {
     /// Requires a multi-threaded tokio runtime — the serve binary
     /// uses the default `#[tokio::main]` flavor which provides one.
     fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, IndexError> {
-        let handle = tokio::runtime::Handle::try_current().map_err(|_| {
-            IndexError::EmbeddingFailed {
+        let handle =
+            tokio::runtime::Handle::try_current().map_err(|_| IndexError::EmbeddingFailed {
                 reason: "OpenAiEmbedder::embed called outside a tokio runtime".to_owned(),
-            }
-        })?;
+            })?;
         tokio::task::block_in_place(|| handle.block_on(self.embed_async(texts)))
     }
 
@@ -608,10 +606,7 @@ mod tests {
         expires_on: String,
     }
 
-    async fn imds_handler(
-        State(s): State<MockShared>,
-        headers: HeaderMap,
-    ) -> impl IntoResponse {
+    async fn imds_handler(State(s): State<MockShared>, headers: HeaderMap) -> impl IntoResponse {
         s.imds_calls.fetch_add(1, Ordering::SeqCst);
         if headers
             .get("X-IDENTITY-HEADER")
@@ -650,10 +645,8 @@ mod tests {
             // Azure's real header value (~60s on a rate-limited S0
             // deployment). The retry-from-header parse path is the
             // same either way.
-            resp.headers_mut().insert(
-                "Retry-After",
-                axum::http::HeaderValue::from_static("0"),
-            );
+            resp.headers_mut()
+                .insert("Retry-After", axum::http::HeaderValue::from_static("0"));
             return resp;
         }
         // Persistent-429 path (gives_up_after_max_429_retries): emit
@@ -666,10 +659,8 @@ mod tests {
                 Json(s.embed_body.clone().unwrap_or(serde_json::json!({}))),
             )
                 .into_response();
-            resp.headers_mut().insert(
-                "Retry-After",
-                axum::http::HeaderValue::from_static("0"),
-            );
+            resp.headers_mut()
+                .insert("Retry-After", axum::http::HeaderValue::from_static("0"));
             return resp;
         }
         assert_eq!(deployment, "embed-test-deployment");
@@ -1037,10 +1028,7 @@ mod tests {
         let err = embedder.embed(&["x"]).unwrap_err();
         match err {
             IndexError::EmbeddingFailed { reason } => {
-                assert!(
-                    reason.contains("outside a tokio runtime"),
-                    "got {reason:?}",
-                );
+                assert!(reason.contains("outside a tokio runtime"), "got {reason:?}");
             }
             other => panic!("wanted EmbeddingFailed, got {other:?}"),
         }

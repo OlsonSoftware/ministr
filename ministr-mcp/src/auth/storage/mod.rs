@@ -66,10 +66,7 @@ pub(crate) trait OAuthStorage: Send + Sync {
         client_id: &str,
     ) -> impl Future<Output = StorageResult<Option<RegisteredClient>>> + Send;
 
-    fn save_code(
-        &self,
-        code: AuthorizationCode,
-    ) -> impl Future<Output = StorageResult<()>> + Send;
+    fn save_code(&self, code: AuthorizationCode) -> impl Future<Output = StorageResult<()>> + Send;
 
     /// Atomically retrieve and remove an authorization code.
     fn take_code(
@@ -124,10 +121,7 @@ impl OAuthBackend {
         }
     }
 
-    pub(crate) async fn take_code(
-        &self,
-        code: &str,
-    ) -> StorageResult<Option<AuthorizationCode>> {
+    pub(crate) async fn take_code(&self, code: &str) -> StorageResult<Option<AuthorizationCode>> {
         match self {
             Self::InMemory(s) => s.take_code(code).await,
             Self::Sqlite(s) => s.take_code(code).await,

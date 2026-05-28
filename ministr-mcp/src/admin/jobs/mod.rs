@@ -240,11 +240,7 @@ impl JobQueueBackend {
     /// Returns [`JobQueueError::NotFound`] if `job_id` does not exist;
     /// other variants surface backend failures.
     #[allow(dead_code)]
-    pub async fn update_progress(
-        &self,
-        job_id: &str,
-        progress: JobProgress,
-    ) -> JobResult<()> {
+    pub async fn update_progress(&self, job_id: &str, progress: JobProgress) -> JobResult<()> {
         match self {
             Self::InMemory(q) => q.update_progress(job_id, progress).await,
             Self::Sqlite(q) => q.update_progress(job_id, progress).await,
@@ -295,7 +291,10 @@ mod tests {
         match parsed {
             JobTrigger::Tenant { paths, clone_url } => {
                 assert_eq!(paths, vec!["/tmp/x".to_string(), "/tmp/y".to_string()]);
-                assert_eq!(clone_url.as_deref(), Some("https://github.com/dtolnay/anyhow"));
+                assert_eq!(
+                    clone_url.as_deref(),
+                    Some("https://github.com/dtolnay/anyhow")
+                );
             }
             other => panic!("expected Tenant, got {other:?}"),
         }

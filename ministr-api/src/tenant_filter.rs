@@ -42,17 +42,15 @@ pub type TenantFilterFuture<'a> =
 /// Future shape returned by [`TenantCorpusFilter::default_corpus_for_tenant`].
 /// Same `Send + 'a` bounds as [`TenantFilterFuture`], but yielding an
 /// `Option<String>` instead of a `bool`.
-pub type DefaultCorpusFuture<'a> = Pin<
-    Box<dyn Future<Output = Result<Option<String>, TenantFilterError>> + Send + 'a>,
->;
+pub type DefaultCorpusFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Option<String>, TenantFilterError>> + Send + 'a>>;
 
 /// Future shape returned by [`TenantCorpusVisibility::visible_corpus_ids`].
 /// Yields the set of `corpus_id`s a tenant is allowed to see — `None`
 /// means "no filter applied" (self-hosted serve), `Some(vec)` is the
 /// explicit allow-list.
-pub type VisibleCorpusFuture<'a> = Pin<
-    Box<dyn Future<Output = Result<Option<Vec<String>>, TenantFilterError>> + Send + 'a>,
->;
+pub type VisibleCorpusFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Option<Vec<String>>, TenantFilterError>> + Send + 'a>>;
 
 /// Minimal view of a corpus registration row, shaped for the daemon's
 /// `list_corpora` handler to synthesise a `CorpusInfo` when the
@@ -96,11 +94,8 @@ pub trait TenantCorpusFilter: Send + Sync + std::fmt::Debug {
     /// fall back to its typo-tolerance shape (empty results, not 403).
     /// `Err` indicates a storage failure — callers should NOT downgrade
     /// to permissive behaviour on Err; treat it as a deny + log.
-    fn allowed<'a>(
-        &'a self,
-        tenant_subject: &'a str,
-        corpus_id: &'a str,
-    ) -> TenantFilterFuture<'a>;
+    fn allowed<'a>(&'a self, tenant_subject: &'a str, corpus_id: &'a str)
+    -> TenantFilterFuture<'a>;
 
     /// F2.x-c — return the `corpus_id` the resolver should answer with
     /// when a tool call comes in with no `project` argument and the
@@ -110,10 +105,7 @@ pub trait TenantCorpusFilter: Send + Sync + std::fmt::Debug {
     /// impl overrides this to return the tenant's most-recently-created
     /// corpus, so authenticated cloud calls without a `project`
     /// argument land on a real corpus instead of the empty default.
-    fn default_corpus_for_tenant<'a>(
-        &'a self,
-        tenant_subject: &'a str,
-    ) -> DefaultCorpusFuture<'a> {
+    fn default_corpus_for_tenant<'a>(&'a self, tenant_subject: &'a str) -> DefaultCorpusFuture<'a> {
         let _ = tenant_subject;
         Box::pin(async { Ok(None) })
     }
@@ -142,10 +134,7 @@ pub trait TenantCorpusVisibility: Send + Sync + std::fmt::Debug {
     /// `cloud_corpora.tenant_id = tenant_subject` and any
     /// `cloud_corpus_acl` grants the tenant inherits through
     /// `org_members`.
-    fn visible_corpus_ids<'a>(
-        &'a self,
-        tenant_subject: &'a str,
-    ) -> VisibleCorpusFuture<'a>;
+    fn visible_corpus_ids<'a>(&'a self, tenant_subject: &'a str) -> VisibleCorpusFuture<'a>;
 
     /// Return registration rows for corpora the tenant owns directly
     /// (the cloud-side source of truth — `cloud_corpora.tenant_id =

@@ -8,8 +8,8 @@ use tokio::task;
 use tracing::debug;
 
 use super::super::ids::new_job_id;
-use crate::time::epoch_now;
 use super::{Job, JobProgress, JobQueue, JobQueueError, JobResult, JobStatus, JobTrigger};
+use crate::time::epoch_now;
 
 #[derive(Debug, Clone)]
 pub struct SqliteJobQueue {
@@ -314,10 +314,7 @@ mod tests {
         let id;
         {
             let q = SqliteJobQueue::open(&path).unwrap();
-            let job = q
-                .enqueue("c1".into(), JobTrigger::Manual, 0)
-                .await
-                .unwrap();
+            let job = q.enqueue("c1".into(), JobTrigger::Manual, 0).await.unwrap();
             id = job.id;
         }
         // Re-open simulates a restart.
@@ -330,10 +327,7 @@ mod tests {
     #[tokio::test]
     async fn claim_next_transitions_status_atomically() {
         let (_dir, q) = open();
-        let job = q
-            .enqueue("c1".into(), JobTrigger::Manual, 0)
-            .await
-            .unwrap();
+        let job = q.enqueue("c1".into(), JobTrigger::Manual, 0).await.unwrap();
         let claimed = q.claim_next().await.unwrap().unwrap();
         assert_eq!(claimed.id, job.id);
         assert_eq!(claimed.status, JobStatus::Running);
@@ -343,10 +337,7 @@ mod tests {
     #[tokio::test]
     async fn progress_and_finish() {
         let (_dir, q) = open();
-        let job = q
-            .enqueue("c1".into(), JobTrigger::Manual, 0)
-            .await
-            .unwrap();
+        let job = q.enqueue("c1".into(), JobTrigger::Manual, 0).await.unwrap();
         q.update_progress(
             &job.id,
             JobProgress {
@@ -359,9 +350,7 @@ mod tests {
         )
         .await
         .unwrap();
-        q.finish(&job.id, JobStatus::Completed, None)
-            .await
-            .unwrap();
+        q.finish(&job.id, JobStatus::Completed, None).await.unwrap();
         let got = q.get(&job.id).await.unwrap().unwrap();
         assert_eq!(got.status, JobStatus::Completed);
         assert_eq!(got.progress.processed_files, 42);

@@ -131,10 +131,7 @@ fn pressure_label(level: ministr_core::session::UsageLevel) -> String {
 /// builder hits an I/O fault on the in-memory buffer), so the caller
 /// surfaces them as `500 internal error` rather than a structured
 /// error envelope.
-pub fn build_session_bundle(
-    session_id: &str,
-    entry: &SessionEntry,
-) -> Result<Vec<u8>, String> {
+pub fn build_session_bundle(session_id: &str, entry: &SessionEntry) -> Result<Vec<u8>, String> {
     assemble_bundle_tar(session_id, entry, None)
 }
 
@@ -188,8 +185,8 @@ fn assemble_bundle_tar(
     drops_jsonl: Option<&[u8]>,
 ) -> Result<Vec<u8>, String> {
     let manifest = SessionBundleManifest::from_entry(session_id, entry);
-    let manifest_json = serde_json::to_vec_pretty(&manifest)
-        .map_err(|e| format!("serialize manifest: {e}"))?;
+    let manifest_json =
+        serde_json::to_vec_pretty(&manifest).map_err(|e| format!("serialize manifest: {e}"))?;
     let delivered_jsonl = build_delivered_jsonl(&entry.session)?;
 
     let drops_len = drops_jsonl.map_or(0, <[u8]>::len);
@@ -214,8 +211,7 @@ fn assemble_bundle_tar(
 fn serialize_drops_jsonl(entries: &[ministr_api::DropEntry]) -> Result<Vec<u8>, String> {
     let mut out: Vec<u8> = Vec::new();
     for entry in entries {
-        let line = serde_json::to_vec(entry)
-            .map_err(|e| format!("serialize drop: {e}"))?;
+        let line = serde_json::to_vec(entry).map_err(|e| format!("serialize drop: {e}"))?;
         out.extend_from_slice(&line);
         out.push(b'\n');
     }
@@ -227,14 +223,12 @@ fn serialize_drops_jsonl(entries: &[ministr_api::DropEntry]) -> Result<Vec<u8>, 
 /// `turn_delivered` ascending. Stable ordering matters for diff-able
 /// replays.
 fn build_delivered_jsonl(session: &Session) -> Result<Vec<u8>, String> {
-    let mut items: Vec<&ministr_core::session::DeliveredItem> =
-        session.delivered_items().collect();
+    let mut items: Vec<&ministr_core::session::DeliveredItem> = session.delivered_items().collect();
     items.sort_by_key(|item| (item.turn_delivered, item.content_id.0.clone()));
 
     let mut out: Vec<u8> = Vec::new();
     for item in items {
-        let line = serde_json::to_vec(item)
-            .map_err(|e| format!("serialize delivered: {e}"))?;
+        let line = serde_json::to_vec(item).map_err(|e| format!("serialize delivered: {e}"))?;
         out.extend_from_slice(&line);
         out.push(b'\n');
     }
@@ -398,7 +392,11 @@ async fn handle_list(State(state): State<SessionExportState>) -> Response {
     drop(reg);
     // Stable order: most-recently-opened first. opened_at strings are
     // ISO-8601 UTC so lexical sort matches chronological order.
-    summaries.sort_by(|a, b| b.opened_at.cmp(&a.opened_at).then(a.session_id.cmp(&b.session_id)));
+    summaries.sort_by(|a, b| {
+        b.opened_at
+            .cmp(&a.opened_at)
+            .then(a.session_id.cmp(&b.session_id))
+    });
     axum::Json(summaries).into_response()
 }
 
@@ -496,10 +494,13 @@ async fn handle_export(
 fn inline_tar_response(session_id: &str, bundle: Vec<u8>) -> Response {
     let filename = format!("session-{session_id}.tar");
     let content_disposition = format!("attachment; filename=\"{filename}\"");
-    ([
-        (header::CONTENT_TYPE, "application/x-tar".to_string()),
-        (header::CONTENT_DISPOSITION, content_disposition),
-    ], bundle)
+    (
+        [
+            (header::CONTENT_TYPE, "application/x-tar".to_string()),
+            (header::CONTENT_DISPOSITION, content_disposition),
+        ],
+        bundle,
+    )
         .into_response()
 }
 
@@ -530,10 +531,13 @@ async fn handle_bundle_download(
                 .unwrap_or("session.tar")
                 .to_owned();
             let content_disposition = format!("attachment; filename=\"{filename}\"");
-            ([
-                (header::CONTENT_TYPE, "application/x-tar".to_string()),
-                (header::CONTENT_DISPOSITION, content_disposition),
-            ], bytes)
+            (
+                [
+                    (header::CONTENT_TYPE, "application/x-tar".to_string()),
+                    (header::CONTENT_DISPOSITION, content_disposition),
+                ],
+                bytes,
+            )
                 .into_response()
         }
         Err(SessionBundleStoreError::InvalidToken) => {
@@ -680,16 +684,13 @@ mod tests {
         // symmetric. Future field additions land on the end of the
         // struct so older crates keep parsing newer payloads.
         let json = serde_json::to_string(&manifest).expect("serialize");
-        let parsed: SessionBundleManifest =
-            serde_json::from_str(&json).expect("deserialize");
+        let parsed: SessionBundleManifest = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed, manifest);
     }
 
     // ── F6.2-b drops integration tests ─────────────────────────────────
 
-    use ministr_api::{
-        AppendDropFuture, DropEntry, DropsLedgerError, ListDropsFuture,
-    };
+    use ministr_api::{AppendDropFuture, DropEntry, DropsLedgerError, ListDropsFuture};
     use std::sync::Mutex as StdMutex;
 
     /// Test-only ledger that returns a fixed slice of drops on
@@ -791,14 +792,10 @@ mod tests {
         reg.create_session("agent-no-ledger", None, AccessMode::ReadWrite);
         let entry = reg.get_session("agent-no-ledger").expect("entry");
 
-        let bytes = build_session_bundle_with_drops(
-            "agent-no-ledger",
-            entry,
-            None,
-            Some("tenant-x"),
-        )
-        .await
-        .expect("build");
+        let bytes =
+            build_session_bundle_with_drops("agent-no-ledger", entry, None, Some("tenant-x"))
+                .await
+                .expect("build");
         let entries = extract_tar_entries(&bytes);
         assert!(entries.contains_key("manifest.json"));
         assert!(entries.contains_key("delivered.jsonl"));
@@ -1028,9 +1025,7 @@ mod tests {
                 }
                 let cap = self.captured.lock().expect("mutex");
                 cap.iter()
-                    .find(|(t, s, _)| {
-                        blob_path == format!("sessions/{t}/{s}/stub.tar")
-                    })
+                    .find(|(t, s, _)| blob_path == format!("sessions/{t}/{s}/stub.tar"))
                     .map(|(_, _, b)| b.clone())
                     .ok_or(SessionBundleStoreError::NotFound)
             })

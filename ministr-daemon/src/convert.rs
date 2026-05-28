@@ -773,8 +773,16 @@ mod tests {
         // F3.6-c-ii-c renders a "no source available" hint when
         // symbol_id is missing.
         let links = vec![link(
-            "pyo3", "src/exporter.rs", "handle_event", "rust", 10,
-            "pkg/__init__.py", "handle_event", "python", 5, 0.8,
+            "pyo3",
+            "src/exporter.rs",
+            "handle_event",
+            "rust",
+            10,
+            "pkg/__init__.py",
+            "handle_event",
+            "python",
+            5,
+            0.8,
         )];
         let graph = bridge_links_to_graph(&links);
         assert_eq!(graph.nodes.len(), 2);

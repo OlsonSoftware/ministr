@@ -82,12 +82,11 @@ fn load_bearer_token() -> Option<String> {
 
 /// Write the cloud bearer token to the OS keychain.
 fn save_bearer_token(token: &str) -> Result<(), CommandError> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_TOKEN_ACCOUNT).map_err(|e| {
-        CommandError::new(ErrorKind::Internal, format!("keyring entry: {e}"))
-    })?;
-    entry.set_password(token).map_err(|e| {
-        CommandError::new(ErrorKind::Internal, format!("keyring write: {e}"))
-    })?;
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_TOKEN_ACCOUNT)
+        .map_err(|e| CommandError::new(ErrorKind::Internal, format!("keyring entry: {e}")))?;
+    entry
+        .set_password(token)
+        .map_err(|e| CommandError::new(ErrorKind::Internal, format!("keyring write: {e}")))?;
     debug!("saved cloud bearer token to OS keychain");
     Ok(())
 }
@@ -96,9 +95,8 @@ fn save_bearer_token(token: &str) -> Result<(), CommandError> {
 /// is treated as success — the post-condition (no entry) holds either
 /// way.
 fn delete_bearer_token() -> Result<(), CommandError> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_TOKEN_ACCOUNT).map_err(|e| {
-        CommandError::new(ErrorKind::Internal, format!("keyring entry: {e}"))
-    })?;
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_TOKEN_ACCOUNT)
+        .map_err(|e| CommandError::new(ErrorKind::Internal, format!("keyring entry: {e}")))?;
     match entry.delete_credential() {
         Ok(()) => {
             debug!("removed cloud bearer token from OS keychain");
@@ -320,9 +318,7 @@ pub async fn cloud_authenticate(app: AppHandle) -> Result<(), CommandError> {
     let client_id = reg
         .get("client_id")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            CommandError::new(ErrorKind::Io, "register response missing client_id")
-        })?
+        .ok_or_else(|| CommandError::new(ErrorKind::Io, "register response missing client_id"))?
         .to_string();
 
     // Open the system browser. urlencoding the redirect_uri is mandatory
@@ -348,17 +344,15 @@ pub async fn cloud_authenticate(app: AppHandle) -> Result<(), CommandError> {
 
     // Wait for the redirect. Time-box at 3 min so a user who abandons the
     // flow doesn't leave the listener dangling.
-    let (code, state_recv) = tokio::time::timeout(
-        Duration::from_secs(180),
-        await_oauth_callback(listener),
-    )
-    .await
-    .map_err(|_| {
-        CommandError::new(
-            ErrorKind::Io,
-            "OAuth flow timed out — user did not complete sign-in within 3 minutes",
-        )
-    })??;
+    let (code, state_recv) =
+        tokio::time::timeout(Duration::from_secs(180), await_oauth_callback(listener))
+            .await
+            .map_err(|_| {
+                CommandError::new(
+                    ErrorKind::Io,
+                    "OAuth flow timed out — user did not complete sign-in within 3 minutes",
+                )
+            })??;
 
     if state_recv != state_nonce {
         return Err(CommandError::new(
@@ -394,9 +388,7 @@ pub async fn cloud_authenticate(app: AppHandle) -> Result<(), CommandError> {
     let access_token = token_resp
         .get("access_token")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            CommandError::new(ErrorKind::Io, "token response missing access_token")
-        })?
+        .ok_or_else(|| CommandError::new(ErrorKind::Io, "token response missing access_token"))?
         .to_string();
 
     let mut saved = load_config();
@@ -555,11 +547,8 @@ async fn await_github_signin_callback(
     }
 
     let Some(state) = state else {
-        let _ = write_html_response(
-            &mut write_half,
-            "Missing state on callback. Please retry.",
-        )
-        .await;
+        let _ =
+            write_html_response(&mut write_half, "Missing state on callback. Please retry.").await;
         return Err(CommandError::new(
             ErrorKind::Io,
             "github callback missing state",
@@ -723,8 +712,7 @@ fn random_url_safe_id(bytes: usize) -> String {
 }
 
 fn base64_url_no_pad(data: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::with_capacity((data.len() * 4).div_ceil(3));
     let mut i = 0;
     while i < data.len() {
@@ -836,9 +824,11 @@ pub async fn cloud_health_check() -> Result<CloudHealth, CommandError> {
         .build()
         .map_err(|e| CommandError::new(ErrorKind::Internal, format!("http client: {e}")))?;
     let started = std::time::Instant::now();
-    let resp = client.get(&url).send().await.map_err(|e| {
-        CommandError::new(ErrorKind::Io, format!("health probe to {url}: {e}"))
-    })?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("health probe to {url}: {e}")))?;
     let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     if !resp.status().is_success() {
         return Err(CommandError::new(
@@ -885,10 +875,7 @@ fn authed_client(timeout_secs: u64) -> Result<(reqwest::Client, String, String),
 /// system browser so the user pays in Stripe-hosted UI; the cloud
 /// webhook flips `users.plan_id` once payment lands.
 #[tauri::command]
-pub async fn cloud_billing_checkout(
-    app: AppHandle,
-    plan: String,
-) -> Result<(), CommandError> {
+pub async fn cloud_billing_checkout(app: AppHandle, plan: String) -> Result<(), CommandError> {
     let (client, endpoint, token) = authed_client(15)?;
     let url = format!("{endpoint}/api/v1/billing/checkout");
     let body = serde_json::json!({ "plan": plan });
@@ -909,12 +896,9 @@ pub async fn cloud_billing_checkout(
         .json()
         .await
         .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse checkout: {e}")))?;
-    let session_url = payload
-        .get("url")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            CommandError::new(ErrorKind::Io, "checkout response missing url".to_string())
-        })?;
+    let session_url = payload.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
+        CommandError::new(ErrorKind::Io, "checkout response missing url".to_string())
+    })?;
     app.opener()
         .open_url(session_url, None::<&str>)
         .map_err(|e| CommandError::new(ErrorKind::Io, format!("open browser: {e}")))?;
@@ -946,12 +930,9 @@ pub async fn cloud_billing_portal(app: AppHandle) -> Result<(), CommandError> {
         .json()
         .await
         .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse portal: {e}")))?;
-    let session_url = payload
-        .get("url")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            CommandError::new(ErrorKind::Io, "portal response missing url".to_string())
-        })?;
+    let session_url = payload.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
+        CommandError::new(ErrorKind::Io, "portal response missing url".to_string())
+    })?;
     app.opener()
         .open_url(session_url, None::<&str>)
         .map_err(|e| CommandError::new(ErrorKind::Io, format!("open browser: {e}")))?;
@@ -1013,9 +994,7 @@ pub async fn cloud_list_corpora() -> Result<serde_json::Value, CommandError> {
 /// The remote server resolves the paths inside its own filesystem (e.g.
 /// container `/data/...`), not the local desktop's.
 #[tauri::command]
-pub async fn cloud_register_corpus(
-    paths: Vec<String>,
-) -> Result<serde_json::Value, CommandError> {
+pub async fn cloud_register_corpus(paths: Vec<String>) -> Result<serde_json::Value, CommandError> {
     let (client, endpoint, token) = authed_client(15)?;
     let url = format!("{endpoint}/api/v1/corpora");
     let body = serde_json::json!({ "paths": paths });
@@ -1084,12 +1063,10 @@ pub async fn cloud_clone_repo(
 }
 
 fn derive_slug_from_repo(repo: &str) -> String {
-    repo.rsplit('/')
-        .find(|s| !s.is_empty())
-        .map_or_else(
-            || "corpus".to_string(),
-            |s| s.trim_end_matches(".git").to_string(),
-        )
+    repo.rsplit('/').find(|s| !s.is_empty()).map_or_else(
+        || "corpus".to_string(),
+        |s| s.trim_end_matches(".git").to_string(),
+    )
 }
 
 /// DELETE `/api/v1/corpora/{id}` — unregister a corpus on the remote server.
@@ -1366,12 +1343,7 @@ pub async fn cloud_transfer_personal_sub(
     }
     resp.json::<CloudTransferPersonalResponse>()
         .await
-        .map_err(|e| {
-            CommandError::new(
-                ErrorKind::Io,
-                format!("parse transfer-personal-sub: {e}"),
-            )
-        })
+        .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse transfer-personal-sub: {e}")))
 }
 
 /// POST `/api/v1/corpora/{id}/transfer` — flip the corpus's tenant
@@ -1558,9 +1530,7 @@ pub struct CloudWebhookTestResult {
 /// GET /api/v1/orgs/{id}/webhooks — list active subscriptions for an
 /// org. Owner/admin only on the server.
 #[tauri::command]
-pub async fn cloud_list_webhook_subs(
-    org_id: String,
-) -> Result<Vec<CloudWebhookSub>, CommandError> {
+pub async fn cloud_list_webhook_subs(org_id: String) -> Result<Vec<CloudWebhookSub>, CommandError> {
     let (client, endpoint, token) = authed_client(10)?;
     let url = format!("{endpoint}/api/v1/orgs/{org_id}/webhooks");
     let resp = client
@@ -1778,7 +1748,11 @@ pub async fn cloud_export_org_usage_csv(
             .chars()
             .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
             .collect();
-        let stem = if safe_org.is_empty() { "org".to_string() } else { safe_org };
+        let stem = if safe_org.is_empty() {
+            "org".to_string()
+        } else {
+            safe_org
+        };
         format!("{stem}-usage-{}d.csv", days.unwrap_or(30))
     };
 
@@ -1803,7 +1777,12 @@ pub async fn cloud_export_org_usage_csv(
     };
     let path: PathBuf = match target.into_path() {
         Ok(p) => p,
-        Err(e) => return Err(CommandError::new(ErrorKind::Io, format!("resolve save path: {e}"))),
+        Err(e) => {
+            return Err(CommandError::new(
+                ErrorKind::Io,
+                format!("resolve save path: {e}"),
+            ));
+        }
     };
     tokio::fs::write(&path, csv.as_bytes())
         .await
@@ -1987,11 +1966,10 @@ pub async fn cloud_fetch_session_bundle(
             .map_err(|e| CommandError::new(ErrorKind::Io, format!("read signed url body: {e}")))?;
         let signed: SignedBundleResponse = serde_json::from_slice(&body)
             .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse signed url json: {e}")))?;
-        let follow = client
-            .get(&signed.url)
-            .send()
-            .await
-            .map_err(|e| CommandError::new(ErrorKind::Io, format!("get {}: {e}", signed.url)))?;
+        let follow =
+            client.get(&signed.url).send().await.map_err(|e| {
+                CommandError::new(ErrorKind::Io, format!("get {}: {e}", signed.url))
+            })?;
         if !follow.status().is_success() {
             return Err(CommandError::new(
                 ErrorKind::Io,
@@ -2035,10 +2013,7 @@ fn parse_session_bundle_tar(bytes: &[u8]) -> Result<CloudSessionBundle, String> 
     let mut delivered_bytes: Option<Vec<u8>> = None;
     let mut drops_bytes: Option<Vec<u8>> = None;
 
-    for entry_result in archive
-        .entries()
-        .map_err(|e| format!("tar entries: {e}"))?
-    {
+    for entry_result in archive.entries().map_err(|e| format!("tar entries: {e}"))? {
         let mut entry = entry_result.map_err(|e| format!("tar entry: {e}"))?;
         let path = entry
             .path()
@@ -2059,13 +2034,13 @@ fn parse_session_bundle_tar(bytes: &[u8]) -> Result<CloudSessionBundle, String> 
         }
     }
 
-    let manifest_bytes = manifest_bytes
-        .ok_or_else(|| "bundle missing manifest.json".to_string())?;
-    let delivered_bytes = delivered_bytes
-        .ok_or_else(|| "bundle missing delivered.jsonl".to_string())?;
+    let manifest_bytes =
+        manifest_bytes.ok_or_else(|| "bundle missing manifest.json".to_string())?;
+    let delivered_bytes =
+        delivered_bytes.ok_or_else(|| "bundle missing delivered.jsonl".to_string())?;
 
-    let manifest: CloudSessionManifest = serde_json::from_slice(&manifest_bytes)
-        .map_err(|e| format!("parse manifest.json: {e}"))?;
+    let manifest: CloudSessionManifest =
+        serde_json::from_slice(&manifest_bytes).map_err(|e| format!("parse manifest.json: {e}"))?;
     let delivered = parse_jsonl::<CloudSessionDelivered>(&delivered_bytes, "delivered.jsonl")?;
     let drops = match drops_bytes {
         Some(bytes) => Some(parse_jsonl::<CloudSessionDrop>(&bytes, "drops.jsonl")?),
@@ -2087,8 +2062,8 @@ fn parse_jsonl<T: for<'de> Deserialize<'de>>(bytes: &[u8], label: &str) -> Resul
         if line.trim().is_empty() {
             continue;
         }
-        let parsed: T = serde_json::from_str(line)
-            .map_err(|e| format!("{label} line {}: {e}", i + 1))?;
+        let parsed: T =
+            serde_json::from_str(line).map_err(|e| format!("{label} line {}: {e}", i + 1))?;
         out.push(parsed);
     }
     Ok(out)

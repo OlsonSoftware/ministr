@@ -242,7 +242,7 @@ async fn extract_cpp_fallback_into_storage<S: Storage + ?Sized>(
         let _ = storage.delete_symbols_for_file(relative_path).await;
         return Ok(CodeSymbolsResult {
             pending_refs: Vec::new(),
-                embedding_pairs: Vec::new(),
+            embedding_pairs: Vec::new(),
         });
     }
 
@@ -308,7 +308,7 @@ async fn extract_shader_symbols<S: Storage + ?Sized>(
         let _ = storage.delete_symbols_for_file(relative_path).await;
         return Ok(CodeSymbolsResult {
             pending_refs: Vec::new(),
-                embedding_pairs: Vec::new(),
+            embedding_pairs: Vec::new(),
         });
     }
 

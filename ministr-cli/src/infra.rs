@@ -95,19 +95,21 @@ pub(crate) async fn init_infrastructure(
         String,
     ) = if use_openai {
         tracing::info!("MINISTR_EMBEDDER_KIND=openai — using Azure OpenAI embedder");
-        let openai_cfg = ministr_core::embedding::openai::OpenAiConfig::from_env().ok_or_else(|| {
-            miette::miette!(
-                "MINISTR_EMBEDDER_KIND=openai requires MINISTR_AZURE_OPENAI_ENDPOINT, \
+        let openai_cfg =
+            ministr_core::embedding::openai::OpenAiConfig::from_env().ok_or_else(|| {
+                miette::miette!(
+                    "MINISTR_EMBEDDER_KIND=openai requires MINISTR_AZURE_OPENAI_ENDPOINT, \
                  MINISTR_AZURE_OPENAI_DEPLOYMENT, and an auth source \
                  (MINISTR_AZURE_OPENAI_API_KEY or IDENTITY_ENDPOINT+IDENTITY_HEADER)",
-            )
-        })?;
+                )
+            })?;
         // Honour resolved_dimension when set; otherwise default to 384
         // (`ministr_core::embedding::openai::DEFAULT_DIMENSIONS`) so HNSW indexes stay
         // cross-compatible with the local fastembed family.
         let dim = resolved_dimension.unwrap_or(ministr_core::embedding::openai::DEFAULT_DIMENSIONS);
-        let remote = ministr_core::embedding::openai::OpenAiEmbedder::with_dimensions(openai_cfg, dim)
-            .map_err(|e| miette::miette!("build OpenAiEmbedder: {e}"))?;
+        let remote =
+            ministr_core::embedding::openai::OpenAiEmbedder::with_dimensions(openai_cfg, dim)
+                .map_err(|e| miette::miette!("build OpenAiEmbedder: {e}"))?;
         let arc: Arc<dyn ministr_core::embedding::Embedder> = Arc::new(remote);
         // No DualEmbedder for the remote path — Matryoshka is a
         // fastembed-specific facility; OpenAI v3 supports the

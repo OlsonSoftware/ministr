@@ -13,7 +13,9 @@ use ministr_api::{ApiKeyResolver, PlanResolver};
 use tracing::warn;
 
 use super::OAuthConfig;
-use super::storage::{InMemoryStorage, OAuthBackend, PostgresStorage, SqliteStorage, StorageResult};
+use super::storage::{
+    InMemoryStorage, OAuthBackend, PostgresStorage, SqliteStorage, StorageResult,
+};
 use super::tenant::{Plan, Tenant};
 use super::types::{AccessToken, AuthorizationCode, RegisteredClient};
 use super::util::{epoch_now, generate_id};
@@ -150,10 +152,7 @@ impl OAuthStore {
         self.backend.save_code(code).await
     }
 
-    pub(crate) async fn take_code(
-        &self,
-        code: &str,
-    ) -> StorageResult<Option<AuthorizationCode>> {
+    pub(crate) async fn take_code(&self, code: &str) -> StorageResult<Option<AuthorizationCode>> {
         self.backend.take_code(code).await
     }
 

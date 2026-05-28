@@ -894,8 +894,7 @@ impl IngestionPipeline {
 
         // For code files: extract symbols and embed immediately
         if parser_kind == ParserKind::Code {
-            let sym_result =
-                extract_code_symbols(source_path, content, storage, None).await?;
+            let sym_result = extract_code_symbols(source_path, content, storage, None).await?;
             if !sym_result.embedding_pairs.is_empty() {
                 batch_embed_and_insert(&sym_result.embedding_pairs, embedder, index).await?;
             }
@@ -1138,7 +1137,9 @@ impl IngestionPipeline {
         // root than a genuinely emptied corpus, and a global diff would
         // then delete every attributable document in the index.
         if files.is_empty() {
-            warn!("skipping stale-doc cleanup: discovery returned 0 files (likely a transient unreadable root, not an emptied corpus)");
+            warn!(
+                "skipping stale-doc cleanup: discovery returned 0 files (likely a transient unreadable root, not an emptied corpus)"
+            );
         } else {
             // Both stored forms a document under this dir can take:
             // namespaced (`rid/rel`, root_id = Some) and bare-relative
@@ -1455,7 +1456,9 @@ impl IngestionPipeline {
         // unreadable / unmounted root than a genuinely emptied corpus,
         // and proceeding would delete every document in the index.
         if files.is_empty() {
-            warn!("skipping stale-doc cleanup: discovery returned 0 files (likely a transient unreadable root, not an emptied corpus)");
+            warn!(
+                "skipping stale-doc cleanup: discovery returned 0 files (likely a transient unreadable root, not an emptied corpus)"
+            );
         } else {
             let discovered: std::collections::HashSet<String> = files
                 .iter()
@@ -1656,10 +1659,9 @@ impl IngestionPipeline {
                         // consumer catches up, which is loud and
                         // useless. Mirrors PHASE3 Fix A's spirit for
                         // the streaming path.
-                        if let (Some(n), Some(dir)) = (
-                            self.batch_config.persist_every,
-                            self.corpus_dir.as_ref(),
-                        ) && n != 0
+                        if let (Some(n), Some(dir)) =
+                            (self.batch_config.persist_every, self.corpus_dir.as_ref())
+                            && n != 0
                             && stats.files_indexed.is_multiple_of(n)
                         {
                             if index.is_empty() {
@@ -1820,9 +1822,7 @@ impl IngestionPipeline {
         let mut phase_flipped = false;
 
         while let Some(pairs) = embed_rx.recv().await {
-            if !phase_flipped
-                && let Some(p) = progress
-            {
+            if !phase_flipped && let Some(p) = progress {
                 p.set_phase(IngestionPhase::Embedding);
                 phase_flipped = true;
             }
@@ -1866,9 +1866,7 @@ impl IngestionPipeline {
         let mut phase_flipped = false;
 
         while let Some(pairs) = embed_rx.recv().await {
-            if !phase_flipped
-                && let Some(p) = progress
-            {
+            if !phase_flipped && let Some(p) = progress {
                 p.set_phase(IngestionPhase::Embedding);
                 phase_flipped = true;
             }
@@ -2552,4 +2550,3 @@ mod phase5_chunk2_persist_gate_tests {
             .expect("persist with at least one vector must succeed");
     }
 }
-

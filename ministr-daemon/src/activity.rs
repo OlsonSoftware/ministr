@@ -19,8 +19,8 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use ministr_api::activity::ActivityEvent;
 use ministr_api::TenantId;
+use ministr_api::activity::ActivityEvent;
 use percent_encoding::percent_decode_str;
 
 use crate::state::AppState;

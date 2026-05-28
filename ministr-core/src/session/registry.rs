@@ -507,8 +507,8 @@ mod tests {
     // ── F6.1-b/d — durable-snapshot + drops plumbing ────────────────
 
     use ministr_api::{
-        AppendDropFuture, DropsLedgerError, ListDropsFuture, LoadSessionFuture,
-        SaveSessionFuture, SessionMutFuture, SessionStorageError,
+        AppendDropFuture, DropsLedgerError, ListDropsFuture, LoadSessionFuture, SaveSessionFuture,
+        SessionMutFuture, SessionStorageError,
     };
     use std::sync::{Arc, Mutex};
 
@@ -525,11 +525,7 @@ mod tests {
                 Ok::<(), SessionStorageError>(())
             })
         }
-        fn load<'a>(
-            &'a self,
-            tenant_id: &'a str,
-            session_id: &'a str,
-        ) -> LoadSessionFuture<'a> {
+        fn load<'a>(&'a self, tenant_id: &'a str, session_id: &'a str) -> LoadSessionFuture<'a> {
             // For round-trip tests: return the most-recently saved
             // snapshot matching the (tenant_id, session_id) PK.
             Box::pin(async move {
@@ -540,18 +536,10 @@ mod tests {
                     .cloned())
             })
         }
-        fn touch<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _session_id: &'a str,
-        ) -> SessionMutFuture<'a> {
+        fn touch<'a>(&'a self, _tenant_id: &'a str, _session_id: &'a str) -> SessionMutFuture<'a> {
             Box::pin(async { Ok(()) })
         }
-        fn delete<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _session_id: &'a str,
-        ) -> SessionMutFuture<'a> {
+        fn delete<'a>(&'a self, _tenant_id: &'a str, _session_id: &'a str) -> SessionMutFuture<'a> {
             Box::pin(async { Ok(()) })
         }
     }
@@ -638,7 +626,10 @@ mod tests {
         let out = registry
             .try_restore("agent-1", "tenant-uuid", None, AccessMode::ReadWrite)
             .await;
-        assert!(out.is_none(), "storage miss → caller falls through to create");
+        assert!(
+            out.is_none(),
+            "storage miss → caller falls through to create"
+        );
         assert!(
             !registry.contains("agent-1"),
             "no shell should be materialised on storage miss",
@@ -700,7 +691,9 @@ mod tests {
         );
         // The in-memory tracker should reflect the persisted
         // consumption — F6.1's "budget preserved across pods" criterion.
-        let entry = registry.get_session(&snap.session_id).expect("shell exists");
+        let entry = registry
+            .get_session(&snap.session_id)
+            .expect("shell exists");
         let status = entry.budget.usage_status();
         assert_eq!(
             status.tokens_used, 500,
@@ -731,7 +724,9 @@ mod tests {
                 AccessMode::ReadWrite,
             )
             .await;
-        let entry = registry.get_session(&snap.session_id).expect("shell exists");
+        let entry = registry
+            .get_session(&snap.session_id)
+            .expect("shell exists");
         let used = entry.budget.usage_status().tokens_used;
         // The seed got clamped to capacity-1; the prior entry remains
         // in the window rather than being evicted on insert.
@@ -761,7 +756,9 @@ mod tests {
                 AccessMode::ReadWrite,
             )
             .await;
-        let entry = registry.get_session(&snap.session_id).expect("shell exists");
+        let entry = registry
+            .get_session(&snap.session_id)
+            .expect("shell exists");
         assert_eq!(
             entry.budget.usage_status().tokens_used,
             0,
@@ -812,8 +809,8 @@ mod tests {
     #[tokio::test]
     async fn persist_snapshot_fires_through_storage() {
         let stub = Arc::new(StubStorage::default());
-        let registry = default_registry()
-            .with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
+        let registry =
+            default_registry().with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
         let snap = fixture_snapshot();
         registry.persist_snapshot(snap.clone());
         // persist_snapshot spawns the work; give the task a turn.
@@ -863,11 +860,7 @@ mod tests {
     fn registry_drops_ledger_defaults_to_none() {
         let registry = default_registry();
         // record_drops on a no-ledger registry must be a no-op.
-        registry.record_drops(
-            "tenant",
-            "session",
-            &["c1".to_string(), "c2".to_string()],
-        );
+        registry.record_drops("tenant", "session", &["c1".to_string(), "c2".to_string()]);
     }
 
     #[test]

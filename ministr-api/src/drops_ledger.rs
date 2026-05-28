@@ -179,10 +179,7 @@ mod tests {
     async fn list_returns_empty_for_unknown_session() {
         let stub = Arc::new(StubLedger::default());
         let ledger: Arc<dyn DropsLedger> = Arc::clone(&stub) as _;
-        let rows = ledger
-            .list_for_session("nobody", "nothing")
-            .await
-            .unwrap();
+        let rows = ledger.list_for_session("nobody", "nothing").await.unwrap();
         assert!(rows.is_empty());
     }
 }

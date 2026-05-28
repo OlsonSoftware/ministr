@@ -295,10 +295,7 @@ impl JobQueue for PostgresJobQueue {
                 .await
                 .map_err(|e| JobQueueError::Backend(format!("get conn: {e}")))?;
             let row = conn
-                .query_opt(
-                    "SELECT data FROM indexer_jobs WHERE id = $1",
-                    &[&job_id],
-                )
+                .query_opt("SELECT data FROM indexer_jobs WHERE id = $1", &[&job_id])
                 .await
                 .map_err(|e| JobQueueError::Backend(format!("get: {e}")))?;
             match row {
@@ -401,16 +398,13 @@ impl JobQueue for PostgresJobQueue {
                 .await
                 .map_err(|e| JobQueueError::Backend(format!("update_progress conn: {e}")))?;
             let row = conn
-                .query_opt(
-                    "SELECT data FROM indexer_jobs WHERE id = $1",
-                    &[&job_id],
-                )
+                .query_opt("SELECT data FROM indexer_jobs WHERE id = $1", &[&job_id])
                 .await
                 .map_err(|e| JobQueueError::Backend(format!("update_progress select: {e}")))?;
             let blob: String = match row {
-                Some(r) => r
-                    .try_get("data")
-                    .map_err(|e| JobQueueError::Backend(format!("update_progress row.data: {e}")))?,
+                Some(r) => r.try_get("data").map_err(|e| {
+                    JobQueueError::Backend(format!("update_progress row.data: {e}"))
+                })?,
                 None => return Err(JobQueueError::NotFound(job_id)),
             };
             let mut job = deserialise(&blob)?;
@@ -441,10 +435,7 @@ impl JobQueue for PostgresJobQueue {
                 .await
                 .map_err(|e| JobQueueError::Backend(format!("finish conn: {e}")))?;
             let row = conn
-                .query_opt(
-                    "SELECT data FROM indexer_jobs WHERE id = $1",
-                    &[&job_id],
-                )
+                .query_opt("SELECT data FROM indexer_jobs WHERE id = $1", &[&job_id])
                 .await
                 .map_err(|e| JobQueueError::Backend(format!("finish select: {e}")))?;
             let blob: String = match row {

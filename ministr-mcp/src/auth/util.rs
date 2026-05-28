@@ -24,8 +24,7 @@ pub(super) fn generate_id() -> String {
 
 /// Base64url-encode without padding (RFC 4648 §5).
 pub(super) fn base64_url_encode(data: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
     let mut encoded = String::new();
 

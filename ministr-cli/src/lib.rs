@@ -21,4 +21,4 @@ pub mod infra;
 pub mod ingestion;
 pub mod worker;
 
-pub use config_resolve::{resolve_config, ResolvedConfig};
+pub use config_resolve::{ResolvedConfig, resolve_config};

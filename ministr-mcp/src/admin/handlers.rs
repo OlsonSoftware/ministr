@@ -20,7 +20,7 @@ use tracing::{debug, warn};
 
 use super::AdminState;
 use super::jobs::{Job, JobTrigger};
-use crate::auth::{queue_priority, Tenant};
+use crate::auth::{Tenant, queue_priority};
 
 #[derive(Debug, Serialize)]
 pub(super) struct HealthResponse {
@@ -116,7 +116,8 @@ pub(super) async fn sla_status(State(state): State<AdminState>) -> Json<SlaRespo
     // i64 fits centuries of unix-epoch comfortably; saturating_sub
     // defends against the unlikely sub-30d-old epoch boundary.
     let window_30d_max_p95_us = if let Some(store) = state.sla_window_store() {
-        let since = i64::try_from(now_secs).unwrap_or(i64::MAX)
+        let since = i64::try_from(now_secs)
+            .unwrap_or(i64::MAX)
             .saturating_sub(30 * 86_400);
         match store.max_p95_since(since).await {
             Ok(v) => v,
@@ -238,9 +239,7 @@ pub(super) async fn reindex(
     tenant: Option<Extension<Tenant>>,
     Json(req): Json<ReindexRequest>,
 ) -> Result<(StatusCode, Json<ReindexResponse>), (StatusCode, String)> {
-    let priority = tenant
-        .as_ref()
-        .map_or(0, |t| queue_priority(t.plan));
+    let priority = tenant.as_ref().map_or(0, |t| queue_priority(t.plan));
     let job = state
         .queue
         .enqueue(req.corpus_id, JobTrigger::Manual, priority)
@@ -255,7 +254,10 @@ pub(super) async fn reindex(
         priority,
         "enqueued reindex job"
     );
-    Ok((StatusCode::ACCEPTED, Json(ReindexResponse { job_id: job.id })))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(ReindexResponse { job_id: job.id }),
+    ))
 }
 
 /// SSE stream of job-progress snapshots.

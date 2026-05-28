@@ -1017,8 +1017,7 @@ impl MinistrServer {
             }
         }
 
-        let tcc =
-            rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
         Self::tool_router().call(tcc).await
     }
 
@@ -1066,10 +1065,7 @@ impl MinistrServer {
             // fan the query across each corpus and merge by score.
             // Otherwise run the existing single-corpus path through
             // `project`.
-            let is_cross_corpus = params
-                .corpus_ids
-                .as_ref()
-                .is_some_and(|v| !v.is_empty());
+            let is_cross_corpus = params.corpus_ids.as_ref().is_some_and(|v| !v.is_empty());
 
             // Run the survey through the backend trait; if results are
             // ambiguous, try eliciting a refined query.
@@ -2985,12 +2981,12 @@ impl MinistrServer {
             .survey(None, None, concept, 5)
             .await
             .map_err(|e| {
-            McpError::new(
-                rmcp::model::ErrorCode::INTERNAL_ERROR,
-                format!("survey failed: {e}"),
-                None,
-            )
-        })?;
+                McpError::new(
+                    rmcp::model::ErrorCode::INTERNAL_ERROR,
+                    format!("survey failed: {e}"),
+                    None,
+                )
+            })?;
 
         if results.is_empty() {
             return Ok(GetPromptResult::new(vec![PromptMessage::new_text(
@@ -3095,10 +3091,7 @@ mod tests {
 
     // ── F6.3-a cross-corpus survey tests ──────────────────────────────
 
-    fn make_sr(
-        content_id: &str,
-        score: f32,
-    ) -> ministr_core::service::SurveyResult {
+    fn make_sr(content_id: &str, score: f32) -> ministr_core::service::SurveyResult {
         ministr_core::service::SurveyResult {
             content_id: content_id.to_string(),
             resolution: "section".to_string(),
@@ -3117,18 +3110,18 @@ mod tests {
                 vec![make_sr("a1", 0.9), make_sr("a2", 0.7)],
                 0,
             ),
-            (
-                "my-app".to_string(),
-                vec![make_sr("b1", 0.8)],
-                0,
-            ),
+            ("my-app".to_string(), vec![make_sr("b1", 0.8)], 0),
         ];
         let (merged, dedup) = merge_cross_corpus_results(per_corpus, None, 10);
         assert_eq!(dedup, 0);
         assert_eq!(merged.len(), 3);
         // All hits carry a source_corpus.
         for r in &merged {
-            assert!(r.source_corpus.is_some(), "hit {} missing source_corpus", r.content_id);
+            assert!(
+                r.source_corpus.is_some(),
+                "hit {} missing source_corpus",
+                r.content_id
+            );
         }
         // Tagging respects the input grouping — a1/a2 → atlas/react; b1 → my-app.
         let by_id: std::collections::HashMap<&str, &str> = merged
@@ -3188,7 +3181,10 @@ mod tests {
             ("gamma".to_string(), vec![], 5),
         ];
         let (_, dedup) = merge_cross_corpus_results(per_corpus, None, 10);
-        assert_eq!(dedup, 10, "deduplicated_count sums across all per-corpus calls");
+        assert_eq!(
+            dedup, 10,
+            "deduplicated_count sums across all per-corpus calls"
+        );
     }
 
     #[test]
@@ -3314,11 +3310,19 @@ mod tests {
         // Regression guard: passing None for the boost map must produce
         // byte-identical output to the F6.3-a path.
         let per_corpus = vec![
-            ("alpha".to_string(), vec![make_sr("a1", 0.9), make_sr("a2", 0.6)], 0),
+            (
+                "alpha".to_string(),
+                vec![make_sr("a1", 0.9), make_sr("a2", 0.6)],
+                0,
+            ),
             ("beta".to_string(), vec![make_sr("b1", 0.7)], 0),
         ];
         let per_corpus_clone = vec![
-            ("alpha".to_string(), vec![make_sr("a1", 0.9), make_sr("a2", 0.6)], 0),
+            (
+                "alpha".to_string(),
+                vec![make_sr("a1", 0.9), make_sr("a2", 0.6)],
+                0,
+            ),
             ("beta".to_string(), vec![make_sr("b1", 0.7)], 0),
         ];
         let (a, _) = merge_cross_corpus_results(per_corpus, None, 10);
@@ -3337,7 +3341,10 @@ mod tests {
         assert!((sanitise_boost(1.0) - 1.0).abs() < f32::EPSILON);
         assert!((sanitise_boost(0.5) - 0.5).abs() < f32::EPSILON);
         assert!((sanitise_boost(0.0) - 0.0).abs() < f32::EPSILON);
-        assert!((sanitise_boost(-1.0) - 0.0).abs() < f32::EPSILON, "negative clamps to 0");
+        assert!(
+            (sanitise_boost(-1.0) - 0.0).abs() < f32::EPSILON,
+            "negative clamps to 0"
+        );
         assert!(
             (sanitise_boost(MAX_CORPUS_BOOST + 5.0) - MAX_CORPUS_BOOST).abs() < f32::EPSILON,
             "above ceiling clamps to MAX"

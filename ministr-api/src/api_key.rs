@@ -75,7 +75,8 @@ pub type ResolveApiKeyFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Option<ResolvedApiKey>, ApiKeyError>> + Send + 'a>>;
 
 /// Returned future shape for [`ApiKeyResolver::touch_last_used`].
-pub type TouchLastUsedFuture<'a> = Pin<Box<dyn Future<Output = Result<(), ApiKeyError>> + Send + 'a>>;
+pub type TouchLastUsedFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<(), ApiKeyError>> + Send + 'a>>;
 
 /// Resolve raw bearer tokens to API key rows.
 ///

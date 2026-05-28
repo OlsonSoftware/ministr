@@ -32,6 +32,7 @@ use std::sync::Arc;
 
 use axum::Router;
 
+use crate::ApiError;
 use crate::api_key::ApiKeyResolver;
 use crate::audit::AuditSink;
 use crate::blob_sink::BlobSink;
@@ -46,7 +47,6 @@ use crate::session_storage::SessionStorage;
 use crate::sla_window_store::SlaWindowStore;
 use crate::tenant_filter::{TenantCorpusFilter, TenantCorpusVisibility};
 use crate::usage::UsageSink;
-use crate::ApiError;
 
 /// Mounts cloud-mode HTTP routes and adapters onto a locally-built serve.
 ///
@@ -239,7 +239,10 @@ impl std::fmt::Debug for CloudAdminAdapters {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CloudAdminAdapters")
             .field("sla_window_store", &self.sla_window_store.is_some())
-            .field("sla_snapshot_persister", &self.sla_snapshot_persister.is_some())
+            .field(
+                "sla_snapshot_persister",
+                &self.sla_snapshot_persister.is_some(),
+            )
             .finish()
     }
 }
@@ -259,9 +262,7 @@ pub trait BlobUploader: Send + Sync + std::fmt::Debug {
         corpus_id: &'a str,
         corpus_dir: &'a std::path::Path,
         model_name: &'a str,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<String, ApiError>> + Send + 'a>,
-    >;
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, ApiError>> + Send + 'a>>;
 }
 
 /// Writes a single latency snapshot row to the cloud SLA store. The
@@ -278,9 +279,7 @@ pub trait SlaSnapshotPersister: Send + Sync + std::fmt::Debug {
         p50_us: u64,
         p95_us: u64,
         p99_us: u64,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<(), ApiError>> + Send + 'a>,
-    >;
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), ApiError>> + Send + 'a>>;
 }
 
 /// License-revocation shutdown signal returned by the cloud mounter.

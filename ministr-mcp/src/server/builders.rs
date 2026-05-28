@@ -381,10 +381,7 @@ impl MinistrServer {
     ///
     /// [`SessionStorage`]: ministr_api::SessionStorage
     #[must_use = "the builder consumes self; assign the returned value"]
-    pub async fn with_session_storage(
-        self,
-        storage: Arc<dyn ministr_api::SessionStorage>,
-    ) -> Self {
+    pub async fn with_session_storage(self, storage: Arc<dyn ministr_api::SessionStorage>) -> Self {
         {
             let mut reg = self.registry.lock().await;
             reg.set_storage(storage);
@@ -512,9 +509,7 @@ impl MinistrServer {
     /// [`Self::with_corpus_registry`]. `None` for stdio / proxy
     /// transports.
     #[must_use]
-    pub fn corpus_registry_arc(
-        &self,
-    ) -> Option<Arc<ministr_daemon::registry::CorpusRegistry>> {
+    pub fn corpus_registry_arc(&self) -> Option<Arc<ministr_daemon::registry::CorpusRegistry>> {
         self.corpus_registry.as_ref().map(Arc::clone)
     }
 
@@ -560,12 +555,8 @@ impl MinistrServer {
     /// audit emission, session stamping, etc.).
     #[must_use]
     pub(crate) fn current_tenant_subject(&self) -> Option<String> {
-        crate::tenant_scope::current().or_else(|| {
-            self.tenant_id_hint
-                .lock()
-                .ok()
-                .and_then(|g| g.clone())
-        })
+        crate::tenant_scope::current()
+            .or_else(|| self.tenant_id_hint.lock().ok().and_then(|g| g.clone()))
     }
 
     /// Set the coherence notification receiver for resource subscription push.

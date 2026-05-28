@@ -49,8 +49,7 @@ pub enum CorporaRepoError {
 /// returns. The `'a` parameter ties the future's lifetime to the
 /// borrow of `&self` (and any borrowed args), so implementations can
 /// capture references without cloning into a `'static` future.
-pub type RepoFuture<'a, T> =
-    Pin<Box<dyn Future<Output = Result<T, CorporaRepoError>> + Send + 'a>>;
+pub type RepoFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, CorporaRepoError>> + Send + 'a>>;
 
 /// Durable backing store for the [`CorpusRegistry`]'s list of known
 /// corpora.
@@ -101,7 +100,10 @@ mod tests {
 
         fn remove<'a>(&'a self, corpus_id: &'a str) -> RepoFuture<'a, ()> {
             Box::pin(async move {
-                self.rows.lock().unwrap().retain(|r| r.corpus_id != corpus_id);
+                self.rows
+                    .lock()
+                    .unwrap()
+                    .retain(|r| r.corpus_id != corpus_id);
                 Ok(())
             })
         }

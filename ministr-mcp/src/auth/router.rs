@@ -5,9 +5,9 @@
 //! - `protected_router` — public routes merged with a token-protected
 //!   MCP router.
 
+use axum::Router;
 use axum::middleware;
 use axum::routing::{get, post};
-use axum::Router;
 
 use super::handlers::{
     authorization_server_metadata, authorize, protected_resource_metadata, register_client, token,

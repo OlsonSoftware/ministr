@@ -80,9 +80,8 @@ pub type SaveSessionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<(), SessionStorageError>> + Send + 'a>>;
 
 /// Returned future shape for [`SessionStorage::load`].
-pub type LoadSessionFuture<'a> = Pin<
-    Box<dyn Future<Output = Result<Option<SessionSnapshot>, SessionStorageError>> + Send + 'a>,
->;
+pub type LoadSessionFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Option<SessionSnapshot>, SessionStorageError>> + Send + 'a>>;
 
 /// Returned future shape for [`SessionStorage::touch`] and [`SessionStorage::delete`].
 pub type SessionMutFuture<'a> =
@@ -108,28 +107,16 @@ pub trait SessionStorage: Send + Sync + std::fmt::Debug {
     /// when no row exists — distinguishable from a storage error so
     /// the registry can hydrate a fresh in-memory `SessionEntry` vs.
     /// fail closed on backend issues.
-    fn load<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        session_id: &'a str,
-    ) -> LoadSessionFuture<'a>;
+    fn load<'a>(&'a self, tenant_id: &'a str, session_id: &'a str) -> LoadSessionFuture<'a>;
 
     /// Touch `last_seen_at` for an existing row. Cheaper than a full
     /// `save` when the budget / coherence haven't changed — useful for
     /// keep-alive on long-lived sessions whose state is mostly stable.
-    fn touch<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        session_id: &'a str,
-    ) -> SessionMutFuture<'a>;
+    fn touch<'a>(&'a self, tenant_id: &'a str, session_id: &'a str) -> SessionMutFuture<'a>;
 
     /// Remove a session row. Idempotent — deleting a non-existent
     /// session is `Ok(())`.
-    fn delete<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        session_id: &'a str,
-    ) -> SessionMutFuture<'a>;
+    fn delete<'a>(&'a self, tenant_id: &'a str, session_id: &'a str) -> SessionMutFuture<'a>;
 }
 
 #[cfg(test)]
@@ -155,11 +142,7 @@ mod tests {
             })
         }
 
-        fn load<'a>(
-            &'a self,
-            tenant_id: &'a str,
-            session_id: &'a str,
-        ) -> LoadSessionFuture<'a> {
+        fn load<'a>(&'a self, tenant_id: &'a str, session_id: &'a str) -> LoadSessionFuture<'a> {
             Box::pin(async move {
                 let rows = self.rows.lock().unwrap();
                 Ok(rows
@@ -169,11 +152,7 @@ mod tests {
             })
         }
 
-        fn touch<'a>(
-            &'a self,
-            tenant_id: &'a str,
-            session_id: &'a str,
-        ) -> SessionMutFuture<'a> {
+        fn touch<'a>(&'a self, tenant_id: &'a str, session_id: &'a str) -> SessionMutFuture<'a> {
             Box::pin(async move {
                 let mut rows = self.rows.lock().unwrap();
                 if let Some(row) = rows
@@ -186,16 +165,10 @@ mod tests {
             })
         }
 
-        fn delete<'a>(
-            &'a self,
-            tenant_id: &'a str,
-            session_id: &'a str,
-        ) -> SessionMutFuture<'a> {
+        fn delete<'a>(&'a self, tenant_id: &'a str, session_id: &'a str) -> SessionMutFuture<'a> {
             Box::pin(async move {
                 let mut rows = self.rows.lock().unwrap();
-                rows.retain(|r| {
-                    !(r.tenant_id == tenant_id && r.session_id == session_id)
-                });
+                rows.retain(|r| !(r.tenant_id == tenant_id && r.session_id == session_id));
                 Ok(())
             })
         }
@@ -219,7 +192,10 @@ mod tests {
         let storage: Arc<dyn SessionStorage> = Arc::new(stub);
         let snap = fixture();
         storage.save(&snap).await.unwrap();
-        let loaded = storage.load(&snap.tenant_id, &snap.session_id).await.unwrap();
+        let loaded = storage
+            .load(&snap.tenant_id, &snap.session_id)
+            .await
+            .unwrap();
         assert_eq!(loaded, Some(snap));
     }
 
@@ -237,7 +213,10 @@ mod tests {
         storage.save(&snap).await.unwrap();
         snap.budget_used = 4096;
         storage.save(&snap).await.unwrap();
-        let loaded = storage.load(&snap.tenant_id, &snap.session_id).await.unwrap();
+        let loaded = storage
+            .load(&snap.tenant_id, &snap.session_id)
+            .await
+            .unwrap();
         assert_eq!(loaded.unwrap().budget_used, 4096);
     }
 
@@ -248,11 +227,20 @@ mod tests {
         storage.delete("nobody", "nothing").await.unwrap();
         let snap = fixture();
         storage.save(&snap).await.unwrap();
-        storage.delete(&snap.tenant_id, &snap.session_id).await.unwrap();
+        storage
+            .delete(&snap.tenant_id, &snap.session_id)
+            .await
+            .unwrap();
         // Second delete on the now-gone row is still Ok.
-        storage.delete(&snap.tenant_id, &snap.session_id).await.unwrap();
+        storage
+            .delete(&snap.tenant_id, &snap.session_id)
+            .await
+            .unwrap();
         assert_eq!(
-            storage.load(&snap.tenant_id, &snap.session_id).await.unwrap(),
+            storage
+                .load(&snap.tenant_id, &snap.session_id)
+                .await
+                .unwrap(),
             None
         );
     }

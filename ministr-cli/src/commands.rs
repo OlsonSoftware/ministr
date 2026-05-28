@@ -112,7 +112,9 @@ fn read_cloud_env() -> CloudEnv {
             .filter(|s| !s.is_empty())
     };
     CloudEnv {
-        data_dir: std::env::var("MINISTR_CLOUD_DATA_DIR").ok().map(PathBuf::from),
+        data_dir: std::env::var("MINISTR_CLOUD_DATA_DIR")
+            .ok()
+            .map(PathBuf::from),
         webhook_secret: std::env::var("MINISTR_GITHUB_WEBHOOK_SECRET").ok(),
         pg_url: trimmed("MINISTR_PG_URL"),
         stripe_webhook_secret: trimmed("MINISTR_STRIPE_WEBHOOK_SECRET"),
@@ -206,7 +208,10 @@ fn build_cors_layer(origins: &[String]) -> tower_http::cors::CorsLayer {
         .max_age(std::time::Duration::from_secs(600))
 }
 
-fn build_admin_state(env: &CloudEnv, corpus_count: usize) -> Result<ministr_mcp::admin::AdminState> {
+fn build_admin_state(
+    env: &CloudEnv,
+    corpus_count: usize,
+) -> Result<ministr_mcp::admin::AdminState> {
     let state = match env.data_dir.as_deref() {
         Some(dir) => {
             std::fs::create_dir_all(dir)
@@ -345,15 +350,11 @@ pub async fn cmd_serve_http(
     if let Some(c) = cloud.as_ref() {
         if let Some(repo) = c.server_adapters.corpora_repo.clone() {
             corpus_registry.set_corpora_repo(repo);
-            tracing::info!(
-                "PostgresCorporaRepo wired via CloudRouterMounter (F31.2b-ii)"
-            );
+            tracing::info!("PostgresCorporaRepo wired via CloudRouterMounter (F31.2b-ii)");
         }
         if let Some(restorer) = c.server_adapters.corpus_restorer.clone() {
             corpus_registry.set_corpus_restorer(restorer);
-            tracing::info!(
-                "BlobCorpusRestorer wired via CloudRouterMounter (F31.2b-ii)"
-            );
+            tracing::info!("BlobCorpusRestorer wired via CloudRouterMounter (F31.2b-ii)");
         }
     }
 
@@ -365,7 +366,10 @@ pub async fn cmd_serve_http(
     // built with `with_corpus_registry_and_filter`. Otherwise (MIT
     // `ministr serve` or no cloud_pool), the plain `with_corpus_registry`
     // path keeps cross-tenant access meaningless (single-user).
-    let server = match cloud.as_ref().and_then(|c| c.server_adapters.tenant_filter.clone()) {
+    let server = match cloud
+        .as_ref()
+        .and_then(|c| c.server_adapters.tenant_filter.clone())
+    {
         Some(filter) => {
             tracing::info!(
                 "tenant_filter wired via CloudRouterMounter — /mcp tool calls gated by cloud_corpora.tenant_id"
@@ -391,9 +395,7 @@ pub async fn cmd_serve_http(
         let s = match c.server_adapters.session_storage.clone() {
             Some(storage) => {
                 let s = server.with_session_storage(storage).await;
-                tracing::info!(
-                    "SessionStorage wired via CloudRouterMounter (F31.2b-ii)"
-                );
+                tracing::info!("SessionStorage wired via CloudRouterMounter (F31.2b-ii)");
                 s
             }
             None => server,
@@ -401,9 +403,7 @@ pub async fn cmd_serve_http(
         match c.server_adapters.drops_ledger.clone() {
             Some(ledger) => {
                 let s = s.with_session_drops_ledger(ledger).await;
-                tracing::info!(
-                    "DropsLedger wired via CloudRouterMounter (F31.2b-ii)"
-                );
+                tracing::info!("DropsLedger wired via CloudRouterMounter (F31.2b-ii)");
                 s
             }
             None => s,
@@ -508,8 +508,7 @@ pub async fn cmd_serve_http(
     // migrated entirely to ClassicCloudMounter. No more inline cloud
     // wiring here — the chunk A stanza below handles the application.
     let session_export_state = {
-        let mut state =
-            ministr_mcp::sessions::SessionExportState::new(Arc::clone(&a2a_registry));
+        let mut state = ministr_mcp::sessions::SessionExportState::new(Arc::clone(&a2a_registry));
         if let Some(c) = cloud.as_ref() {
             if let Some(ledger) = c.server_adapters.drops_ledger.clone() {
                 state = state.with_drops_ledger(ledger);
@@ -559,9 +558,7 @@ pub async fn cmd_serve_http(
         .as_ref()
         .and_then(|c| c.admin_adapters.sla_window_store.clone())
     {
-        tracing::info!(
-            "sla_window_store wired via CloudRouterMounter (F31.2b-ii)"
-        );
+        tracing::info!("sla_window_store wired via CloudRouterMounter (F31.2b-ii)");
         admin_state.with_sla_window_store(sla)
     } else {
         admin_state
@@ -673,9 +670,7 @@ pub async fn cmd_serve_http(
             }
             tracing::info!("blob upload reactor exited — completion channel closed");
         });
-        tracing::info!(
-            "blob upload reactor spawned — bundles uploaded after every ingest"
-        );
+        tracing::info!("blob upload reactor spawned — bundles uploaded after every ingest");
     }
 
     // F31.2b-ii — apply mounter-provided daemon adapters. These run
@@ -687,39 +682,27 @@ pub async fn cmd_serve_http(
     if let Some(c) = cloud.as_ref() {
         if let Some(v) = c.daemon_adapters.corpus_visibility.clone() {
             daemon_state = daemon_state.with_corpus_visibility(v);
-            tracing::info!(
-                "corpus_visibility wired via CloudRouterMounter (F31.2b-ii)"
-            );
+            tracing::info!("corpus_visibility wired via CloudRouterMounter (F31.2b-ii)");
         }
         if let Some(s) = c.daemon_adapters.usage_sink.clone() {
             daemon_state = daemon_state.with_usage_sink(s);
-            tracing::info!(
-                "usage_sink wired via CloudRouterMounter (F31.2b-ii)"
-            );
+            tracing::info!("usage_sink wired via CloudRouterMounter (F31.2b-ii)");
         }
         if let Some(s) = c.daemon_adapters.audit_sink.clone() {
             daemon_state = daemon_state.with_audit_sink(s);
-            tracing::info!(
-                "audit_sink wired via CloudRouterMounter (F31.2b-ii)"
-            );
+            tracing::info!("audit_sink wired via CloudRouterMounter (F31.2b-ii)");
         }
         if let Some(s) = c.daemon_adapters.index_job_sink.clone() {
             daemon_state = daemon_state.with_index_job_sink(s);
-            tracing::info!(
-                "index_job_sink wired via CloudRouterMounter (F31.2b-ii)"
-            );
+            tracing::info!("index_job_sink wired via CloudRouterMounter (F31.2b-ii)");
         }
         if let Some(m) = c.daemon_adapters.installation_minter.clone() {
             daemon_state = daemon_state.with_installation_minter(m);
-            tracing::info!(
-                "installation_minter wired via CloudRouterMounter (F31.2b-ii)"
-            );
+            tracing::info!("installation_minter wired via CloudRouterMounter (F31.2b-ii)");
         }
         if let Some(s) = c.daemon_adapters.blob_sink.clone() {
             daemon_state = daemon_state.with_blob_sink(s);
-            tracing::info!(
-                "blob_sink wired via CloudRouterMounter (F31.2b-ii)"
-            );
+            tracing::info!("blob_sink wired via CloudRouterMounter (F31.2b-ii)");
         }
     }
 
@@ -735,8 +718,7 @@ pub async fn cmd_serve_http(
     // of the handler. The cloud-side upserts in `PostgresCorporaRepo`
     // and `PostgresIndexJobSink` consult that task-local to stamp
     // `cloud_corpora.tenant_id` — closing the F2.x-b permissive arm.
-    let scope_tenant_layer =
-        axum::middleware::from_fn(ministr_mcp::tenant_scope::scope_tenant);
+    let scope_tenant_layer = axum::middleware::from_fn(ministr_mcp::tenant_scope::scope_tenant);
     let daemon_read_router = ministr_daemon::daemon::corpora_read_router(daemon_state.clone())
         .layer(activity_layer.clone())
         .layer(scope_tenant_layer.clone());
@@ -786,18 +768,14 @@ pub async fn cmd_serve_http(
         let store = if let Some(c) = cloud.as_ref() {
             let s = match c.oauth_adapters.api_key_resolver.clone() {
                 Some(r) => {
-                    tracing::info!(
-                        "api_key_resolver wired via CloudRouterMounter (F31.2b-ii)"
-                    );
+                    tracing::info!("api_key_resolver wired via CloudRouterMounter (F31.2b-ii)");
                     store.with_api_key_resolver(r)
                 }
                 None => store,
             };
             match c.oauth_adapters.plan_resolver.clone() {
                 Some(r) => {
-                    tracing::info!(
-                        "plan_resolver wired via CloudRouterMounter (F31.2b-ii)"
-                    );
+                    tracing::info!("plan_resolver wired via CloudRouterMounter (F31.2b-ii)");
                     s.with_plan_resolver(r)
                 }
                 None => s,
@@ -827,10 +805,7 @@ pub async fn cmd_serve_http(
         // populates the slot, wrap the router with cloud layers;
         // otherwise mount the router unwrapped (self-hosted serve
         // stays open-core-clean).
-        let daemon_write_wrapped = match cloud
-            .as_ref()
-            .and_then(|c| c.daemon_write_layer.clone())
-        {
+        let daemon_write_wrapped = match cloud.as_ref().and_then(|c| c.daemon_write_layer.clone()) {
             Some(layer) => {
                 tracing::info!(
                     "daemon-write quota + rate-limit wrapped via CloudRouterMounter (F31.2b-ii-P)"
@@ -922,7 +897,9 @@ pub async fn cmd_serve_http(
     // public surfaces). Default-off: missing/blank
     // `MINISTR_CORS_ALLOWED_ORIGINS` leaves the layer unmounted and
     // self-hosted serve keeps its zero-browser-exposure posture.
-    let app = if let Some(origins) = parse_cors_allowed_origins(cloud_env.cors_allowed_origins.as_deref()) {
+    let app = if let Some(origins) =
+        parse_cors_allowed_origins(cloud_env.cors_allowed_origins.as_deref())
+    {
         tracing::info!(
             origins = ?origins,
             "CORS enabled — Access-Control-Allow-Origin headers added for browser callers"
@@ -1656,11 +1633,7 @@ pub async fn cmd_daemon_status() -> Result<()> {
 }
 
 /// `ministr search` — search the corpus via the daemon.
-pub async fn cmd_daemon_search(
-    corpus_paths: &[String],
-    query: &str,
-    top_k: usize,
-) -> Result<()> {
+pub async fn cmd_daemon_search(corpus_paths: &[String], query: &str, top_k: usize) -> Result<()> {
     let client = ministr_api::client::DaemonClient::new();
     if !client.is_available() {
         miette::bail!(
@@ -2076,7 +2049,6 @@ fn would_hook_block(tool_name: &str, tool_args: &str) -> bool {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2088,8 +2060,8 @@ mod tests {
 
     #[test]
     fn cors_parser_single_origin_round_trips() {
-        let out = parse_cors_allowed_origins(Some("https://ministr.ai"))
-            .expect("single origin parses");
+        let out =
+            parse_cors_allowed_origins(Some("https://ministr.ai")).expect("single origin parses");
         assert_eq!(out, vec!["https://ministr.ai".to_string()]);
     }
 
@@ -2112,10 +2084,8 @@ mod tests {
     #[test]
     fn cors_parser_drops_malformed_entries_but_keeps_valid_ones() {
         // First entry is missing the scheme; should be dropped + log.
-        let out = parse_cors_allowed_origins(Some(
-            "ministr.ai, https://ministr.ai",
-        ))
-        .expect("at least one entry parses");
+        let out = parse_cors_allowed_origins(Some("ministr.ai, https://ministr.ai"))
+            .expect("at least one entry parses");
         assert_eq!(out, vec!["https://ministr.ai".to_string()]);
     }
 

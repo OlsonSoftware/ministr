@@ -4,10 +4,10 @@
 //! exists but unconditionally returns 404 to avoid leaking that the
 //! endpoint is configurable.
 
+use axum::Json;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
-use axum::Json;
 use hmac::{Hmac, Mac};
 use serde::Serialize;
 use sha2::Sha256;

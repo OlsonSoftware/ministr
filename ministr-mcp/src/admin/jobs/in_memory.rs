@@ -6,8 +6,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use super::super::ids::new_job_id;
-use crate::time::epoch_now;
 use super::{Job, JobProgress, JobQueue, JobQueueError, JobResult, JobStatus, JobTrigger};
+use crate::time::epoch_now;
 
 #[derive(Debug, Clone, Default)]
 pub struct InMemoryJobQueue {
@@ -106,7 +106,10 @@ mod tests {
     #[tokio::test]
     async fn enqueue_and_get() {
         let q = InMemoryJobQueue::new();
-        let job = q.enqueue("corpus-a".into(), JobTrigger::Manual, 0).await.unwrap();
+        let job = q
+            .enqueue("corpus-a".into(), JobTrigger::Manual, 0)
+            .await
+            .unwrap();
         let got = q.get(&job.id).await.unwrap().unwrap();
         assert_eq!(got.corpus_id, "corpus-a");
         assert_eq!(got.status, JobStatus::Pending);

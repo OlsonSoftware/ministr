@@ -433,14 +433,7 @@ async fn rooted_ingest_registers_root_and_populates_root_id() {
 
     let rid = "root-000000000000000a";
     pipeline
-        .ingest_directory_with_embeddings_rooted(
-            &src,
-            &storage,
-            &embedder,
-            &index,
-            Some(rid),
-            None,
-        )
+        .ingest_directory_with_embeddings_rooted(&src, &storage, &embedder, &index, Some(rid), None)
         .await
         .unwrap();
 
@@ -481,7 +474,11 @@ async fn reindex_prunes_orphaned_symbols_after_file_deletion() {
     let tmp = tempfile::tempdir().unwrap();
     let src = tmp.path().join("src");
     std::fs::create_dir_all(&src).unwrap();
-    std::fs::write(src.join("keep.rs"), "//! keep\npub fn keep() -> u32 { 1 }\n").unwrap();
+    std::fs::write(
+        src.join("keep.rs"),
+        "//! keep\npub fn keep() -> u32 { 1 }\n",
+    )
+    .unwrap();
     std::fs::write(
         src.join("gone.rs"),
         "//! gone\npub fn helper() -> u32 { 42 }\npub fn caller() -> u32 { helper() }\n",
@@ -500,7 +497,10 @@ async fn reindex_prunes_orphaned_symbols_after_file_deletion() {
         .await
         .unwrap();
 
-    let before = storage.list_symbols(&SymbolFilter::default()).await.unwrap();
+    let before = storage
+        .list_symbols(&SymbolFilter::default())
+        .await
+        .unwrap();
     assert!(
         before.iter().any(|s| s.file_path.contains("gone.rs")),
         "gone.rs symbols should be indexed initially"
@@ -517,7 +517,10 @@ async fn reindex_prunes_orphaned_symbols_after_file_deletion() {
         .await
         .unwrap();
 
-    let after = storage.list_symbols(&SymbolFilter::default()).await.unwrap();
+    let after = storage
+        .list_symbols(&SymbolFilter::default())
+        .await
+        .unwrap();
     assert!(
         after.iter().all(|s| !s.file_path.contains("gone.rs")),
         "deleted file's symbols must be pruned, but these survived: {:?}",

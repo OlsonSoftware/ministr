@@ -60,9 +60,8 @@ pub struct SignedBundleUrl {
 }
 
 /// Returned future shape for [`SessionBundleStore::put_and_sign`].
-pub type PutAndSignFuture<'a> = Pin<
-    Box<dyn Future<Output = Result<SignedBundleUrl, SessionBundleStoreError>> + Send + 'a>,
->;
+pub type PutAndSignFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<SignedBundleUrl, SessionBundleStoreError>> + Send + 'a>>;
 
 /// Returned future shape for [`SessionBundleStore::verify_and_get`].
 pub type VerifyAndGetFuture<'a> =
@@ -90,11 +89,7 @@ pub trait SessionBundleStore: Send + Sync + std::fmt::Debug {
     /// `sessions/{tenant}/{session_id}/{ts}.tar`) — already
     /// URL-decoded by the axum extractor. `token` carries the signing
     /// material and expiry.
-    fn verify_and_get<'a>(
-        &'a self,
-        blob_path: &'a str,
-        token: &'a str,
-    ) -> VerifyAndGetFuture<'a>;
+    fn verify_and_get<'a>(&'a self, blob_path: &'a str, token: &'a str) -> VerifyAndGetFuture<'a>;
 }
 
 #[cfg(test)]

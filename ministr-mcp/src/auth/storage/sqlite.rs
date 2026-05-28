@@ -162,10 +162,7 @@ impl OAuthStorage for SqliteStorage {
         })
     }
 
-    fn save_code(
-        &self,
-        code: AuthorizationCode,
-    ) -> impl Future<Output = StorageResult<()>> + Send {
+    fn save_code(&self, code: AuthorizationCode) -> impl Future<Output = StorageResult<()>> + Send {
         self.with_conn(move |conn| {
             let blob = serde_json::to_string(&code)?;
             conn.execute(
@@ -196,11 +193,8 @@ impl OAuthStorage for SqliteStorage {
                 .optional()
                 .map_err(|e| StorageError::Backend(format!("take_code select: {e}")))?;
             if blob.is_some() {
-                tx.execute(
-                    "DELETE FROM oauth_codes WHERE code = ?1",
-                    params![code],
-                )
-                .map_err(|e| StorageError::Backend(format!("take_code delete: {e}")))?;
+                tx.execute("DELETE FROM oauth_codes WHERE code = ?1", params![code])
+                    .map_err(|e| StorageError::Backend(format!("take_code delete: {e}")))?;
             }
             tx.commit()
                 .map_err(|e| StorageError::Backend(format!("commit: {e}")))?;

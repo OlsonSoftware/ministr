@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use miette::Result;
 
-use ministr_cli::{commands, resolve_config, ResolvedConfig};
+use ministr_cli::{ResolvedConfig, commands, resolve_config};
 
 /// ministr — a code intelligence MCP server for AI coding agents.
 ///

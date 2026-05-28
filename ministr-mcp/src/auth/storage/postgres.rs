@@ -187,10 +187,7 @@ impl OAuthStorage for PostgresStorage {
         }
     }
 
-    fn save_code(
-        &self,
-        code: AuthorizationCode,
-    ) -> impl Future<Output = StorageResult<()>> + Send {
+    fn save_code(&self, code: AuthorizationCode) -> impl Future<Output = StorageResult<()>> + Send {
         let pool = self.pool.clone();
         async move {
             let blob = serde_json::to_string(&code)?;
@@ -275,10 +272,7 @@ impl OAuthStorage for PostgresStorage {
                 .await
                 .map_err(|e| StorageError::Backend(format!("get_token conn: {e}")))?;
             let row = conn
-                .query_opt(
-                    "SELECT data FROM oauth_tokens WHERE token = $1",
-                    &[&token],
-                )
+                .query_opt("SELECT data FROM oauth_tokens WHERE token = $1", &[&token])
                 .await
                 .map_err(|e| StorageError::Backend(format!("get_token: {e}")))?;
             match row {

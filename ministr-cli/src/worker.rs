@@ -362,7 +362,7 @@ mod tests {
     //! failing runner marks the job Failed.
 
     use super::*;
-    use ministr_mcp::admin::jobs::{JobQueueBackend, JobTrigger, InMemoryJobQueue};
+    use ministr_mcp::admin::jobs::{InMemoryJobQueue, JobQueueBackend, JobTrigger};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Test fake. Tracks how many times it was invoked and returns the
@@ -546,11 +546,7 @@ mod tests {
     async fn wait_for_terminal(queue: &JobQueueBackend, job_id: &str, timeout: Duration) -> Job {
         let deadline = std::time::Instant::now() + timeout;
         loop {
-            let job = queue
-                .get(job_id)
-                .await
-                .expect("get")
-                .expect("job exists");
+            let job = queue.get(job_id).await.expect("get").expect("job exists");
             if matches!(job.status, JobStatus::Completed | JobStatus::Failed) {
                 return job;
             }

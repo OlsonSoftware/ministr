@@ -341,7 +341,8 @@ mod tests {
     use super::*;
     use ministr_api::{
         AppendDropFuture, DropEntry, DropsLedger, DropsLedgerError, ListDropsFuture,
-        LoadSessionFuture, SaveSessionFuture, SessionMutFuture, SessionStorage, SessionStorageError,
+        LoadSessionFuture, SaveSessionFuture, SessionMutFuture, SessionStorage,
+        SessionStorageError,
     };
     use ministr_core::session::{CoherenceAlert, UsageConfig, UsageLevel};
     use std::sync::{Arc, Mutex as StdMutex};
@@ -451,11 +452,7 @@ mod tests {
             })
         }
 
-        fn load<'a>(
-            &'a self,
-            tenant_id: &'a str,
-            session_id: &'a str,
-        ) -> LoadSessionFuture<'a> {
+        fn load<'a>(&'a self, tenant_id: &'a str, session_id: &'a str) -> LoadSessionFuture<'a> {
             // Mirrors the registry.rs F6.1-c StubStorage: return the
             // most-recently-saved snapshot matching the `(tenant_id,
             // session_id)` PK so round-trip tests can pre-seed via `save`.
@@ -471,19 +468,11 @@ mod tests {
             })
         }
 
-        fn touch<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _session_id: &'a str,
-        ) -> SessionMutFuture<'a> {
+        fn touch<'a>(&'a self, _tenant_id: &'a str, _session_id: &'a str) -> SessionMutFuture<'a> {
             Box::pin(async { Ok(()) })
         }
 
-        fn delete<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _session_id: &'a str,
-        ) -> SessionMutFuture<'a> {
+        fn delete<'a>(&'a self, _tenant_id: &'a str, _session_id: &'a str) -> SessionMutFuture<'a> {
             Box::pin(async { Ok(()) })
         }
     }

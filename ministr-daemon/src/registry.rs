@@ -80,8 +80,7 @@ pub struct CorpusRegistry {
     /// storage so corpus indexes survive ACA pod recycling. `None` on
     /// self-hosted serve, where the user's local disk is already
     /// durable.
-    completion_tx:
-        std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<(String, PathBuf)>>,
+    completion_tx: std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<(String, PathBuf)>>,
     /// Durable registry repository. Wired in cloud mode by
     /// `cmd_serve_http` so the list of which corpora exist survives
     /// pod recycling — the on-disk `corpora.json` is pod-ephemeral on
@@ -232,10 +231,7 @@ impl CorpusRegistry {
     /// (the self-hosted serve and every test) see zero behavior change —
     /// `notify_complete` is fire-and-forget and silently drops when no
     /// sink is wired.
-    pub fn set_completion_sink(
-        &self,
-        tx: tokio::sync::mpsc::UnboundedSender<(String, PathBuf)>,
-    ) {
+    pub fn set_completion_sink(&self, tx: tokio::sync::mpsc::UnboundedSender<(String, PathBuf)>) {
         let _ = self.completion_tx.set(tx);
     }
 
@@ -1546,10 +1542,7 @@ mod tests {
     }
 
     impl ministr_core::embedding::Embedder for StubEmbedder {
-        fn embed(
-            &self,
-            texts: &[&str],
-        ) -> Result<Vec<Vec<f32>>, ministr_core::error::IndexError> {
+        fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, ministr_core::error::IndexError> {
             Ok(texts.iter().map(|_| vec![0.0_f32; self.dim]).collect())
         }
         fn dimension(&self) -> usize {

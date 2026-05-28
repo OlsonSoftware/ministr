@@ -32,12 +32,11 @@ pub struct ResolvedConfig {
 ///
 /// `cli_corpus` mirrors the `--corpus` repeatable flag (empty when none
 /// supplied). `cli_config` mirrors `--config` (None ⇒ default path).
-pub fn resolve_config(
-    cli_corpus: &[String],
-    cli_config: Option<&Path>,
-) -> Result<ResolvedConfig> {
-    let config_path = cli_config
-        .map_or_else(ministr_core::config::MinistrConfig::default_path, PathBuf::from);
+pub fn resolve_config(cli_corpus: &[String], cli_config: Option<&Path>) -> Result<ResolvedConfig> {
+    let config_path = cli_config.map_or_else(
+        ministr_core::config::MinistrConfig::default_path,
+        PathBuf::from,
+    );
     let config = ministr_core::config::MinistrConfig::load(&config_path).map_err(|e| {
         miette::miette!("failed to load config from {}: {e}", config_path.display())
     })?;

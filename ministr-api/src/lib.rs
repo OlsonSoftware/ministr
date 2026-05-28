@@ -41,17 +41,17 @@ pub use api_key::{
     ApiKeyError, ApiKeyResolver, ResolveApiKeyFuture, ResolvedApiKey, TouchLastUsedFuture,
 };
 pub use audit::{AuditEntry, AuditSink};
+pub use blob_sink::BlobSink;
 pub use cloud_router::{
     BlobUploader, CloudAdminAdapters, CloudDaemonAdapters, CloudMountInput, CloudMountOutput,
     CloudOAuthAdapters, CloudRouterMounter, CloudServerAdapters, DaemonWriteLayer,
     RevocationHandle, SlaSnapshotPersister,
 };
-pub use blob_sink::BlobSink;
+pub use corpora_repo::{CorporaRepo, CorporaRepoError, CorpusRegistration, RepoFuture};
+pub use corpus_restorer::{CorpusRestoreError, CorpusRestorer, RestoreFuture};
 pub use drops_ledger::{
     AppendDropFuture, DropEntry, DropsLedger, DropsLedgerError, ListDropsFuture,
 };
-pub use corpora_repo::{CorporaRepo, CorporaRepoError, CorpusRegistration, RepoFuture};
-pub use corpus_restorer::{CorpusRestoreError, CorpusRestorer, RestoreFuture};
 pub use github_app::{InstallationTokenMinter, MintError};
 pub use index_job_sink::{
     IndexJobError, IndexJobFuture, IndexJobSink, IndexJobSnapshot, IndexJobStatus,
@@ -59,7 +59,6 @@ pub use index_job_sink::{
 pub use iso8601::format_unix_secs_iso;
 pub use mail::{InviteMessage, MailSender, StaleKeyDigestMessage, StaleKeyEntry};
 pub use plan_resolver::{PlanResolver, PlanResolverError, ResolvePlanFuture};
-pub use sla_window_store::{MaxP95Future, SlaWindowStore, SlaWindowStoreError};
 pub use session_bundle_store::{
     PutAndSignFuture, SessionBundleStore, SessionBundleStoreError, SignedBundleUrl,
     VerifyAndGetFuture,
@@ -68,6 +67,7 @@ pub use session_storage::{
     LoadSessionFuture, SaveSessionFuture, SessionMutFuture, SessionSnapshot, SessionStorage,
     SessionStorageError,
 };
+pub use sla_window_store::{MaxP95Future, SlaWindowStore, SlaWindowStoreError};
 pub use tenant::TenantId;
 pub use tenant_filter::{
     CorpusRegistrationView, DefaultCorpusFuture, PendingCorporaFuture, TenantCorpusFilter,

@@ -42,20 +42,14 @@ tokio::task_local! {
 /// tests, stdio transport).
 #[must_use]
 pub fn current() -> Option<String> {
-    TENANT_SUBJECT
-        .try_with(Clone::clone)
-        .ok()
-        .flatten()
+    TENANT_SUBJECT.try_with(Clone::clone).ok().flatten()
 }
 
 /// F5.5-a-priority — return the current request's billing plan, or
 /// `None` when called outside a [`scope_tenant`] scope.
 #[must_use]
 pub fn current_plan() -> Option<Plan> {
-    TENANT_PLAN
-        .try_with(|p| *p)
-        .ok()
-        .flatten()
+    TENANT_PLAN.try_with(|p| *p).ok().flatten()
 }
 
 /// Axum middleware: pulls the [`Tenant`] from the request extensions and
@@ -81,11 +75,7 @@ pub async fn scope_tenant(req: Request, next: Next) -> Response {
 /// tests can exercise code paths that read [`current`] / [`current_plan`]
 /// without standing up an axum middleware stack.
 #[cfg(test)]
-pub(crate) async fn scope_for_test<F, T>(
-    subject: Option<String>,
-    plan: Option<Plan>,
-    fut: F,
-) -> T
+pub(crate) async fn scope_for_test<F, T>(subject: Option<String>, plan: Option<Plan>, fut: F) -> T
 where
     F: std::future::Future<Output = T>,
 {

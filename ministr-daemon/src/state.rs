@@ -6,8 +6,7 @@ use std::sync::Arc;
 use ministr_api::activity::ActivityEvent;
 use ministr_api::coherence::CoherenceEvent;
 use ministr_api::{
-    AuditSink, BlobSink, IndexJobSink, InstallationTokenMinter, TenantCorpusVisibility,
-    UsageSink,
+    AuditSink, BlobSink, IndexJobSink, InstallationTokenMinter, TenantCorpusVisibility, UsageSink,
 };
 use tokio::sync::RwLock;
 
@@ -160,10 +159,7 @@ impl AppState {
     /// Wire a GitHub App installation-token minter (F2.1 cloud mode).
     /// Returns `self` for chainable construction.
     #[must_use]
-    pub fn with_installation_minter(
-        mut self,
-        minter: Arc<dyn InstallationTokenMinter>,
-    ) -> Self {
+    pub fn with_installation_minter(mut self, minter: Arc<dyn InstallationTokenMinter>) -> Self {
         self.installation_minter = Some(minter);
         self
     }
@@ -191,10 +187,7 @@ impl AppState {
     /// When unset (self-hosted serve), the list returns every
     /// in-memory corpus — matches the pre-F3.2-iii behaviour.
     #[must_use]
-    pub fn with_corpus_visibility(
-        mut self,
-        visibility: Arc<dyn TenantCorpusVisibility>,
-    ) -> Self {
+    pub fn with_corpus_visibility(mut self, visibility: Arc<dyn TenantCorpusVisibility>) -> Self {
         self.corpus_visibility = Some(visibility);
         self
     }

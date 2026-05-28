@@ -13,9 +13,9 @@ pub mod hybrid;
 // F31.2b-ii-O — Azure OpenAI embedder moved here from ministr-cloud
 // so the MIT serve infrastructure (build_server in ministr-cli/infra.rs)
 // no longer depends on a proprietary crate for the embedder selection.
-pub mod openai;
 #[cfg(feature = "candle")]
 mod metal_bert;
+pub mod openai;
 mod rerank;
 mod sparse;
 

@@ -49,10 +49,7 @@ impl OAuthStorage for InMemoryStorage {
     }
 
     async fn save_token(&self, token: AccessToken) -> StorageResult<()> {
-        self.tokens
-            .write()
-            .await
-            .insert(token.token.clone(), token);
+        self.tokens.write().await.insert(token.token.clone(), token);
         Ok(())
     }
 

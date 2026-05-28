@@ -152,10 +152,12 @@ fn cloud_status_dot(corpora: &[ministr_api::corpus::CorpusInfo]) -> &'static str
     if !crate::commands_cloud::is_authenticated() {
         return "⚪";
     }
-    if corpora
-        .iter()
-        .any(|c| matches!(c.status, ministr_api::corpus::IndexingStatus::Indexing { .. }))
-    {
+    if corpora.iter().any(|c| {
+        matches!(
+            c.status,
+            ministr_api::corpus::IndexingStatus::Indexing { .. }
+        )
+    }) {
         return "🟡";
     }
     "🟢"
