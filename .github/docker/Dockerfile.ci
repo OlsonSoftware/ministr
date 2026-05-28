@@ -89,7 +89,7 @@ RUN apt-get update \
 # multiple values space-separated makes the second one a positional arg.
 # Using `rustup component add` after install is clearer and immune to
 # that footgun.
-ARG RUST_TOOLCHAIN=stable
+ARG RUST_TOOLCHAIN=1.95.0
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --no-modify-path --default-toolchain "${RUST_TOOLCHAIN}" --profile minimal \
  && rustup component add clippy rustfmt \

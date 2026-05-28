@@ -320,7 +320,13 @@ jobs:
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-05-17
         with:
           # Pinned by SHA → channel can't be read from the ref; set it.
-          toolchain: stable
+          # Matches rust-toolchain.toml so the fmt runner pre-installs the
+          # exact pin (no redundant runtime re-download). The TOML is the
+          # effective pin regardless (its dir-override beats rustup default);
+          # this keeps the fmt job self-consistent. `components: rustfmt` is
+          # load-bearing — dtolnay does NOT auto-install rustfmt for a pinned
+          # numeric toolchain unless listed.
+          toolchain: 1.95.0
           components: rustfmt
       - run: cargo fmt --all -- --check
 

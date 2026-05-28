@@ -1,0 +1,19 @@
+# Pins the Rust toolchain for ALL in-repo cargo invocations to 1.95.0
+# (which ships rustfmt 1.9.0). Via rustup's directory-override precedence
+# this outranks every `rustup default stable` in the repo (the ci.yml fmt
+# action, .github/actions/rust-env, scripts/ci/win_setup.ps1), so it
+# governs not just CI's `cargo fmt --all -- --check` gate but also
+# clippy/nextest and the release-artifact builds (release.yml) and the
+# production Dockerfile's `cargo build`. Goal: stop `cargo fmt --check`
+# drifting as latest-stable rustfmt evolves — bump this file in a
+# dedicated PR to take new rustfmt/clippy behavior intentionally.
+#
+# Use the exact patch (1.95.0), NOT major.minor (1.95): the CI image
+# (.github/docker/Dockerfile.ci) bakes `--default-toolchain 1.95.0`, and
+# rustup tracks `1.95` and `1.95.0` as distinct toolchains; the exact
+# match means no surprise in-container re-download. `profile = "minimal"`
+# omits rustfmt/clippy, so the `components` line below is load-bearing.
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
