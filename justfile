@@ -40,8 +40,16 @@ validate: fmt-check lint test
     cd ministr-app && node scripts/design-lint.cjs
     python3 scripts/ci/blackbox_lint.py 2>/dev/null || python scripts/ci/blackbox_lint.py
 
-# Pre-release: validate + audit + eval gate + web build
-release-preflight: validate
+# Verify the workspace compiles on the declared MSRV (rust-version = 1.88).
+# `+1.88` overrides rust-toolchain.toml (which pins the repo to 1.95.0), so
+# this exercises the MSRV rather than the pinned toolchain. Self-contained:
+# installs the 1.88 toolchain if missing.
+msrv:
+    rustup toolchain install 1.88 --profile minimal --no-self-update
+    cargo +1.88 check --workspace --locked
+
+# Pre-release: validate + MSRV + audit + eval gate + web build
+release-preflight: validate msrv
     cargo audit
     cargo deny check
     cargo test --test eval_retrieval eval_retrieval_regression_gate -p ministr-core -- --nocapture
