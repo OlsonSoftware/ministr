@@ -1096,8 +1096,14 @@ impl IngestionPipeline {
         )
         .await;
 
-        // Cleanup stale docs
-        let existing_docs = if let Some(rid) = root_id {
+        // Cleanup stale docs. Guard: an empty `files` set is far more
+        // likely a transient unreadable / unmounted root than a genuinely
+        // emptied corpus — every doc would fail the `full_path.exists()`
+        // check below and the whole index would be wiped. Skip the sweep.
+        let existing_docs = if files.is_empty() {
+            warn!("skipping stale-doc cleanup: discovery returned 0 files (likely a transient unreadable root, not an emptied corpus)");
+            Vec::new()
+        } else if let Some(rid) = root_id {
             storage
                 .list_documents_by_root(rid)
                 .await
@@ -1341,30 +1347,47 @@ impl IngestionPipeline {
         )
         .await;
 
-        // Cleanup stale docs per root
-        for (_root_path, rid) in &roots {
-            let root_docs = storage
-                .list_documents_by_root(rid)
+        // Cleanup stale docs (orphan GC). Enumerate *every* document in
+        // the corpus, not just those under a currently-registered root.
+        // A document whose `root_id` is NULL, points at a root no longer
+        // in `paths`, or whose root directory was deleted out-of-band
+        // (a bulk `git rm`, a branch switch, a crate moved to another
+        // repo) is never returned by `list_documents_by_root` and would
+        // otherwise orphan forever — its sections, symbols, vectors and
+        // `file_hashes` row surviving every reindex. A single global diff
+        // against the discovered set catches all of those and is O(docs)
+        // instead of the old O(roots × docs × files).
+        //
+        // Guard: skip the sweep entirely when discovery turned up zero
+        // files. An empty `files` set is far more likely a transient
+        // unreadable / unmounted root than a genuinely emptied corpus,
+        // and proceeding would delete every document in the index.
+        if files.is_empty() {
+            warn!("skipping stale-doc cleanup: discovery returned 0 files (likely a transient unreadable root, not an emptied corpus)");
+        } else {
+            let discovered: std::collections::HashSet<String> = files
+                .iter()
+                .map(|f| compute_relative_path(f, paths))
+                .collect();
+            let existing_docs = storage
+                .list_documents()
                 .await
                 .map_err(IngestionError::from)?;
-            for doc in &root_docs {
-                let still_exists = files.iter().any(|f| {
-                    let rel = compute_relative_path(f, paths);
-                    rel == doc.source_path
-                });
-                if !still_exists {
-                    debug!(path = %doc.source_path, root = %rid, "file removed, deleting from index");
-                    super::embedding::delete_document_vectors(&doc.id, storage, index).await?;
-                    storage
-                        .delete_document(&doc.id)
-                        .await
-                        .map_err(IngestionError::from)?;
-                    storage
-                        .delete_file_hash(&doc.source_path)
-                        .await
-                        .map_err(IngestionError::from)?;
-                    stats.files_removed += 1;
+            for doc in &existing_docs {
+                if discovered.contains(&doc.source_path) {
+                    continue;
                 }
+                debug!(path = %doc.source_path, "file removed, deleting from index");
+                super::embedding::delete_document_vectors(&doc.id, storage, index).await?;
+                storage
+                    .delete_document(&doc.id)
+                    .await
+                    .map_err(IngestionError::from)?;
+                storage
+                    .delete_file_hash(&doc.source_path)
+                    .await
+                    .map_err(IngestionError::from)?;
+                stats.files_removed += 1;
             }
         }
 
