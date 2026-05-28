@@ -29,7 +29,7 @@ interface Props {
 export function Sidebar({ active, onSelect }: Props) {
   return (
     <nav
-      aria-label="Primary"
+      aria-label="Main navigation"
       className="flex flex-col items-center gap-0.5 border-r border-border bg-surface py-3 w-[60px] shrink-0"
     >
       {ITEMS.map((item) => {

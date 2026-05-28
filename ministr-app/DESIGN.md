@@ -449,8 +449,11 @@ Every interactive element must be keyboard-operable:
 
 ### Landmarks
 
-The app should declare semantic landmarks so screen readers can navigate
-by region:
+The app declares semantic landmarks so screen readers can navigate
+by region. Multiple navigation landmarks each carry a **unique**
+`aria-label` (WAI-ARIA: when a page has more than one `nav`, each needs a
+distinct accessible name), so the rail and the section sub-nav never
+collide:
 
 | Element | Landmark | `aria-label` |
 |---|---|---|
@@ -482,7 +485,7 @@ See § Color system for:
 |---|---|
 | ConfirmDialog | `role="alertdialog"`, `aria-describedby` on the warning text |
 | CommandPalette | `role="combobox"` + `aria-expanded` + `role="listbox"` on results |
-| SurfaceSidebar | `role="tablist"` at narrow; `role="navigation"` at wide |
+| SurfaceSidebar | `<nav aria-label="Section navigation">` at both widths; active item carries `aria-current="page"` |
 | Toggle | `role="switch"` + `aria-checked` |
 | Disclosure | `aria-expanded` on trigger, `aria-controls` pointing to content |
 | EmptyState | `role="status"` (live region for async-loaded empties) |

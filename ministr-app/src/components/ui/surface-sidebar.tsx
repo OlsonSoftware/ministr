@@ -29,7 +29,10 @@ export function SurfaceSidebar({
     <AdaptiveSurface>
       <div className="h-full flex flex-col @min-[900px]/surface:flex-row min-h-0">
         {/* Sidebar nav — wide viewports */}
-        <nav className="hidden @min-[900px]/surface:flex flex-col w-[200px] shrink-0 border-r border-border-soft p-4 pt-5">
+        <nav
+          aria-label="Section navigation"
+          className="hidden @min-[900px]/surface:flex flex-col w-[200px] shrink-0 border-r border-border-soft p-4 pt-5"
+        >
           <span className="font-sans text-xs font-semibold text-text-dim px-3 mb-3 uppercase tracking-wide">
             {title}
           </span>
@@ -39,6 +42,7 @@ export function SurfaceSidebar({
                 key={id}
                 type="button"
                 onClick={() => onSelect(id)}
+                aria-current={active === id ? "page" : undefined}
                 className={cn(
                   "flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium text-left transition-colors duration-150",
                   active === id
@@ -54,12 +58,16 @@ export function SurfaceSidebar({
         </nav>
 
         {/* Tab bar — narrow viewports */}
-        <div className="flex @min-[900px]/surface:hidden border-b border-border-soft shrink-0">
+        <nav
+          aria-label="Section navigation"
+          className="flex @min-[900px]/surface:hidden border-b border-border-soft shrink-0"
+        >
           {items.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               type="button"
               onClick={() => onSelect(id)}
+              aria-current={active === id ? "page" : undefined}
               className={cn(
                 "flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium transition-colors duration-150",
                 active === id
@@ -71,7 +79,7 @@ export function SurfaceSidebar({
               {label}
             </button>
           ))}
-        </div>
+        </nav>
 
         {/* Active view with animated transition */}
         <div className="flex-1 min-h-0 overflow-y-auto p-5">
