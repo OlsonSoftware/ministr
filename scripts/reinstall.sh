@@ -195,10 +195,12 @@ if [ "$OS" = "macos" ]; then
             cat >&2 <<EOF
    No ministr.app bundle found at either $APP_BUNDLE or $RELEASED_BUNDLE.
    This recipe only updates the inner binary; it cannot build the
-   .app bundle from scratch. Run \`just pkg-dev\` (or \`just pkg\` for
-   a signed+notarized build), install the produced .pkg, then
-   re-run this recipe — the .pkg provides the bundle skeleton this
-   recipe clones into ~/Applications.
+   .app bundle from scratch. Install the released .pkg from
+   https://ministr.ai (or this repo's GitHub Releases page) to lay down
+   the signed bundle skeleton, then re-run this recipe — it clones that
+   bundle into ~/Applications and swaps in your freshly-built dev binary.
+   (Post-F31 the signed + notarized .pkg is built in CI, not from a
+   local just recipe — see RELEASE.md.)
 EOF
             exit 1
         fi

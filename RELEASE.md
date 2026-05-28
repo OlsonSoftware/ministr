@@ -127,7 +127,8 @@ on the **private** repo (`APPLE_CERTIFICATE`,
 `APPLE_TEAM_ID`) — 9 secrets total. Same values as the ones this
 repo used pre-F31.5; copy them across. See
 [ministr-app/SIGNING.md](ministr-app/SIGNING.md) for the env-var
-descriptions and the `just pkg` / `just pkg-dev` local workflows.
+descriptions and how the signed `.pkg` is built in CI
+(`scripts/ci/ci.py pkg`).
 
 ### Required secrets summary
 

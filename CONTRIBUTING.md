@@ -11,7 +11,7 @@ If you're looking for a place to begin, check the [issues labeled `good first is
 - **Rust 1.88+** (edition 2024) — install via [rustup](https://rustup.rs)
 - **just** — task runner (`cargo install just` or `brew install just`)
 - **cargo-deny** — license and advisory checks (`cargo install cargo-deny`)
-- **Python 3** — runs the black-box lint (`just blackbox-lint`, part of `just validate`); `python3` on Linux/macOS, `python` on Windows
+- **Python 3** — runs the black-box lint (part of `just validate`); `python3` on Linux/macOS, `python` on Windows
 
 ### Clone and build
 
@@ -153,9 +153,8 @@ chore: bump fastembed to 5.1
 All of these must pass before merge:
 
 ```sh
-just validate          # fmt-check + lint + test
-just deny              # license and advisory checks
-just eval-gate         # retrieval quality regression gate
+just validate          # fmt-check + lint + test + black-box guard
+just release-preflight # validate + cargo audit + cargo deny + retrieval eval gate + web build
 ```
 
 CI runs these automatically on every PR.

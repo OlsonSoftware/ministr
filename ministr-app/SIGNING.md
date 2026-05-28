@@ -7,8 +7,9 @@ will block launch on anything other than the developer's own machine.
 
 Out of the box this repo builds **unsigned**. Signing is off until an
 identity is configured — `ministr-app/src-tauri/tauri.conf.json` has
-`bundle.macOS.signingIdentity: null`, and `just pkg-dev` explicitly
-skips notarization.
+`bundle.macOS.signingIdentity: null`. Signed + notarized `.pkg`
+artifacts are produced in CI (see [Building](#building) below), not from
+a local recipe.
 
 This doc captures what's needed to turn signing on.
 
@@ -30,19 +31,20 @@ This doc captures what's needed to turn signing on.
 
 ## Environment variables
 
-`scripts/build-pkg.sh` (invoked by `just pkg`) reads:
+The CI `.pkg` builder (`scripts/ci/ci.py pkg`) reads these from the
+environment — bound as secrets on the release workflows (see
+[CI signing](#ci-signing)):
 
 | Variable                       | Example                                             | Required by                |
 | ------------------------------ | --------------------------------------------------- | -------------------------- |
-| `APPLE_SIGNING_IDENTITY`       | `Developer ID Application: Your Name (TEAMID)`      | signing (always)           |
-| `APPLE_INSTALLER_IDENTITY`     | `Developer ID Installer: Your Name (TEAMID)`        | `.pkg` signing (always)    |
-| `APPLE_ID`                     | `you@example.com`                                   | notarization               |
-| `APPLE_PASSWORD`               | app-specific password                               | notarization               |
-| `APPLE_TEAM_ID`                | `ABCD123456`                                        | notarization               |
-| `SKIP_NOTARIZE`                | `1`                                                 | dev-only bypass            |
+| `APPLE_SIGNING_IDENTITY`           | `Developer ID Application: Your Name (TEAMID)`  | signing (always)        |
+| `APPLE_INSTALLER_SIGNING_IDENTITY` | `Developer ID Installer: Your Name (TEAMID)`    | `.pkg` signing (always) |
+| `APPLE_ID`                         | `you@example.com`                               | notarization            |
+| `APPLE_PASSWORD`                   | app-specific password                           | notarization            |
+| `APPLE_TEAM_ID`                    | `ABCD123456`                                    | notarization            |
 
-Store these in `.env.signing` at the repo root (already gitignored), then
-`source .env.signing` before running `just pkg`.
+These are bound as repo secrets on the release workflows, not sourced
+from a local file — see [CI signing](#ci-signing).
 
 ## Wire up Tauri's bundler
 
@@ -64,48 +66,48 @@ the app actually uses — Apple scrutinizes broad entitlements.
 
 `signingIdentity` in `tauri.conf.json` is only consulted by the
 `.dmg`/`.app` bundler path (`pnpm tauri build`). The `.pkg` path in
-`scripts/build-pkg.sh` reads the same identity from the env var directly
+`scripts/ci/ci.py pkg` reads the same identity from the env var directly
 via `codesign` and `productbuild`.
 
 ## Building
 
-Local signed build, skipping notarization (fast, for checking that
-signing is wired up right):
+Signed + notarized `.pkg` artifacts are built in **CI**, not locally.
+Local signed builds were retired in F31: `scripts/build-pkg.sh` and the
+`just pkg` / `just pkg-dev` recipes are gone.
 
-```
-just pkg-dev
-```
+The release flow (see [RELEASE.md](../RELEASE.md)):
 
-Signed + notarized + stapled `.pkg` for distribution:
+- A `chore: release vX.Y.Z` PR merged here pushes tag `v<X.Y.Z>` and
+  fires a `repository_dispatch` into **ministr-private**'s `release.yml`.
+- That workflow clones both repos as siblings, builds the cloud-capable
+  `ministr` against the MIT crates here, then runs
+  `python3 scripts/ci/ci.py pkg` for the macOS packaging step:
+  `pkgbuild` (component + postinstall CLI symlink) → `productbuild`
+  (signed) → `notarytool --wait` → `stapler`, and uploads the artifacts
+  to this repo's Release via a cross-repo PAT.
 
-```
-source .env.signing
-just pkg
-```
-
-The final `.pkg` lands in `target/pkg/ministr-<version>.pkg`. `pkgutil
---check-signature` runs automatically; if it says anything other than
-"signed by a developer certificate issued by Apple … notarization: ok"
-the release is not ready to ship.
+`ci.py pkg` checks the result with `pkgutil --check-signature`; anything
+other than "signed by a developer certificate issued by Apple …
+notarization: ok" fails the build before any artifact is uploaded.
 
 ## CI signing
 
-`.github/workflows/app-release.yml` triggers on `v*-app` tags and calls
-`tauri-apps/tauri-action` which respects the same env vars. Add them as
-repo secrets:
+The Developer ID secrets are bound on the **private** repo (the build
+runs there). Same env-var names as the table above plus the base64 `.p12`
+imports the runner keychain needs — 9 secrets total:
 
-- `APPLE_SIGNING_IDENTITY`
-- `APPLE_ID`
-- `APPLE_PASSWORD`
-- `APPLE_TEAM_ID`
-- `APPLE_CERTIFICATE` — base64-encoded `.p12` of the Developer ID
-  Application cert (required by tauri-action to import into the runner
-  keychain)
-- `APPLE_CERTIFICATE_PASSWORD` — password for the `.p12` export
+- `APPLE_SIGNING_IDENTITY`, `APPLE_CERTIFICATE`,
+  `APPLE_CERTIFICATE_PASSWORD` — Developer ID **Application** cert (signs
+  the `.app` + CLI under the hardened runtime).
+- `APPLE_INSTALLER_SIGNING_IDENTITY`, `APPLE_INSTALLER_CERTIFICATE`,
+  `APPLE_INSTALLER_CERTIFICATE_PASSWORD` — Developer ID **Installer**
+  cert (signs the outer `.pkg`).
+- `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` — notarization
+  (`notarytool`).
 
-The `.pkg` workflow (not yet in CI — currently `just pkg` is a local
-recipe) would need `APPLE_INSTALLER_IDENTITY` plus the corresponding
-`.p12` import for the Installer cert.
+These are the same values this repo used pre-F31.5; F31.5 copied them to
+the private repo. See [RELEASE.md](../RELEASE.md) for the cross-repo
+release pipeline.
 
 ## Troubleshooting
 
