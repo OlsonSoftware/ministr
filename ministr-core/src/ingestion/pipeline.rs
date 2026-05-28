@@ -1028,6 +1028,31 @@ impl IngestionPipeline {
             progress.start(files.len());
         }
 
+        // Register this corpus root *before* the producer/consumer loop:
+        // run_producer_consumer calls set_document_root per file, and that
+        // UPDATE is FK-constrained to corpus_roots, so the row must already
+        // exist or root_id silently stays NULL (the error is logged at
+        // debug and swallowed). The rooted entry point is otherwise the one
+        // ingestion path that never registers its root — only
+        // ingest_paths_with_embeddings did — which left root_id NULL and
+        // list_documents_by_root / list_corpus_roots empty for every
+        // rooted-path corpus. Guard on a non-empty discovery so a transient
+        // unreadable root can't stomp a prior good file_count with 0 (same
+        // footing as the orphan-sweep guard below).
+        if let Some(rid) = root_id
+            && !files.is_empty()
+        {
+            let roots = [(dir.to_path_buf(), rid.to_string())];
+            let mut root_lang_stats: std::collections::HashMap<
+                String,
+                std::collections::HashMap<String, usize>,
+            > = std::collections::HashMap::new();
+            let mut root_file_counts: std::collections::HashMap<String, usize> =
+                std::collections::HashMap::new();
+            accumulate_language_stats(&files, &roots, &mut root_lang_stats, &mut root_file_counts);
+            update_root_stats(storage, &roots, &root_lang_stats, &root_file_counts).await;
+        }
+
         let detected_kinds = detector::FrameworkDetector::detect(dir);
         let bridge_linker = create_linker_for_kinds(&detected_kinds);
         if !detected_kinds.is_empty() {

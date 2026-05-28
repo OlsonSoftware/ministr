@@ -411,6 +411,65 @@ async fn rooted_reindex_preserves_sibling_root_documents() {
     );
 }
 
+/// F32.3 — the rooted entry point must register its corpus root so
+/// `set_document_root`'s FK to `corpus_roots` is satisfied and
+/// `documents.root_id` is actually persisted. Before this, the rooted path
+/// never registered the root (only `ingest_paths_with_embeddings` did), so
+/// `root_id` stayed NULL and `list_documents_by_root` / `list_corpus_roots`
+/// returned nothing for rooted-path corpora.
+#[tokio::test]
+async fn rooted_ingest_registers_root_and_populates_root_id() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("a.rs"), "//! a\npub fn a() {}\n").unwrap();
+    std::fs::write(src.join("b.rs"), "//! b\npub fn b() {}\n").unwrap();
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let dim = 8;
+    let embedder = MockEmbedder { dim };
+    let index = HnswIndex::new(dim, 10_000).unwrap();
+    let pipeline = IngestionPipeline::new();
+
+    let rid = "root-000000000000000a";
+    pipeline
+        .ingest_directory_with_embeddings_rooted(
+            &src,
+            &storage,
+            &embedder,
+            &index,
+            Some(rid),
+            None,
+        )
+        .await
+        .unwrap();
+
+    // The corpus root must be registered (was never registered before).
+    let roots = storage.list_corpus_roots().await.unwrap();
+    assert!(
+        roots.iter().any(|r| r.id == rid),
+        "rooted ingest must register its corpus root"
+    );
+
+    // Every document must carry root_id — the FK-constrained set_document_root
+    // can only persist it once the corpus_roots row exists.
+    let docs = storage.list_documents().await.unwrap();
+    assert_eq!(docs.len(), 2, "both files indexed");
+    assert!(
+        docs.iter().all(|d| d.root_id.as_deref() == Some(rid)),
+        "every document must have root_id set to the ingest root, got {:?}",
+        docs.iter().map(|d| &d.root_id).collect::<Vec<_>>()
+    );
+
+    // The root-scoped query must now return them (returned nothing before).
+    let by_root = storage.list_documents_by_root(rid).await.unwrap();
+    assert_eq!(
+        by_root.len(),
+        2,
+        "list_documents_by_root must return the rooted corpus's documents"
+    );
+}
+
 /// Orphan symbols: code symbols live in their own table (NOT cascaded by
 /// `delete_document`), so a deleted file's symbols used to keep surfacing in
 /// symbol search forever. The orphan sweep must prune them too.
