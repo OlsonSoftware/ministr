@@ -9,13 +9,22 @@
  * (`src/lib/cloudClient.ts`). All Tauri ↔ HTTP plumbing lives there.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type Dispatch,
+  type SetStateAction,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowRight,
   BarChart3,
   Check,
   ChevronDown,
   ChevronRight,
+  Cloud,
   CloudOff,
   Copy,
   CreditCard,
@@ -309,7 +318,28 @@ export function CloudPanel() {
       active={visibleSection}
       onSelect={setActiveSection}
     >
-      {visibleSection === "connection" && (
+      {visibleSection === "connection" && !authenticated && (
+        <SignedOutCloud
+          busy={busy}
+          signInError={signInError}
+          advancedOpen={advancedOpen}
+          setAdvancedOpen={setAdvancedOpen}
+          endpointDraft={endpointDraft}
+          setEndpointDraft={setEndpointDraft}
+          tokenDraft={tokenDraft}
+          setTokenDraft={setTokenDraft}
+          status={status}
+          health={health}
+          healthError={healthError}
+          onSignInGitHub={onSignInGitHub}
+          onSignIn={onSignIn}
+          onSaveEndpoint={onSaveEndpoint}
+          onSaveToken={onSaveToken}
+          onProbe={onProbe}
+        />
+      )}
+
+      {visibleSection === "connection" && authenticated && (
       <div className="flex flex-col gap-6">
 
       <OnboardingWizard
@@ -576,6 +606,192 @@ export function CloudPanel() {
         <SessionInspectorSection authenticated={authenticated} />
       )}
     </SurfaceSidebar>
+  );
+}
+
+// ── Signed-out entry point ──────────────────────────────────────────────────
+
+interface SignedOutCloudProps {
+  busy: string | null;
+  signInError: string | null;
+  advancedOpen: boolean;
+  setAdvancedOpen: Dispatch<SetStateAction<boolean>>;
+  endpointDraft: string;
+  setEndpointDraft: Dispatch<SetStateAction<string>>;
+  tokenDraft: string;
+  setTokenDraft: Dispatch<SetStateAction<string>>;
+  status: CloudStatus | null;
+  health: CloudHealth | null;
+  healthError: string | null;
+  onSignInGitHub: () => void;
+  onSignIn: () => void;
+  onSaveEndpoint: () => void;
+  onSaveToken: () => void;
+  onProbe: () => void;
+}
+
+/**
+ * What an unauthenticated visitor sees on the Cloud surface. The Cloud
+ * nav-rail icon stays visible as the entry point (F31), but instead of the
+ * operator-grade Connection panel we present an inviting sign-in CTA. The
+ * self-host / manual-token plumbing lives behind an "Advanced" disclosure so
+ * the common path (federated GitHub sign-in) is a single button.
+ */
+function SignedOutCloud({
+  busy,
+  signInError,
+  advancedOpen,
+  setAdvancedOpen,
+  endpointDraft,
+  setEndpointDraft,
+  tokenDraft,
+  setTokenDraft,
+  status,
+  health,
+  healthError,
+  onSignInGitHub,
+  onSignIn,
+  onSaveEndpoint,
+  onSaveToken,
+  onProbe,
+}: SignedOutCloudProps) {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-full py-10 px-6">
+      <div className="flex flex-col items-center text-center w-full max-w-sm gap-4">
+        <div className="flex size-14 items-center justify-center rounded-xl bg-accent/10 text-accent">
+          <Cloud className="size-7" strokeWidth={1.8} />
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <h2 className="font-sans text-2xl font-semibold text-text">
+            ministr Cloud
+          </h2>
+          <p className="font-sans text-sm text-text-muted leading-relaxed">
+            Sync corpora across machines, share them with your team, and manage
+            API keys, webhooks, and usage — all from here.
+          </p>
+        </div>
+
+        <Button
+          onClick={onSignInGitHub}
+          disabled={busy === "sign-in-github" || busy === "sign-in"}
+          className="mt-1"
+        >
+          {busy === "sign-in-github" ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <GitHubMark className="size-4" />
+          )}
+          Sign in with GitHub
+        </Button>
+
+        {signInError && <ErrorCallout message={signInError} />}
+
+        <p className="font-sans text-xs text-text-dim leading-relaxed">
+          Opens your browser to authorize through GitHub; the resulting token is
+          stored in your OS keychain. Times out after 3 minutes.
+        </p>
+
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen((v) => !v)}
+          aria-expanded={advancedOpen}
+          className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text transition-colors mt-2"
+        >
+          {advancedOpen ? (
+            <ChevronDown className="size-3.5" />
+          ) : (
+            <ChevronRight className="size-3.5" />
+          )}
+          Advanced (self-host)
+        </button>
+
+        {advancedOpen && (
+          <div className="w-full flex flex-col gap-4 text-left border-t border-border-soft pt-4 mt-1">
+            <p className="font-sans text-xs text-text-dim leading-relaxed">
+              Point the app at your own ministr deployment, sign in via OAuth, or
+              paste a bearer token directly.
+            </p>
+
+            <label className="flex flex-col gap-1.5">
+              <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+                Endpoint
+              </span>
+              <input
+                type="url"
+                value={endpointDraft}
+                onChange={(e) => setEndpointDraft(e.target.value)}
+                placeholder={DEFAULT_ENDPOINT}
+                className="h-9 px-3 rounded-md border border-border bg-surface font-mono text-sm text-text focus:outline-none focus:border-border-hover"
+              />
+            </label>
+            <div className="flex gap-2 flex-wrap">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onSaveEndpoint}
+                disabled={busy === "save-endpoint" || endpointDraft === (status?.endpoint ?? "")}
+              >
+                {busy === "save-endpoint" ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                Save endpoint
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={onSignIn}
+                disabled={busy === "sign-in" || busy === "sign-in-github"}
+              >
+                {busy === "sign-in" ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <LogIn className="size-3.5" />
+                )}
+                Use OAuth (self-hosted)
+              </Button>
+            </div>
+
+            <label className="flex flex-col gap-1.5">
+              <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-text-muted">
+                Bearer token
+              </span>
+              <input
+                type="password"
+                value={tokenDraft}
+                onChange={(e) => setTokenDraft(e.target.value)}
+                placeholder="Paste a token from any OAuth flow"
+                className="h-9 px-3 rounded-md border border-border bg-surface font-mono text-sm text-text focus:outline-none focus:border-border-hover"
+              />
+            </label>
+            <div className="flex gap-2 flex-wrap">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onSaveToken}
+                disabled={busy === "save-token" || tokenDraft.trim() === ""}
+              >
+                {busy === "save-token" ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                Save token
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={onProbe}
+                disabled={busy === "probe" || !status?.configured}
+              >
+                {busy === "probe" ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-3.5" />
+                )}
+                Ping /healthz
+              </Button>
+            </div>
+
+            <ConnectionStatus status={status} health={health} healthError={healthError} />
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
