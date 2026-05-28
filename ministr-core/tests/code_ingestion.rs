@@ -265,3 +265,66 @@ async fn empty_discovery_does_not_wipe_the_index() {
         "the index must survive a reindex whose discovery returned 0 files"
     );
 }
+
+/// Orphan symbols: code symbols live in their own table (NOT cascaded by
+/// `delete_document`), so a deleted file's symbols used to keep surfacing in
+/// symbol search forever. The orphan sweep must prune them too.
+/// (`symbol_refs` cascade off symbols via FK — proven in `storage_integration`.)
+#[tokio::test]
+async fn reindex_prunes_orphaned_symbols_after_file_deletion() {
+    use ministr_core::storage::SymbolFilter;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("keep.rs"), "//! keep\npub fn keep() -> u32 { 1 }\n").unwrap();
+    std::fs::write(
+        src.join("gone.rs"),
+        "//! gone\npub fn helper() -> u32 { 42 }\npub fn caller() -> u32 { helper() }\n",
+    )
+    .unwrap();
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let dim = 8;
+    let embedder = MockEmbedder { dim };
+    let index = HnswIndex::new(dim, 10_000).unwrap();
+    let pipeline = IngestionPipeline::new();
+    let paths: Vec<PathBuf> = vec![src.clone()];
+
+    pipeline
+        .ingest_paths_with_embeddings(&paths, &storage, &embedder, &index)
+        .await
+        .unwrap();
+
+    let before = storage.list_symbols(&SymbolFilter::default()).await.unwrap();
+    assert!(
+        before.iter().any(|s| s.file_path.contains("gone.rs")),
+        "gone.rs symbols should be indexed initially"
+    );
+    assert!(
+        before.iter().any(|s| s.file_path.contains("keep.rs")),
+        "keep.rs symbols should be indexed initially"
+    );
+
+    // Delete the file out-of-band, then reindex.
+    std::fs::remove_file(src.join("gone.rs")).unwrap();
+    pipeline
+        .ingest_paths_with_embeddings(&paths, &storage, &embedder, &index)
+        .await
+        .unwrap();
+
+    let after = storage.list_symbols(&SymbolFilter::default()).await.unwrap();
+    assert!(
+        after.iter().all(|s| !s.file_path.contains("gone.rs")),
+        "deleted file's symbols must be pruned, but these survived: {:?}",
+        after
+            .iter()
+            .filter(|s| s.file_path.contains("gone.rs"))
+            .map(|s| (&s.file_path, &s.name))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        after.iter().any(|s| s.file_path.contains("keep.rs")),
+        "keep.rs symbols must survive the sweep"
+    );
+}

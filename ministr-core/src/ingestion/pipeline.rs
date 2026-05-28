@@ -1128,6 +1128,15 @@ impl IngestionPipeline {
                     .delete_file_hash(&doc.source_path)
                     .await
                     .map_err(IngestionError::from)?;
+                // Symbols live in their own table keyed by file_path (NOT
+                // cascaded by delete_document); without this they'd keep
+                // surfacing in symbol search forever. Runs after
+                // delete_document_vectors so the HNSW teardown could still
+                // enumerate them. symbol_refs cascade off symbols via FK.
+                storage
+                    .delete_symbols_for_file(&doc.source_path)
+                    .await
+                    .map_err(IngestionError::from)?;
                 stats.files_removed += 1;
             }
         }
@@ -1385,6 +1394,15 @@ impl IngestionPipeline {
                     .map_err(IngestionError::from)?;
                 storage
                     .delete_file_hash(&doc.source_path)
+                    .await
+                    .map_err(IngestionError::from)?;
+                // Symbols live in their own table keyed by file_path (NOT
+                // cascaded by delete_document); without this they'd keep
+                // surfacing in symbol search forever. Runs after
+                // delete_document_vectors so the HNSW teardown could still
+                // enumerate them. symbol_refs cascade off symbols via FK.
+                storage
+                    .delete_symbols_for_file(&doc.source_path)
                     .await
                     .map_err(IngestionError::from)?;
                 stats.files_removed += 1;

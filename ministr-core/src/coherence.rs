@@ -422,6 +422,11 @@ impl CoherenceEngine {
         // Delete the document (cascading to sections and claims)
         let _ = storage.delete_document(&doc_id).await;
         let _ = storage.delete_file_hash(&relative).await;
+        // Symbols are keyed by file_path in their own table and are NOT
+        // cascaded by delete_document; drop them too (symbol_refs cascade
+        // off symbols via FK) so a removed file's symbols stop surfacing
+        // in symbol search. Same `relative` key the document used.
+        let _ = storage.delete_symbols_for_file(&relative).await;
 
         Ok(section_ids)
     }
