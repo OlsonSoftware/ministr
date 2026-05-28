@@ -266,6 +266,151 @@ async fn empty_discovery_does_not_wipe_the_index() {
     );
 }
 
+/// F32.1 — a NULL-root document (ingested through the unrooted entry point,
+/// by the CLI/worker, or before roots existed) must be reclaimed when its
+/// file is deleted and the corpus is later reindexed through the *rooted*
+/// path. The old per-root `list_documents_by_root(rid)` scan never saw
+/// NULL-root docs, so they orphaned forever.
+#[tokio::test]
+async fn rooted_reindex_prunes_null_root_orphan() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("keep.rs"), "//! keep\npub fn keep() {}\n").unwrap();
+    std::fs::write(src.join("gone.rs"), "//! gone\npub fn gone() {}\n").unwrap();
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let dim = 8;
+    let embedder = MockEmbedder { dim };
+    let index = HnswIndex::new(dim, 10_000).unwrap();
+    let pipeline = IngestionPipeline::new();
+
+    // Initial ingest through the *unrooted* entry point → documents are
+    // stored with root_id = NULL and bare-relative source paths.
+    pipeline
+        .ingest_directory_with_embeddings(&src, &storage, &embedder, &index)
+        .await
+        .unwrap();
+    let docs = storage.list_documents().await.unwrap();
+    assert_eq!(docs.len(), 2, "both files indexed initially");
+    assert!(
+        docs.iter().all(|d| d.root_id.is_none()),
+        "the unrooted entry point must leave root_id NULL"
+    );
+
+    // Delete one file out-of-band, then reindex through the ROOTED path.
+    std::fs::remove_file(src.join("gone.rs")).unwrap();
+    let rid = "root-000000000000000a";
+    let stats = pipeline
+        .ingest_directory_with_embeddings_rooted(&src, &storage, &embedder, &index, Some(rid), None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        stats.files_removed, 1,
+        "the deleted file's NULL-root document must be pruned by the rooted sweep"
+    );
+    let docs = storage.list_documents().await.unwrap();
+    assert!(
+        docs.iter().all(|d| !d.source_path.contains("gone.rs")),
+        "the orphaned NULL-root document for gone.rs must be deleted"
+    );
+    assert!(
+        docs.iter().any(|d| d.source_path.contains("keep.rs")),
+        "keep.rs must survive the sweep"
+    );
+}
+
+/// F32.1 — the global sweep scopes deletion by ownership: reindexing one
+/// root may prune that root's own orphan but must NEVER delete a sibling
+/// root's documents sharing the same (multi-root) index. Without the scope
+/// guard a naive global diff would wipe every other root on each reindex.
+#[tokio::test]
+async fn rooted_reindex_preserves_sibling_root_documents() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir_a = tmp.path().join("a");
+    let dir_b = tmp.path().join("b");
+    std::fs::create_dir_all(&dir_a).unwrap();
+    std::fs::create_dir_all(&dir_b).unwrap();
+    std::fs::write(dir_a.join("keep_a.rs"), "//! a\npub fn keep_a() {}\n").unwrap();
+    std::fs::write(dir_a.join("gone_a.rs"), "//! a\npub fn gone_a() {}\n").unwrap();
+    std::fs::write(dir_b.join("b.rs"), "//! b\npub fn b() {}\n").unwrap();
+
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let dim = 8;
+    let embedder = MockEmbedder { dim };
+    let index = HnswIndex::new(dim, 10_000).unwrap();
+    let pipeline = IngestionPipeline::new();
+
+    let rid_a = "root-000000000000000a";
+    let rid_b = "root-000000000000000b";
+    pipeline
+        .ingest_directory_with_embeddings_rooted(
+            &dir_a,
+            &storage,
+            &embedder,
+            &index,
+            Some(rid_a),
+            None,
+        )
+        .await
+        .unwrap();
+    pipeline
+        .ingest_directory_with_embeddings_rooted(
+            &dir_b,
+            &storage,
+            &embedder,
+            &index,
+            Some(rid_b),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        storage.document_count().await.unwrap(),
+        3,
+        "two root-A files + one root-B file indexed across two roots"
+    );
+
+    // Delete one of root A's files, then reindex ONLY root A.
+    std::fs::remove_file(dir_a.join("gone_a.rs")).unwrap();
+    let stats = pipeline
+        .ingest_directory_with_embeddings_rooted(
+            &dir_a,
+            &storage,
+            &embedder,
+            &index,
+            Some(rid_a),
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        stats.files_removed, 1,
+        "root A's deleted file must be pruned by its own reindex"
+    );
+    let docs = storage.list_documents().await.unwrap();
+    assert!(
+        docs.iter()
+            .any(|d| d.source_path.ends_with("b.rs") && d.source_path.starts_with(rid_b)),
+        "sibling root B's document (namespaced under root B) must survive a root-A reindex"
+    );
+    assert!(
+        docs.iter().all(|d| !d.source_path.contains("gone_a.rs")),
+        "root A's orphan must be pruned"
+    );
+    assert!(
+        docs.iter().any(|d| d.source_path.contains("keep_a.rs")),
+        "root A's surviving file must remain"
+    );
+    assert_eq!(
+        storage.document_count().await.unwrap(),
+        2,
+        "gone_a pruned; keep_a + sibling b remain"
+    );
+}
+
 /// Orphan symbols: code symbols live in their own table (NOT cascaded by
 /// `delete_document`), so a deleted file's symbols used to keep surfacing in
 /// symbol search forever. The orphan sweep must prune them too.

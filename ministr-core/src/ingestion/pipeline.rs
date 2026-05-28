@@ -1096,28 +1096,86 @@ impl IngestionPipeline {
         )
         .await;
 
-        // Cleanup stale docs. Guard: an empty `files` set is far more
-        // likely a transient unreadable / unmounted root than a genuinely
-        // emptied corpus — every doc would fail the `full_path.exists()`
-        // check below and the whole index would be wiped. Skip the sweep.
-        let existing_docs = if files.is_empty() {
+        // Cleanup stale docs (orphan GC) — keying-aware global sweep.
+        //
+        // Enumerate *every* document, not just those under the root being
+        // ingested. A document whose `root_id` is NULL (ingested via the
+        // unrooted entry point, by the CLI/worker, or before roots existed)
+        // is invisible to `list_documents_by_root(rid)` and would otherwise
+        // orphan forever — surviving every reindex of its own corpus. We
+        // mirror the global discovered-set diff the multi-path entry point
+        // uses (F32) so behaviour is consistent across entry points, but
+        // scope *deletion* by document ownership so a sibling root's
+        // documents in a shared multi-root index are never false-deleted.
+        //
+        // Guard: skip the sweep entirely on empty discovery. An empty
+        // `files` set is far more likely a transient unreadable / unmounted
+        // root than a genuinely emptied corpus, and a global diff would
+        // then delete every attributable document in the index.
+        if files.is_empty() {
             warn!("skipping stale-doc cleanup: discovery returned 0 files (likely a transient unreadable root, not an emptied corpus)");
-            Vec::new()
-        } else if let Some(rid) = root_id {
-            storage
-                .list_documents_by_root(rid)
-                .await
-                .map_err(IngestionError::from)?
         } else {
-            storage
+            // Both stored forms a document under this dir can take:
+            // namespaced (`rid/rel`, root_id = Some) and bare-relative
+            // (`rel`, root_id = NULL). Keyed exactly as ingestion keys them
+            // above, so membership is an equality test, not a `stat`.
+            let discovered: std::collections::HashSet<String> = files
+                .iter()
+                .flat_map(|file_path| {
+                    let raw = file_path
+                        .strip_prefix(dir)
+                        .unwrap_or(file_path)
+                        .to_string_lossy()
+                        .into_owned();
+                    match root_id {
+                        Some(rid) => vec![namespace_path(rid, &raw), raw],
+                        None => vec![raw],
+                    }
+                })
+                .collect();
+
+            let existing_docs = storage
                 .list_documents()
                 .await
-                .map_err(IngestionError::from)?
-        };
-        for doc in &existing_docs {
-            let source_path = strip_root_prefix(&doc.source_path).unwrap_or(&doc.source_path);
-            let full_path = dir.join(source_path);
-            if !full_path.exists() {
+                .map_err(IngestionError::from)?;
+
+            // Ownership is read from the source_path namespace prefix
+            // (`rid/…`), set by `namespace_path` at ingest. The `root_id`
+            // *column* is not written on this code path, so scope must not
+            // key off it. `this_prefix` is what this run namespaces under
+            // (None for an unrooted reindex).
+            let this_prefix = root_id.map(|rid| format!("{rid}/"));
+
+            // Does a *foreign* explicit root share this index? A bare-
+            // relative (NULL-keyed) document carries no attribution, so we
+            // reclaim such documents only when none is present — i.e. a
+            // single-corpus CLI/worker index, the only place NULL-keyed
+            // documents legitimately arise. In a genuine multi-root index
+            // they could belong to any sibling corpus.
+            let has_foreign_root = existing_docs.iter().any(|d| {
+                strip_root_prefix(&d.source_path).is_some()
+                    && this_prefix
+                        .as_deref()
+                        .is_none_or(|p| !d.source_path.starts_with(p))
+            });
+
+            for doc in &existing_docs {
+                // Never delete a document this run isn't authoritative for:
+                //   namespaced under our rid → ours.
+                //   namespaced under another → a sibling root, skip.
+                //   bare-relative (NULL-keyed) → ours only on an unrooted
+                //     reindex, or when no sibling root shares the index
+                //     (the F32.1 fix).
+                let attributable = if strip_root_prefix(&doc.source_path).is_some() {
+                    this_prefix
+                        .as_deref()
+                        .is_some_and(|p| doc.source_path.starts_with(p))
+                } else {
+                    root_id.is_none() || !has_foreign_root
+                };
+                if !attributable || discovered.contains(&doc.source_path) {
+                    continue;
+                }
                 debug!(path = %doc.source_path, "file removed, deleting from index");
                 super::embedding::delete_document_vectors(&doc.id, storage, index).await?;
                 storage
