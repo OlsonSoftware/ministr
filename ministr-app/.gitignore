@@ -1,3 +1,6 @@
 node_modules/
 dist/
 src-tauri/binaries/
+
+# Use pnpm (pnpm-lock.yaml) — npm lockfile is a footgun in a pnpm project.
+package-lock.json

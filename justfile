@@ -35,9 +35,20 @@ web-deps:
 
 # ── Quality gates ────────────────────────────────────────────────────
 
-# All checks: format + lint + test + UI contract + black-box guard
-validate: fmt-check lint test
+# Desktop-app frontend gate — the CANONICAL pnpm path (ministr-app uses pnpm;
+# only web/ uses npm). `--frozen-lockfile` fails if package.json and
+# pnpm-lock.yaml drift (the exact breakage `just reinstall` hit when a dep was
+# added without updating the pnpm lockfile); tsc + build catch type/bundler
+# regressions; design-lint enforces the UI contract. Inside `validate` so the
+# frontend can't be silently broken behind a green gate.
+validate-app:
+    cd ministr-app && pnpm install --frozen-lockfile
+    cd ministr-app && pnpm exec tsc --noEmit
     cd ministr-app && node scripts/design-lint.cjs
+    cd ministr-app && pnpm run build
+
+# All checks: format + lint + test + desktop-app gate + black-box guard
+validate: fmt-check lint test validate-app
     python3 scripts/ci/blackbox_lint.py 2>/dev/null || python scripts/ci/blackbox_lint.py
 
 # Verify the workspace compiles on the declared MSRV (rust-version = 1.88).
