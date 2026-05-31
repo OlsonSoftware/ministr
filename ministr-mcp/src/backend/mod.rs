@@ -161,11 +161,10 @@ pub trait QueryBackend: Send + Sync {
 
     /// Structural TOC entries for the corpus or a specific document.
     ///
-    /// The daemon backend currently returns lossy entries (`api::TocEntry`
-    /// flattens away `document_id`, `section_id`, `claims_available`,
-    /// `token_count`); daemon-mode handlers tolerate the missing fields
-    /// with defaults. Tracked alongside `toc-schema-convergence` in
-    /// `proxy.rs`.
+    /// As of the toc-schema-convergence work the daemon backend is at parity
+    /// with the local backend: `api::TocEntry` carries `heading_path`,
+    /// `claims_available`, and `token_count`, and `document_id` rides on
+    /// `source_path`, so daemon-mode TOC entries are no longer lossy.
     fn toc(
         &self,
         document_id: Option<&str>,

@@ -233,6 +233,47 @@ async fn toc_pagination_returns_sections_past_the_old_100_cap() {
 }
 
 #[tokio::test]
+async fn toc_entries_carry_heading_path_claims_and_token_counts() {
+    // Regression (f-toc-schema-convergence): daemon-mode TOC used to drop the
+    // full heading_path and zero out claims_available/token_count. They must
+    // now ride the wire so daemon mode matches local mode.
+    let daemon = TestDaemon::start().await;
+    let client = daemon.client();
+
+    let resp = client
+        .toc(
+            &daemon.corpus_id,
+            &TocRequest {
+                document_id: None,
+                offset: None,
+                limit: None,
+                session_id: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    let tokens = resp
+        .entries
+        .iter()
+        .find(|e| e.id == "docs/auth.md#tokens")
+        .expect("docs/auth.md#tokens should appear in the TOC");
+
+    // Full heading hierarchy, not just the leaf title.
+    assert_eq!(
+        tokens.heading_path,
+        vec!["Authentication".to_string(), "Tokens".to_string()],
+    );
+    assert_eq!(tokens.title, "Tokens");
+    // The section has two claims (auth-c1, auth-c2).
+    assert_eq!(tokens.claims_available, 2);
+    // Token count is populated (non-zero) for a non-empty section.
+    assert!(tokens.token_count > 0, "token_count should be populated");
+    // document_id rides on source_path.
+    assert_eq!(tokens.source_path.as_deref(), Some("docs/auth.md"));
+}
+
+#[tokio::test]
 async fn test_extract() {
     let daemon = TestDaemon::start().await;
     let client = daemon.client();

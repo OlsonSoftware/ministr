@@ -495,6 +495,17 @@ pub struct TocEntry {
     /// Source file path.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_path: Option<String>,
+    /// Full heading hierarchy path for section entries (not just the leaf
+    /// `title`). `#[serde(default)]` keeps the wire format back-compatible
+    /// with older daemons that only sent `title`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub heading_path: Vec<String>,
+    /// Number of claims available for extraction from this section.
+    #[serde(default)]
+    pub claims_available: usize,
+    /// Approximate token count of the section text.
+    #[serde(default)]
+    pub token_count: usize,
 }
 
 /// TOC response.

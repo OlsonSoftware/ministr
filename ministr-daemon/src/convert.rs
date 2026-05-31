@@ -374,6 +374,9 @@ pub fn toc_entry(e: ministr_core::types::TocEntry) -> query::TocEntry {
         depth: e.depth as usize,
         children: 0,
         source_path: Some(e.document_id.0),
+        heading_path: e.heading_path,
+        claims_available: e.claims_available,
+        token_count: e.token_count,
     }
 }
 

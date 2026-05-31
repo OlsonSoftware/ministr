@@ -371,25 +371,31 @@ pub(super) fn api_compressed_to_service(
     }
 }
 
-/// Lossy conversion: `api::TocEntry` flattens the rich service shape.
-/// `document_id`, `claims_available`, `token_count` are lost and default
-/// to empty/0. See `toc-schema-convergence` TODO in proxy.rs — the proper
-/// fix is to enrich `api::TocEntry` with the rich fields and update
-/// `ministr-daemon/src/convert.rs::toc_entry` to populate them.
+/// Convert an `api::TocEntry` (daemon wire shape) back to the rich service
+/// [`TocEntry`]. As of the toc-schema-convergence work, `api::TocEntry`
+/// carries `heading_path`, `claims_available`, and `token_count`, so daemon
+/// mode is at parity with local mode; `document_id` rides on `source_path`.
+/// The `heading_path` fallback to `[title]` keeps this lossless-enough against
+/// an older daemon that only sent the leaf `title`.
 pub(super) fn api_toc_to_service(e: ministr_api::query::TocEntry) -> TocEntry {
+    let heading_path = if e.heading_path.is_empty() {
+        if e.title.is_empty() {
+            Vec::new()
+        } else {
+            vec![e.title]
+        }
+    } else {
+        e.heading_path
+    };
     TocEntry {
         document_id: e
             .source_path
             .map_or_else(|| ContentId(String::new()), ContentId),
         section_id: SectionId(e.id),
-        heading_path: if e.title.is_empty() {
-            Vec::new()
-        } else {
-            vec![e.title]
-        },
+        heading_path,
         depth: u32::try_from(e.depth).unwrap_or(0),
-        claims_available: 0,
-        token_count: 0,
+        claims_available: e.claims_available,
+        token_count: e.token_count,
     }
 }
 
@@ -416,9 +422,10 @@ pub(super) fn api_bridge_to_storage(l: ministr_api::query::BridgeLink) -> Bridge
 }
 
 // ---------------------------------------------------------------------------
-// Tests — verify wire-type conversions preserve every field on the
-// non-lossy paths. The lossy paths (toc, bridge) have round-trip-fidelity
-// tests on the fields that DO survive.
+// Tests — verify wire-type conversions preserve every field. TOC is now
+// lossless (heading_path / claims_available / token_count round-trip); the
+// bridge path is still lossy (per-endpoint file/line/binding_key drop) and is
+// tested on the fields that DO survive.
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -543,7 +550,9 @@ mod tests {
     }
 
     #[test]
-    fn toc_lossy_preserves_what_it_can() {
+    fn toc_round_trips_rich_fields() {
+        // toc-schema-convergence: heading_path, claims_available, and
+        // token_count now ride the wire, so daemon mode is lossless.
         let api = ministr_api::query::TocEntry {
             id: "doc.md#sec1".into(),
             title: "Section 1".into(),
@@ -551,14 +560,38 @@ mod tests {
             depth: 2,
             children: 3,
             source_path: Some("docs/doc.md".into()),
+            heading_path: vec!["Doc".into(), "Section 1".into()],
+            claims_available: 4,
+            token_count: 321,
         };
         let svc = api_toc_to_service(api.clone());
         assert_eq!(svc.section_id.0, api.id);
+        assert_eq!(svc.document_id.0, "docs/doc.md");
         assert_eq!(svc.depth, u32::try_from(api.depth).unwrap());
+        assert_eq!(
+            svc.heading_path,
+            vec!["Doc".to_string(), "Section 1".to_string()]
+        );
+        assert_eq!(svc.claims_available, 4);
+        assert_eq!(svc.token_count, 321);
+    }
+
+    #[test]
+    fn toc_falls_back_to_title_when_heading_path_empty() {
+        // Back-compat: an older daemon only sends the leaf `title`.
+        let api = ministr_api::query::TocEntry {
+            id: "doc.md#sec1".into(),
+            title: "Section 1".into(),
+            kind: "section".into(),
+            depth: 2,
+            children: 0,
+            source_path: Some("docs/doc.md".into()),
+            heading_path: vec![],
+            claims_available: 0,
+            token_count: 0,
+        };
+        let svc = api_toc_to_service(api);
         assert_eq!(svc.heading_path, vec!["Section 1".to_string()]);
-        // Lossy: claims_available, token_count, document_id default.
-        assert_eq!(svc.claims_available, 0);
-        assert_eq!(svc.token_count, 0);
     }
 
     #[test]
