@@ -340,17 +340,15 @@ impl QueryBackend for DaemonBackend {
         query: Option<&str>,
         kind: Option<&str>,
         language: Option<&str>,
-        _file_path: Option<&str>,
+        file_path: Option<&str>,
     ) -> impl Future<Output = Result<Vec<BridgeLinkDetail>, BackendError>> + Send {
-        // The daemon's BridgeRequest doesn't currently carry file_path —
-        // the filter is dropped in daemon mode. Tracked alongside
-        // `toc-schema-convergence`.
         let client = self.client.clone();
         let corpus_id = self.corpus_id.clone();
         let req = ministr_api::query::BridgeRequest {
             query: query.map(String::from),
             kind: kind.map(String::from),
             source_language: language.map(String::from),
+            file_path: file_path.map(String::from),
             limit: None,
             session_id: self.session_id.clone(),
         };

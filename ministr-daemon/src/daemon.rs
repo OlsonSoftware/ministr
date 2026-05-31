@@ -1572,6 +1572,9 @@ async fn bridge(
         if let Some(l) = req.source_language.as_deref() {
             parts.push(format!("lang={l}"));
         }
+        if let Some(f) = req.file_path.as_deref() {
+            parts.push(format!("file={f}"));
+        }
         if parts.is_empty() {
             "all bridges".to_string()
         } else {
@@ -1584,7 +1587,7 @@ async fn bridge(
             req.query.as_deref(),
             req.kind.as_deref(),
             req.source_language.as_deref(),
-            None,
+            req.file_path.as_deref(),
         )
         .await;
     drop(handle);

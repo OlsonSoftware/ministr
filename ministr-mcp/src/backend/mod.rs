@@ -18,13 +18,13 @@
 //!
 //! ## Out of scope
 //!
-//! `bridges` and `toc` are deliberately **not** in this trait yet — the
-//! `ministr-api` wire types for those endpoints are leaner than the
-//! service-layer types (no `binding_key` on `BridgeLink`; flattened
-//! `TocEntry` `kind`/`source_path`). Promoting them would require richer
-//! wire types (tracked alongside the `toc-schema-convergence` TODO in
-//! `proxy.rs`). Those handlers still live separately in `MinistrServer` and
-//! `ProxyServer` until the schemas converge.
+//! `bridges` and `toc` are part of this trait. Their `ministr-api` wire types
+//! (`BridgeLink`, `TocEntry`) were once leaner than the service-layer types,
+//! but the schema-convergence work enriched them — `TocEntry` carries
+//! `heading_path`/`claims_available`/`token_count` and `BridgeLink` carries the
+//! per-endpoint binding key/symbol/file/line — so the `backend::convert`
+//! converters are lossless for the agent-facing fields and daemon mode is at
+//! parity with local mode.
 
 // `manual_async_fn` is intentionally allowed: returning `impl Future`
 // matches the project's existing `Storage` trait convention and avoids
@@ -172,8 +172,11 @@ pub trait QueryBackend: Send + Sync {
 
     /// Cross-language bridge links with optional filters.
     ///
-    /// Daemon backend is similarly lossy here (`api::BridgeLink` drops
-    /// `binding_key`, per-endpoint file/line). Same TODO as `toc`.
+    /// As of the schema-convergence work the daemon backend is at parity with
+    /// the local backend: `api::BridgeLink` carries the per-endpoint binding
+    /// key, symbol, file, and line, and `api::BridgeRequest` carries
+    /// `file_path`, so neither the result fields nor the `file_path` filter
+    /// are dropped in daemon mode.
     fn bridges(
         &self,
         query: Option<&str>,

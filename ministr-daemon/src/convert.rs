@@ -389,6 +389,12 @@ pub fn bridge_link(l: ministr_core::storage::BridgeLinkDetail) -> query::BridgeL
         target: l.import_binding_key,
         target_language: l.import_language,
         confidence: l.confidence,
+        export_symbol: l.export_symbol,
+        export_file: l.export_file,
+        export_line: l.export_line,
+        import_symbol: l.import_symbol,
+        import_file: l.import_file,
+        import_line: l.import_line,
     }
 }
 

@@ -572,6 +572,9 @@ pub struct BridgeRequest {
     /// Filter by source language.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_language: Option<String>,
+    /// Filter to links where either endpoint is in this file path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
     /// Maximum results.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
@@ -585,16 +588,35 @@ pub struct BridgeRequest {
 pub struct BridgeLink {
     /// Bridge kind (e.g. `"ffi"`, `"napi"`, `"pyo3"`).
     pub kind: String,
-    /// Source-side symbol or identifier.
+    /// Source-side binding key (export endpoint).
     pub source: String,
     /// Source language.
     pub source_language: String,
-    /// Target-side symbol or identifier.
+    /// Target-side binding key (import endpoint).
     pub target: String,
     /// Target language.
     pub target_language: String,
     /// Confidence score.
     pub confidence: f32,
+    /// Export-endpoint symbol name. `#[serde(default)]` keeps the wire format
+    /// back-compatible with older daemons that only sent binding keys.
+    #[serde(default)]
+    pub export_symbol: String,
+    /// Export-endpoint source file path.
+    #[serde(default)]
+    pub export_file: String,
+    /// Export-endpoint line number.
+    #[serde(default)]
+    pub export_line: u32,
+    /// Import-endpoint symbol name.
+    #[serde(default)]
+    pub import_symbol: String,
+    /// Import-endpoint source file path.
+    #[serde(default)]
+    pub import_file: String,
+    /// Import-endpoint line number.
+    #[serde(default)]
+    pub import_line: u32,
 }
 
 /// Bridge query response.

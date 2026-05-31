@@ -399,24 +399,27 @@ pub(super) fn api_toc_to_service(e: ministr_api::query::TocEntry) -> TocEntry {
     }
 }
 
-/// Lossy conversion: `api::BridgeLink` drops `binding_key` + per-endpoint
-/// file/line. See `toc-schema-convergence` TODO. The map maps
-/// source/target onto export/import positions.
+/// Convert an `api::BridgeLink` (daemon wire shape) back to the rich
+/// [`BridgeLinkDetail`]. As of the schema-convergence work the per-endpoint
+/// binding key (`source`/`target`), symbol, file, and line all ride the wire,
+/// so daemon mode is at parity with local mode. Only the internal
+/// `*_symbol_id` heuristic ids are not carried — they are not surfaced by the
+/// MCP bridge result.
 pub(super) fn api_bridge_to_storage(l: ministr_api::query::BridgeLink) -> BridgeLinkDetail {
     BridgeLinkDetail {
         kind: l.kind,
         confidence: l.confidence,
-        export_file: String::new(),
-        export_binding_key: String::new(),
-        export_symbol: l.source,
+        export_file: l.export_file,
+        export_binding_key: l.source,
+        export_symbol: l.export_symbol,
         export_language: l.source_language,
-        export_line: 0,
+        export_line: l.export_line,
         export_symbol_id: None,
-        import_file: String::new(),
-        import_binding_key: String::new(),
-        import_symbol: l.target,
+        import_file: l.import_file,
+        import_binding_key: l.target,
+        import_symbol: l.import_symbol,
         import_language: l.target_language,
-        import_line: 0,
+        import_line: l.import_line,
         import_symbol_id: None,
     }
 }
@@ -595,24 +598,38 @@ mod tests {
     }
 
     #[test]
-    fn bridge_lossy_preserves_what_it_can() {
+    fn bridge_round_trips_rich_fields() {
+        // schema-convergence: binding key (source/target), symbol, file, and
+        // line all survive; only the internal symbol_id is intentionally
+        // dropped (not surfaced by the MCP bridge result).
         let api = ministr_api::query::BridgeLink {
             kind: "tauri_command".into(),
-            source: "validate_token".into(),
+            source: "auth.validateToken".into(),
             source_language: "rust".into(),
-            target: "invoke".into(),
+            target: "auth.invoke".into(),
             target_language: "typescript".into(),
             confidence: 0.95,
+            export_symbol: "validate_token".into(),
+            export_file: "src/auth.rs".into(),
+            export_line: 12,
+            import_symbol: "invoke".into(),
+            import_file: "src/api.ts".into(),
+            import_line: 88,
         };
         let svc = api_bridge_to_storage(api.clone());
         assert_eq!(svc.kind, api.kind);
-        assert_eq!(svc.export_symbol, api.source);
-        assert_eq!(svc.import_symbol, api.target);
+        assert!((svc.confidence - api.confidence).abs() < f32::EPSILON);
+        // Binding key rides source/target.
+        assert_eq!(svc.export_binding_key, "auth.validateToken");
+        assert_eq!(svc.import_binding_key, "auth.invoke");
+        // Per-endpoint symbol/file/line preserved.
+        assert_eq!(svc.export_symbol, "validate_token");
+        assert_eq!(svc.export_file, "src/auth.rs");
+        assert_eq!(svc.export_line, 12);
+        assert_eq!(svc.import_symbol, "invoke");
+        assert_eq!(svc.import_file, "src/api.ts");
+        assert_eq!(svc.import_line, 88);
         assert_eq!(svc.export_language, api.source_language);
         assert_eq!(svc.import_language, api.target_language);
-        // Lossy: per-endpoint file/line/binding_key default.
-        assert!(svc.export_file.is_empty());
-        assert_eq!(svc.export_line, 0);
-        assert!(svc.import_binding_key.is_empty());
     }
 }

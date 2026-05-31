@@ -317,6 +317,7 @@ async fn test_bridge() {
         query: None,
         kind: None,
         source_language: None,
+        file_path: None,
         limit: None,
         session_id: None,
     };
@@ -325,6 +326,52 @@ async fn test_bridge() {
     let link = &resp.links[0];
     assert_eq!(link.kind, "tauri_command");
     assert!(link.confidence > 0.0);
+
+    // f-bridge-schema-convergence: per-endpoint binding key (source/target),
+    // symbol, file, and line now ride the wire instead of being dropped.
+    assert_eq!(link.source, "auth.parseToken");
+    assert_eq!(link.target, "auth.parseToken");
+    assert_eq!(link.export_symbol, "parseToken");
+    assert_eq!(link.export_file, "src/auth.ts");
+    assert_eq!(link.export_line, 15);
+    assert_eq!(link.import_symbol, "parse_token");
+    assert_eq!(link.import_file, "src/auth/token.rs");
+    assert_eq!(link.import_line, 42);
+}
+
+#[tokio::test]
+async fn bridge_file_path_filter_is_honored() {
+    // f-bridge-schema-convergence: the file_path filter used to be dropped in
+    // daemon mode (BridgeRequest had no file_path field).
+    let daemon = TestDaemon::start().await;
+    let client = daemon.client();
+
+    let make = |file_path: Option<&str>| BridgeRequest {
+        query: None,
+        kind: None,
+        source_language: None,
+        file_path: file_path.map(String::from),
+        limit: None,
+        session_id: None,
+    };
+
+    let matching = client
+        .bridge(&daemon.corpus_id, &make(Some("src/auth.ts")))
+        .await
+        .unwrap();
+    assert!(
+        !matching.links.is_empty(),
+        "file_path matching an endpoint should return the link"
+    );
+
+    let none = client
+        .bridge(&daemon.corpus_id, &make(Some("does/not/exist.rs")))
+        .await
+        .unwrap();
+    assert!(
+        none.links.is_empty(),
+        "file_path matching no endpoint should return nothing"
+    );
 }
 
 #[tokio::test]
