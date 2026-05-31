@@ -8,8 +8,8 @@
  * card from the span metadata already in hand.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { FileContent, SymbolSpan } from "../../lib/types";
-import { buildSymbolDecorations } from "./decorations";
+import type { FileContent, Occurrence, SymbolSpan } from "../../lib/types";
+import { buildOccurrenceDecorations, buildSymbolDecorations } from "./decorations";
 import { useHighlightedHtml } from "./useHighlighter";
 import type { ColorScheme } from "./useColorScheme";
 import "./code.css";
@@ -19,6 +19,9 @@ interface Props {
   scheme: ColorScheme;
   /** 1-based line to scroll into view (e.g. a go-to-definition target). */
   focusLine?: number;
+  /** v2 occurrence index — when non-empty, EVERY resolved token is clickable;
+   *  otherwise the viewer falls back to definition name-spans. */
+  occurrences?: Occurrence[];
   onSymbolClick: (symbolId: string, name: string) => void;
 }
 
@@ -28,10 +31,21 @@ interface HoverState {
   y: number;
 }
 
-export function CodeViewer({ file, scheme, focusLine, onSymbolClick }: Props) {
+export function CodeViewer({
+  file,
+  scheme,
+  focusLine,
+  occurrences,
+  onSymbolClick,
+}: Props) {
+  // Prefer the v2 occurrence index (every resolved token) when present;
+  // otherwise fall back to v1 definition name-spans.
   const decorations = useMemo(
-    () => buildSymbolDecorations(file.content, file.symbol_spans),
-    [file.content, file.symbol_spans],
+    () =>
+      occurrences && occurrences.length > 0
+        ? buildOccurrenceDecorations(occurrences)
+        : buildSymbolDecorations(file.content, file.symbol_spans),
+    [occurrences, file.content, file.symbol_spans],
   );
   const { html, loading, error } = useHighlightedHtml({
     code: file.content,

@@ -125,6 +125,7 @@ fn main() {
             commands::symbol_references,
             commands::symbol_definition,
             commands::read_file,
+            commands::file_occurrences,
             commands::bridge_query,
             commands::read_source_excerpt,
             commands::open_path,

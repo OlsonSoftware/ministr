@@ -12,7 +12,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowLeft, Code2, Command } from "lucide-react";
-import type { DaemonStatus, FileContent, SymbolInfo, SymbolRef } from "../../lib/types";
+import type {
+  DaemonStatus,
+  FileContent,
+  Occurrence,
+  SymbolInfo,
+  SymbolRef,
+} from "../../lib/types";
 import { spring } from "../../lib/motion";
 import { FileTree } from "./FileTree";
 import { CodeViewer } from "./CodeViewer";
@@ -38,6 +44,7 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
   const scheme = useColorScheme();
   const nav = useCodeNavigation();
   const [file, setFile] = useState<FileContent | null>(null);
+  const [occurrences, setOccurrences] = useState<Occurrence[]>([]);
   const [fileLoading, setFileLoading] = useState(false);
   const [panel, setPanel] = useState<PanelState | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -69,6 +76,26 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
       })
       .finally(() => {
         if (!cancelled) setFileLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [corpusId, path]);
+
+  // Load the v2 occurrence index for the current file (empty unless the corpus
+  // opted into occurrence indexing — the viewer then falls back to def spans).
+  useEffect(() => {
+    if (!corpusId || !path) {
+      setOccurrences([]);
+      return;
+    }
+    let cancelled = false;
+    invoke<Occurrence[]>("file_occurrences", { corpusId, path })
+      .then((o) => {
+        if (!cancelled) setOccurrences(o);
+      })
+      .catch(() => {
+        if (!cancelled) setOccurrences([]);
       });
     return () => {
       cancelled = true;
@@ -199,6 +226,7 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
               file={file}
               scheme={scheme}
               focusLine={focusLine}
+              occurrences={occurrences}
               onSymbolClick={openSymbol}
             />
           ) : (

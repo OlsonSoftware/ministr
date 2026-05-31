@@ -144,6 +144,19 @@ export interface FileContent {
   symbol_spans: SymbolSpan[];
 }
 
+/** One resolved identifier occurrence in a file (F-CodeExplorer v2 —
+ *  click-ANY-token). Present only when the corpus was indexed with occurrence
+ *  indexing enabled (`MINISTR_INDEX_OCCURRENCES`); otherwise `file_occurrences`
+ *  returns an empty list and the viewer falls back to definition spans. */
+export interface Occurrence {
+  symbol_id: string;
+  name: string;
+  byte_start: number;
+  byte_end: number;
+  line: number;
+  col: number;
+}
+
 /** Full symbol definition returned by `symbol_definition`. */
 export interface SymbolDefinitionDetail {
   id: string;

@@ -12,7 +12,7 @@
  * overlap an earlier one on the same line are dropped.
  */
 import type { DecorationItem } from "shiki";
-import type { SymbolSpan } from "../../lib/types";
+import type { Occurrence, SymbolSpan } from "../../lib/types";
 
 interface Candidate {
   line: number;
@@ -54,6 +54,39 @@ export function buildSymbolDecorations(
         "data-symbol-id": c.span.id,
         "data-symbol-name": c.span.name,
         title: c.span.signature,
+      },
+    });
+  }
+  return decorations;
+}
+
+/**
+ * v2 occurrence decorations: make *every* resolved identifier site clickable,
+ * not just definitions. Each occurrence carries its own byte/line/col span and
+ * the symbol it resolves to. Columns are byte columns; for the ASCII
+ * identifiers Rust uses this equals the character column Shiki expects.
+ *
+ * Overlap-safe like {@link buildSymbolDecorations} (Shiki throws on overlap).
+ */
+export function buildOccurrenceDecorations(occurrences: Occurrence[]): DecorationItem[] {
+  const sorted = [...occurrences].sort((a, b) => a.line - b.line || a.col - b.col);
+  const decorations: DecorationItem[] = [];
+  let lastLine = -1;
+  let lastEnd = -1;
+  for (const o of sorted) {
+    const line = o.line - 1;
+    const start = o.col;
+    const end = o.col + (o.byte_end - o.byte_start);
+    if (line === lastLine && start < lastEnd) continue; // overlap — skip
+    lastLine = line;
+    lastEnd = end;
+    decorations.push({
+      start: { line, character: start },
+      end: { line, character: end },
+      properties: {
+        class: "code-symbol",
+        "data-symbol-id": o.symbol_id,
+        "data-symbol-name": o.name,
       },
     });
   }

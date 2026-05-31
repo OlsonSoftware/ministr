@@ -1130,6 +1130,50 @@ pub async fn read_file(
     })
 }
 
+/// One resolved identifier occurrence (F-CodeExplorer v2), for click-any-token.
+#[derive(Serialize)]
+pub struct Occurrence {
+    pub symbol_id: String,
+    pub name: String,
+    pub byte_start: u32,
+    pub byte_end: u32,
+    pub line: u32,
+    pub col: u32,
+}
+
+/// File-level occurrence index: every resolved identifier site in the file.
+///
+/// Empty unless the corpus was indexed with occurrence indexing enabled
+/// (`MINISTR_INDEX_OCCURRENCES`). When present it lets the Code surface
+/// resolve a click on *any* token, not just known definitions.
+#[tauri::command]
+pub async fn file_occurrences(
+    state: State<'_, AppState>,
+    corpus_id: String,
+    path: String,
+) -> Result<Vec<Occurrence>, CommandError> {
+    let guard = state.registry.corpora().read().await;
+    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
+
+    let records = handle
+        .storage
+        .list_occurrences(&path)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(records
+        .into_iter()
+        .map(|r| Occurrence {
+            symbol_id: r.symbol_id.0,
+            name: r.name,
+            byte_start: r.byte_start,
+            byte_end: r.byte_end,
+            line: r.line,
+            col: r.col,
+        })
+        .collect())
+}
+
 /// Reference link for the symbol graph.
 #[derive(Serialize)]
 pub struct SymbolRef {
