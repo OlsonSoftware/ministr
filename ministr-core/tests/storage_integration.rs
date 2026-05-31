@@ -569,7 +569,68 @@ async fn migration_rollforward() {
     assert_eq!(docs.len(), 1);
 
     // Current version should match
-    assert_eq!(CURRENT_SCHEMA_VERSION, 22);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 23);
+}
+
+/// F-CodeExplorer v2: occurrences round-trip through the V23 table —
+/// insert, list (byte-ordered), and per-file delete.
+#[tokio::test]
+async fn occurrences_round_trip() {
+    use ministr_core::storage::traits::OccurrenceRecord;
+    use ministr_core::types::SymbolId;
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let storage = SqliteStorage::open(tmp.path()).unwrap();
+
+    let occ = vec![
+        OccurrenceRecord {
+            file_path: "src/main.rs".into(),
+            name: "MinistrConfig".into(),
+            symbol_id: SymbolId("sym-config::MinistrConfig".into()),
+            byte_start: 40,
+            byte_end: 53,
+            line: 2,
+            col: 14,
+        },
+        OccurrenceRecord {
+            file_path: "src/main.rs".into(),
+            name: "main".into(),
+            symbol_id: SymbolId("sym-main::main".into()),
+            byte_start: 3,
+            byte_end: 7,
+            line: 1,
+            col: 3,
+        },
+    ];
+    storage.insert_occurrences(&occ).await.unwrap();
+
+    let listed = storage.list_occurrences("src/main.rs").await.unwrap();
+    assert_eq!(listed.len(), 2);
+    // ORDER BY byte_start → `main` (3) before `MinistrConfig` (40).
+    assert_eq!(listed[0].name, "main");
+    assert_eq!(listed[1].name, "MinistrConfig");
+    assert_eq!(listed[1].symbol_id.0, "sym-config::MinistrConfig");
+
+    // Other files are unaffected; the queried file clears to empty.
+    assert!(
+        storage
+            .list_occurrences("src/other.rs")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let removed = storage
+        .delete_occurrences_for_file("src/main.rs")
+        .await
+        .unwrap();
+    assert_eq!(removed, 2);
+    assert!(
+        storage
+            .list_occurrences("src/main.rs")
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]

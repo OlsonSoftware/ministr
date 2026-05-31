@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 22;
+pub const CURRENT_SCHEMA_VERSION: usize = 23;
 
 /// Returns the migration set for the content database.
 ///
@@ -394,6 +394,28 @@ fn migrations() -> Migrations<'static> {
         M::up(
             "
             ALTER TABLE file_hashes ADD COLUMN resolver_version INTEGER NOT NULL DEFAULT 0;
+            ",
+        ),
+        // V23: Occurrence-level index (F-CodeExplorer v2). Every resolved
+        // identifier *site* in a file with its exact byte span + the symbol it
+        // names, so the code browser can make any token clickable — not just
+        // definitions. Opt-in + per-language at ingest time; the table is
+        // simply empty for corpora that didn't index occurrences. Deleted
+        // per-file on re-index (no FK — an occurrence may name a symbol in
+        // another file whose lifecycle is independent).
+        M::up(
+            "
+            CREATE TABLE occurrences (
+                file_path  TEXT NOT NULL,
+                name       TEXT NOT NULL,
+                symbol_id  TEXT NOT NULL,
+                byte_start INTEGER NOT NULL,
+                byte_end   INTEGER NOT NULL,
+                line       INTEGER NOT NULL,
+                col        INTEGER NOT NULL
+            );
+
+            CREATE INDEX idx_occurrences_file ON occurrences(file_path);
             ",
         ),
     ])

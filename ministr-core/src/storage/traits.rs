@@ -294,6 +294,31 @@ pub struct SymbolRefRecord {
     pub ref_kind: RefKind,
 }
 
+/// A resolved identifier occurrence within a file (F-CodeExplorer v2).
+///
+/// Where [`SymbolRecord`] is one definition and [`SymbolRefRecord`] is one
+/// symbol→symbol edge, an occurrence is *one identifier token site* resolved
+/// to the symbol it names, with an exact byte span. This is what lets the code
+/// browser make every token clickable, not just definitions.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+pub struct OccurrenceRecord {
+    /// Source file path (relative to corpus root / root-namespaced), matching
+    /// the keys used by `symbols` / `file_hashes`.
+    pub file_path: String,
+    /// The identifier text at this site.
+    pub name: String,
+    /// The symbol this occurrence resolves to.
+    pub symbol_id: SymbolId,
+    /// Start byte offset (inclusive) into the file's UTF-8 source.
+    pub byte_start: u32,
+    /// End byte offset (exclusive).
+    pub byte_end: u32,
+    /// 1-based line of the occurrence.
+    pub line: u32,
+    /// 0-based byte column of the occurrence.
+    pub col: u32,
+}
+
 /// A stored bridge endpoint record.
 /// A reference that could not be resolved during ingestion, persisted for
 /// deferred resolution on subsequent warm restarts.
@@ -575,6 +600,37 @@ pub trait Storage: Send + Sync {
     /// fall through is to remove the stale hash rows it would match
     /// against.
     fn clear_file_hashes(&self) -> impl Future<Output = Result<usize, StorageError>> + Send;
+
+    // -- Occurrences (F-CodeExplorer v2 — opt-in, default no-op) --
+
+    /// Insert resolved identifier occurrences for a file.
+    ///
+    /// Default no-op: occurrence indexing is opt-in, so a backend that doesn't
+    /// support it simply discards the rows. `SqliteStorage` overrides this.
+    fn insert_occurrences(
+        &self,
+        _occurrences: &[OccurrenceRecord],
+    ) -> impl Future<Output = Result<(), StorageError>> + Send {
+        async { Ok(()) }
+    }
+
+    /// List the resolved occurrences recorded for a file (byte-span ordered by
+    /// the caller as needed). Default: none.
+    fn list_occurrences(
+        &self,
+        _file_path: &str,
+    ) -> impl Future<Output = Result<Vec<OccurrenceRecord>, StorageError>> + Send {
+        async { Ok(Vec::new()) }
+    }
+
+    /// Delete all occurrences for a file (called before re-indexing it).
+    /// Returns the number of rows removed. Default: 0.
+    fn delete_occurrences_for_file(
+        &self,
+        _file_path: &str,
+    ) -> impl Future<Output = Result<u64, StorageError>> + Send {
+        async { Ok(0) }
+    }
 
     // -- Sessions --
 

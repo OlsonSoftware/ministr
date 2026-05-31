@@ -21,8 +21,8 @@ use super::schema::{configure_connection, run_migrations};
 use super::traits::{
     BridgeEndpointRecord, BridgeLinkDetail, BridgeLinkRecord, ClaimRecord, CoAccessRecord,
     CorpusMerkleRecord, CorpusStats, DocumentRecord, FileHashRecord, GitCacheRecord,
-    PendingRefRecord, RelatedClaimRecord, SectionAccessStat, SectionRecord, Storage, SymbolFilter,
-    SymbolRecord, SymbolRefRecord, WebCacheRecord,
+    OccurrenceRecord, PendingRefRecord, RelatedClaimRecord, SectionAccessStat, SectionRecord,
+    Storage, SymbolFilter, SymbolRecord, SymbolRefRecord, WebCacheRecord,
 };
 use crate::error::StorageError;
 use crate::session::{DeliveredItem, Session, SessionId};
@@ -2052,6 +2052,101 @@ impl Storage for SqliteStorage {
             let affected = conn
                 .execute(
                     "DELETE FROM symbols WHERE file_path = ?1",
+                    rusqlite::params![file_path],
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            Ok(u64::try_from(affected).unwrap_or(0))
+        })
+        .await
+    }
+
+    // -- Occurrences (F-CodeExplorer v2) --
+
+    async fn insert_occurrences(
+        &self,
+        occurrences: &[OccurrenceRecord],
+    ) -> Result<(), StorageError> {
+        let occurrences = occurrences.to_vec();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "INSERT INTO occurrences
+                     (file_path, name, symbol_id, byte_start, byte_end, line, col)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            for o in &occurrences {
+                stmt.execute(rusqlite::params![
+                    o.file_path,
+                    o.name,
+                    o.symbol_id.as_ref(),
+                    o.byte_start,
+                    o.byte_end,
+                    o.line,
+                    o.col,
+                ])
+                .map_err(|e| StorageError::Database {
+                    reason: format!(
+                        "failed to insert occurrence {} in {}: {e}",
+                        o.name, o.file_path
+                    ),
+                })?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    async fn list_occurrences(
+        &self,
+        file_path: &str,
+    ) -> Result<Vec<OccurrenceRecord>, StorageError> {
+        let file_path = file_path.to_string();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT file_path, name, symbol_id, byte_start, byte_end, line, col
+                     FROM occurrences WHERE file_path = ?1 ORDER BY byte_start",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            let rows = stmt
+                .query_map(rusqlite::params![file_path], |row| {
+                    Ok(OccurrenceRecord {
+                        file_path: row.get(0)?,
+                        name: row.get(1)?,
+                        symbol_id: SymbolId(row.get(2)?),
+                        byte_start: row.get(3)?,
+                        byte_end: row.get(4)?,
+                        line: row.get(5)?,
+                        col: row.get(6)?,
+                    })
+                })
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            let mut out = Vec::new();
+            for r in rows {
+                out.push(r.map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?);
+            }
+            Ok(out)
+        })
+        .await
+    }
+
+    async fn delete_occurrences_for_file(&self, file_path: &str) -> Result<u64, StorageError> {
+        let file_path = file_path.to_string();
+        self.with_conn(move |conn| {
+            let affected = conn
+                .execute(
+                    "DELETE FROM occurrences WHERE file_path = ?1",
                     rusqlite::params![file_path],
                 )
                 .map_err(|e| StorageError::Database {
