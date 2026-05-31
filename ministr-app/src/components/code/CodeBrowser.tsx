@@ -23,6 +23,7 @@ import { spring } from "../../lib/motion";
 import { cn } from "../../lib/utils";
 import { FileTree } from "./FileTree";
 import { CodeViewer } from "./CodeViewer";
+import { CodeLanding } from "./CodeLanding";
 import { SymbolPeek } from "./SymbolPeek";
 import { ReferencesPanel } from "./ReferencesPanel";
 import { RelatedFilesPanel } from "./RelatedFilesPanel";
@@ -52,6 +53,7 @@ interface PanelState {
 
 export function CodeBrowser({ status, activeCorpusId }: Props) {
   const corpusId = activeCorpusId ?? status.corpora[0]?.id ?? "";
+  const corpus = status.corpora.find((c) => c.id === corpusId) ?? null;
   const scheme = useColorScheme();
   const nav = useCodeNavigation();
   const [file, setFile] = useState<FileContent | null>(null);
@@ -311,7 +313,11 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
 
         <div className="min-h-0 min-w-0 border-r border-border-soft">
           {!path ? (
-            <CenterEmpty />
+            <CodeLanding
+              corpusId={corpusId}
+              corpus={corpus}
+              onOpen={(p) => nav.push({ path: p })}
+            />
           ) : fileLoading && !file ? (
             <div className="grid h-full place-items-center">
               <span className="font-mono text-sm text-text-dim">Loading_</span>
@@ -385,21 +391,6 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
         onClose={() => setPaletteOpen(false)}
         onPick={pickFromPalette}
       />
-    </div>
-  );
-}
-
-function CenterEmpty() {
-  return (
-    <div className="grid h-full place-items-center px-6 text-center">
-      <div className="flex flex-col items-center gap-2">
-        <Code2 className="h-8 w-8 text-text-dim" strokeWidth={1.5} />
-        <p className="font-sans text-sm text-text">Pick a file</p>
-        <p className="max-w-xs font-sans text-xs text-text-dim">
-          Choose a file from the tree, or press ⌘K to jump straight to a symbol.
-          Click any underlined symbol to peek its definition and references.
-        </p>
-      </div>
     </div>
   );
 }
