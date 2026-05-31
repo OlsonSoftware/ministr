@@ -32,7 +32,7 @@ export function SurfaceSidebar({
   fill = false,
 }: Props) {
   return (
-    <AdaptiveSurface bleed={fill}>
+    <AdaptiveSurface>
       <div className="h-full flex flex-col @min-[900px]/surface:flex-row min-h-0">
         {/* Sidebar nav — wide viewports */}
         <nav
