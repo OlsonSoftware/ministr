@@ -16,6 +16,11 @@ interface Props {
   active: string;
   onSelect: (id: string) => void;
   children: ReactNode;
+  /** Full-bleed content: the active section is an edge-to-edge layout that
+   *  manages its own height + scrolling (e.g. the Code IDE surface). Drops the
+   *  default padding/scroll so the child's `h-full` chain resolves to the full
+   *  surface height. Padded, self-scrolling sections (Server, Logs) omit it. */
+  fill?: boolean;
 }
 
 export function SurfaceSidebar({
@@ -24,9 +29,10 @@ export function SurfaceSidebar({
   active,
   onSelect,
   children,
+  fill = false,
 }: Props) {
   return (
-    <AdaptiveSurface>
+    <AdaptiveSurface bleed={fill}>
       <div className="h-full flex flex-col @min-[900px]/surface:flex-row min-h-0">
         {/* Sidebar nav — wide viewports */}
         <nav
@@ -81,8 +87,15 @@ export function SurfaceSidebar({
           ))}
         </nav>
 
-        {/* Active view with animated transition */}
-        <div className="flex-1 min-h-0 overflow-y-auto p-5">
+        {/* Active view with animated transition. `fill` sections own their
+            height + scrolling (edge-to-edge IDE layout); others get the
+            default padding + vertical scroll. */}
+        <div
+          className={cn(
+            "flex-1 min-h-0",
+            fill ? "overflow-hidden" : "overflow-y-auto p-5",
+          )}
+        >
           <AnimatePresence mode="wait">
             <motion.div
               key={active}
@@ -90,6 +103,7 @@ export function SurfaceSidebar({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -4 }}
               transition={swift}
+              className={fill ? "h-full min-h-0" : undefined}
             >
               {children}
             </motion.div>

@@ -27,6 +27,7 @@ export function ExploreSurface({ status, activeCorpusId }: Props) {
       items={NAV_ITEMS}
       active={active}
       onSelect={setActive}
+      fill={active === "code"}
     >
       {active === "code" && (
         <CodeBrowser status={status} activeCorpusId={activeCorpusId} />
