@@ -24,6 +24,7 @@ import { FileTree } from "./FileTree";
 import { CodeViewer } from "./CodeViewer";
 import { SymbolPeek } from "./SymbolPeek";
 import { ReferencesPanel } from "./ReferencesPanel";
+import { RelatedFilesPanel } from "./RelatedFilesPanel";
 import { SymbolPalette } from "./SymbolPalette";
 import { useCodeNavigation } from "./useCodeNavigation";
 import { useColorScheme } from "./useColorScheme";
@@ -236,8 +237,11 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
           )}
         </div>
 
-        <AnimatePresence>
-          {panel && (
+        {/* Right column: a clicked symbol's peek/references, or — when no
+            symbol is selected — the current file's related files, so you can
+            always navigate contextually from within a file. */}
+        <AnimatePresence mode="wait">
+          {panel ? (
             <motion.aside
               key={`${panel.mode}-${panel.symbolId}`}
               initial={{ opacity: 0, x: 12 }}
@@ -267,7 +271,22 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
                 />
               )}
             </motion.aside>
-          )}
+          ) : file ? (
+            <motion.aside
+              key="related"
+              initial={{ opacity: 0, x: 12 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 12 }}
+              transition={spring}
+              className="hidden min-h-0 min-w-0 bg-surface @min-[1100px]/page:block"
+            >
+              <RelatedFilesPanel
+                corpusId={corpusId}
+                file={file}
+                onOpen={(p) => nav.push({ path: p })}
+              />
+            </motion.aside>
+          ) : null}
         </AnimatePresence>
       </div>
 

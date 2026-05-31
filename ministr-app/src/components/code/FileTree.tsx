@@ -11,6 +11,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { ChevronRight, ChevronDown, File as FileIcon } from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { FileInfo } from "../../lib/types";
+import { commonDirPrefix, stripPrefix } from "./paths";
+
+/** Per-nested-level indentation, in px. Kept tight so deep trees stay readable. */
+const INDENT_STEP = 8;
+const INDENT_BASE = 6;
+function indentPx(depth: number): number {
+  return depth * INDENT_STEP + INDENT_BASE;
+}
 
 interface Props {
   corpusId: string;
@@ -29,10 +37,18 @@ function newDir(name: string, path: string): DirNode {
   return { name, path, dirs: new Map(), files: [] };
 }
 
-function buildTree(files: FileInfo[]): DirNode {
+/**
+ * Build the display tree, rooted at `prefix` (the corpus' common ancestor):
+ * directory structure comes from each path *with the prefix stripped*, while
+ * every file leaf keeps its FULL `path` as the key handed back to `onSelect` /
+ * `read_file`. Directory node paths are prefix-relative so expand/collapse
+ * state and {@link ancestorDirs} agree.
+ */
+function buildTree(files: FileInfo[], prefix: string): DirNode {
   const root = newDir("", "");
   for (const f of [...files].sort((a, b) => a.path.localeCompare(b.path))) {
-    const segments = f.path.split("/").filter(Boolean);
+    const rel = stripPrefix(f.path, prefix);
+    const segments = rel.split("/").filter(Boolean);
     if (segments.length === 0) continue;
     let dir = root;
     for (let i = 0; i < segments.length - 1; i++) {
@@ -50,9 +66,9 @@ function buildTree(files: FileInfo[]): DirNode {
   return root;
 }
 
-/** Directory paths on the way to `path` (so we can auto-expand to the active file). */
-function ancestorDirs(path: string): Set<string> {
-  const segments = path.split("/").filter(Boolean);
+/** Prefix-relative directory paths on the way to `path` (for auto-expand). */
+function ancestorDirs(path: string, prefix: string): Set<string> {
+  const segments = stripPrefix(path, prefix).split("/").filter(Boolean);
   const out = new Set<string>();
   let acc = "";
   for (let i = 0; i < segments.length - 1; i++) {
@@ -87,13 +103,17 @@ export function FileTree({ corpusId, activePath, onSelect }: Props) {
     };
   }, [corpusId]);
 
+  // Root the display tree at the highest directory the corpus' files share,
+  // so it doesn't start at the filesystem root.
+  const prefix = useMemo(() => commonDirPrefix(files.map((f) => f.path)), [files]);
+
   // Auto-expand the path to the active file.
   useEffect(() => {
     if (!activePath) return;
-    setExpanded((prev) => new Set([...prev, ...ancestorDirs(activePath)]));
-  }, [activePath]);
+    setExpanded((prev) => new Set([...prev, ...ancestorDirs(activePath, prefix)]));
+  }, [activePath, prefix]);
 
-  const tree = useMemo(() => buildTree(files), [files]);
+  const tree = useMemo(() => buildTree(files, prefix), [files, prefix]);
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -123,6 +143,14 @@ export function FileTree({ corpusId, activePath, onSelect }: Props) {
           className="h-8 w-full rounded-md border border-border-soft bg-surface-sunken px-2 text-xs font-sans text-text placeholder:text-text-dim focus:border-accent focus:outline-none transition-colors duration-150 ease-out"
         />
       </div>
+      {prefix && !filter && (
+        <div
+          className="shrink-0 truncate border-b border-border-soft px-2 py-1 font-mono text-mono-mini text-text-dim"
+          title={prefix}
+        >
+          {prefix}/
+        </div>
+      )}
       <div className="min-h-0 flex-1 overflow-y-auto py-1">
         {loading ? (
           <p className="px-3 py-2 font-mono text-mono-mini text-text-dim">Loading_</p>
@@ -135,7 +163,7 @@ export function FileTree({ corpusId, activePath, onSelect }: Props) {
             filtered.map((f) => (
               <FileRow
                 key={f.path}
-                name={f.path}
+                name={stripPrefix(f.path, prefix)}
                 depth={0}
                 active={f.path === activePath}
                 onSelect={() => onSelect(f.path)}
@@ -181,7 +209,7 @@ function DirChildren({
             <button
               type="button"
               onClick={() => onToggle(child.path)}
-              style={{ paddingLeft: `${depth * 12 + 8}px` }}
+              style={{ paddingLeft: `${indentPx(depth)}px` }}
               className="flex w-full items-center gap-1 py-1 pr-2 text-left font-mono text-xs text-text-muted hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
             >
               {isOpen ? (
@@ -232,7 +260,7 @@ function FileRow({
     <button
       type="button"
       onClick={onSelect}
-      style={{ paddingLeft: `${depth * 12 + 8}px` }}
+      style={{ paddingLeft: `${indentPx(depth)}px` }}
       className={cn(
         "relative flex w-full items-center gap-1.5 py-1 pr-2 text-left font-mono text-xs cursor-pointer transition-colors duration-150 ease-out",
         active
