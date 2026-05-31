@@ -5,6 +5,7 @@ mod common;
 use ministr_api::query::{
     BridgeRequest, ExtractRequest, RelatedRequest, SymbolsRequest, TocRequest,
 };
+use ministr_core::types::{ContentId, DocumentTree, Section, SectionId};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use common::TestDaemon;
@@ -139,6 +140,96 @@ async fn test_toc() {
     let resp = client.toc(&daemon.corpus_id, &req).await.unwrap();
     assert!(resp.total >= 3, "should have at least 3 sections");
     assert!(!resp.entries.is_empty());
+}
+
+/// Build a single document with `n` trivial sections — enough to exceed the
+/// daemon TOC handler's old 100-entry default cap.
+fn big_doc(n: usize) -> DocumentTree {
+    let sections = (0..n)
+        .map(|i| Section {
+            id: SectionId(format!("big.md#s{i}")),
+            heading_path: vec!["Big".to_string(), format!("Section {i}")],
+            depth: 2,
+            text: format!("Section {i} body text."),
+            structural_nodes: vec![],
+            children: vec![],
+            claims: vec![],
+            summary: None,
+        })
+        .collect();
+    DocumentTree {
+        id: ContentId("big.md".into()),
+        title: "Big Document".into(),
+        source_path: "big.md".into(),
+        sections,
+        summary: None,
+    }
+}
+
+#[tokio::test]
+async fn toc_pagination_returns_sections_past_the_old_100_cap() {
+    // Regression (f-toc-deep-pagination): the daemon TOC handler used to default
+    // `limit` to 100, so an unfiltered toc over a corpus with >100 sections
+    // capped at 100 and offset:100 returned empty — the MCP `ministr_toc`
+    // deep-pagination bug. Omitting `limit` must now return every section.
+    let daemon = TestDaemon::start_with_corpus(vec![big_doc(150)]).await;
+    let client = daemon.client();
+
+    // `limit` omitted → all 150 sections, with an accurate total.
+    let all = client
+        .toc(
+            &daemon.corpus_id,
+            &TocRequest {
+                document_id: None,
+                offset: None,
+                limit: None,
+                session_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(all.total, 150);
+    assert_eq!(
+        all.entries.len(),
+        150,
+        "omitting limit must return every section, not cap at 100"
+    );
+
+    // Offset past the old 100 cap returns the later page (was empty before).
+    let page = client
+        .toc(
+            &daemon.corpus_id,
+            &TocRequest {
+                document_id: None,
+                offset: Some(100),
+                limit: Some(50),
+                session_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.total, 150);
+    assert_eq!(
+        page.entries.len(),
+        50,
+        "offset:100 must return entries 100..150, not empty"
+    );
+
+    // An explicit small limit still caps.
+    let capped = client
+        .toc(
+            &daemon.corpus_id,
+            &TocRequest {
+                document_id: None,
+                offset: None,
+                limit: Some(10),
+                session_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(capped.entries.len(), 10);
+    assert_eq!(capped.total, 150);
 }
 
 #[tokio::test]

@@ -1485,7 +1485,10 @@ async fn toc(
 ) -> impl IntoResponse {
     let handle = get_corpus!(&state, &id);
     let offset = req.offset.unwrap_or(0);
-    let limit = req.limit.unwrap_or(100);
+    // Omitting `limit` means "no limit" — return the whole TOC so callers that
+    // paginate client-side (e.g. the MCP `ministr_toc` handler) see every
+    // section and can page past the first 100. An explicit `limit` still caps.
+    let limit = req.limit.unwrap_or(usize::MAX);
     let session_id = req.session_id.clone();
     let summary = req.document_id.as_deref().unwrap_or("<root>").to_string();
     let result = handle.service.toc(req.document_id.as_deref()).await;

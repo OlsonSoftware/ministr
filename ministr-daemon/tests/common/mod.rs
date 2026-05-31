@@ -67,18 +67,53 @@ pub struct TestDaemon {
 }
 
 impl TestDaemon {
-    /// Start a daemon with a pre-populated test corpus.
+    /// Start a daemon with the standard pre-populated test corpus
+    /// (documents, embeddings, symbols, bridges, relationships).
     pub async fn start() -> Self {
         let tmp_dir = tempfile::TempDir::new().unwrap();
-        let addr = test_ipc_addr(&tmp_dir);
         let db_path = tmp_dir.path().join("content.db");
-
         let dim = 16;
         let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim });
         let index: Arc<dyn VectorIndex> = Arc::new(HnswIndex::new(dim, 1000).unwrap());
         let storage = Arc::new(SqliteStorage::open(&db_path).unwrap());
 
         populate_storage(&storage, &embedder, &index).await;
+
+        Self::spawn(tmp_dir, db_path, embedder, index, storage).await
+    }
+
+    /// Start a daemon over a caller-supplied corpus (documents + sections
+    /// only). For tests that need a specific corpus shape — e.g. more than
+    /// 100 sections to exercise TOC pagination.
+    ///
+    /// `common` is compiled into every integration-test binary but only some
+    /// use this constructor, so the allow keeps `-D warnings` clean elsewhere.
+    #[allow(dead_code)]
+    pub async fn start_with_corpus(docs: Vec<DocumentTree>) -> Self {
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let db_path = tmp_dir.path().join("content.db");
+        let dim = 16;
+        let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim });
+        let index: Arc<dyn VectorIndex> = Arc::new(HnswIndex::new(dim, 1000).unwrap());
+        let storage = Arc::new(SqliteStorage::open(&db_path).unwrap());
+
+        for doc in &docs {
+            storage.insert_document(doc).await.unwrap();
+        }
+
+        Self::spawn(tmp_dir, db_path, embedder, index, storage).await
+    }
+
+    /// Shared daemon spin-up: build the query service + corpus handle, register
+    /// it, bind the listener, and serve.
+    async fn spawn(
+        tmp_dir: tempfile::TempDir,
+        db_path: PathBuf,
+        embedder: Arc<dyn Embedder>,
+        index: Arc<dyn VectorIndex>,
+        storage: Arc<SqliteStorage>,
+    ) -> Self {
+        let addr = test_ipc_addr(&tmp_dir);
 
         // Build QueryService with its own connection to the same DB file.
         let query_storage = SqliteStorage::open(&db_path).unwrap();
