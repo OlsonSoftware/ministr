@@ -5,7 +5,6 @@ import { cn } from "../lib/utils";
 import { corpusRelative } from "../lib/path";
 import { useEntityPanel } from "../hooks/useEntityPanel";
 import type { DaemonStatus, FileInfo } from "../lib/types";
-import type { ExploreMode } from "./ExploreView";
 import { H1 } from "./ui/heading";
 
 interface Props {
@@ -13,9 +12,9 @@ interface Props {
   activeCorpusId: string | null;
   setActiveCorpusId: (id: string | null) => void;
   /** Optional jump callback — clicking a cell navigates to the
-   *  Explore tab on the given pivot mode. Currently unused inside
-   *  the treemap body; reserved for future drill-in actions. */
-  onNavigate?: (target: "explore", exploreMode?: ExploreMode) => void;
+   *  Explore surface. Currently unused inside the treemap body;
+   *  reserved for future drill-in actions. */
+  onNavigate?: (target: "explore") => void;
 }
 
 type GroupBy = "flat" | "dir" | "ext";

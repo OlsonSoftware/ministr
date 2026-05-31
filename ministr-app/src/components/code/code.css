@@ -1,0 +1,62 @@
+/* Code surface — styling for Shiki output + clickable symbol hot-zones.
+ * Kept in CSS (not Tailwind classNames) because it targets Shiki's emitted
+ * `pre.shiki` / `.line` structure and the decoration spans we inject. */
+
+.code-viewer {
+  height: 100%;
+  overflow: auto;
+}
+
+.code-viewer pre.shiki {
+  margin: 0;
+  padding: 0.75rem 0;
+  background: transparent !important;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  tab-size: 2;
+}
+
+.code-viewer code {
+  display: block;
+  counter-reset: ln;
+  width: max-content;
+  min-width: 100%;
+}
+
+.code-viewer .line {
+  display: inline-block;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.code-viewer .line::before {
+  counter-increment: ln;
+  content: counter(ln);
+  display: inline-block;
+  width: 3rem;
+  margin-right: 1rem;
+  padding-right: 0.75rem;
+  text-align: right;
+  color: var(--color-text-dim);
+  user-select: none;
+}
+
+.code-viewer .line.code-line-focus {
+  background: var(--color-surface-overlay);
+}
+
+/* A definition name the index resolves — clickable. */
+.code-symbol {
+  cursor: pointer;
+  border-radius: 2px;
+  text-decoration: underline;
+  text-decoration-color: var(--color-accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition: background-color 150ms ease-out;
+}
+
+.code-symbol:hover {
+  background: var(--color-surface-overlay);
+}

@@ -122,6 +122,28 @@ export interface SymbolRef {
   ref_kind: string;
 }
 
+/** One clickable symbol span within a file, returned by `read_file`.
+ *  `signature` + `doc_comment` let the Code surface render a hovercard
+ *  with no extra round-trip. Line numbers are 1-based, inclusive. */
+export interface SymbolSpan {
+  id: string;
+  name: string;
+  kind: string;
+  signature: string;
+  doc_comment: string | null;
+  line_start: number;
+  line_end: number;
+}
+
+/** A source file's full contents + the symbol spans the index knows for it,
+ *  returned by the `read_file` Tauri command. `lang` is a Shiki language id. */
+export interface FileContent {
+  path: string;
+  lang: string;
+  content: string;
+  symbol_spans: SymbolSpan[];
+}
+
 /** Full symbol definition returned by `symbol_definition`. */
 export interface SymbolDefinitionDetail {
   id: string;

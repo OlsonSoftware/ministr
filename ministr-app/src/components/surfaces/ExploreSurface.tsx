@@ -1,11 +1,10 @@
 import { useState } from "react";
-import { Server, ScrollText, Search, FlaskConical } from "lucide-react";
+import { Server, ScrollText, Code2 } from "lucide-react";
 import type { DaemonStatus } from "../../lib/types";
 import { SurfaceSidebar, type SidebarItem } from "../ui/surface-sidebar";
 import { ServerSettings } from "./ServerSettings";
 import { LogViewer } from "../LogViewer";
-import { ExploreView } from "../ExploreView";
-import { QueryPlayground } from "../QueryPlayground";
+import { CodeBrowser } from "../code/CodeBrowser";
 
 interface Props {
   status: DaemonStatus;
@@ -14,18 +13,13 @@ interface Props {
 }
 
 const NAV_ITEMS: readonly SidebarItem[] = [
+  { id: "code", label: "Code", icon: Code2 },
   { id: "server", label: "Server", icon: Server },
   { id: "logs", label: "Logs", icon: ScrollText },
-  { id: "explorer", label: "Explorer", icon: Search },
-  { id: "playground", label: "Playground", icon: FlaskConical },
 ];
 
-export function ExploreSurface({
-  status,
-  activeCorpusId,
-  setActiveCorpusId,
-}: Props) {
-  const [active, setActive] = useState("server");
+export function ExploreSurface({ status, activeCorpusId }: Props) {
+  const [active, setActive] = useState("code");
 
   return (
     <SurfaceSidebar
@@ -34,28 +28,16 @@ export function ExploreSurface({
       active={active}
       onSelect={setActive}
     >
+      {active === "code" && (
+        <CodeBrowser status={status} activeCorpusId={activeCorpusId} />
+      )}
+
       {active === "server" && <ServerSettings status={status} />}
 
       {active === "logs" && (
         <div className="h-[600px]">
           <LogViewer />
         </div>
-      )}
-
-      {active === "explorer" && (
-        <ExploreView
-          status={status}
-          activeCorpusId={activeCorpusId}
-          setActiveCorpusId={setActiveCorpusId}
-        />
-      )}
-
-      {active === "playground" && (
-        <QueryPlayground
-          status={status}
-          activeCorpusId={activeCorpusId}
-          setActiveCorpusId={setActiveCorpusId}
-        />
       )}
     </SurfaceSidebar>
   );

@@ -1,0 +1,179 @@
+/**
+ * CodeViewer — renders one file with Shiki highlighting and overlays the
+ * symbol index as clickable, hoverable hot-zones.
+ *
+ * Single responsibility: turn a {@link FileContent} into an interactive view.
+ * Clicks are captured by event delegation on the container (Shiki emits the
+ * `data-symbol-id` attributes via decorations); hover shows a zero-latency
+ * card from the span metadata already in hand.
+ */
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { FileContent, SymbolSpan } from "../../lib/types";
+import { buildSymbolDecorations } from "./decorations";
+import { useHighlightedHtml } from "./useHighlighter";
+import type { ColorScheme } from "./useColorScheme";
+import "./code.css";
+
+interface Props {
+  file: FileContent;
+  scheme: ColorScheme;
+  /** 1-based line to scroll into view (e.g. a go-to-definition target). */
+  focusLine?: number;
+  onSymbolClick: (symbolId: string, name: string) => void;
+}
+
+interface HoverState {
+  span: SymbolSpan;
+  x: number;
+  y: number;
+}
+
+export function CodeViewer({ file, scheme, focusLine, onSymbolClick }: Props) {
+  const decorations = useMemo(
+    () => buildSymbolDecorations(file.content, file.symbol_spans),
+    [file.content, file.symbol_spans],
+  );
+  const { html, loading, error } = useHighlightedHtml({
+    code: file.content,
+    lang: file.lang,
+    scheme,
+    decorations,
+  });
+
+  const spanById = useMemo(() => {
+    const m = new Map<string, SymbolSpan>();
+    for (const s of file.symbol_spans) m.set(s.id, s);
+    return m;
+  }, [file.symbol_spans]);
+
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [hover, setHover] = useState<HoverState | null>(null);
+
+  // Keep the latest click handler in a ref so the delegation effect doesn't
+  // re-bind listeners on every parent render.
+  const onSymbolClickRef = useRef(onSymbolClick);
+  onSymbolClickRef.current = onSymbolClick;
+
+  // Click + hover delegation. Re-bound only when the rendered html changes.
+  useEffect(() => {
+    const root = containerRef.current;
+    if (!root || !html) return;
+
+    function symbolElFrom(target: EventTarget | null): HTMLElement | null {
+      return (target as HTMLElement | null)?.closest<HTMLElement>(
+        "[data-symbol-id]",
+      ) ?? null;
+    }
+
+    function onClick(e: MouseEvent) {
+      const el = symbolElFrom(e.target);
+      if (!el) return;
+      const id = el.getAttribute("data-symbol-id");
+      const name = el.getAttribute("data-symbol-name") ?? "";
+      if (id) onSymbolClickRef.current(id, name);
+    }
+
+    function onOver(e: MouseEvent) {
+      const el = symbolElFrom(e.target);
+      if (!el) {
+        setHover(null);
+        return;
+      }
+      const id = el.getAttribute("data-symbol-id");
+      const span = id ? spanById.get(id) : undefined;
+      if (!span) {
+        setHover(null);
+        return;
+      }
+      const rect = el.getBoundingClientRect();
+      const hostRect = root!.getBoundingClientRect();
+      setHover({
+        span,
+        x: rect.left - hostRect.left,
+        y: rect.bottom - hostRect.top + 4,
+      });
+    }
+
+    function onLeave() {
+      setHover(null);
+    }
+
+    root.addEventListener("click", onClick);
+    root.addEventListener("mouseover", onOver);
+    root.addEventListener("mouseleave", onLeave);
+    return () => {
+      root.removeEventListener("click", onClick);
+      root.removeEventListener("mouseover", onOver);
+      root.removeEventListener("mouseleave", onLeave);
+    };
+  }, [html, spanById]);
+
+  // Scroll the focus line into view + flash it once the html is in the DOM.
+  useEffect(() => {
+    const root = containerRef.current;
+    if (!root || !html || !focusLine) return;
+    const lines = root.querySelectorAll<HTMLElement>(".line");
+    const target = lines[focusLine - 1];
+    if (!target) return;
+    target.classList.add("code-line-focus");
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    const id = window.setTimeout(
+      () => target.classList.remove("code-line-focus"),
+      1600,
+    );
+    return () => window.clearTimeout(id);
+  }, [html, focusLine, file.path]);
+
+  if (error) {
+    return (
+      <div className="grid h-full place-items-center px-6 text-center">
+        <p className="font-mono text-sm text-danger">Failed to highlight: {error}</p>
+      </div>
+    );
+  }
+
+  if (loading || html === null) {
+    return (
+      <div className="grid h-full place-items-center">
+        <span className="font-mono text-sm text-text-dim">Loading_</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative h-full min-h-0">
+      <div
+        ref={containerRef}
+        className="code-viewer h-full bg-surface-sunken"
+        // Shiki output is sanitized HTML it generated from our text + tokens.
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+      {hover && <Hovercard hover={hover} />}
+    </div>
+  );
+}
+
+function Hovercard({ hover }: { hover: HoverState }) {
+  const { span, x, y } = hover;
+  return (
+    <div
+      className="pointer-events-none absolute z-30 max-w-md rounded-md border border-border bg-surface-overlay px-3 py-2 shadow-[var(--glow-soft)]"
+      style={{ left: x, top: y }}
+    >
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
+          {span.kind}
+        </span>
+        <span className="font-mono text-xs font-semibold text-text">{span.name}</span>
+      </div>
+      <div className="mt-1 font-mono text-mono-mini text-text-muted whitespace-pre-wrap">
+        {span.signature}
+      </div>
+      {span.doc_comment && (
+        <div className="mt-1.5 border-l border-accent pl-2 font-mono text-mono-mini text-text-dim whitespace-pre-wrap line-clamp-4">
+          {span.doc_comment}
+        </div>
+      )}
+    </div>
+  );
+}
