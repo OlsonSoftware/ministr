@@ -215,7 +215,9 @@ where
     clippy::cast_possible_truncation,
     reason = "f64→f32 narrowing is acceptable for a boost multiplier"
 )]
-pub fn lenient_opt_f32_map<'de, D>(deserializer: D) -> Result<Option<HashMap<String, f32>>, D::Error>
+pub fn lenient_opt_f32_map<'de, D>(
+    deserializer: D,
+) -> Result<Option<HashMap<String, f32>>, D::Error>
 where
     D: Deserializer<'de>,
 {

@@ -432,6 +432,9 @@ mod tests {
         let out = fit_to_budget(Value::Array(big), 600);
         assert!(tokens(&out) <= 600);
         assert!(out["_condensed"].is_object());
-        assert!(out.get("result").is_some(), "bare array wrapped under result");
+        assert!(
+            out.get("result").is_some(),
+            "bare array wrapped under result"
+        );
     }
 }

@@ -3085,7 +3085,11 @@ mod tests {
             .structured_content
             .as_ref()
             .expect("soft error must carry a structured_content envelope");
-        assert_eq!(sc["ok"], serde_json::json!(false), "envelope ok must be false");
+        assert_eq!(
+            sc["ok"],
+            serde_json::json!(false),
+            "envelope ok must be false"
+        );
         assert_eq!(
             sc["error_kind"],
             serde_json::json!(expected_kind),

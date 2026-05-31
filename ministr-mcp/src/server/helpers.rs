@@ -131,7 +131,9 @@ pub(crate) fn format_query_error(err: &QueryError) -> String {
 /// both through [`soft_error`] so the result carries `is_error: false` — a
 /// backend miss (section/symbol not found, daemon transport blip) can never be
 /// the errored sibling that cancels a parallel tool batch.
-pub(crate) fn soft_backend_error(err: &crate::backend::BackendError) -> rmcp::model::CallToolResult {
+pub(crate) fn soft_backend_error(
+    err: &crate::backend::BackendError,
+) -> rmcp::model::CallToolResult {
     use crate::backend::BackendError;
     let kind = match err {
         BackendError::Query(QueryError::SectionNotFound { .. }) => "section_not_found",
