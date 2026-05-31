@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use rmcp::model::{CallToolResult, Content, ErrorData as McpError};
+use rmcp::model::{CallToolResult, ErrorData as McpError};
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
@@ -19,7 +19,7 @@ use ministr_core::storage::{SqliteStorage, Storage};
 
 use super::MinistrServer;
 use super::helpers::{
-    compute_language_stats, elapsed_millis, repo_display_name, structured_result,
+    compute_language_stats, elapsed_millis, repo_display_name, soft_error, structured_result,
 };
 use super::types::{
     CloneParams, CloneResponse, RefreshGitDetailResponse, RefreshParams, RefreshResponse,
@@ -54,9 +54,7 @@ impl MinistrServer {
             Ok(r) => r,
             Err(e) => {
                 warn!(error = %e, repo = %params.repo, "ministr_clone: git clone failed");
-                return Ok(CallToolResult::error(vec![Content::text(format!(
-                    "clone failed: {e}"
-                ))]));
+                return Ok(soft_error("clone_failed", format!("clone failed: {e}")));
             }
         };
         let clone_time_ms = elapsed_millis(clone_start);
@@ -200,9 +198,10 @@ impl MinistrServer {
             }
             Err(e) => {
                 warn!(error = %e, repo = %params.repo, "ministr_clone: ingestion failed");
-                Ok(CallToolResult::error(vec![Content::text(format!(
-                    "clone succeeded but ingestion failed: {e}"
-                ))]))
+                Ok(soft_error(
+                    "ingest_failed",
+                    format!("clone succeeded but ingestion failed: {e}"),
+                ))
             }
         }
     }
@@ -228,7 +227,7 @@ impl MinistrServer {
             match web_result {
                 Ok(tuple) => tuple,
                 Err(msg) => {
-                    return Ok(CallToolResult::error(vec![Content::text(msg)]));
+                    return Ok(soft_error("refresh_failed", msg));
                 }
             };
         let (git_checked, git_refreshed, git_unchanged, git_failed, git_details) = git_result;

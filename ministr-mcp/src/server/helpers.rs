@@ -125,6 +125,25 @@ pub(crate) fn format_query_error(err: &QueryError) -> String {
     }
 }
 
+/// Cascade-safe rendering of a [`crate::backend::BackendError`] as a tool
+/// result. Classifies the error into a stable `error_kind` and reuses
+/// [`format_backend_error`] for the human/agent-facing message, then routes
+/// both through [`soft_error`] so the result carries `is_error: false` — a
+/// backend miss (section/symbol not found, daemon transport blip) can never be
+/// the errored sibling that cancels a parallel tool batch.
+pub(crate) fn soft_backend_error(err: &crate::backend::BackendError) -> rmcp::model::CallToolResult {
+    use crate::backend::BackendError;
+    let kind = match err {
+        BackendError::Query(QueryError::SectionNotFound { .. }) => "section_not_found",
+        BackendError::Query(QueryError::ClaimNotFound { .. }) => "claim_not_found",
+        BackendError::Query(QueryError::SymbolNotFound { .. }) => "symbol_not_found",
+        BackendError::Query(QueryError::Index(_)) => "index_error",
+        BackendError::Query(QueryError::Storage(_)) => "storage_error",
+        BackendError::Client(_) => "daemon_error",
+    };
+    soft_error(kind, format_backend_error(err))
+}
+
 /// Format a [`crate::backend::BackendError`] into a user-friendly error
 /// message for MCP tool responses.
 ///
@@ -281,6 +300,42 @@ pub(crate) fn build_instructions(router: &ToolRouter<MinistrServer>) -> String {
         "ministr is a code intelligence MCP server for AI coding agents. Use {}.",
         parts.join(", "),
     )
+}
+
+/// Cascade-safe logical failure: a tool result that is **not** an MCP error.
+///
+/// Claude Code cancels *every sibling tool call in a parallel batch* when one
+/// of them errors (anthropics/claude-code#22264). A tool reports an error two
+/// ways: a JSON-RPC `-32602` (killed at the [`super::coerce`] layer) or a
+/// `CallToolResult` with `is_error: true` — which is what
+/// `CallToolResult::error` sets. So an ordinary logical failure ("section not
+/// found") becomes the errored sibling that wipes a whole batch.
+///
+/// This is the single home for the rule: **a tool result is never marked
+/// `is_error: true`.** A logical failure is returned as a *successful* result
+/// whose payload loudly says it failed —
+/// `{ ok: false, error_kind, message }` in `structured_content`, and a
+/// `"⚠ <kind>: <message>"` line in the text content so a human/agent reading
+/// prose can't miss it. The tool *succeeded at telling the caller the request
+/// was invalid*; it produced no errored sibling, so nothing cascades.
+#[must_use]
+pub(crate) fn soft_error(
+    error_kind: &str,
+    message: impl Into<String>,
+) -> rmcp::model::CallToolResult {
+    use rmcp::model::{CallToolResult, Content};
+    let message = message.into();
+    let structured = serde_json::json!({
+        "ok": false,
+        "error_kind": error_kind,
+        "message": message,
+    });
+    // Build via the structured constructor (which sets is_error:false) and
+    // replace the default text with our loud "⚠ kind: message" line. The
+    // is_error:false is the load-bearing bit.
+    let mut result = CallToolResult::structured(structured);
+    result.content = vec![Content::text(format!("⚠ {error_kind}: {message}"))];
+    result
 }
 
 /// Serialize a value into a `CallToolResult` with structured content.

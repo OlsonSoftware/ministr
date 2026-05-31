@@ -7,6 +7,8 @@
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 
+use super::coerce;
+
 use ministr_core::service::{
     CompressedItem, DeadSymbol, ImpactResult, RelatedClaimResult, SolidFinding, SurveyResult,
     SymbolRefResult,
@@ -142,15 +144,17 @@ pub(crate) struct DroppedResponse {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SurveyParams {
     /// Natural language query to search for relevant content.
+    #[serde(default, deserialize_with = "coerce::lenient_string")]
     #[schemars(description = "Natural language query to search the corpus")]
     pub query: String,
 
     /// Maximum number of results to return (default: 10).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
     #[schemars(description = "Maximum number of results to return")]
     pub top_k: Option<usize>,
 
     /// Optional linked-project label. Omit for the session's primary corpus.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(
         description = "Optional linked-project label (from .ministr.toml [[linked]]). \
                        Omit for the session's primary corpus. Call ministr_projects to list labels."
@@ -164,7 +168,7 @@ pub struct SurveyParams {
     /// `top_k`. When omitted or empty, behaviour is unchanged (single
     /// corpus resolved through `project`). Mutually compatible with
     /// `project`: when both are set, `corpus_ids` wins.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "coerce::opt_string_or_seq")]
     #[schemars(
         description = "Optional cross-corpus list. When set and non-empty, fans the query out \
                        across each corpus_id (own corpora or Atlas slugs), tags hits with \
@@ -178,7 +182,7 @@ pub struct SurveyParams {
     /// 0.0 = suppressed). Absent corpora default to 1.0. Values are
     /// clamped to `[0.0, 10.0]` and any non-finite (NaN, ±∞) value is
     /// rejected back to 1.0. Only consulted when `corpus_ids` is set.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "coerce::lenient_opt_f32_map")]
     #[schemars(
         description = "Optional per-corpus score multipliers for cross-corpus ranking. \
                        Map<corpus_id, multiplier>; absent corpora default to 1.0; clamped to [0, 10]. \
@@ -191,11 +195,12 @@ pub struct SurveyParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ReadParams {
     /// Hierarchical section ID (e.g. `docs/auth.md#error-handling`).
+    #[serde(default, deserialize_with = "coerce::lenient_string")]
     #[schemars(description = "Section ID to read (e.g. 'docs/auth.md#error-handling')")]
     pub section_id: String,
 
     /// Optional linked-project label.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
     pub project: Option<String>,
 }
@@ -204,6 +209,7 @@ pub struct ReadParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DroppedParams {
     /// Content IDs that the agent has dropped from its context window.
+    #[serde(default, deserialize_with = "coerce::string_or_seq")]
     #[schemars(description = "Content IDs the agent has dropped from its context")]
     pub content_ids: Vec<String>,
 }
@@ -212,15 +218,17 @@ pub struct DroppedParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ExtractParams {
     /// Section ID to extract claims from.
+    #[serde(default, deserialize_with = "coerce::lenient_string")]
     #[schemars(description = "Section ID to extract claims from")]
     pub section_id: String,
 
     /// Optional query to filter claims by relevance.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional query to filter claims by relevance")]
     pub query: Option<String>,
 
     /// Optional linked-project label.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
     pub project: Option<String>,
 }
@@ -229,11 +237,12 @@ pub struct ExtractParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CompressParams {
     /// Content IDs to generate compressed summaries for.
+    #[serde(default, deserialize_with = "coerce::string_or_seq")]
     #[schemars(description = "Content IDs (section IDs) to generate compressed summaries for")]
     pub content_ids: Vec<String>,
 
     /// Optional linked-project label.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
     pub project: Option<String>,
 }
@@ -299,17 +308,19 @@ pub(crate) struct SessionMetricsResponse {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct RelatedParams {
     /// Claim ID to find related claims for.
+    #[serde(default, deserialize_with = "coerce::lenient_string")]
     #[schemars(description = "Claim ID to find related claims for")]
     pub claim_id: String,
 
     /// Optional filter for specific relation types.
+    #[serde(default, deserialize_with = "coerce::opt_string_or_seq")]
     #[schemars(
         description = "Optional filter: 'references', 'contradicts', 'depends_on', 'updates'"
     )]
     pub relation_types: Option<Vec<String>>,
 
     /// Optional linked-project label.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
     pub project: Option<String>,
 }
@@ -338,21 +349,24 @@ pub(crate) struct CompressResponse {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TocParams {
     /// Optional document ID filter — returns only sections from this document.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(
         description = "Optional document ID to filter the table of contents to a single document"
     )]
     pub document_id: Option<String>,
 
     /// Number of entries to skip (default: 0). Use with `limit` for pagination.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
     #[schemars(description = "Number of entries to skip (default: 0)")]
     pub offset: Option<usize>,
 
     /// Maximum number of entries to return (default: 100).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
     #[schemars(description = "Maximum number of entries to return (default: 100)")]
     pub limit: Option<usize>,
 
     /// Optional linked-project label.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
     pub project: Option<String>,
 }
@@ -361,19 +375,23 @@ pub struct TocParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct FetchParams {
     /// URL to fetch content from.
+    #[serde(default, deserialize_with = "coerce::lenient_string")]
     #[schemars(description = "URL to fetch content from (e.g. 'https://docs.example.com/')")]
     pub url: String,
 
     /// Crawl depth for following links (default: 0 = single page).
     /// Depth 1+ follows same-domain links up to this depth.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_u32")]
     #[schemars(description = "Crawl depth for following links (default: 0 = single page only)")]
     pub depth: Option<u32>,
 
     /// Maximum number of pages to fetch when crawling (default: 50).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
     #[schemars(description = "Maximum number of pages to fetch when crawling (default: 50)")]
     pub max_pages: Option<usize>,
 
     /// Only fetch URLs whose path starts with this prefix (e.g. '/docs/').
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Only fetch URLs whose path starts with this prefix (e.g. '/docs/')")]
     pub path_filter: Option<String>,
 }
@@ -398,6 +416,7 @@ pub(crate) struct FetchResponse {
 pub struct RefreshParams {
     /// Optional URL or repo URL to refresh. If omitted, checks all cached web
     /// and git sources.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(
         description = "Optional URL (web) or repo URL (git) to check for staleness. If omitted, checks all cached sources."
     )]
@@ -465,6 +484,7 @@ pub(crate) fn is_zero(val: &usize) -> bool {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CloneParams {
     /// Remote git repository URL (HTTPS or SSH).
+    #[serde(default, deserialize_with = "coerce::lenient_string")]
     #[schemars(
         description = "Remote git repository URL to clone (e.g. 'https://github.com/owner/repo.git')"
     )]
@@ -472,12 +492,14 @@ pub struct CloneParams {
 
     /// Optional list of paths for sparse checkout — only these directories/files
     /// will be checked out and indexed.
+    #[serde(default, deserialize_with = "coerce::opt_string_or_seq")]
     #[schemars(
         description = "Optional paths for sparse checkout (e.g. ['docs', 'src']). Omit for full checkout."
     )]
     pub paths: Option<Vec<String>>,
 
     /// Optional branch to clone (defaults to the repository's default branch).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional branch to clone (defaults to repository default)")]
     pub branch: Option<String>,
 }
@@ -505,6 +527,7 @@ pub(crate) struct CloneResponse {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct TaskParams {
     /// Task ID to check status for.
+    #[serde(default, deserialize_with = "coerce::lenient_string")]
     #[schemars(description = "Task ID to check status for")]
     pub task_id: String,
 }
@@ -539,33 +562,39 @@ pub(crate) struct TaskStatusResponse {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SymbolsParams {
     /// Fuzzy name search (case-insensitive substring match).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Fuzzy symbol name search (case-insensitive substring match)")]
     pub query: Option<String>,
 
     /// Exact kind filter (e.g. "function", "struct", "trait", "enum", "impl").
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(
         description = "Exact kind filter: 'function', 'struct', 'trait', 'enum', 'impl', 'const', 'static', 'type', 'mod'"
     )]
     pub kind: Option<String>,
 
     /// Module path prefix filter (e.g. "config" matches `config::sub`).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Module path prefix filter (e.g. 'config' matches config::sub)")]
     pub module: Option<String>,
 
     /// Exact visibility filter (e.g. "pub", "pub(crate)", "").
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Exact visibility filter: 'pub', 'pub(crate)', 'pub(super)', ''")]
     pub visibility: Option<String>,
 
     /// Number of entries to skip (default: 0). Use with `limit` for pagination.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
     #[schemars(description = "Number of entries to skip (default: 0)")]
     pub offset: Option<usize>,
 
     /// Maximum number of entries to return (default: 100).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
     #[schemars(description = "Maximum number of entries to return (default: 100)")]
     pub limit: Option<usize>,
 
     /// Optional linked-project label.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
     pub project: Option<String>,
 }
@@ -574,11 +603,12 @@ pub struct SymbolsParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DefinitionParams {
     /// The symbol ID to look up.
+    #[serde(default, deserialize_with = "coerce::lenient_string")]
     #[schemars(description = "Symbol ID to get the definition for (from ministr_symbols results)")]
     pub symbol_id: String,
 
     /// Optional linked-project label.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
     pub project: Option<String>,
 }
@@ -587,25 +617,29 @@ pub struct DefinitionParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ReferencesParams {
     /// The symbol ID to find references for.
+    #[serde(default, deserialize_with = "coerce::lenient_string")]
     #[schemars(description = "Symbol ID to find references for (from ministr_symbols results)")]
     pub symbol_id: String,
 
     /// Optional reference kind filter.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(
         description = "Optional reference kind filter: 'calls', 'implements', 'imports', 'uses', 'bridge'"
     )]
     pub ref_kind: Option<String>,
 
     /// Number of entries to skip (default: 0). Use with `limit` for pagination.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
     #[schemars(description = "Number of entries to skip (default: 0)")]
     pub offset: Option<usize>,
 
     /// Maximum number of entries to return (default: 100).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
     #[schemars(description = "Maximum number of entries to return (default: 100)")]
     pub limit: Option<usize>,
 
     /// Optional linked-project label.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
     pub project: Option<String>,
 }
@@ -614,19 +648,21 @@ pub struct ReferencesParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ImpactParams {
     /// The symbol ID whose blast radius should be analyzed.
+    #[serde(default, deserialize_with = "coerce::lenient_string")]
     #[schemars(
         description = "Symbol ID whose blast radius should be analyzed (from ministr_symbols results)"
     )]
     pub symbol_id: String,
 
     /// Maximum BFS depth to walk (default 3, capped at 10).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_u32")]
     #[schemars(
         description = "Maximum BFS depth to walk up the call graph. Default 3, capped at 10."
     )]
     pub max_depth: Option<u32>,
 
     /// Optional linked-project label.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
     pub project: Option<String>,
 }
@@ -635,25 +671,29 @@ pub struct ImpactParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DeadCodeParams {
     /// Optional kind filter (e.g. `"function"`, `"struct"`).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional symbol kind filter (e.g. 'function', 'struct')")]
     pub kind: Option<String>,
 
     /// Optional module path prefix filter.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional module path prefix filter")]
     pub module: Option<String>,
 
     /// Skip symbols whose body is shorter than this many lines (default 1).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_u32")]
     #[schemars(
         description = "Skip symbols whose body is shorter than this many lines. Default 1."
     )]
     pub min_lines: Option<u32>,
 
     /// Maximum results to return (default 50, capped at 500).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
     #[schemars(description = "Maximum results to return. Default 50, capped at 500.")]
     pub limit: Option<usize>,
 
     /// Optional linked-project label.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
     pub project: Option<String>,
 }
@@ -727,70 +767,80 @@ pub(crate) struct DeadCodeResponse {
 pub struct SolidParams {
     /// Optional symbol-kind filter for the candidate set
     /// (e.g. `"function"`).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional symbol kind filter (e.g. 'function', 'struct')")]
     pub kind: Option<String>,
 
     /// Module-path prefix filter (e.g. `"server"`).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional module path prefix filter")]
     pub module: Option<String>,
 
     /// Which principles to evaluate: any subset of `dry_ocp`, `srp`, `isp`,
     /// `dip`, `shotgun_surgery`, `cyclic_dependency`. Empty / omitted = all six.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "coerce::string_or_seq")]
     #[schemars(
         description = "Principles to evaluate: 'dry_ocp', 'srp', 'isp', 'dip', 'shotgun_surgery', 'cyclic_dependency'. Omit or pass empty to run all six."
     )]
     pub principles: Vec<String>,
 
     /// Override container kinds (defaults cover Rust/TS/Python).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "coerce::string_or_seq")]
     #[schemars(
         description = "Override container kinds for SRP detection. Defaults: ['impl','struct','class','mod']"
     )]
     pub container_kinds: Vec<String>,
 
     /// Override interface kinds.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "coerce::string_or_seq")]
     #[schemars(
         description = "Override interface kinds for ISP/DIP detection. Defaults: ['trait','interface','protocol']"
     )]
     pub interface_kinds: Vec<String>,
 
     /// Cosine threshold for DRY/OCP clone detection (default 0.86).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_f32")]
     #[schemars(description = "Cosine threshold for DRY/OCP clone detection. Default 0.86.")]
     pub similarity_threshold: Option<f32>,
 
     /// Jaccard threshold over callee-sets for DRY/OCP (default 0.4).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_f32")]
     #[schemars(description = "Jaccard threshold over callee-sets for DRY/OCP. Default 0.4.")]
     pub jaccard_threshold: Option<f32>,
 
     /// Cosine threshold for SRP cohesion edges (default 0.7).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_f32")]
     #[schemars(
         description = "Cosine threshold for SRP within-container cohesion edges. Default 0.7."
     )]
     pub srp_cohesion_threshold: Option<f32>,
 
     /// Minimum method count for ISP to fire (default 6).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
     #[schemars(description = "Minimum interface method count before ISP fires. Default 6.")]
     pub isp_min_methods: Option<usize>,
 
     /// Implementor counts as "under-using" at or below this fraction
     /// (default 0.33).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_f32")]
     #[schemars(
         description = "Implementor under-using cutoff (fraction of trait methods overlapped). Default 0.33."
     )]
     pub isp_max_overlap_fraction: Option<f32>,
 
     /// Skip candidate symbols shorter than this many lines (default 5).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_u32")]
     #[schemars(description = "Skip candidate symbols shorter than this many lines. Default 5.")]
     pub min_lines: Option<u32>,
 
     /// Maximum findings to return (default 50, capped at 500).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
     #[schemars(description = "Maximum findings to return. Default 50, capped at 500.")]
     pub limit: Option<usize>,
 
     /// Hard cap on pairwise comparisons inside any single DRY/OCP bucket
     /// (default 100k).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
     #[schemars(
         description = "Hard cap on pairwise comparisons inside any DRY/OCP bucket. Default 100k."
     )]
@@ -799,12 +849,14 @@ pub struct SolidParams {
     /// Maximum representative members included per finding component list.
     /// When a list exceeds this it's truncated and the remainder is
     /// reported as `*_omitted` (default 5).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
     #[schemars(
         description = "Maximum representative members per component list. Larger arrays are truncated and reported via `*_omitted`. Default 5."
     )]
     pub representative_count: Option<usize>,
 
     /// Minimum file count before a Shotgun-Surgery finding fires (default 3).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
     #[schemars(
         description = "Minimum file count before a Shotgun-Surgery finding fires. Default 3."
     )]
@@ -812,6 +864,7 @@ pub struct SolidParams {
 
     /// Max callee-set Jaccard for Shotgun-Surgery. Above this the group is a
     /// real Type-4 clone, handled by `dry_ocp` instead (default 0.5).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_f32")]
     #[schemars(
         description = "Maximum callee-set Jaccard for ShotgunSurgery. Above this the group is treated as a Type-4 clone and handled by 'dry_ocp'. Default 0.5."
     )]
@@ -820,6 +873,7 @@ pub struct SolidParams {
     /// Shotgun-Surgery sites must span at least this many distinct package
     /// prefixes (default 2). Single-crate fan-out is typically intentional
     /// polymorphism, not a cross-layer smell.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
     #[schemars(
         description = "Minimum distinct packages a Shotgun-Surgery group must span. Default 2."
     )]
@@ -828,6 +882,7 @@ pub struct SolidParams {
     /// Whether to drop Shotgun-Surgery candidates with conventional method
     /// names (`new`, `default`, `fmt`, `clone`, `as_str`, `parse`,
     /// `main`, ...). Default `true`.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_bool")]
     #[schemars(
         description = "Skip Shotgun-Surgery groups whose name is universally conventional (new/default/fmt/clone/as_str/parse/main/etc.). Default true."
     )]
@@ -836,6 +891,7 @@ pub struct SolidParams {
     /// Minimum cross-package edges per direction before two packages
     /// count as mutually dependent (default 2). Filters phantom cycles
     /// from ambiguous symbol-name resolution.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
     #[schemars(
         description = "CyclicDependency: minimum distinct cross-package edges per direction. Single-edge cycles are usually phantom name-resolution artefacts. Default 2."
     )]
@@ -843,13 +899,14 @@ pub struct SolidParams {
 
     /// Whether the cycle detector skips edges whose source or target
     /// lives in a test / fixture path. Default `true`.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_bool")]
     #[schemars(
         description = "CyclicDependency: skip edges touching test/fixture paths. Sample data shouldn't drive the workspace dependency graph. Default true."
     )]
     pub cyclic_skip_test_paths: Option<bool>,
 
     /// Optional linked-project label.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
     pub project: Option<String>,
 }
@@ -868,29 +925,33 @@ pub(crate) struct SolidResponse {
 #[serde(rename_all = "snake_case")]
 pub struct BridgeParams {
     /// Optional search query to filter bridge links by binding key or symbol name.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(
         description = "Search query to filter by binding key or symbol name (case-insensitive substring match)"
     )]
     pub query: Option<String>,
 
     /// Optional bridge kind filter.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(
         description = "Filter by bridge kind: 'tauri_command', 'tauri_event', 'napi', 'wasm_bindgen', 'pyo3', 'http_route', 'ffi', 'cgo', 'jni', 'uni_ffi', 'grpc', 'flutter_channel', 'electron_ipc'"
     )]
     pub bridge_kind: Option<String>,
 
     /// Optional language filter.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(
         description = "Filter links involving this language (e.g. 'rust', 'typescript', 'javascript', 'python')"
     )]
     pub language: Option<String>,
 
     /// Optional file path filter.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Filter links where either endpoint is in this file path")]
     pub file_path: Option<String>,
 
     /// Optional linked-project label.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
     pub project: Option<String>,
 }

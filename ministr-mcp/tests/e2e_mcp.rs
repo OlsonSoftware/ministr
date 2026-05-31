@@ -646,7 +646,9 @@ async fn read_nonexistent_section_returns_user_friendly_error() {
     )
     .await;
 
-    assert_eq!(result.is_error, Some(true));
+    // Cascade-safe: a logical failure is a *soft* error (is_error:false) so it
+    // can't cancel sibling tool calls in a parallel batch.
+    assert_eq!(result.is_error, Some(false));
     let text = extract_text(&result.content);
     assert!(text.contains("Section not found"), "got: {text}");
     assert!(
@@ -666,7 +668,7 @@ async fn extract_nonexistent_section_returns_user_friendly_error() {
     )
     .await;
 
-    assert_eq!(result.is_error, Some(true));
+    assert_eq!(result.is_error, Some(false));
     let text = extract_text(&result.content);
     assert!(text.contains("Section not found"));
 }
@@ -2448,8 +2450,8 @@ async fn ministr_fetch_not_configured_returns_error() {
     .await;
 
     assert!(
-        result.is_error == Some(true),
-        "ministr_fetch should return error when not configured"
+        result.is_error == Some(false),
+        "ministr_fetch should report a soft (non-cascading) error when not configured"
     );
 
     let text = extract_text(&result.content);
@@ -3007,8 +3009,8 @@ async fn ministr_clone_not_configured_returns_error() {
     .await;
 
     assert!(
-        result.is_error == Some(true),
-        "ministr_clone should return error when not configured"
+        result.is_error == Some(false),
+        "ministr_clone should report a soft (non-cascading) error when not configured"
     );
 
     let text = extract_text(&result.content);
@@ -3043,8 +3045,8 @@ async fn ministr_clone_nonexistent_repo_returns_user_friendly_error() {
 
     // Should return an error result, not panic.
     assert!(
-        result.is_error == Some(true),
-        "ministr_clone with nonexistent repo should return error"
+        result.is_error == Some(false),
+        "ministr_clone with nonexistent repo should report a soft (non-cascading) error"
     );
 
     let text = extract_text(&result.content);
@@ -3073,8 +3075,8 @@ async fn ministr_clone_empty_repo_url_returns_error() {
     let result = call_tool(&client, "ministr_clone", json!({"repo": ""})).await;
 
     assert!(
-        result.is_error == Some(true),
-        "ministr_clone with empty URL should return error"
+        result.is_error == Some(false),
+        "ministr_clone with empty URL should report a soft (non-cascading) error"
     );
 
     let text = extract_text(&result.content);
@@ -3355,7 +3357,7 @@ async fn ministr_definition_not_found() {
     )
     .await;
 
-    assert_eq!(result.is_error, Some(true));
+    assert_eq!(result.is_error, Some(false));
     let text = extract_text(&result.content);
     assert!(
         text.contains("Symbol not found"),
@@ -3439,7 +3441,7 @@ async fn ministr_references_not_found() {
     )
     .await;
 
-    assert_eq!(result.is_error, Some(true));
+    assert_eq!(result.is_error, Some(false));
     let text = extract_text(&result.content);
     assert!(
         text.contains("Symbol not found"),
@@ -3862,8 +3864,8 @@ async fn integration_roundtrip_all_mcp_tools() {
     .await;
     assert_eq!(
         fetch.is_error,
-        Some(true),
-        "ministr_fetch should fail when not configured"
+        Some(false),
+        "ministr_fetch should report a soft (non-cascading) failure when not configured"
     );
 
     // 14. ministr_clone — should return error (not configured)
@@ -3875,8 +3877,8 @@ async fn integration_roundtrip_all_mcp_tools() {
     .await;
     assert_eq!(
         clone.is_error,
-        Some(true),
-        "ministr_clone should fail when not configured"
+        Some(false),
+        "ministr_clone should report a soft (non-cascading) failure when not configured"
     );
 
     // Verify all tools are listed

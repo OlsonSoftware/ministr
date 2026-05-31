@@ -10,6 +10,7 @@
 //! (`ministr_usage`, `ministr_compress`, `ministr_dropped`).
 
 mod builders;
+mod coerce;
 mod helpers;
 mod prefetch;
 mod progress;
@@ -30,7 +31,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::ErrorData as McpError;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, CancelTaskParams, CompleteRequestParams, CompleteResult,
-    CompletionInfo, Content, CreateTaskResult, ExtensionCapabilities, GetPromptRequestParams,
+    CompletionInfo, CreateTaskResult, ExtensionCapabilities, GetPromptRequestParams,
     GetPromptResult, GetTaskInfoParams, GetTaskPayloadResult, GetTaskResult, GetTaskResultParams,
     Implementation, InitializeRequestParams, InitializeResult, ListPromptsResult,
     ListResourceTemplatesResult, ListResourcesResult, ListTasksResult, PaginatedRequestParams,
@@ -62,7 +63,7 @@ use ministr_core::types::{
 use ministr_core::web::fetcher::WebFetcher;
 
 use helpers::{
-    MAX_INTENT_PREFETCH_SURVEY, content_hash, format_backend_error, parse_resolution,
+    MAX_INTENT_PREFETCH_SURVEY, content_hash, parse_resolution, soft_backend_error, soft_error,
     structured_result,
 };
 use progress::{run_ingestion_progress_notifier, run_subscription_notifier};
@@ -1297,9 +1298,7 @@ impl MinistrServer {
                 }
                 Err(e) => {
                     warn!(error = %e, "ministr_survey failed");
-                    Ok(CallToolResult::error(vec![Content::text(
-                        format_backend_error(&e),
-                    )]))
+                    Ok(soft_backend_error(&e))
                 }
             }
         }
@@ -1417,9 +1416,7 @@ impl MinistrServer {
                 }
                 Err(e) => {
                     warn!(error = %e, section_id = %params.section_id, "ministr_read failed");
-                    Ok(CallToolResult::error(vec![Content::text(
-                        format_backend_error(&e),
-                    )]))
+                    Ok(soft_backend_error(&e))
                 }
             }
         }
@@ -1500,9 +1497,7 @@ impl MinistrServer {
                 }
                 Err(e) => {
                     warn!(error = %e, section_id = %params.section_id, "ministr_extract failed");
-                    Ok(CallToolResult::error(vec![Content::text(
-                        format_backend_error(&e),
-                    )]))
+                    Ok(soft_backend_error(&e))
                 }
             }
         }
@@ -1585,9 +1580,7 @@ impl MinistrServer {
                 }
                 Err(e) => {
                     warn!(error = %e, claim_id = %params.claim_id, "ministr_related failed");
-                    Ok(CallToolResult::error(vec![Content::text(
-                        format_backend_error(&e),
-                    )]))
+                    Ok(soft_backend_error(&e))
                 }
             }
         }
@@ -1837,9 +1830,7 @@ impl MinistrServer {
                 }
                 Err(e) => {
                     warn!(error = %e, "ministr_compress failed");
-                    Ok(CallToolResult::error(vec![Content::text(
-                        format_backend_error(&e),
-                    )]))
+                    Ok(soft_backend_error(&e))
                 }
             }
         }
@@ -1946,9 +1937,7 @@ impl MinistrServer {
                 }
                 Err(e) => {
                     warn!(error = %e, "ministr_toc failed");
-                    Ok(CallToolResult::error(vec![Content::text(
-                        format_backend_error(&e),
-                    )]))
+                    Ok(soft_backend_error(&e))
                 }
             }
         }
@@ -1986,29 +1975,32 @@ impl MinistrServer {
             );
 
             let Some(ref web_fetcher) = self.web_fetcher else {
-                return Ok(CallToolResult::error(vec![Content::text(
+                return Ok(soft_error(
+                    "not_available",
                     "ministr_fetch is not available: web fetcher not configured. \
-                     Start ministr with a data directory to enable web fetching."
-                        .to_string(),
-                )]));
+                     Start ministr with a data directory to enable web fetching.",
+                ));
             };
 
             let Some(ref embedder) = self.embedder else {
-                return Ok(CallToolResult::error(vec![Content::text(
-                    "ministr_fetch is not available: embedder not configured.".to_string(),
-                )]));
+                return Ok(soft_error(
+                    "not_available",
+                    "ministr_fetch is not available: embedder not configured.",
+                ));
             };
 
             let Some(ref index) = self.index else {
-                return Ok(CallToolResult::error(vec![Content::text(
-                    "ministr_fetch is not available: vector index not configured.".to_string(),
-                )]));
+                return Ok(soft_error(
+                    "not_available",
+                    "ministr_fetch is not available: vector index not configured.",
+                ));
             };
 
             let Some(ref storage) = self.storage else {
-                return Ok(CallToolResult::error(vec![Content::text(
-                    "ministr_fetch is not available: storage not configured.".to_string(),
-                )]));
+                return Ok(soft_error(
+                    "not_available",
+                    "ministr_fetch is not available: storage not configured.",
+                ));
             };
 
             // When invoked as an MCP Task, rmcp's enqueue_task handles the
@@ -2055,9 +2047,7 @@ impl MinistrServer {
                 }
                 Err(e) => {
                     warn!(error = %e, url = %params.url, "ministr_fetch failed");
-                    Ok(CallToolResult::error(vec![Content::text(format!(
-                        "fetch failed: {e}"
-                    ))]))
+                    Ok(soft_error("fetch_failed", format!("fetch failed: {e}")))
                 }
             }
         }
@@ -2086,21 +2076,24 @@ impl MinistrServer {
             debug!(url = ?params.url, "ministr_refresh request");
 
             let Some(ref embedder) = self.embedder else {
-                return Ok(CallToolResult::error(vec![Content::text(
-                    "ministr_refresh is not available: embedder not configured.".to_string(),
-                )]));
+                return Ok(soft_error(
+                    "not_available",
+                    "ministr_refresh is not available: embedder not configured.",
+                ));
             };
 
             let Some(ref index) = self.index else {
-                return Ok(CallToolResult::error(vec![Content::text(
-                    "ministr_refresh is not available: vector index not configured.".to_string(),
-                )]));
+                return Ok(soft_error(
+                    "not_available",
+                    "ministr_refresh is not available: vector index not configured.",
+                ));
             };
 
             let Some(ref storage) = self.storage else {
-                return Ok(CallToolResult::error(vec![Content::text(
-                    "ministr_refresh is not available: storage not configured.".to_string(),
-                )]));
+                return Ok(soft_error(
+                    "not_available",
+                    "ministr_refresh is not available: storage not configured.",
+                ));
             };
 
             self.refresh_all_sources(&params, storage, embedder.as_ref(), index.as_ref())
@@ -2168,37 +2161,38 @@ impl MinistrServer {
                     }
                     Err(e) => {
                         warn!(error = %e, repo = %params.repo, "ministr_clone (daemon-backend) failed");
-                        Ok(CallToolResult::error(vec![Content::text(format!(
-                            "daemon clone failed: {e}"
-                        ))]))
+                        Ok(soft_error("clone_failed", format!("daemon clone failed: {e}")))
                     }
                 };
             }
 
             let Some(ref git_fetcher) = self.git_fetcher else {
-                return Ok(CallToolResult::error(vec![Content::text(
+                return Ok(soft_error(
+                    "not_available",
                     "ministr_clone is not available: git fetcher not configured. \
-                     Start ministr with a data directory to enable git cloning."
-                        .to_string(),
-                )]));
+                     Start ministr with a data directory to enable git cloning.",
+                ));
             };
 
             let Some(ref embedder) = self.embedder else {
-                return Ok(CallToolResult::error(vec![Content::text(
-                    "ministr_clone is not available: embedder not configured.".to_string(),
-                )]));
+                return Ok(soft_error(
+                    "not_available",
+                    "ministr_clone is not available: embedder not configured.",
+                ));
             };
 
             let Some(ref index) = self.index else {
-                return Ok(CallToolResult::error(vec![Content::text(
-                    "ministr_clone is not available: vector index not configured.".to_string(),
-                )]));
+                return Ok(soft_error(
+                    "not_available",
+                    "ministr_clone is not available: vector index not configured.",
+                ));
             };
 
             let Some(ref storage) = self.storage else {
-                return Ok(CallToolResult::error(vec![Content::text(
-                    "ministr_clone is not available: storage not configured.".to_string(),
-                )]));
+                return Ok(soft_error(
+                    "not_available",
+                    "ministr_clone is not available: storage not configured.",
+                ));
             };
 
             // When invoked as an MCP Task, rmcp's enqueue_task handles the
@@ -2239,10 +2233,13 @@ impl MinistrServer {
 
             match self.task_manager.get_task(&params.task_id).await {
                 Some(task) => structured_result(&task),
-                None => Ok(CallToolResult::error(vec![Content::text(format!(
-                    "unknown task ID: {}. Tasks expire 5 minutes after completion.",
-                    params.task_id
-                ))])),
+                None => Ok(soft_error(
+                    "not_found",
+                    format!(
+                        "unknown task ID: {}. Tasks expire 5 minutes after completion.",
+                        params.task_id
+                    ),
+                )),
             }
         }
         .instrument(span)
@@ -2356,7 +2353,7 @@ impl MinistrServer {
                 }
                 Err(e) => {
                     warn!(error = %e, "ministr_symbols failed");
-                    Ok(CallToolResult::error(vec![Content::text(format_backend_error(&e))]))
+                    Ok(soft_backend_error(&e))
                 }
             }
         }
@@ -2408,7 +2405,7 @@ impl MinistrServer {
                 }
                 Err(e) => {
                     warn!(error = %e, symbol_id = %params.symbol_id, "ministr_definition failed");
-                    Ok(CallToolResult::error(vec![Content::text(format_backend_error(&e))]))
+                    Ok(soft_backend_error(&e))
                 }
             }
         }
@@ -2480,7 +2477,7 @@ impl MinistrServer {
                 }
                 Err(e) => {
                     warn!(error = %e, symbol_id = %params.symbol_id, "ministr_references failed");
-                    Ok(CallToolResult::error(vec![Content::text(format_backend_error(&e))]))
+                    Ok(soft_backend_error(&e))
                 }
             }
         }
@@ -2537,7 +2534,7 @@ impl MinistrServer {
                 }
                 Err(e) => {
                     warn!(error = %e, symbol_id = %params.symbol_id, "ministr_impact failed");
-                    Ok(CallToolResult::error(vec![Content::text(format_backend_error(&e))]))
+                    Ok(soft_backend_error(&e))
                 }
             }
         }
@@ -2607,9 +2604,7 @@ impl MinistrServer {
                 }
                 Err(e) => {
                     warn!(error = %e, "ministr_dead failed");
-                    Ok(CallToolResult::error(vec![Content::text(
-                        format_backend_error(&e),
-                    )]))
+                    Ok(soft_backend_error(&e))
                 }
             }
         }
@@ -2677,9 +2672,7 @@ impl MinistrServer {
                 }
                 Err(e) => {
                     warn!(error = %e, "ministr_solid failed");
-                    Ok(CallToolResult::error(vec![Content::text(
-                        format_backend_error(&e),
-                    )]))
+                    Ok(soft_backend_error(&e))
                 }
             }
         }
@@ -2757,7 +2750,7 @@ impl MinistrServer {
                 }
                 Err(e) => {
                     warn!(error = %e, "ministr_bridge failed");
-                    Ok(CallToolResult::error(vec![Content::text(format_backend_error(&e))]))
+                    Ok(soft_backend_error(&e))
                 }
             }
         }
@@ -3045,6 +3038,7 @@ impl MinistrServer {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DependencyChainArgs {
     /// The concept or topic to trace dependency chains for.
+    #[serde(default, deserialize_with = "coerce::lenient_string")]
     #[schemars(description = "The concept to trace claim dependency chains for")]
     pub concept: String,
 }
@@ -3059,7 +3053,7 @@ mod tests {
     use ministr_core::session::UsageConfig;
     use ministr_core::storage::{SqliteStorage, Storage};
     use ministr_core::types::{Claim, ClaimId, ContentId, DocumentTree, Section, SectionId};
-    use rmcp::model::{ProtocolVersion, ResourceContents};
+    use rmcp::model::{Content, ProtocolVersion, ResourceContents};
     use serde::Serialize;
 
     use crate::server::helpers::{
@@ -3074,6 +3068,28 @@ mod tests {
             .expect("expected text content")
             .text
             .as_str()
+    }
+
+    /// Assert a tool result is a *soft* error (cascade-safe): it must never set
+    /// `is_error: true` (which would cancel sibling tool calls in a parallel
+    /// batch — anthropics/claude-code#22264) and must carry the
+    /// `{ ok: false, error_kind, message }` envelope in `structured_content`.
+    fn assert_soft_error(result: &CallToolResult, expected_kind: &str) {
+        assert_eq!(
+            result.is_error,
+            Some(false),
+            "logical failures must be soft (is_error:false) so they never cascade-cancel siblings"
+        );
+        let sc = result
+            .structured_content
+            .as_ref()
+            .expect("soft error must carry a structured_content envelope");
+        assert_eq!(sc["ok"], serde_json::json!(false), "envelope ok must be false");
+        assert_eq!(
+            sc["error_kind"],
+            serde_json::json!(expected_kind),
+            "unexpected error_kind"
+        );
     }
 
     // ── Steering surface: instructions + next_action helpers ──────────
@@ -4038,7 +4054,7 @@ mod tests {
         };
         let result = server.read(Parameters(params)).await.unwrap();
 
-        assert_eq!(result.is_error, Some(true));
+        assert_soft_error(&result, "section_not_found");
     }
 
     #[tokio::test]
@@ -4051,7 +4067,7 @@ mod tests {
         };
         let result = server.extract(Parameters(params)).await.unwrap();
 
-        assert_eq!(result.is_error, Some(true));
+        assert_soft_error(&result, "section_not_found");
     }
 
     // --- Error formatting tests ---
@@ -4105,7 +4121,7 @@ mod tests {
         };
         let result = server.read(Parameters(params)).await.unwrap();
 
-        assert_eq!(result.is_error, Some(true));
+        assert_soft_error(&result, "section_not_found");
         let text = extract_text(&result.content);
         assert!(
             text.contains("Section not found"),
@@ -4127,7 +4143,7 @@ mod tests {
         };
         let result = server.extract(Parameters(params)).await.unwrap();
 
-        assert_eq!(result.is_error, Some(true));
+        assert_soft_error(&result, "section_not_found");
         let text = extract_text(&result.content);
         assert!(
             text.contains("Section not found"),
@@ -4690,7 +4706,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.is_error.unwrap_or(false));
+        assert_soft_error(&result, "not_available");
         let text = extract_text(&result.content);
         assert!(
             text.contains("not available"),
@@ -4733,7 +4749,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.is_error.unwrap_or(false));
+        assert_soft_error(&result, "clone_failed");
         let text = extract_text(&result.content);
         assert!(
             text.contains("clone failed"),
@@ -5056,7 +5072,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.is_error.unwrap_or(false));
+        assert_soft_error(&result, "not_found");
         let text = extract_text(&result.content);
         assert!(
             text.contains("unknown task ID"),
