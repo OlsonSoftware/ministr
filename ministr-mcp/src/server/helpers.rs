@@ -353,6 +353,11 @@ pub(crate) fn structured_result(
         rmcp::model::ErrorData::internal_error(format!("serialization failed: {e}"), None)
     })?;
 
+    // Hard token bound first: condense to fit the MCP client's per-result
+    // token cap (fidelity-preserving — see `super::condense`), so a large
+    // trailhead result is never truncated/dumped by the client. The legacy
+    // byte guard then rarely fires but stays as a defensive net.
+    let v = super::condense::fit_to_budget(v, super::condense::output_budget_tokens());
     let v = apply_response_size_guard(v);
 
     Ok(rmcp::model::CallToolResult::structured(v))

@@ -11,6 +11,7 @@
 
 mod builders;
 mod coerce;
+mod condense;
 mod helpers;
 mod prefetch;
 mod progress;
