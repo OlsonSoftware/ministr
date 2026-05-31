@@ -122,6 +122,12 @@ pub(crate) fn format_query_error(err: &QueryError) -> String {
         QueryError::SymbolNotFound { id } => {
             format!("Symbol not found: '{id}'. Use ministr_symbols to search for valid symbol IDs.")
         }
+        QueryError::FileUnavailable { path, source } => {
+            format!(
+                "Source file unavailable: '{path}' ({source}). The file may have been \
+                 moved or deleted since indexing; re-index the corpus or pick another file."
+            )
+        }
     }
 }
 
@@ -141,6 +147,7 @@ pub(crate) fn soft_backend_error(
         BackendError::Query(QueryError::SymbolNotFound { .. }) => "symbol_not_found",
         BackendError::Query(QueryError::Index(_)) => "index_error",
         BackendError::Query(QueryError::Storage(_)) => "storage_error",
+        BackendError::Query(QueryError::FileUnavailable { .. }) => "file_unavailable",
         BackendError::Client(_) => "daemon_error",
     };
     soft_error(kind, format_backend_error(err))
