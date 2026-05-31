@@ -8,10 +8,10 @@
  * same symbol graph the AI uses (read_file / search_symbols /
  * symbol_definition / symbol_references).
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, Code2, Command } from "lucide-react";
+import { ArrowLeft, Code2, Command, PanelRight, X } from "lucide-react";
 import type {
   DaemonStatus,
   FileContent,
@@ -20,6 +20,7 @@ import type {
   SymbolRef,
 } from "../../lib/types";
 import { spring } from "../../lib/motion";
+import { cn } from "../../lib/utils";
 import { FileTree } from "./FileTree";
 import { CodeViewer } from "./CodeViewer";
 import { SymbolPeek } from "./SymbolPeek";
@@ -28,6 +29,15 @@ import { RelatedFilesPanel } from "./RelatedFilesPanel";
 import { SymbolPalette } from "./SymbolPalette";
 import { useCodeNavigation } from "./useCodeNavigation";
 import { useColorScheme } from "./useColorScheme";
+import { useContainerWidth } from "./useContainerWidth";
+
+/**
+ * Surface width (px) at/above which the right panel is an inline third column;
+ * below it, the panel becomes a slide-over drawer so the code viewer keeps its
+ * width on narrow windows. Measured on the surface itself (rail already
+ * excluded), not the window.
+ */
+const WIDE_PANEL_PX = 1040;
 
 interface Props {
   status: DaemonStatus;
@@ -49,6 +59,13 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
   const [fileLoading, setFileLoading] = useState(false);
   const [panel, setPanel] = useState<PanelState | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // Narrow-width drawer: when the right panel can't be an inline column, it
+  // slides over instead. `rightOpen` gates that drawer (no effect when wide).
+  const [rightOpen, setRightOpen] = useState(false);
+
+  const gridRef = useRef<HTMLDivElement>(null);
+  const surfaceWidth = useContainerWidth(gridRef);
+  const isWide = surfaceWidth >= WIDE_PANEL_PX;
 
   const path = nav.current?.path ?? null;
 
@@ -129,7 +146,27 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
 
   const openSymbol = useCallback((symbolId: string, name: string) => {
     setPanel({ mode: "peek", symbolId, symbolName: name });
+    setRightOpen(true); // surface the peek immediately, drawer or column
   }, []);
+
+  // Close the right panel: drop any symbol peek and dismiss the narrow drawer.
+  const closeRight = useCallback(() => {
+    setPanel(null);
+    setRightOpen(false);
+  }, []);
+
+  // Escape closes the narrow drawer (when the symbol palette isn't up).
+  useEffect(() => {
+    if (isWide || !rightOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && !paletteOpen) {
+        e.stopPropagation();
+        setRightOpen(false);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isWide, rightOpen, paletteOpen]);
 
   const goToDefinition = useCallback(
     (filePath: string, line: number) => {
@@ -185,6 +222,36 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
     );
   }
 
+  // The right-panel content, built once and placed in exactly one location
+  // (inline column when wide, slide-over drawer when narrow): a clicked
+  // symbol's peek/references, else the open file's related files.
+  const rightPanel = panel ? (
+    panel.mode === "peek" ? (
+      <SymbolPeek
+        corpusId={corpusId}
+        symbolId={panel.symbolId}
+        symbolName={panel.symbolName}
+        onGoToDefinition={goToDefinition}
+        onShowReferences={() => setPanel((p) => (p ? { ...p, mode: "refs" } : p))}
+        onClose={closeRight}
+      />
+    ) : (
+      <ReferencesPanel
+        corpusId={corpusId}
+        symbolId={panel.symbolId}
+        symbolName={panel.symbolName}
+        onBack={() => setPanel((p) => (p ? { ...p, mode: "peek" } : p))}
+        onJump={jumpToRef}
+      />
+    )
+  ) : file ? (
+    <RelatedFilesPanel
+      corpusId={corpusId}
+      file={file}
+      onOpen={(p) => nav.push({ path: p })}
+    />
+  ) : null;
+
   return (
     <div className="@container/page relative flex h-full min-h-0 flex-col">
       <header className="flex shrink-0 items-center gap-2 border-b border-border-soft bg-surface px-3 py-1.5">
@@ -201,18 +268,45 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
         <span className="truncate font-mono text-xs text-text-muted">
           {path ?? "Select a file"}
         </span>
-        <button
-          type="button"
-          onClick={() => setPaletteOpen(true)}
-          className="ml-auto inline-flex items-center gap-1 rounded-md border border-border-soft px-2 py-1 font-mono text-mono-mini text-text-muted hover:border-border hover:text-text cursor-pointer transition-colors duration-150 ease-out"
-        >
-          <Command className="h-3 w-3" strokeWidth={2} />
-          <span>K</span>
-          <span className="text-text-dim">jump to symbol</span>
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          {!isWide && file && (
+            <button
+              type="button"
+              onClick={() => setRightOpen((o) => !o)}
+              aria-label={rightOpen ? "Hide side panel" : "Show side panel"}
+              aria-pressed={rightOpen}
+              title="Symbol & related-file panel"
+              className={cn(
+                "inline-flex items-center gap-1 rounded-md border px-2 py-1 font-mono text-mono-mini cursor-pointer transition-colors duration-150 ease-out",
+                rightOpen
+                  ? "border-accent bg-surface-overlay text-text"
+                  : "border-border-soft text-text-muted hover:border-border hover:text-text",
+              )}
+            >
+              <PanelRight className="h-3 w-3" strokeWidth={2} />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            className="inline-flex items-center gap-1 rounded-md border border-border-soft px-2 py-1 font-mono text-mono-mini text-text-muted hover:border-border hover:text-text cursor-pointer transition-colors duration-150 ease-out"
+          >
+            <Command className="h-3 w-3" strokeWidth={2} />
+            <span>K</span>
+            <span className="text-text-dim">jump to symbol</span>
+          </button>
+        </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[clamp(200px,22%,300px)_minmax(0,1fr)] @min-[1100px]/page:grid-cols-[clamp(200px,20%,300px)_minmax(0,1fr)_clamp(300px,28%,420px)]">
+      <div
+        ref={gridRef}
+        className={cn(
+          "grid min-h-0 flex-1",
+          isWide
+            ? "grid-cols-[clamp(200px,20%,300px)_minmax(0,1fr)_clamp(300px,28%,420px)]"
+            : "grid-cols-[clamp(200px,26%,300px)_minmax(0,1fr)]",
+        )}
+      >
         <FileTree corpusId={corpusId} activePath={path} onSelect={(p) => nav.push({ path: p })} />
 
         <div className="min-h-0 min-w-0 border-r border-border-soft">
@@ -237,58 +331,53 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
           )}
         </div>
 
-        {/* Right column: a clicked symbol's peek/references, or — when no
-            symbol is selected — the current file's related files, so you can
-            always navigate contextually from within a file. */}
-        <AnimatePresence mode="wait">
-          {panel ? (
-            <motion.aside
-              key={`${panel.mode}-${panel.symbolId}`}
-              initial={{ opacity: 0, x: 12 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 12 }}
-              transition={spring}
-              className="hidden min-h-0 min-w-0 bg-surface @min-[1100px]/page:block"
-            >
-              {panel.mode === "peek" ? (
-                <SymbolPeek
-                  corpusId={corpusId}
-                  symbolId={panel.symbolId}
-                  symbolName={panel.symbolName}
-                  onGoToDefinition={goToDefinition}
-                  onShowReferences={() =>
-                    setPanel((p) => (p ? { ...p, mode: "refs" } : p))
-                  }
-                  onClose={() => setPanel(null)}
-                />
-              ) : (
-                <ReferencesPanel
-                  corpusId={corpusId}
-                  symbolId={panel.symbolId}
-                  symbolName={panel.symbolName}
-                  onBack={() => setPanel((p) => (p ? { ...p, mode: "peek" } : p))}
-                  onJump={jumpToRef}
-                />
-              )}
-            </motion.aside>
-          ) : file ? (
-            <motion.aside
-              key="related"
-              initial={{ opacity: 0, x: 12 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 12 }}
-              transition={spring}
-              className="hidden min-h-0 min-w-0 bg-surface @min-[1100px]/page:block"
-            >
-              <RelatedFilesPanel
-                corpusId={corpusId}
-                file={file}
-                onOpen={(p) => nav.push({ path: p })}
-              />
-            </motion.aside>
-          ) : null}
-        </AnimatePresence>
+        {/* Wide: the right panel is an inline third column. The content
+            (symbol peek/references, or the file's related files) mounts in
+            exactly one place — here or the narrow drawer below — so its data
+            fetches never double-fire. */}
+        {isWide && rightPanel && (
+          <aside className="min-h-0 min-w-0 bg-surface">{rightPanel}</aside>
+        )}
       </div>
+
+      {/* Narrow: the same panel slides over the viewer instead of stealing its
+          width. Backdrop + Escape (above) + the X dismiss it. */}
+      <AnimatePresence>
+        {!isWide && rightOpen && rightPanel && (
+          <motion.div
+            className="absolute inset-0 z-30 flex"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <button
+              type="button"
+              aria-label="Close panel"
+              onClick={closeRight}
+              className="flex-1 bg-bg/60 cursor-default"
+            />
+            <motion.aside
+              className="flex min-h-0 w-[min(420px,85%)] flex-col border-l border-border bg-surface shadow-[var(--glow-soft)]"
+              initial={{ x: 24 }}
+              animate={{ x: 0 }}
+              exit={{ x: 24 }}
+              transition={spring}
+            >
+              <div className="flex shrink-0 items-center justify-end border-b border-border-soft px-2 py-1">
+                <button
+                  type="button"
+                  onClick={closeRight}
+                  aria-label="Close panel"
+                  className="grid h-5 w-5 place-items-center rounded-md border border-border-soft text-text-muted hover:border-border hover:text-text cursor-pointer transition-colors duration-150 ease-out"
+                >
+                  <X className="h-2.5 w-2.5" strokeWidth={2} />
+                </button>
+              </div>
+              <div className="min-h-0 flex-1">{rightPanel}</div>
+            </motion.aside>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <SymbolPalette
         open={paletteOpen}
