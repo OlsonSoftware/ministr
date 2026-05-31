@@ -1007,11 +1007,16 @@ pub async fn search_symbols(
 }
 
 /// A symbol's clickable span within a file (1-based, inclusive line range).
+///
+/// `signature` + `doc_comment` ride along so the code browser can render a
+/// hovercard without a second round-trip to `symbol_definition`.
 #[derive(Serialize)]
 pub struct SymbolSpan {
     pub id: String,
     pub name: String,
     pub kind: String,
+    pub signature: String,
+    pub doc_comment: Option<String>,
     pub line_start: u32,
     pub line_end: u32,
 }
@@ -1110,6 +1115,8 @@ pub async fn read_file(
             id: r.id.0,
             name: r.name,
             kind: r.kind,
+            signature: r.signature,
+            doc_comment: r.doc_comment,
             line_start: r.line_start,
             line_end: r.line_end,
         })
