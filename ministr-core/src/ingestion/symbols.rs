@@ -1312,12 +1312,21 @@ fn run() {
             "ministr-core/src/bundle.rs",
             "ministr-app/src/components/Header.tsx"
         ));
-        // Grammar-registry-distinct flavours of "TypeScript" stay
-        // separated. `.tsx` and `.ts` have different tree-sitter
-        // grammars so cross-binding is rejected — a conservative
-        // default; rare collateral that can be relaxed later if the
-        // indexer ever unifies them.
-        assert!(!languages_compatible("a.tsx", "b.ts"));
+        // The JS/TS ecosystem is ONE ref-resolution family even though
+        // the grammar registry keeps `.tsx` (own grammar), `.ts`
+        // (`typescript`) and `.js`/`.jsx` (`javascript`) as distinct
+        // canonical names. These share one ES module system and
+        // routinely cross-import (a `.tsx` component importing `cn` from
+        // a `.ts` util is the canonical case), so they must be
+        // compatible — keeping them separate silently dropped every
+        // `.tsx`→`.ts` cross-file reference.
+        assert!(languages_compatible("a.tsx", "b.ts"));
+        assert!(languages_compatible("a.ts", "b.tsx"));
+        assert!(languages_compatible("a.tsx", "b.js"));
+        assert!(languages_compatible("a.jsx", "b.ts"));
+        assert!(languages_compatible("a.mts", "b.tsx"));
+        // …but the family is closed: JS/TS still cannot bind to Rust.
+        assert!(!languages_compatible("a.tsx", "b.rs"));
         // Unknown extensions: both sides must resolve → reject (safer
         // than wide-open match).
         assert!(!languages_compatible("README.md", "src/a.rs"));
