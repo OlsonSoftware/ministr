@@ -69,7 +69,12 @@ pub(crate) use embedding::delete_document_vectors;
 ///   `UFUNCTION` / `GENERATED_BODY` / ...) now parse as first-class
 ///   nodes instead of ERROR subtrees — UE corpora will pick up
 ///   meaningfully more symbols on re-extraction.
-pub const EXTRACTOR_VERSION: i64 = 3;
+/// - **4**: Bridge framework detection now also scans manifests in
+///   *subdirectories* of the corpus (`FrameworkDetector::detect_in_files`),
+///   not just the upward walk from the root. Monorepos with a subdir app
+///   (e.g. a Tauri app under `<repo>/app/src-tauri/`) now detect their
+///   bridge framework and link cross-language endpoints on re-extraction.
+pub const EXTRACTOR_VERSION: i64 = 4;
 
 /// Version of the symbol-reference *resolution* pipeline.
 ///

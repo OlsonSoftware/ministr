@@ -142,6 +142,50 @@ impl FrameworkDetector {
         kinds.into_iter().collect()
     }
 
+    /// Detect bridge frameworks from manifests *anywhere* in an
+    /// already-discovered file set.
+    ///
+    /// [`detect`](Self::detect) only walks UP from a single start dir, so in a
+    /// monorepo it misses frameworks declared in subdirectories — e.g. a Tauri
+    /// app under `<repo>/app-name/src-tauri/`, whose `tauri.conf.json`,
+    /// `@tauri-apps/api` `package.json`, and `tauri`-dep `Cargo.toml` all sit
+    /// below the corpus root the upward walk starts from. This scans the
+    /// directory of every manifest file present in `files` and unions the
+    /// per-directory signals. Callers union the result with [`detect`] on the
+    /// corpus root(s) so both parent- and child-declared frameworks register.
+    #[must_use]
+    pub fn detect_in_files(files: &[std::path::PathBuf]) -> Vec<BridgeKind> {
+        const MANIFESTS: &[&str] = &[
+            "Cargo.toml",
+            "package.json",
+            "pyproject.toml",
+            "tauri.conf.json",
+            "pubspec.yaml",
+        ];
+        let mut kinds = BTreeSet::new();
+        let mut scanned: BTreeSet<&Path> = BTreeSet::new();
+        for file in files {
+            let Some(name) = file.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if !MANIFESTS.contains(&name) {
+                continue;
+            }
+            let Some(parent) = file.parent() else {
+                continue;
+            };
+            if !scanned.insert(parent) {
+                continue;
+            }
+            Self::scan_cargo_toml(parent, &mut kinds);
+            Self::scan_package_json(parent, &mut kinds);
+            Self::scan_pyproject_toml(parent, &mut kinds);
+            Self::scan_tauri_conf(parent, &mut kinds);
+            Self::scan_pubspec(parent, &mut kinds);
+        }
+        kinds.into_iter().collect()
+    }
+
     /// Whether `dir` contains any C/C++ source files at the top level.
     ///
     /// Cheap one-level glob — does not recurse. Adequate because most
@@ -272,6 +316,47 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let kinds = FrameworkDetector::detect(tmp.path());
         assert!(kinds.is_empty());
+    }
+
+    #[test]
+    fn detect_in_files_finds_tauri_in_monorepo_subdir() {
+        // A monorepo whose root manifest has no bridge marker, but a subdir
+        // app declares Tauri — the case `detect` (upward walk) misses.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"app\"]\n",
+        )
+        .unwrap();
+
+        let app = root.join("app");
+        std::fs::create_dir_all(app.join("src-tauri")).unwrap();
+        std::fs::write(
+            app.join("package.json"),
+            r#"{"devDependencies":{"@tauri-apps/api":"^2"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            app.join("src-tauri").join("Cargo.toml"),
+            "[dependencies]\ntauri = \"2\"\n",
+        )
+        .unwrap();
+        std::fs::write(app.join("src-tauri").join("tauri.conf.json"), "{}").unwrap();
+
+        // The upward walk from the root sees only the workspace Cargo.toml.
+        assert!(!FrameworkDetector::detect(root).contains(&BridgeKind::TauriCommand));
+
+        // Scanning the discovered file set picks up the subdir app.
+        let files = vec![
+            root.join("Cargo.toml"),
+            app.join("package.json"),
+            app.join("src-tauri").join("Cargo.toml"),
+            app.join("src-tauri").join("tauri.conf.json"),
+        ];
+        let kinds = FrameworkDetector::detect_in_files(&files);
+        assert!(kinds.contains(&BridgeKind::TauriCommand));
+        assert!(kinds.contains(&BridgeKind::TauriEvent));
     }
 
     #[test]

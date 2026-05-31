@@ -1052,7 +1052,18 @@ impl IngestionPipeline {
             update_root_stats(storage, &roots, &root_lang_stats, &root_file_counts).await;
         }
 
-        let detected_kinds = detector::FrameworkDetector::detect(dir);
+        // Union the upward walk from the root with a scan of every manifest
+        // discovered *below* it — otherwise a monorepo's subdirectory app
+        // (e.g. a Tauri app under `<repo>/app/src-tauri/`) never registers its
+        // bridge framework and its commands never link.
+        let detected_kinds: Vec<BridgeKind> = {
+            let mut set: std::collections::BTreeSet<BridgeKind> =
+                detector::FrameworkDetector::detect(dir)
+                    .into_iter()
+                    .collect();
+            set.extend(detector::FrameworkDetector::detect_in_files(&files));
+            set.into_iter().collect()
+        };
         let bridge_linker = create_linker_for_kinds(&detected_kinds);
         if !detected_kinds.is_empty() {
             info!(
@@ -1350,6 +1361,10 @@ impl IngestionPipeline {
                 all_bridge_kinds.extend(kinds);
             }
         }
+        // Also scan manifests in subdirectories of the discovered file set, so
+        // a monorepo app declared below the indexed path(s) still links (see
+        // FrameworkDetector::detect_in_files).
+        all_bridge_kinds.extend(detector::FrameworkDetector::detect_in_files(&files));
         let bridge_kinds: Vec<BridgeKind> = all_bridge_kinds.into_iter().collect();
         let bridge_linker = create_linker_for_kinds(&bridge_kinds);
         if !bridge_kinds.is_empty() {
