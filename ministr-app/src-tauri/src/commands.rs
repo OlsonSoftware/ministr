@@ -1006,6 +1006,123 @@ pub async fn search_symbols(
         .collect())
 }
 
+/// A symbol's clickable span within a file (1-based, inclusive line range).
+#[derive(Serialize)]
+pub struct SymbolSpan {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub line_start: u32,
+    pub line_end: u32,
+}
+
+/// A source file's full contents plus the symbol spans the index knows for it.
+///
+/// Returned by [`read_file`]; the code browser renders `content` with Shiki
+/// (using `lang`) and overlays `symbol_spans` as clickable, navigable hot-zones.
+#[derive(Serialize)]
+pub struct FileContent {
+    pub path: String,
+    pub lang: String,
+    pub content: String,
+    pub symbol_spans: Vec<SymbolSpan>,
+}
+
+/// Map a file path's extension to a Shiki language id for highlighting.
+///
+/// Single source of truth for language inference (the frontend just forwards
+/// the result to Shiki). Unknown extensions fall back to `"text"`.
+fn lang_from_path(path: &str) -> String {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let lang = match ext.as_str() {
+        "rs" => "rust",
+        "ts" => "typescript",
+        "tsx" => "tsx",
+        "js" | "mjs" | "cjs" => "javascript",
+        "jsx" => "jsx",
+        "py" => "python",
+        "go" => "go",
+        "java" => "java",
+        "rb" => "ruby",
+        "c" | "h" => "c",
+        "cc" | "cpp" | "cxx" | "hpp" | "hh" => "cpp",
+        "cs" => "csharp",
+        "php" => "php",
+        "swift" => "swift",
+        "kt" | "kts" => "kotlin",
+        "scala" => "scala",
+        "sh" | "bash" | "zsh" => "bash",
+        "json" => "json",
+        "toml" => "toml",
+        "yaml" | "yml" => "yaml",
+        "xml" => "xml",
+        "html" | "htm" => "html",
+        "css" => "css",
+        "scss" => "scss",
+        "sql" => "sql",
+        "md" | "markdown" => "markdown",
+        "lua" => "lua",
+        "dart" => "dart",
+        "ex" | "exs" => "elixir",
+        "hs" => "haskell",
+        _ => "text",
+    };
+    lang.to_string()
+}
+
+/// Read an indexed source file: full contents, a Shiki language id inferred
+/// from the extension, and the definition spans the symbol index knows for the
+/// file (so the UI can render clickable, navigable symbols).
+#[tauri::command]
+pub async fn read_file(
+    state: State<'_, AppState>,
+    corpus_id: String,
+    path: String,
+) -> Result<FileContent, CommandError> {
+    let guard = state.registry.corpora().read().await;
+    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
+
+    let content = handle
+        .service
+        .read_file_content(&path)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let filter = ministr_core::storage::traits::SymbolFilter {
+        name: None,
+        name_exact: None,
+        kind: None,
+        visibility: None,
+        module: None,
+        file_path: Some(path.clone()),
+    };
+    let symbol_spans = handle
+        .storage
+        .list_symbols(&filter)
+        .await
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|r| SymbolSpan {
+            id: r.id.0,
+            name: r.name,
+            kind: r.kind,
+            line_start: r.line_start,
+            line_end: r.line_end,
+        })
+        .collect();
+
+    Ok(FileContent {
+        lang: lang_from_path(&path),
+        path,
+        content,
+        symbol_spans,
+    })
+}
+
 /// Reference link for the symbol graph.
 #[derive(Serialize)]
 pub struct SymbolRef {
@@ -2211,4 +2328,32 @@ fn home_pathbuf() -> Option<std::path::PathBuf> {
         return Some(std::path::PathBuf::from(profile));
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lang_from_path;
+
+    #[test]
+    fn lang_from_path_maps_known_extensions() {
+        assert_eq!(lang_from_path("src/main.rs"), "rust");
+        assert_eq!(lang_from_path("a/b/App.tsx"), "tsx");
+        assert_eq!(lang_from_path("lib/types.ts"), "typescript");
+        assert_eq!(lang_from_path("script.py"), "python");
+        assert_eq!(lang_from_path("Cargo.toml"), "toml");
+        assert_eq!(lang_from_path("README.md"), "markdown");
+    }
+
+    #[test]
+    fn lang_from_path_is_case_insensitive() {
+        assert_eq!(lang_from_path("FOO.RS"), "rust");
+        assert_eq!(lang_from_path("Page.JSX"), "jsx");
+    }
+
+    #[test]
+    fn lang_from_path_falls_back_to_text() {
+        assert_eq!(lang_from_path("data.unknownext"), "text");
+        assert_eq!(lang_from_path("LICENSE"), "text");
+        assert_eq!(lang_from_path(""), "text");
+    }
 }

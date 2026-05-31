@@ -390,6 +390,30 @@ impl QueryService {
         file_path.to_string()
     }
 
+    /// Read the full UTF-8 contents of an indexed source file.
+    ///
+    /// Resolves the stored (possibly root-namespaced) `file_path` to an
+    /// absolute filesystem path via [`Self::resolve_source_path`], then reads
+    /// the entire file. Unlike [`Self::read_source_context`] — a best-effort
+    /// context window for one symbol that swallows I/O errors into a
+    /// placeholder string — this returns the whole file and surfaces a read
+    /// failure as [`QueryError::FileUnavailable`], so callers (e.g. the desktop
+    /// code browser) can distinguish a missing file from an empty one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::FileUnavailable`] if the resolved path cannot be
+    /// read (missing, permission denied, or not valid UTF-8).
+    pub async fn read_file_content(&self, file_path: &str) -> Result<String, QueryError> {
+        let resolved = self.resolve_source_path(file_path).await;
+        tokio::fs::read_to_string(&resolved)
+            .await
+            .map_err(|source| QueryError::FileUnavailable {
+                path: file_path.to_string(),
+                source,
+            })
+    }
+
     /// Read source file lines for symbol context display.
     ///
     /// Returns the symbol's source lines with 3 lines of surrounding context.

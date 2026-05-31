@@ -547,6 +547,16 @@ pub enum QueryError {
     /// The requested symbol was not found.
     #[error("symbol not found: {id}")]
     SymbolNotFound { id: String },
+
+    /// A source file could not be read from disk.
+    #[error("source file unavailable: {path}: {source}")]
+    FileUnavailable {
+        /// The stored file path that failed to resolve or read.
+        path: String,
+        /// The underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// High-level query service that composes storage, embedding, and vector index.
