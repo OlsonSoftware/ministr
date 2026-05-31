@@ -1949,6 +1949,10 @@ impl IngestionPipeline {
             let endpoints = rebuild_bridge_endpoints(all_files, linker).await;
             store_bridge_links(&endpoints, Some(linker), storage).await;
         }
+
+        // Opt-in occurrence index (F-CodeExplorer v2) — default off; cheap
+        // early return unless MINISTR_INDEX_OCCURRENCES is set.
+        super::occurrences::rebuild_occurrences(all_files, storage).await;
     }
 
     // ── Shared file processing (used by rooted + multi-path) ─────────────

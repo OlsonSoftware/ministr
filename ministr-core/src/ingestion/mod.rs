@@ -17,6 +17,7 @@
 
 mod discovery;
 mod embedding;
+mod occurrences;
 mod pipeline;
 mod process;
 mod roots;
