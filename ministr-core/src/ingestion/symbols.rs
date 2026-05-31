@@ -533,7 +533,27 @@ fn filter_primary(matches: &[SymbolRecord]) -> Vec<&SymbolRecord> {
 ///
 /// Unknown extensions on either side return `false` — a hard "skip" is
 /// safer than a wide-open match against arbitrary file kinds.
+///
+/// JavaScript/TypeScript are a single resolution family. The grammar
+/// registry keeps `tsx` as its own grammar (distinct from `typescript`)
+/// because TSX needs a separate tree-sitter parser, and JSX collapses
+/// into `javascript`. But all of `.ts`/`.tsx`/`.js`/`.jsx`/`.mts`/`.cts`/
+/// `.mjs`/`.cjs` share one ES module system and routinely cross-import —
+/// a `.tsx` component importing `cn` from a `.ts` util is the canonical
+/// case. Treating those distinct grammar names as incompatible silently
+/// dropped every `.tsx`→`.ts` cross-file reference (the real-world
+/// `cn`/`corpusLabel` "no related files" bug). Collapse them to one
+/// family for ref-compatibility so the import edge resolves.
 fn languages_compatible(source_path: &str, target_path: &str) -> bool {
+    /// Map a canonical grammar name to its ref-resolution family. Only
+    /// the JS/TS ecosystem needs collapsing; every other language is its
+    /// own family (identity), preserving the strict cross-language guard.
+    fn family(lang: &str) -> &str {
+        match lang {
+            "javascript" | "typescript" | "tsx" => "js_ts",
+            other => other,
+        }
+    }
     fn lang_of(path: &str) -> Option<&'static str> {
         let ext = std::path::Path::new(path)
             .extension()
@@ -541,7 +561,7 @@ fn languages_compatible(source_path: &str, target_path: &str) -> bool {
         crate::code::GrammarRegistry::global().language_name_for_extension(ext)
     }
     match (lang_of(source_path), lang_of(target_path)) {
-        (Some(a), Some(b)) => a == b,
+        (Some(a), Some(b)) => family(a) == family(b),
         _ => false,
     }
 }

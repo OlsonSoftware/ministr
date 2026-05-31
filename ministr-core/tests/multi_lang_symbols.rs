@@ -505,17 +505,17 @@ mod typescript {
 
     /// Regression for the real-world "no related files" report: a util module
     /// (`utils.ts`) exports `cn`, imported + called by a component
-    /// (`button.tsx`) that is processed BEFORE the util in alphabetical order
-    /// (b < u) — so at component-ingest time `cn` is not yet in storage and the
-    /// ref must be resolved by the deferred second pass. This is the exact
-    /// shape of `cn` / `corpusLabel` in ministr-app, which report 0 references.
+    /// (`button.tsx`). This is the exact shape of `cn` / `corpusLabel` in
+    /// ministr-app, which reported 0 references.
     ///
-    /// KNOWN-FAILING repro, `#[ignore]`d to keep the gate green: it currently
-    /// FAILS — the deferred second pass does not resolve importer-before-
-    /// definition cross-file refs. Tracked by roadmap f-graph-generic-symbol-
-    /// line-ranges (root cause unconfirmed) / FE3. Drop the `#[ignore]` once the
-    /// resolver is fixed; it then becomes a permanent regression guard.
-    #[ignore = "reproduces the unfixed importer-before-definition resolution bug (f-graph / FE3)"]
+    /// Root cause (fixed): `languages_compatible` compared canonical grammar
+    /// names, and the registry keeps `tsx` as its own grammar distinct from
+    /// `typescript`. So a `.tsx`→`.ts` cross-file ref was judged
+    /// cross-language and silently dropped in both resolution passes. The fix
+    /// collapses the JS/TS family (`javascript`/`typescript`/`tsx`) into one
+    /// ref-resolution family. The importer is also processed BEFORE the
+    /// definition (alphabetical b < u), so the edge must additionally survive
+    /// the deferred second pass. Permanent regression guard.
     #[tokio::test]
     async fn typescript_importer_before_definition_resolves() {
         let tmp = tempfile::tempdir().unwrap();
