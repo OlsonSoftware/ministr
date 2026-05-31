@@ -503,6 +503,68 @@ mod typescript {
         );
     }
 
+    /// Regression for the real-world "no related files" report: a util module
+    /// (`utils.ts`) exports `cn`, imported + called by a component
+    /// (`button.tsx`) that is processed BEFORE the util in alphabetical order
+    /// (b < u) — so at component-ingest time `cn` is not yet in storage and the
+    /// ref must be resolved by the deferred second pass. This is the exact
+    /// shape of `cn` / `corpusLabel` in ministr-app, which report 0 references.
+    ///
+    /// KNOWN-FAILING repro, `#[ignore]`d to keep the gate green: it currently
+    /// FAILS — the deferred second pass does not resolve importer-before-
+    /// definition cross-file refs. Tracked by roadmap f-graph-generic-symbol-
+    /// line-ranges (root cause unconfirmed) / FE3. Drop the `#[ignore]` once the
+    /// resolver is fixed; it then becomes a permanent regression guard.
+    #[ignore = "reproduces the unfixed importer-before-definition resolution bug (f-graph / FE3)"]
+    #[tokio::test]
+    async fn typescript_importer_before_definition_resolves() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("tsapp");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // button.tsx (processed first) imports + calls cn from ./utils
+        std::fs::write(
+            dir.join("button.tsx"),
+            r#"import { cn } from './utils';
+
+export function Button(props: { active: boolean }) {
+    const klass = cn("base", props.active && "on");
+    return klass;
+}
+"#,
+        )
+        .unwrap();
+
+        // utils.ts (processed AFTER button.tsx) defines cn
+        std::fs::write(
+            dir.join("utils.ts"),
+            r#"export function cn(...inputs: string[]): string {
+    return inputs.filter(Boolean).join(" ");
+}
+"#,
+        )
+        .unwrap();
+
+        let storage = ingest_dir(&dir).await;
+
+        let cn_syms = storage
+            .list_symbols(&SymbolFilter {
+                name_exact: Some("cn".to_string()),
+                ..SymbolFilter::default()
+            })
+            .await
+            .unwrap();
+        assert!(!cn_syms.is_empty(), "cn symbol should be extracted");
+
+        let cn_refs = storage.query_refs(&cn_syms[0].id, None).await.unwrap();
+        assert!(
+            !cn_refs.is_empty(),
+            "button.tsx imports cn from utils.ts — the cross-file ref must resolve \
+             even though the importer is ingested before the definition (deferred \
+             second pass). Got 0 refs — this is the real 'no related files' bug.",
+        );
+    }
+
     #[tokio::test]
     async fn typescript_type_alias_extracted() {
         let tmp = tempfile::tempdir().unwrap();
