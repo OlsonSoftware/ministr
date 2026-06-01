@@ -44,6 +44,21 @@ fn python_language() -> tree_sitter::Language {
     tree_sitter_python::LANGUAGE.into()
 }
 
+#[cfg(feature = "lang-c")]
+fn c_language() -> tree_sitter::Language {
+    tree_sitter_c::LANGUAGE.into()
+}
+
+#[cfg(feature = "lang-go")]
+fn go_language() -> tree_sitter::Language {
+    tree_sitter_go::LANGUAGE.into()
+}
+
+#[cfg(feature = "lang-java")]
+fn java_language() -> tree_sitter::Language {
+    tree_sitter_java::LANGUAGE.into()
+}
+
 // ---------------------------------------------------------------------------
 // Tauri fixtures
 // ---------------------------------------------------------------------------
@@ -436,4 +451,178 @@ fn http_route_fixtures_python_server_exports() {
         assert_eq!(ep.role, EndpointRole::Export);
         assert_eq!(ep.kind, BridgeKind::HttpRoute);
     }
+}
+
+// ---------------------------------------------------------------------------
+// FFI fixtures (Rust #[no_mangle] extern "C" export ↔ Python ctypes import)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "lang-python")]
+#[test]
+fn ffi_fixtures_link() {
+    use ministr_core::code::bridge::ffi::FfiExtractor;
+
+    let rust_src: &[u8] =
+        b"#[no_mangle]\npub extern \"C\" fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n";
+    let py_src: &[u8] = b"import ctypes\n\nlib = ctypes.CDLL(\"libadd.so\")\n\ndef run():\n    return lib.add(1, 2)\n";
+
+    let rust_tree = parse_with(rust_src, &rust_language());
+    let py_tree = parse_with(py_src, &python_language());
+
+    let mut linker = BridgeLinker::new();
+    linker.register(Box::new(FfiExtractor));
+
+    let files = [
+        SourceFile {
+            file_path: "lib.rs",
+            language: "rust",
+            tree: &rust_tree,
+            source: rust_src,
+        },
+        SourceFile {
+            file_path: "client.py",
+            language: "python",
+            tree: &py_tree,
+            source: py_src,
+        },
+    ];
+
+    let links = linker.extract_and_link(&files);
+    assert!(
+        links
+            .iter()
+            .any(|l| l.kind == BridgeKind::Ffi && l.export.binding_key == "add"),
+        "expected an ffi link for C-ABI symbol `add` (Rust export → Python ctypes), got {links:?}",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// cgo fixtures (C function export ↔ Go C.func import)
+// ---------------------------------------------------------------------------
+
+#[cfg(all(feature = "lang-c", feature = "lang-go"))]
+#[test]
+fn cgo_fixtures_link() {
+    use ministr_core::code::bridge::cgo::CgoExtractor;
+
+    let c_src: &[u8] = b"int add(int a, int b) {\n    return a + b;\n}\n";
+    let go_src: &[u8] = b"package main\n\n// #include \"add.h\"\nimport \"C\"\n\nfunc Run() int {\n    return int(C.add(1, 2))\n}\n";
+
+    let c_tree = parse_with(c_src, &c_language());
+    let go_tree = parse_with(go_src, &go_language());
+
+    let mut linker = BridgeLinker::new();
+    linker.register(Box::new(CgoExtractor));
+
+    let files = [
+        SourceFile {
+            file_path: "add.c",
+            language: "c",
+            tree: &c_tree,
+            source: c_src,
+        },
+        SourceFile {
+            file_path: "main.go",
+            language: "go",
+            tree: &go_tree,
+            source: go_src,
+        },
+    ];
+
+    let links = linker.extract_and_link(&files);
+    assert!(
+        links
+            .iter()
+            .any(|l| l.kind == BridgeKind::Cgo && l.export.binding_key == "add"),
+        "expected a cgo link for C function `add` (C export → Go C.add), got {links:?}",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// JNI fixtures (Java native decl ↔ C Java_pkg_Class_method export)
+// ---------------------------------------------------------------------------
+
+#[cfg(all(feature = "lang-c", feature = "lang-java"))]
+#[test]
+fn jni_fixtures_link() {
+    use ministr_core::code::bridge::jni::JniExtractor;
+
+    let java_src: &[u8] =
+        b"package com.example;\n\npublic class Foo {\n    public native int compute(int x);\n}\n";
+    let c_src: &[u8] = b"#include <jni.h>\n\nJNIEXPORT jint JNICALL Java_com_example_Foo_compute(JNIEnv *env, jobject obj, jint x) {\n    return x;\n}\n";
+
+    let java_tree = parse_with(java_src, &java_language());
+    let c_tree = parse_with(c_src, &c_language());
+
+    let mut linker = BridgeLinker::new();
+    linker.register(Box::new(JniExtractor));
+
+    let files = [
+        SourceFile {
+            file_path: "Foo.java",
+            language: "java",
+            tree: &java_tree,
+            source: java_src,
+        },
+        SourceFile {
+            file_path: "native.c",
+            language: "c",
+            tree: &c_tree,
+            source: c_src,
+        },
+    ];
+
+    let links = linker.extract_and_link(&files);
+    assert!(
+        links
+            .iter()
+            .any(|l| l.kind == BridgeKind::Jni && l.import.binding_key == "compute"),
+        "expected a jni link for native method `compute` (Java native ↔ C Java_*), got {links:?}",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// UniFFI fixtures (Rust #[uniffi::export] ↔ foreign import)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "lang-python")]
+#[test]
+fn uniffi_fixtures_link() {
+    use ministr_core::code::bridge::uniffi::UniffiExtractor;
+
+    let rust_src: &[u8] =
+        b"#[uniffi::export]\npub fn greet(name: String) -> String {\n    name\n}\n";
+    let py_src: &[u8] = b"from my_lib import greet\n\n\ndef run():\n    return greet(\"x\")\n";
+
+    let rust_tree = parse_with(rust_src, &rust_language());
+    let py_tree = parse_with(py_src, &python_language());
+
+    let mut linker = BridgeLinker::new();
+    linker.register(Box::new(UniffiExtractor));
+
+    let files = [
+        SourceFile {
+            file_path: "lib.rs",
+            language: "rust",
+            tree: &rust_tree,
+            source: rust_src,
+        },
+        SourceFile {
+            file_path: "client.py",
+            language: "python",
+            tree: &py_tree,
+            source: py_src,
+        },
+    ];
+
+    // The Rust #[uniffi::export] side always extracts; the foreign import side
+    // is heuristic. Assert the export endpoint resolves; a full link is the
+    // stronger signal when the heuristic import matches.
+    let endpoints = linker.extract_all(&files);
+    assert!(
+        endpoints.iter().any(|e| e.kind == BridgeKind::UniFfi
+            && e.binding_key == "greet"
+            && e.role == EndpointRole::Export),
+        "expected a uniffi export endpoint for `greet`, got {endpoints:?}",
+    );
 }
