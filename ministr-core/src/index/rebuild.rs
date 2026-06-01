@@ -80,6 +80,24 @@ pub async fn rebuild_hnsw_from_store<S: IndexedVectorStore + ?Sized>(
             reason: format!("failed to read indexed vectors from store: {e}"),
         })?;
 
+    // Degenerate-index invariant (f-ingest-gov-invariants): the per-vector
+    // guard in `insert` keeps zeros out of the live graph, but it can't see
+    // that the *whole* source of truth has collapsed (all-zero, or every live
+    // vector pointing one way — every query then returns equal-distance junk).
+    // Surface it loudly here, at the rebuild boundary, so a poisoned corpus is
+    // diagnosable instead of silently serving broken search. Non-fatal: the
+    // rebuild still proceeds (the guard keeps the graph structurally valid).
+    let health = crate::index::analyze_vectors(vectors.iter().map(|(_, v)| v.as_slice()));
+    if health.is_degenerate() {
+        tracing::warn!(
+            total = health.total,
+            degenerate = health.degenerate,
+            collapsed = health.collapsed,
+            "rebuilt index is degenerate: every query would return equal-distance \
+             results — re-index required"
+        );
+    }
+
     let max_elements = vectors.len().max(1);
     let index = HnswIndex::with_config(HnswIndexConfig::new(dimension, max_elements))?;
     if let Some(name) = model_name {

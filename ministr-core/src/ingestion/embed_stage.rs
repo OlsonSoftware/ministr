@@ -259,4 +259,49 @@ mod tests {
         );
         assert_eq!(index.len(), 0, "no vectors inserted when embedding fails");
     }
+
+    /// Embedder that produces zero vectors — the degenerate case the HNSW guard
+    /// (fb3015a) refuses.
+    struct ZeroEmbedder {
+        dim: usize,
+    }
+
+    impl Embedder for ZeroEmbedder {
+        fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, IndexError> {
+            Ok(texts.iter().map(|_| vec![0.0_f32; self.dim]).collect())
+        }
+
+        fn dimension(&self) -> usize {
+            self.dim
+        }
+    }
+
+    /// Degenerate-vector guard as an Embed-stage invariant (f-ingest-gov-invariants):
+    /// even when the embedder yields zero vectors, none reach the live index —
+    /// the `HnswIndex::insert` guard drops them, so a poisoned vector can never
+    /// enter via the embed stage. Note the returned count reflects pairs
+    /// *processed* (batch_embed_and_insert counts inputs), not vectors inserted;
+    /// the live index staying empty is the invariant that matters.
+    #[tokio::test]
+    async fn embed_stage_drops_zero_vectors_keeping_index_clean() {
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let embedder = ZeroEmbedder { dim: 8 };
+        let index = HnswIndex::new(8, 100).expect("hnsw index");
+        let storage = SqliteStorage::open_in_memory().expect("storage");
+
+        tx.send(vec![
+            (VectorId::section("doc#s1"), "hello".to_owned()),
+            (VectorId::section("doc#s2"), "world".to_owned()),
+        ])
+        .await
+        .expect("send pairs");
+        drop(tx);
+
+        let count = run_embed_stage(rx, &storage, &embedder, None, None, &index, None)
+            .await
+            .expect("embed stage drains cleanly");
+
+        assert_eq!(count, 2, "both pairs were processed");
+        assert_eq!(index.len(), 0, "but no zero vector entered the live index");
+    }
 }

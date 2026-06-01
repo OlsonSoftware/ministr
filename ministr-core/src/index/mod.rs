@@ -7,10 +7,12 @@
 //! The [`SparseIndex`] trait and [`InvertedIndex`] implementation provide
 //! sparse vector storage for keyword-level matching via SPLADE embeddings.
 
+pub mod health;
 mod hnsw;
 mod inverted;
 mod rebuild;
 
+pub use health::{VectorSetHealth, analyze_vectors};
 pub use hnsw::{HnswIndex, HnswIndexConfig};
 pub use inverted::InvertedIndex;
 pub use rebuild::{IndexedVectorStore, rebuild_hnsw_from_store};
