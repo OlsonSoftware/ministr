@@ -1820,8 +1820,85 @@ fn csharp_collect_type_uses(node: &tree_sitter::Node<'_>, source: &[u8], refs: &
 }
 
 fn extract_refs_swift(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
-    extract_imports(tree, source, &SwiftImports)
+    // Imports from the root walker; the call/heritage/type graph from a
+    // full-tree walk (mirrors Kotlin) — Swift is import-only no more.
+    let mut refs = extract_imports(tree, source, &SwiftImports);
+    walk_swift_refs(&tree.root_node(), source, &mut refs);
+    refs
 }
+
+/// Recursively emit `Calls`/`Implements`/`Uses` edges for Swift. Complements
+/// [`SwiftImports`] (which handles `import`):
+///
+/// - `inheritance_specifier` (a class/protocol/struct supertype entry) →
+///   `Implements` for the inherited `user_type` (Swift lists the base class
+///   and conformed protocols together).
+/// - `call_expression` → `Calls` (callee `simple_identifier`, or the final
+///   `navigation_suffix` name of a `navigation_expression`). Swift has no
+///   `new`, so a constructor call `Widget()` surfaces as `Calls(Widget)`.
+/// - `user_type` in any type position (annotations, parameters, return types)
+///   → `Uses`; heritage `user_type`s are skipped (already `Implements`).
+///
+/// `from_context` is `None`; the line-based resolver attributes each edge to
+/// its enclosing symbol. Type references are wrapped in `user_type`, while a
+/// declaration's own name is a bare `type_identifier`, so matching only
+/// `user_type` avoids emitting the declared name as a use.
+fn walk_swift_refs(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    match node.kind() {
+        "inheritance_specifier" => {
+            if let Some(ut) = node.child_by_field_name("inherits_from")
+                && let Some(name) = swift_user_type_head(&ut, source)
+            {
+                push_graph_ref(refs, name, RefKind::Implements, node_line(node));
+            }
+        }
+        "call_expression" => swift_call(node, source, refs),
+        "user_type" => {
+            let in_heritage = node
+                .parent()
+                .is_some_and(|p| p.kind() == "inheritance_specifier");
+            if !in_heritage && let Some(name) = swift_user_type_head(node, source) {
+                push_graph_ref(refs, name, RefKind::Uses, node_line(node));
+            }
+        }
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_swift_refs(&child, source, refs);
+    }
+}
+
+/// The head type name of a `user_type` (its `type_identifier` child), e.g.
+/// `Array<Foo>` → `Array`. Nested generic arguments are separate `user_type`
+/// nodes handled by the recursion.
+fn swift_user_type_head<'a>(node: &tree_sitter::Node<'_>, source: &'a [u8]) -> Option<&'a str> {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .find(|c| c.kind() == "type_identifier")
+        .and_then(|c| c.utf8_text(source).ok())
+}
+
+/// Emit a `Calls` edge from a `call_expression`: callee `simple_identifier`
+/// (`foo()`, `Widget()`), or the final `navigation_suffix` name of a
+/// `navigation_expression` receiver chain (`a.b.foo()` → `foo`).
+fn swift_call(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    let Some(callee) = node.child(0) else {
+        return;
+    };
+    let name = match callee.kind() {
+        "simple_identifier" => callee.utf8_text(source).ok(),
+        "navigation_expression" => callee
+            .child_by_field_name("suffix")
+            .and_then(|s| s.child_by_field_name("suffix"))
+            .and_then(|n| n.utf8_text(source).ok()),
+        _ => None,
+    };
+    if let Some(name) = name {
+        push_graph_ref(refs, name, RefKind::Calls, node_line(node));
+    }
+}
+
 fn extract_refs_ruby(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
     extract_imports(tree, source, &RubyImports)
 }

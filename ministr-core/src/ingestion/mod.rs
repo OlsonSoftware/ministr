@@ -95,7 +95,11 @@ pub(crate) use embedding::delete_document_vectors;
 ///   likewise emits `Calls`/`Implements`/`Uses` edges (`delegation_specifier`
 ///   supertypes, `call_expression`, and `user_type` positions), not
 ///   import-only. Kotlin corpora gain a real reference graph on re-extraction.
-pub const EXTRACTOR_VERSION: i64 = 8;
+/// - **9**: The Swift ref extractor (`code::refs::extract_refs_swift`)
+///   likewise emits `Calls`/`Implements`/`Uses` edges (`inheritance_specifier`
+///   supertypes, `call_expression`, and `user_type` positions), not
+///   import-only. Swift corpora gain a real reference graph on re-extraction.
+pub const EXTRACTOR_VERSION: i64 = 9;
 
 /// Version of the symbol-reference *resolution* pipeline.
 ///
