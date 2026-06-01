@@ -183,10 +183,13 @@ impl QueryBackend for DaemonBackend {
     fn references(
         &self,
         symbol_id: &str,
-        _ref_kind: Option<RefKind>,
+        ref_kind: Option<RefKind>,
     ) -> impl Future<Output = Result<Vec<SymbolRefResult>, BackendError>> + Send {
-        // The daemon HTTP route doesn't accept a ref_kind filter today —
-        // forward unfiltered and rely on the caller. Parity follow-up.
+        // The daemon HTTP route doesn't accept a ref_kind filter, so apply it
+        // client-side here for parity with `LocalBackend` (which filters in
+        // the query service). Without this the `ref_kind` argument was
+        // silently dropped on the daemon path — the mode the stdio MCP proxy
+        // actually runs in.
         let client = self.client.clone();
         let corpus_id = self.corpus_id.clone();
         let symbol_id = symbol_id.to_string();
@@ -195,11 +198,13 @@ impl QueryBackend for DaemonBackend {
             let resp = client
                 .references(&corpus_id, &symbol_id, session_id.as_deref())
                 .await?;
-            Ok(resp
+            let mut refs: Vec<SymbolRefResult> = resp
                 .references
                 .into_iter()
                 .map(api_symbol_reference_to_service)
-                .collect())
+                .collect();
+            retain_ref_kind(&mut refs, ref_kind);
+            Ok(refs)
         }
     }
 
@@ -356,5 +361,62 @@ impl QueryBackend for DaemonBackend {
             let resp = client.bridge(&corpus_id, &req).await?;
             Ok(resp.links.into_iter().map(api_bridge_to_storage).collect())
         }
+    }
+}
+
+/// Keep only references whose kind matches `ref_kind` (no-op when `None`).
+///
+/// The daemon returns every reference to a symbol regardless of kind, so the
+/// `ref_kind` narrowing requested through `ministr_references` is applied here.
+/// [`SymbolRefResult::ref_kind`] is the snake-case string form produced by
+/// [`RefKind::as_str`], so the comparison is against that.
+fn retain_ref_kind(refs: &mut Vec<SymbolRefResult>, ref_kind: Option<RefKind>) {
+    if let Some(kind) = ref_kind {
+        refs.retain(|r| r.ref_kind == kind.as_str());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ref_of(kind: &str) -> SymbolRefResult {
+        SymbolRefResult {
+            from_symbol_id: "sym-from".into(),
+            from_name: "from".into(),
+            from_file: "a.rs".into(),
+            from_line: 1,
+            to_symbol_id: "sym-to".into(),
+            to_name: "to".into(),
+            to_file: "b.rs".into(),
+            to_line: 2,
+            ref_kind: kind.into(),
+        }
+    }
+
+    #[test]
+    fn retain_ref_kind_none_keeps_all() {
+        let mut refs = vec![ref_of("calls"), ref_of("imports"), ref_of("implements")];
+        retain_ref_kind(&mut refs, None);
+        assert_eq!(refs.len(), 3);
+    }
+
+    #[test]
+    fn retain_ref_kind_narrows_to_requested_kind() {
+        let mut refs = vec![
+            ref_of("imports"),
+            ref_of("calls"),
+            ref_of("implements"),
+            ref_of("calls"),
+            ref_of("uses"),
+        ];
+        retain_ref_kind(&mut refs, Some(RefKind::Calls));
+        assert_eq!(refs.len(), 2);
+        assert!(refs.iter().all(|r| r.ref_kind == "calls"));
+
+        let mut implements = vec![ref_of("imports"), ref_of("implements"), ref_of("calls")];
+        retain_ref_kind(&mut implements, Some(RefKind::Implements));
+        assert_eq!(implements.len(), 1);
+        assert_eq!(implements[0].ref_kind, "implements");
     }
 }
