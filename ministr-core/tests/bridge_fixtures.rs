@@ -59,6 +59,21 @@ fn java_language() -> tree_sitter::Language {
     tree_sitter_java::LANGUAGE.into()
 }
 
+#[cfg(feature = "lang-kotlin")]
+fn kotlin_language() -> tree_sitter::Language {
+    tree_sitter_kotlin_ng::LANGUAGE.into()
+}
+
+#[cfg(feature = "lang-proto")]
+fn proto_language() -> tree_sitter::Language {
+    tree_sitter_proto::LANGUAGE.into()
+}
+
+#[cfg(feature = "lang-dart")]
+fn dart_language() -> tree_sitter::Language {
+    tree_sitter_dart::language()
+}
+
 // ---------------------------------------------------------------------------
 // Tauri fixtures
 // ---------------------------------------------------------------------------
@@ -624,5 +639,88 @@ fn uniffi_fixtures_link() {
             && e.binding_key == "greet"
             && e.role == EndpointRole::Export),
         "expected a uniffi export endpoint for `greet`, got {endpoints:?}",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// gRPC fixtures (.proto service ↔ generated client stub reference)
+// ---------------------------------------------------------------------------
+
+#[cfg(all(feature = "lang-proto", feature = "lang-go"))]
+#[test]
+fn grpc_fixtures_link() {
+    use ministr_core::code::bridge::grpc::GrpcExtractor;
+
+    let proto_src: &[u8] = b"syntax = \"proto3\";\n\nservice Greeter {\n  rpc SayHello (HelloRequest) returns (HelloReply);\n}\n";
+    let go_src: &[u8] = b"package main\n\nfunc dial(conn *grpc.ClientConn) {\n    client := NewGreeterClient(conn)\n    _ = client\n}\n";
+
+    let proto_tree = parse_with(proto_src, &proto_language());
+    let go_tree = parse_with(go_src, &go_language());
+
+    let mut linker = BridgeLinker::new();
+    linker.register(Box::new(GrpcExtractor));
+
+    let files = [
+        SourceFile {
+            file_path: "greeter.proto",
+            language: "proto",
+            tree: &proto_tree,
+            source: proto_src,
+        },
+        SourceFile {
+            file_path: "client.go",
+            language: "go",
+            tree: &go_tree,
+            source: go_src,
+        },
+    ];
+
+    let links = linker.extract_and_link(&files);
+    assert!(
+        links
+            .iter()
+            .any(|l| l.kind == BridgeKind::Grpc && l.export.binding_key == "Greeter"),
+        "expected a grpc link for service `Greeter` (.proto ↔ Go NewGreeterClient), got {links:?}",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Flutter platform-channel fixtures (Dart MethodChannel ↔ native registration)
+// ---------------------------------------------------------------------------
+
+#[cfg(all(feature = "lang-dart", feature = "lang-kotlin"))]
+#[test]
+fn flutter_channel_fixtures_link() {
+    use ministr_core::code::bridge::flutter::FlutterChannelExtractor;
+
+    let dart_src: &[u8] = b"import 'package:flutter/services.dart';\n\nclass Battery {\n  static const platform = MethodChannel('com.example/battery');\n}\n";
+    let kotlin_src: &[u8] = b"class MainActivity {\n    fun configure(messenger: BinaryMessenger) {\n        MethodChannel(messenger, \"com.example/battery\")\n    }\n}\n";
+
+    let dart_tree = parse_with(dart_src, &dart_language());
+    let kotlin_tree = parse_with(kotlin_src, &kotlin_language());
+
+    let mut linker = BridgeLinker::new();
+    linker.register(Box::new(FlutterChannelExtractor));
+
+    let files = [
+        SourceFile {
+            file_path: "battery.dart",
+            language: "dart",
+            tree: &dart_tree,
+            source: dart_src,
+        },
+        SourceFile {
+            file_path: "MainActivity.kt",
+            language: "kotlin",
+            tree: &kotlin_tree,
+            source: kotlin_src,
+        },
+    ];
+
+    let links = linker.extract_and_link(&files);
+    assert!(
+        links.iter().any(|l| l.kind == BridgeKind::FlutterChannel
+            && l.export.binding_key == "com.example/battery"),
+        "expected a flutter_channel link for `com.example/battery` (Dart ↔ Kotlin), got {links:?}",
     );
 }
