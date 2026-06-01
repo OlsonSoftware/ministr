@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 23;
+pub const CURRENT_SCHEMA_VERSION: usize = 24;
 
 /// Returns the migration set for the content database.
 ///
@@ -418,6 +418,25 @@ fn migrations() -> Migrations<'static> {
             CREATE INDEX idx_occurrences_file ON occurrences(file_path);
             ",
         ),
+        // V24: Indexed-vector source of truth (ADR 0001 D4). The EXACT
+        // vector inserted into the ANN index — for dual/Matryoshka corpora
+        // that is the *truncated* vector the HNSW searches, not the
+        // full-dim rerank vector in `full_dim_vectors`. Persisting it in
+        // the ACID store (committing with its metadata) lets the in-memory
+        // HNSW be rebuilt from SQLite on load instead of trusting a
+        // separately-persisted graph dump. With no separate file to
+        // diverge and the insert-time degenerate guard re-applied on every
+        // rebuild, the zero-vector-poison + "fixed in code / stale on disk"
+        // bug classes become structurally impossible.
+        M::up(
+            "
+            CREATE TABLE indexed_vectors (
+                vector_id  TEXT PRIMARY KEY NOT NULL,
+                vector     BLOB NOT NULL,
+                dimension  INTEGER NOT NULL
+            );
+            ",
+        ),
     ])
 }
 
@@ -575,6 +594,7 @@ mod tests {
         assert!(tables.contains(&"corpus_roots".to_string()));
         assert!(tables.contains(&"embedding_cache".to_string()));
         assert!(tables.contains(&"full_dim_vectors".to_string()));
+        assert!(tables.contains(&"indexed_vectors".to_string()));
         assert!(tables.contains(&"answer_cache".to_string()));
         assert!(tables.contains(&"answer_cache_sources".to_string()));
         assert!(tables.contains(&"corpus_merkle".to_string()));

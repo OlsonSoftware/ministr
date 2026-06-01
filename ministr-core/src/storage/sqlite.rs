@@ -3128,6 +3128,112 @@ impl SqliteStorage {
         })
         .await
     }
+
+    // ── Indexed-vector source of truth (ADR 0001 D4) ──
+
+    /// Persist the EXACT vectors inserted into the ANN index, keyed by
+    /// `vector_id`, in the ACID store.
+    ///
+    /// This is the vector source of truth: for dual/Matryoshka corpora it is
+    /// the *truncated* vector the HNSW actually searches (not the full-dim
+    /// rerank vector in `full_dim_vectors`), so the in-memory index can be
+    /// rebuilt from SQLite on load via
+    /// [`crate::index::rebuild_hnsw_from_store`]. Uses `INSERT OR REPLACE` so
+    /// re-indexing overwrites stale vectors.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] if the database insert fails.
+    pub async fn store_indexed_vectors(
+        &self,
+        entries: &[(String, Vec<f32>)],
+    ) -> Result<(), StorageError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let entries: Vec<(String, Vec<f32>)> = entries.to_vec();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO indexed_vectors (vector_id, vector, dimension) \
+                     VALUES (?1, ?2, ?3)",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: format!("prepare failed: {e}"),
+                })?;
+            for (id, vec) in &entries {
+                let blob = encode_f32_blob(vec);
+                let dim = i64::try_from(vec.len()).unwrap_or(0);
+                stmt.execute(rusqlite::params![id, blob, dim])
+                    .map_err(|e| StorageError::Database {
+                        reason: format!("insert indexed_vectors failed for {id}: {e}"),
+                    })?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Delete persisted indexed vectors by ID (e.g. partial-document
+    /// rollback, so SQLite and the rebuilt index never disagree).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] if the database delete fails.
+    pub async fn delete_indexed_vectors(&self, ids: &[&str]) -> Result<(), StorageError> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<String> = ids.iter().map(|s| (*s).to_owned()).collect();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare_cached("DELETE FROM indexed_vectors WHERE vector_id = ?1")
+                .map_err(|e| StorageError::Database {
+                    reason: format!("prepare failed: {e}"),
+                })?;
+            for id in &ids {
+                stmt.execute(rusqlite::params![id])
+                    .map_err(|e| StorageError::Database {
+                        reason: format!("delete indexed_vectors failed for {id}: {e}"),
+                    })?;
+            }
+            Ok(())
+        })
+        .await
+    }
+}
+
+/// The D4 vector source-of-truth read seam: stream the exact indexed vectors
+/// back so [`crate::index::rebuild_hnsw_from_store`] can reconstruct the
+/// in-memory ANN index from this ACID store on load.
+impl crate::index::IndexedVectorStore for SqliteStorage {
+    async fn list_indexed_vectors(&self) -> Result<Vec<(String, Vec<f32>)>, StorageError> {
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare_cached("SELECT vector_id, vector FROM indexed_vectors ORDER BY vector_id")
+                .map_err(|e| StorageError::Database {
+                    reason: format!("prepare failed: {e}"),
+                })?;
+            let rows = stmt
+                .query_map([], |row| {
+                    let vec_id: String = row.get(0)?;
+                    let blob: Vec<u8> = row.get(1)?;
+                    Ok((vec_id, blob))
+                })
+                .map_err(|e| StorageError::Database {
+                    reason: format!("query indexed_vectors failed: {e}"),
+                })?;
+            let mut results = Vec::new();
+            for row in rows {
+                let (id, blob) = row.map_err(|e| StorageError::Database {
+                    reason: format!("read indexed_vectors row failed: {e}"),
+                })?;
+                results.push((id, decode_f32_blob(&blob)));
+            }
+            Ok(results)
+        })
+        .await
+    }
 }
 
 /// Encode a `f32` slice as little-endian bytes.
@@ -3152,6 +3258,44 @@ mod tests {
     use super::*;
     use crate::storage::traits::Storage;
     use crate::types::SymbolId;
+
+    // ── Indexed-vector source of truth (ADR 0001 D4) ─────────────────
+
+    #[tokio::test]
+    async fn indexed_vectors_round_trip_and_rebuild() {
+        use crate::index::{IndexedVectorStore, VectorIndex, rebuild_hnsw_from_store};
+
+        let storage = SqliteStorage::open_in_memory().unwrap();
+
+        storage
+            .store_indexed_vectors(&[
+                ("a".to_string(), vec![1.0, 0.0, 0.0]),
+                ("b".to_string(), vec![0.0, 1.0, 0.0]),
+            ])
+            .await
+            .unwrap();
+
+        // Read back through the DIP seam (round-trips the LE blob encoding).
+        let listed = storage.list_indexed_vectors().await.unwrap();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].0, "a");
+        assert_eq!(listed[0].1, vec![1.0, 0.0, 0.0]);
+
+        // Rebuild the in-memory ANN index straight from the ACID store — no
+        // separate on-disk graph dump involved.
+        let index = rebuild_hnsw_from_store(&storage, 3, Some("test-model"))
+            .await
+            .unwrap();
+        assert_eq!(index.len(), 2);
+        let hits = index.search_knn(&[1.0, 0.0, 0.0], 1).unwrap();
+        assert_eq!(hits[0].id, "a");
+
+        // Deleting keeps SQLite (and therefore any future rebuild) consistent.
+        storage.delete_indexed_vectors(&["a"]).await.unwrap();
+        let after = storage.list_indexed_vectors().await.unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].0, "b");
+    }
 
     // ── Tokenizer tests ──────────────────────────────────────────────
 

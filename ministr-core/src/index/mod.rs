@@ -9,9 +9,11 @@
 
 mod hnsw;
 mod inverted;
+mod rebuild;
 
-pub use hnsw::HnswIndex;
+pub use hnsw::{HnswIndex, HnswIndexConfig};
 pub use inverted::InvertedIndex;
+pub use rebuild::{IndexedVectorStore, rebuild_hnsw_from_store};
 
 use std::path::Path;
 
