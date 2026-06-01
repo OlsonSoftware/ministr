@@ -13,10 +13,11 @@
 
 mod langtest;
 
-use langtest::{IngestedProject, assert_range_invariant, assert_symbol};
+use langtest::{IngestedProject, assert_cross_file_ref, assert_range_invariant, assert_symbol};
+use ministr_core::types::RefKind;
 
 fn shapes_c() -> &'static str {
-    r#"#include <stddef.h>
+    r"#include <stddef.h>
 
 // Named struct.
 struct Point {
@@ -101,7 +102,7 @@ void register_cb(Callback cb) {
 // Macros (not AST symbols — characterized below).
 #define MAX_ITEMS 100
 #define SQUARE(x) ((x) * (x))
-"#
+"
 }
 
 /// Diagnostic dump (always passes) so regressions print the full picture.
@@ -260,4 +261,62 @@ async fn c_prototype_and_definition_single_symbol_baseline() {
          1-symbol collapse baseline)",
         computes.len(),
     );
+}
+
+// ── Cross-file references (both orders) ────────────────────────────────────
+
+/// A C `Calls` edge resolves across `.c` files in BOTH ingest orders. The
+/// caller's `area()` calls `square()` defined in another file; C/C++ ref
+/// extraction emits a name-based `Calls` ref that the resolver binds
+/// cross-file, and the deferred second pass fills it in even when the caller is
+/// ingested before the definition.
+#[tokio::test]
+async fn c_cross_file_call_both_orders() {
+    let def = "int square(int n) {\n    return n * n;\n}\n";
+    let caller = "int area(int side) {\n    return square(side);\n}\n";
+
+    // Definition-before-caller (geom.c < zmain.c).
+    let def_first = IngestedProject::from_files(&[("geom.c", def), ("zmain.c", caller)]).await;
+    assert_cross_file_ref(
+        &def_first,
+        "square",
+        "geom.c",
+        "zmain.c",
+        Some(RefKind::Calls),
+    )
+    .await;
+
+    // Caller-before-definition (amain.c < geom.c) — deferred second pass.
+    let caller_first = IngestedProject::from_files(&[("amain.c", caller), ("geom.c", def)]).await;
+    assert_cross_file_ref(
+        &caller_first,
+        "square",
+        "geom.c",
+        "amain.c",
+        Some(RefKind::Calls),
+    )
+    .await;
+}
+
+/// The `#include "x.h"` shape: a header declares the prototype, one TU defines
+/// the function, another `#include`s the header and calls it. The call resolves
+/// cross-file to a `square` definition (characterizing whatever the C ref model
+/// binds — kind left open).
+#[tokio::test]
+async fn c_include_header_cross_file_call() {
+    let proj = IngestedProject::from_files(&[
+        (
+            "mathlib.c",
+            "#include \"mathlib.h\"\nint cube(int n) {\n    return n * n * n;\n}\n",
+        ),
+        ("mathlib.h", "int cube(int n);\n"),
+        (
+            "app.c",
+            "#include \"mathlib.h\"\nint go(int n) {\n    return cube(n);\n}\n",
+        ),
+    ])
+    .await;
+    // app.c's go() calls cube() — resolves cross-file to the definition in
+    // mathlib.c (any ref kind).
+    assert_cross_file_ref(&proj, "cube", "mathlib.c", "app.c", None).await;
 }
