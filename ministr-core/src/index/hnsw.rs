@@ -374,6 +374,22 @@ impl VectorIndex for HnswIndex {
             });
         }
 
+        // Refuse to index a zero / non-finite vector. Under cosine similarity a
+        // zero vector sits at distance 0 from EVERY query, so a single one
+        // dominates the top-k of every search and buries all real results —
+        // a single poisoned claim silently breaks semantic search for the
+        // whole corpus (observed in practice on degenerate markdown-claim
+        // embeddings). Skip it with a warning rather than corrupt the index.
+        let norm_sq: f32 = vector.iter().map(|x| x * x).sum();
+        if !norm_sq.is_finite() || norm_sq < 1e-12 {
+            tracing::warn!(
+                id,
+                norm_sq,
+                "refusing to index a degenerate (zero/non-finite) embedding vector"
+            );
+            return Ok(());
+        }
+
         // If ID already exists, soft-delete the old entry
         if let Some(&old_int_id) = inner.id_to_int.get(id) {
             inner.deleted.insert(old_int_id);
