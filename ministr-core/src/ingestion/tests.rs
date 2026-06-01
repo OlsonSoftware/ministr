@@ -103,6 +103,42 @@ mod tests {
         assert_eq!(hash.len(), 64);
     }
 
+    // --- Per-stage observability metrics (fg4) ---
+
+    #[test]
+    fn progress_embed_backlog_tracks_queue_depth() {
+        let p = IngestionProgress::new();
+        p.start(3);
+        assert_eq!(p.embed_backlog(), 0, "nothing queued yet");
+        p.add_embeddings_total(10); // parse stage queued 10 sections to embed
+        assert_eq!(p.embed_backlog(), 10, "all queued, none embedded");
+        p.add_embeddings_done(4); // embed stage drained 4
+        assert_eq!(p.embed_backlog(), 6);
+        p.add_embeddings_done(6);
+        assert_eq!(p.embed_backlog(), 0, "fully drained");
+    }
+
+    #[test]
+    fn progress_throughput_is_finite_and_nonnegative() {
+        let p = IngestionProgress::new();
+        // Before start there is no elapsed time and no throughput.
+        assert!(
+            p.elapsed_secs().abs() < f64::EPSILON,
+            "no elapsed before start"
+        );
+        assert!(p.files_per_sec().abs() < f64::EPSILON);
+        assert!(p.embeddings_per_sec().abs() < f64::EPSILON);
+
+        p.start(2);
+        p.increment_done();
+        p.add_embeddings_total(5);
+        p.add_embeddings_done(5);
+
+        assert!(p.elapsed_secs() >= 0.0);
+        assert!(p.files_per_sec() >= 0.0 && p.files_per_sec().is_finite());
+        assert!(p.embeddings_per_sec() >= 0.0 && p.embeddings_per_sec().is_finite());
+    }
+
     // --- File discovery ---
 
     #[test]

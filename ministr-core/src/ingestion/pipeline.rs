@@ -210,6 +210,9 @@ pub struct IngestionProgress {
     embeddings_total: AtomicUsize,
     embeddings_done: AtomicUsize,
     current_file: parking_lot::Mutex<String>,
+    /// Wall-clock start of the current run, set by [`IngestionProgress::start`].
+    /// Backs the throughput/latency getters (fg4 — per-stage observability).
+    started_at: parking_lot::Mutex<Option<std::time::Instant>>,
 }
 
 impl IngestionProgress {
@@ -224,6 +227,7 @@ impl IngestionProgress {
             embeddings_total: AtomicUsize::new(0),
             embeddings_done: AtomicUsize::new(0),
             current_file: parking_lot::Mutex::new(String::new()),
+            started_at: parking_lot::Mutex::new(None),
         }
     }
 
@@ -233,6 +237,7 @@ impl IngestionProgress {
         self.sections_done.store(0, Ordering::Relaxed);
         self.embeddings_total.store(0, Ordering::Relaxed);
         self.embeddings_done.store(0, Ordering::Relaxed);
+        *self.started_at.lock() = Some(std::time::Instant::now());
         self.set_phase(IngestionPhase::Parsing);
         self.status.store(1, Ordering::Relaxed);
     }
@@ -312,6 +317,57 @@ impl IngestionProgress {
     #[must_use]
     pub fn status(&self) -> u8 {
         self.status.load(Ordering::Relaxed)
+    }
+
+    // ── Per-stage observability (fg4) ──────────────────────────────────────
+    //
+    // Lightweight derived metrics so the parse-vs-embed bottleneck is visible
+    // rather than guessed. `embed_backlog` is the embed-stage queue depth
+    // (sections the producer has queued for embedding minus those the consumer
+    // has embedded); the throughput getters divide the live counters by the
+    // wall-clock elapsed since `start`.
+
+    /// Embed-stage backlog: sections parsed and queued for embedding but not
+    /// yet embedded. A persistently large value means embedding is the
+    /// bottleneck (the GPU/embedder can't keep up with parsing).
+    #[must_use]
+    pub fn embed_backlog(&self) -> usize {
+        self.embeddings_total
+            .load(Ordering::Relaxed)
+            .saturating_sub(self.embeddings_done.load(Ordering::Relaxed))
+    }
+
+    /// Seconds elapsed since [`IngestionProgress::start`], or `0.0` if the run
+    /// has not started.
+    #[must_use]
+    pub fn elapsed_secs(&self) -> f64 {
+        let started = *self.started_at.lock();
+        started.map_or(0.0, |t| t.elapsed().as_secs_f64())
+    }
+
+    /// Files indexed per second since `start` (`0.0` before any time elapses).
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)] // throughput metric; counts fit f64 exactly well past any real corpus
+    pub fn files_per_sec(&self) -> f64 {
+        let secs = self.elapsed_secs();
+        if secs > 0.0 {
+            self.files_done() as f64 / secs
+        } else {
+            0.0
+        }
+    }
+
+    /// Embeddings completed per second since `start` (`0.0` before any time
+    /// elapses).
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)] // throughput metric; counts fit f64 exactly well past any real corpus
+    pub fn embeddings_per_sec(&self) -> f64 {
+        let secs = self.elapsed_secs();
+        if secs > 0.0 {
+            self.embeddings_done() as f64 / secs
+        } else {
+            0.0
+        }
     }
 }
 
@@ -1795,6 +1851,19 @@ impl IngestionPipeline {
         let embed_count = embed_result?;
 
         if let Some(ref progress) = self.progress {
+            // fg4 — per-stage observability: emit the run's throughput +
+            // embed-backlog so the parse-vs-embed bottleneck is visible in logs
+            // without a profiler. embed_backlog should be ~0 here (the consumer
+            // has drained); a non-zero value flags a torn/early exit.
+            tracing::info!(
+                files_indexed = stats.files_indexed,
+                embeddings = embed_count,
+                elapsed_secs = progress.elapsed_secs(),
+                files_per_sec = progress.files_per_sec(),
+                embeddings_per_sec = progress.embeddings_per_sec(),
+                embed_backlog = progress.embed_backlog(),
+                "ingestion stage metrics",
+            );
             progress.set_phase(IngestionPhase::Finalizing);
             progress.set_current_file("");
         }
