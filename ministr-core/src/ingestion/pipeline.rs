@@ -921,7 +921,7 @@ impl IngestionPipeline {
         .await?;
 
         // Embed all resolution levels (immediate)
-        embed_document(&doc, embedder, index)?;
+        embed_document(&doc, embedder, index, storage).await?;
 
         // For code files: extract symbols and embed immediately
         if parser_kind == ParserKind::Code {
@@ -932,6 +932,7 @@ impl IngestionPipeline {
                     embedder,
                     self.embedding_service.as_deref(),
                     index,
+                    storage,
                 )
                 .await?;
             }
@@ -1793,6 +1794,10 @@ impl IngestionPipeline {
             .zip(self.full_dim_storage.as_ref());
         let progress_ref = self.progress.as_ref();
         let service_ref = self.embedding_service.as_deref();
+        // Copy the shared storage reference for the consumer (`&S` is `Copy`),
+        // so the single-embed path can persist the indexed vectors (D4) while
+        // the producer keeps its own borrow.
+        let storage_for_consumer = storage;
         let internal_ct_for_consumer = internal_ct.clone();
         let consumer = async move {
             // The Embed stage (ADR 0001 D3): drain the producer channel, batch,
@@ -1800,6 +1805,7 @@ impl IngestionPipeline {
             // the dual (Matryoshka) variant also stores full-dim vectors.
             let result = super::embed_stage::run_embed_stage(
                 embed_rx,
+                storage_for_consumer,
                 embedder,
                 service_ref,
                 dual.map(|(d, s)| (d.as_ref(), s)),

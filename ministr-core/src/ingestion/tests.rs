@@ -848,10 +848,27 @@ mod tests {
         };
 
         let (embedder, index) = make_mock_embedder_and_index();
-        let count = embed_document(&doc, &embedder, &index).unwrap();
+        let storage = crate::storage::SqliteStorage::open_in_memory().unwrap();
+        let count = embed_document(&doc, &embedder, &index, &storage)
+            .await
+            .unwrap();
 
         assert_eq!(count, 4);
         assert_eq!(index.len(), 4, "all 4 vectors should be in the index");
+
+        // D4: the exact indexed vectors are persisted to the ACID store and a
+        // rebuild from that store reproduces the index — the source-of-truth
+        // flip, proven end-to-end through the live embed path.
+        {
+            use crate::embedding::Embedder;
+            use crate::index::{IndexedVectorStore, VectorIndex, rebuild_hnsw_from_store};
+            let stored = storage.list_indexed_vectors().await.unwrap();
+            assert_eq!(stored.len(), 4, "all 4 indexed vectors persisted to SQLite");
+            let rebuilt = rebuild_hnsw_from_store(&storage, embedder.dimension(), None)
+                .await
+                .unwrap();
+            assert_eq!(rebuilt.len(), 4, "index reconstructed from the ACID store");
+        }
 
         // Verify membership by querying each expected ID with the
         // exact text that was embedded to produce it. HNSW's

@@ -632,6 +632,32 @@ pub trait Storage: Send + Sync {
         async { Ok(0) }
     }
 
+    // -- Indexed-vector source of truth (ADR 0001 D4) --
+
+    /// Persist the EXACT vectors inserted into the ANN index, keyed by
+    /// `vector_id` — the vector source of truth from which the in-memory
+    /// index is rebuilt on load (see [`crate::index::rebuild_hnsw_from_store`]).
+    ///
+    /// For dual/Matryoshka corpora these are the *truncated* vectors the HNSW
+    /// searches, not the full-dimension rerank vectors. Default no-op: a
+    /// backend that keeps the index and durable store unified (or doesn't
+    /// support rebuild) simply discards them. `SqliteStorage` overrides this.
+    fn store_indexed_vectors(
+        &self,
+        _entries: &[(String, Vec<f32>)],
+    ) -> impl Future<Output = Result<(), StorageError>> + Send {
+        async { Ok(()) }
+    }
+
+    /// Delete persisted indexed vectors by id (partial-document rollback and
+    /// re-index) so the store and a future rebuild never disagree. Default: no-op.
+    fn delete_indexed_vectors(
+        &self,
+        _ids: &[&str],
+    ) -> impl Future<Output = Result<(), StorageError>> + Send {
+        async { Ok(()) }
+    }
+
     // -- Sessions --
 
     /// Save a session to persistent storage for crash recovery.

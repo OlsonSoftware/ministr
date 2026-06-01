@@ -17,7 +17,7 @@ use std::sync::Arc;
 use crate::embedding::{DualEmbedder, Embedder, EmbeddingService};
 use crate::error::IngestionError;
 use crate::index::VectorIndex;
-use crate::storage::SqliteStorage;
+use crate::storage::{SqliteStorage, Storage};
 use crate::types::VectorId;
 
 use super::embedding::{
@@ -35,8 +35,9 @@ use super::pipeline::{IngestionPhase, IngestionProgress};
 /// # Errors
 ///
 /// Propagates [`IngestionError`] from embedding or vector insertion.
-pub(super) async fn run_embed_stage<E, I>(
+pub(super) async fn run_embed_stage<S, E, I>(
     embed_rx: tokio::sync::mpsc::Receiver<Vec<(VectorId, String)>>,
+    storage: &S,
     embedder: &E,
     service: Option<&EmbeddingService>,
     dual: Option<(&dyn DualEmbedder, &SqliteStorage)>,
@@ -44,26 +45,31 @@ pub(super) async fn run_embed_stage<E, I>(
     progress: Option<&Arc<IngestionProgress>>,
 ) -> Result<usize, IngestionError>
 where
+    S: Storage + ?Sized,
     E: Embedder + ?Sized,
     I: VectorIndex + ?Sized,
 {
     if let Some((dual_embedder, full_dim_storage)) = dual {
+        // The dual path persists the truncated indexed vectors via
+        // `full_dim_storage` (the same content.db) inside the batch helper.
         consume_dual(embed_rx, dual_embedder, index, full_dim_storage, progress).await
     } else {
-        consume_single(embed_rx, embedder, service, index, progress).await
+        consume_single(embed_rx, storage, embedder, service, index, progress).await
     }
 }
 
 /// Single-embedder path: consume embedding pairs from the producer channel,
 /// batch them, and insert.
-async fn consume_single<E, I>(
+async fn consume_single<S, E, I>(
     mut embed_rx: tokio::sync::mpsc::Receiver<Vec<(VectorId, String)>>,
+    storage: &S,
     embedder: &E,
     service: Option<&EmbeddingService>,
     index: &I,
     progress: Option<&Arc<IngestionProgress>>,
 ) -> Result<usize, IngestionError>
 where
+    S: Storage + ?Sized,
     E: Embedder + ?Sized,
     I: VectorIndex + ?Sized,
 {
@@ -82,7 +88,7 @@ where
         }
         buffer.extend(pairs);
         if buffer.len() >= EMBED_FLUSH_THRESHOLD {
-            let count = batch_embed_and_insert(&buffer, embedder, service, index).await?;
+            let count = batch_embed_and_insert(&buffer, embedder, service, index, storage).await?;
             total_embeddings += count;
             if let Some(p) = progress {
                 p.add_embeddings_done(count);
@@ -91,7 +97,7 @@ where
         }
     }
     if !buffer.is_empty() {
-        let count = batch_embed_and_insert(&buffer, embedder, service, index).await?;
+        let count = batch_embed_and_insert(&buffer, embedder, service, index, storage).await?;
         total_embeddings += count;
         if let Some(p) = progress {
             p.add_embeddings_done(count);
@@ -180,6 +186,7 @@ mod tests {
         let (tx, rx) = tokio::sync::mpsc::channel(8);
         let embedder = StageMockEmbedder { dim: 8 };
         let index = HnswIndex::new(8, 100).expect("hnsw index");
+        let storage = SqliteStorage::open_in_memory().expect("storage");
 
         tx.send(vec![
             (VectorId::section("doc#s1"), "hello".to_owned()),
@@ -189,7 +196,7 @@ mod tests {
         .expect("send pairs");
         drop(tx); // close the channel so the stage drains and returns
 
-        let count = run_embed_stage(rx, &embedder, None, None, &index, None)
+        let count = run_embed_stage(rx, &storage, &embedder, None, None, &index, None)
             .await
             .expect("embed stage");
 
@@ -202,9 +209,10 @@ mod tests {
         let (tx, rx) = tokio::sync::mpsc::channel(1);
         let embedder = StageMockEmbedder { dim: 4 };
         let index = HnswIndex::new(4, 16).expect("hnsw index");
+        let storage = SqliteStorage::open_in_memory().expect("storage");
         drop(tx);
 
-        let count = run_embed_stage(rx, &embedder, None, None, &index, None)
+        let count = run_embed_stage(rx, &storage, &embedder, None, None, &index, None)
             .await
             .expect("embed stage");
 

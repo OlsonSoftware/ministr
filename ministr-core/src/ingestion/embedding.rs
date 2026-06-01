@@ -16,10 +16,15 @@ pub(super) const EMBED_BATCH_CHUNK: usize = 128;
 pub(super) const EMBED_FLUSH_THRESHOLD: usize = 4096;
 
 /// Embed a document tree at all three resolution levels (immediate).
-pub(super) fn embed_document<E: Embedder + ?Sized, I: VectorIndex + ?Sized>(
+pub(super) async fn embed_document<
+    E: Embedder + ?Sized,
+    I: VectorIndex + ?Sized,
+    S: Storage + ?Sized,
+>(
     doc: &DocumentTree,
     embedder: &E,
     index: &I,
+    storage: &S,
 ) -> Result<usize, IngestionError> {
     let mut texts: Vec<String> = Vec::new();
     let mut ids: Vec<VectorId> = Vec::new();
@@ -52,6 +57,18 @@ pub(super) fn embed_document<E: Embedder + ?Sized, I: VectorIndex + ?Sized>(
             })?;
     }
 
+    // D4: persist the exact indexed vectors so the index can be rebuilt from
+    // SQLite on load (the immediate-embed entry point, used by content ingest).
+    let indexed: Vec<(String, Vec<f32>)> = ids
+        .iter()
+        .zip(vectors.iter())
+        .map(|(vid, v)| (vid.to_string(), v.clone()))
+        .collect();
+    storage
+        .store_indexed_vectors(&indexed)
+        .await
+        .map_err(IngestionError::from)?;
+
     let count = ids.len();
     debug!(embeddings = count, doc_id = %doc.id, "embedded document");
     Ok(count)
@@ -78,11 +95,16 @@ pub(super) fn collect_document_embeddings(doc: &DocumentTree, pairs: &mut Vec<(V
 /// model runs on the service's own thread and this task `await`s without
 /// blocking a Tokio worker. When `None`, the embedder is called inline (the
 /// path tests / `ministr index` / web fetch use).
-pub(super) async fn batch_embed_and_insert<E: Embedder + ?Sized, I: VectorIndex + ?Sized>(
+pub(super) async fn batch_embed_and_insert<
+    E: Embedder + ?Sized,
+    I: VectorIndex + ?Sized,
+    S: Storage + ?Sized,
+>(
     pairs: &[(VectorId, String)],
     embedder: &E,
     service: Option<&crate::embedding::EmbeddingService>,
     index: &I,
+    storage: &S,
 ) -> Result<usize, IngestionError> {
     if pairs.is_empty() {
         return Ok(0);
@@ -118,6 +140,21 @@ pub(super) async fn batch_embed_and_insert<E: Embedder + ?Sized, I: VectorIndex 
                     reason: format!("failed to insert vector {vid}: {e}"),
                 })?;
         }
+
+        // D4: persist the exact indexed vectors in the ACID store so the
+        // in-memory HNSW can be rebuilt from SQLite on load. The rebuild
+        // re-applies the degenerate guard, so storing every vector here
+        // (zeros included) stays consistent with what the index accepts.
+        let indexed: Vec<(String, Vec<f32>)> = chunk
+            .iter()
+            .zip(vectors.iter())
+            .map(|((vid, _), v)| (vid.to_string(), v.clone()))
+            .collect();
+        storage
+            .store_indexed_vectors(&indexed)
+            .await
+            .map_err(IngestionError::from)?;
+
         total += chunk.len();
         mem_profile::checkpoint_every(5, i, "after index.insert() batch");
 
@@ -170,6 +207,19 @@ pub(super) async fn batch_embed_and_insert_dual<I: VectorIndex + ?Sized>(
                     reason: format!("failed to insert vector {vid}: {e}"),
                 })?;
         }
+
+        // D4: persist the exact INDEXED (truncated) vectors as the rebuild
+        // source of truth — distinct from the full-dim rerank vectors stored
+        // below. This is what `rebuild_hnsw_from_store` reconstructs from.
+        let indexed_entries: Vec<(String, Vec<f32>)> = chunk
+            .iter()
+            .zip(dual.truncated.iter())
+            .map(|((vid, _), vec)| (vid.to_string(), vec.clone()))
+            .collect();
+        storage
+            .store_indexed_vectors(&indexed_entries)
+            .await
+            .map_err(IngestionError::from)?;
 
         // Store full-dim vectors in SQLite.
         let full_entries: Vec<(String, Vec<f32>)> = chunk
@@ -239,8 +289,15 @@ pub(crate) async fn delete_document_vectors<S: Storage + ?Sized, I: VectorIndex 
     index: &I,
 ) -> Result<usize, IngestionError> {
     let mut deleted = 0;
+    // D4: collect every vector id we remove from the index so we can also
+    // delete it from the `indexed_vectors` source of truth — SQLite and a
+    // future rebuild must never disagree about what was indexed. Collected
+    // unconditionally (a vector stored but skipped by the index guard still
+    // has a row to clean up).
+    let mut removed_vids: Vec<String> = Vec::new();
 
     let vid = VectorId::doc_summary(doc_id.as_ref());
+    removed_vids.push(vid.as_str().to_owned());
     if index
         .delete(vid.as_str())
         .map_err(|e| IngestionError::Embedding {
@@ -257,6 +314,7 @@ pub(crate) async fn delete_document_vectors<S: Storage + ?Sized, I: VectorIndex 
 
     for section in &sections {
         let vid = VectorId::sec_summary(section.id.as_ref());
+        removed_vids.push(vid.as_str().to_owned());
         if index
             .delete(vid.as_str())
             .map_err(|e| IngestionError::Embedding {
@@ -267,6 +325,7 @@ pub(crate) async fn delete_document_vectors<S: Storage + ?Sized, I: VectorIndex 
         }
 
         let vid = VectorId::section(section.id.as_ref());
+        removed_vids.push(vid.as_str().to_owned());
         if index
             .delete(vid.as_str())
             .map_err(|e| IngestionError::Embedding {
@@ -282,6 +341,7 @@ pub(crate) async fn delete_document_vectors<S: Storage + ?Sized, I: VectorIndex 
             .map_err(IngestionError::from)?;
         for claim in &claims {
             let vid = VectorId::claim(claim.id.as_ref());
+            removed_vids.push(vid.as_str().to_owned());
             if index
                 .delete(vid.as_str())
                 .map_err(|e| IngestionError::Embedding {
@@ -307,16 +367,25 @@ pub(crate) async fn delete_document_vectors<S: Storage + ?Sized, I: VectorIndex 
             .map_err(IngestionError::from)?;
         for sym in &symbols {
             let stub_vid = VectorId::symbol_stub(sym.id.as_ref());
+            removed_vids.push(stub_vid.as_str().to_owned());
             if index.delete(stub_vid.as_str()).unwrap_or(false) {
                 deleted += 1;
             }
             let full_vid = VectorId::symbol_full(sym.id.as_ref());
+            removed_vids.push(full_vid.as_str().to_owned());
             if index.delete(full_vid.as_str()).unwrap_or(false) {
                 deleted += 1;
             }
         }
         let _ = storage.delete_symbols_for_file(&doc.source_path).await;
     }
+
+    // D4: remove the same ids from the indexed_vectors source of truth.
+    let refs: Vec<&str> = removed_vids.iter().map(String::as_str).collect();
+    storage
+        .delete_indexed_vectors(&refs)
+        .await
+        .map_err(IngestionError::from)?;
 
     debug!(deleted, doc_id = %doc_id, "deleted document vectors");
     Ok(deleted)

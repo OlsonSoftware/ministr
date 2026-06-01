@@ -2157,6 +2157,66 @@ impl Storage for SqliteStorage {
         .await
     }
 
+    // -- Indexed-vector source of truth (ADR 0001 D4) --
+
+    /// Persist the EXACT vectors inserted into the ANN index (the truncated
+    /// vector for dual/Matryoshka corpora), keyed by `vector_id`, in the ACID
+    /// store so the in-memory index can be rebuilt from SQLite on load. Uses
+    /// `INSERT OR REPLACE` so re-indexing overwrites stale vectors.
+    async fn store_indexed_vectors(
+        &self,
+        entries: &[(String, Vec<f32>)],
+    ) -> Result<(), StorageError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        let entries: Vec<(String, Vec<f32>)> = entries.to_vec();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO indexed_vectors (vector_id, vector, dimension) \
+                     VALUES (?1, ?2, ?3)",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: format!("prepare failed: {e}"),
+                })?;
+            for (id, vec) in &entries {
+                let blob = encode_f32_blob(vec);
+                let dim = i64::try_from(vec.len()).unwrap_or(0);
+                stmt.execute(rusqlite::params![id, blob, dim])
+                    .map_err(|e| StorageError::Database {
+                        reason: format!("insert indexed_vectors failed for {id}: {e}"),
+                    })?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Delete persisted indexed vectors by ID so SQLite and a future rebuild
+    /// never disagree (partial-document rollback / re-index).
+    async fn delete_indexed_vectors(&self, ids: &[&str]) -> Result<(), StorageError> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<String> = ids.iter().map(|s| (*s).to_owned()).collect();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare_cached("DELETE FROM indexed_vectors WHERE vector_id = ?1")
+                .map_err(|e| StorageError::Database {
+                    reason: format!("prepare failed: {e}"),
+                })?;
+            for id in &ids {
+                stmt.execute(rusqlite::params![id])
+                    .map_err(|e| StorageError::Database {
+                        reason: format!("delete indexed_vectors failed for {id}: {e}"),
+                    })?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
     // -- Symbol references --
 
     async fn insert_symbol_refs(&self, refs: &[SymbolRefRecord]) -> Result<(), StorageError> {
@@ -3122,79 +3182,6 @@ impl SqliteStorage {
                 stmt.execute(rusqlite::params![id])
                     .map_err(|e| StorageError::Database {
                         reason: format!("delete full_dim_vectors failed for {id}: {e}"),
-                    })?;
-            }
-            Ok(())
-        })
-        .await
-    }
-
-    // ── Indexed-vector source of truth (ADR 0001 D4) ──
-
-    /// Persist the EXACT vectors inserted into the ANN index, keyed by
-    /// `vector_id`, in the ACID store.
-    ///
-    /// This is the vector source of truth: for dual/Matryoshka corpora it is
-    /// the *truncated* vector the HNSW actually searches (not the full-dim
-    /// rerank vector in `full_dim_vectors`), so the in-memory index can be
-    /// rebuilt from SQLite on load via
-    /// [`crate::index::rebuild_hnsw_from_store`]. Uses `INSERT OR REPLACE` so
-    /// re-indexing overwrites stale vectors.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StorageError`] if the database insert fails.
-    pub async fn store_indexed_vectors(
-        &self,
-        entries: &[(String, Vec<f32>)],
-    ) -> Result<(), StorageError> {
-        if entries.is_empty() {
-            return Ok(());
-        }
-        let entries: Vec<(String, Vec<f32>)> = entries.to_vec();
-        self.with_conn(move |conn| {
-            let mut stmt = conn
-                .prepare_cached(
-                    "INSERT OR REPLACE INTO indexed_vectors (vector_id, vector, dimension) \
-                     VALUES (?1, ?2, ?3)",
-                )
-                .map_err(|e| StorageError::Database {
-                    reason: format!("prepare failed: {e}"),
-                })?;
-            for (id, vec) in &entries {
-                let blob = encode_f32_blob(vec);
-                let dim = i64::try_from(vec.len()).unwrap_or(0);
-                stmt.execute(rusqlite::params![id, blob, dim])
-                    .map_err(|e| StorageError::Database {
-                        reason: format!("insert indexed_vectors failed for {id}: {e}"),
-                    })?;
-            }
-            Ok(())
-        })
-        .await
-    }
-
-    /// Delete persisted indexed vectors by ID (e.g. partial-document
-    /// rollback, so SQLite and the rebuilt index never disagree).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StorageError`] if the database delete fails.
-    pub async fn delete_indexed_vectors(&self, ids: &[&str]) -> Result<(), StorageError> {
-        if ids.is_empty() {
-            return Ok(());
-        }
-        let ids: Vec<String> = ids.iter().map(|s| (*s).to_owned()).collect();
-        self.with_conn(move |conn| {
-            let mut stmt = conn
-                .prepare_cached("DELETE FROM indexed_vectors WHERE vector_id = ?1")
-                .map_err(|e| StorageError::Database {
-                    reason: format!("prepare failed: {e}"),
-                })?;
-            for id in &ids {
-                stmt.execute(rusqlite::params![id])
-                    .map_err(|e| StorageError::Database {
-                        reason: format!("delete indexed_vectors failed for {id}: {e}"),
                     })?;
             }
             Ok(())
