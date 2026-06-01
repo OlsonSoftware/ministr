@@ -724,3 +724,127 @@ fn flutter_channel_fixtures_link() {
         "expected a flutter_channel link for `com.example/battery` (Dart ↔ Kotlin), got {links:?}",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Coverage guard — every BridgeKind has an e2e link fixture above
+// ---------------------------------------------------------------------------
+
+/// All 13 `BridgeKind` variants. The `match` is intentionally exhaustive: when
+/// a new variant is added it fails to compile HERE, forcing the author to add
+/// an e2e fixture above and a `BRIDGE_FIXTURED` entry below.
+fn all_bridge_kinds() -> [BridgeKind; 13] {
+    let kinds = [
+        BridgeKind::TauriCommand,
+        BridgeKind::TauriEvent,
+        BridgeKind::Napi,
+        BridgeKind::WasmBindgen,
+        BridgeKind::PyO3,
+        BridgeKind::HttpRoute,
+        BridgeKind::Ffi,
+        BridgeKind::Cgo,
+        BridgeKind::Jni,
+        BridgeKind::UniFfi,
+        BridgeKind::Grpc,
+        BridgeKind::FlutterChannel,
+        BridgeKind::ElectronIpc,
+    ];
+    // Exhaustiveness tripwire: a new variant breaks this match → update the
+    // array above, add a fixture, and add it to BRIDGE_FIXTURED.
+    for k in kinds {
+        match k {
+            BridgeKind::TauriCommand
+            | BridgeKind::TauriEvent
+            | BridgeKind::Napi
+            | BridgeKind::WasmBindgen
+            | BridgeKind::PyO3
+            | BridgeKind::HttpRoute
+            | BridgeKind::Ffi
+            | BridgeKind::Cgo
+            | BridgeKind::Jni
+            | BridgeKind::UniFfi
+            | BridgeKind::Grpc
+            | BridgeKind::FlutterChannel
+            | BridgeKind::ElectronIpc => {}
+        }
+    }
+    kinds
+}
+
+/// Bridge kinds with a `*_fixtures_link` (or endpoint) e2e test in this file.
+const BRIDGE_FIXTURED: &[&str] = &[
+    "tauri_command",   // tauri_command_fixtures_link
+    "tauri_event",     // tauri_event_fixtures_link
+    "napi",            // napi_fixtures_link
+    "wasm_bindgen",    // wasm_bindgen_fixtures_link
+    "pyo3",            // pyo3_fixtures_link
+    "http_route",      // http_route_fixtures_link_rust_to_ts
+    "ffi",             // ffi_fixtures_link
+    "cgo",             // cgo_fixtures_link
+    "jni",             // jni_fixtures_link
+    "uniffi",          // uniffi_fixtures_link (export endpoint)
+    "grpc",            // grpc_fixtures_link
+    "flutter_channel", // flutter_channel_fixtures_link
+    "electron_ipc",    // electron_ipc_fixtures_link
+];
+
+#[test]
+fn every_bridge_kind_has_an_e2e_fixture() {
+    for k in all_bridge_kinds() {
+        assert!(
+            BRIDGE_FIXTURED.contains(&k.as_str()),
+            "BridgeKind `{}` has no e2e fixture in bridge_fixtures.rs — add a \
+             `{}_fixtures_link` test and list it in BRIDGE_FIXTURED",
+            k.as_str(),
+            k.as_str(),
+        );
+    }
+    // Every fixtured name is a real kind (catches typos / removed variants).
+    for name in BRIDGE_FIXTURED {
+        assert!(
+            BridgeKind::parse(name).is_some(),
+            "BRIDGE_FIXTURED lists unknown bridge kind `{name}`",
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Monorepo-subdir framework detection (detect_in_files)
+// ---------------------------------------------------------------------------
+
+/// A Tauri app lives under `<repo>/app/src-tauri/`, so its manifests sit BELOW
+/// the corpus root. `FrameworkDetector::detect` only walks UP from the root and
+/// misses them; `detect_in_files` scans the directory of every manifest in the
+/// file set and finds them. This pins that contrast.
+#[test]
+fn detect_in_files_finds_subdir_tauri_app() {
+    use ministr_core::code::bridge::detector::FrameworkDetector;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let subdir = root.join("app").join("src-tauri");
+    std::fs::create_dir_all(&subdir).expect("create src-tauri dir");
+
+    let cargo_toml = subdir.join("Cargo.toml");
+    std::fs::write(
+        &cargo_toml,
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ntauri = \"2\"\n",
+    )
+    .expect("write Cargo.toml");
+    let tauri_conf = subdir.join("tauri.conf.json");
+    std::fs::write(&tauri_conf, "{\n  \"productName\": \"app\"\n}\n")
+        .expect("write tauri.conf.json");
+
+    // The upward walk from the repo root misses the subdir app.
+    let from_root = FrameworkDetector::detect(root);
+    assert!(
+        !from_root.contains(&BridgeKind::TauriCommand),
+        "detect() from the repo root should NOT see the subdir Tauri app, got {from_root:?}",
+    );
+
+    // detect_in_files, given the discovered manifests, finds it.
+    let detected = FrameworkDetector::detect_in_files(&[cargo_toml, tauri_conf]);
+    assert!(
+        detected.contains(&BridgeKind::TauriCommand),
+        "detect_in_files should find the subdir Tauri app's TauriCommand bridge, got {detected:?}",
+    );
+}
