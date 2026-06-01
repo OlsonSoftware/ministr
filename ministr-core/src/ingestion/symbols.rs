@@ -514,7 +514,13 @@ fn filter_primary(matches: &[SymbolRecord]) -> Vec<&SymbolRecord> {
         .filter(|s| {
             matches!(
                 s.kind.as_str(),
-                "struct" | "enum" | "trait" | "function" | "type" | "const" | "static" | "mod"
+                // `module` (not `mod`): `ItemKind::Module.as_str()` is
+                // `"module"`, so a `"mod"` arm here matched nothing and
+                // dropped every module-kind target — e.g. a Ruby `module`
+                // used as a mixin interface (`include M`), or a Scala
+                // package. Allowing `module` lets such Implements/Uses refs
+                // resolve to their definition.
+                "struct" | "enum" | "trait" | "function" | "type" | "const" | "static" | "module"
             )
         })
         .collect()
@@ -597,7 +603,7 @@ pub(super) async fn resolve_and_store_refs<S: Storage + ?Sized>(
 
     let file_anchor = local_symbols
         .iter()
-        .find(|s| s.kind == "mod")
+        .find(|s| s.kind == "module")
         .or_else(|| {
             local_symbols.iter().find(|s| {
                 matches!(

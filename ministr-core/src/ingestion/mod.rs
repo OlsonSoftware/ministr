@@ -167,4 +167,11 @@ pub const EXTRACTOR_VERSION: i64 = 14;
 ///   component. Intentional cross-language paths still live in
 ///   `RefKind::Bridge` (handled by the bridge linker), which never
 ///   goes through `disambiguate_target`.
-pub const RESOLVER_VERSION: i64 = 2;
+/// - **3**: `filter_primary` (and the `file_anchor` lookup) now allow
+///   `"module"`-kind symbols as resolution targets / anchors. Both
+///   previously tested for `"mod"`, but `ItemKind::Module.as_str()` is
+///   `"module"` — so every module-kind target was silently dropped. This
+///   fixes mixin-as-interface resolution (Ruby `include M`/`prepend M`
+///   onto a `module`, Scala packages) so those `Implements`/`Uses` refs
+///   bind to their definition instead of going permanently pending.
+pub const RESOLVER_VERSION: i64 = 3;

@@ -13,7 +13,6 @@
 mod langtest;
 
 use langtest::{IngestedProject, assert_cross_file_ref};
-use ministr_core::code::refs::extract_refs;
 use ministr_core::types::RefKind;
 
 async fn assert_edge(
@@ -62,35 +61,26 @@ async fn ruby_superclass_both_orders() {
     .await;
 }
 
-/// `include` / `prepend` emit `RefKind::Implements` edges onto the mixed-in
-/// modules (Ruby's interface mechanism). Asserted directly on the extractor
-/// output: cross-file *resolution* of a mixin requires the target module to be
-/// an in-corpus symbol, and module-kind symbols aren't yet resolved as
-/// Implements targets (tracked: f-ruby-module-implements-resolution) — but the
-/// extractor correctly produces the edge.
-#[test]
-fn ruby_include_prepend_emit_implements() {
-    let src = b"class EconomyService\n  include IService\n  prepend IOther\nend\n";
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter_ruby::LANGUAGE.into())
-        .unwrap();
-    let tree = parser.parse(&src[..], None).unwrap();
-    let refs = extract_refs(&tree, &src[..], "ruby");
-
-    let implements: Vec<&str> = refs
-        .iter()
-        .filter(|r| r.kind == RefKind::Implements)
-        .map(|r| r.target_name.as_str())
-        .collect();
-    assert!(
-        implements.contains(&"IService"),
-        "expected Implements(IService) from `include`; got {implements:?}",
-    );
-    assert!(
-        implements.contains(&"IOther"),
-        "expected Implements(IOther) from `prepend`; got {implements:?}",
-    );
+/// `include M` emits a `RefKind::Implements` edge onto the mixed-in module
+/// (Ruby's interface mechanism) that now RESOLVES cross-file: the target is a
+/// `module` symbol, and module-kind symbols are valid Implements targets after
+/// the `filter_primary` "mod"→"module" fix (f-ruby-module-implements-resolution).
+#[tokio::test]
+async fn ruby_include_resolves_to_module_cross_file() {
+    assert_edge(
+        &[
+            ("a_iservice.rb", "module IService\n  def run; end\nend\n"),
+            (
+                "b_economy.rb",
+                "require 'a_iservice'\nclass EconomyService\n  include IService\n  def run; 1; end\nend\n",
+            ),
+        ],
+        "IService",
+        "a_iservice.rb",
+        "b_economy.rb",
+        RefKind::Implements,
+    )
+    .await;
 }
 
 #[tokio::test]
