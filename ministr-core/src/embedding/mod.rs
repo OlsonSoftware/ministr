@@ -17,6 +17,7 @@ pub mod hybrid;
 mod metal_bert;
 pub mod openai;
 mod rerank;
+pub mod service;
 mod sparse;
 
 pub use cache::CachedEmbedder;
@@ -28,6 +29,7 @@ pub use fastembed_impl::{
 };
 pub use hybrid::HybridEmbedder;
 pub use rerank::FastReranker;
+pub use service::{EmbeddingService, EmbeddingServiceConfig};
 pub use sparse::FastSparseEmbedder;
 
 use crate::error::IndexError;
