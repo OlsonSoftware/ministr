@@ -1407,4 +1407,56 @@ impl Bundle {
             "no Rust ref should bind to a TSX symbol; resolver phantom-bound across languages"
         );
     }
+
+    /// Build a minimal `SymbolRecord` for `enclosing_symbol_id` tests — only
+    /// `id`, `kind`, and the line range matter to the function under test.
+    fn rec(id: &str, kind: &str, line_start: u32, line_end: u32) -> SymbolRecord {
+        SymbolRecord {
+            id: SymbolId(id.into()),
+            file_path: "f.rs".into(),
+            name: id.into(),
+            kind: kind.into(),
+            visibility: String::new(),
+            signature: String::new(),
+            doc_comment: None,
+            module_path: String::new(),
+            line_start,
+            line_end,
+            cyclomatic_complexity: None,
+        }
+    }
+
+    #[test]
+    fn enclosing_symbol_id_picks_smallest_enclosing_owner() {
+        // An inner function (lines 5..7) nested inside a module (lines 1..20).
+        // Both enclose line 6, but the tighter range (the function) wins.
+        let symbols = vec![
+            rec("outer_mod", "mod", 1, 20),
+            rec("inner_fn", "function", 5, 7),
+        ];
+        assert_eq!(
+            enclosing_symbol_id(&symbols, 6),
+            Some(SymbolId("inner_fn".into())),
+            "smallest (most-specific) enclosing owner range must win",
+        );
+        // A line owned only by the module (outside the inner fn) attributes to
+        // the module.
+        assert_eq!(
+            enclosing_symbol_id(&symbols, 15),
+            Some(SymbolId("outer_mod".into())),
+        );
+    }
+
+    #[test]
+    fn enclosing_symbol_id_none_when_unowned_or_non_owner_kind() {
+        // No symbol owns the line → None.
+        let fns = vec![rec("f", "function", 10, 20)];
+        assert_eq!(enclosing_symbol_id(&fns, 5), None);
+
+        // A type declaration encloses the line, but `struct`/`enum`/`trait`
+        // are NOT owner kinds (their body-level refs carry an explicit
+        // from_context), so the fallback attributes nothing.
+        let types = vec![rec("S", "struct", 1, 30), rec("E", "enum", 1, 30)];
+        assert_eq!(enclosing_symbol_id(&types, 10), None);
+    }
 }
