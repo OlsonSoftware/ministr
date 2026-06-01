@@ -435,7 +435,7 @@ impl CorpusRegistry {
             }
         }
         let display = display_name.unwrap_or_else(|| display_name_from_paths(paths));
-        let handle = self.create_handle(corpus_id, paths, display)?;
+        let handle = self.create_handle(corpus_id, paths, display).await?;
 
         // Seed CorpusInfo.files_indexed from the restored content.db so
         // /api/v1/corpora reports the bundle's true count instead of the
@@ -726,7 +726,9 @@ impl CorpusRegistry {
         // Windows for identity stability, but humans want to see
         // "Ministr", not "ministr".
         let display_name = display_name_from_paths(paths);
-        let handle = self.create_handle(&corpus_id, &canonical, display_name)?;
+        let handle = self
+            .create_handle(&corpus_id, &canonical, display_name)
+            .await?;
 
         // Subscribe to coherence broadcasts for answer cache invalidation
         // BEFORE inserting the handle (the tx is on the handle).
@@ -1131,7 +1133,7 @@ impl CorpusRegistry {
         Ok(())
     }
 
-    fn create_handle(
+    async fn create_handle(
         &self,
         corpus_id: &str,
         paths: &[String],
@@ -1150,7 +1152,8 @@ impl CorpusRegistry {
         );
 
         let dim = self.embedder.dimension();
-        let index = load_or_create_index(&index_dir, dim, &self.config.default_model)?;
+        let index =
+            load_or_create_index(&index_dir, dim, &self.config.default_model, &storage).await?;
 
         let query_storage = SqliteStorage::open(&db_path)
             .map_err(|e| RegistryError::Storage(format!("open query db: {e}")))?;
@@ -1281,11 +1284,37 @@ pub fn spawn_session_invalidator(
     })
 }
 
-fn load_or_create_index(
+async fn load_or_create_index(
     index_dir: &std::path::Path,
     dim: usize,
     model_name: &str,
+    storage: &SqliteStorage,
 ) -> Result<Arc<dyn VectorIndex>, RegistryError> {
+    // ADR 0001 D4: prefer rebuilding the in-memory ANN index from the ACID
+    // vector source of truth (the `indexed_vectors` table). There is no
+    // separate on-disk graph to drift, and the degenerate-vector guard
+    // re-runs on every insert during the rebuild — so the zero-vector-poison
+    // and "fixed in code / stale on disk" bug classes are structurally
+    // impossible. Falls back to the legacy on-disk HNSW dump for corpora and
+    // cloud bundles indexed before the V24 flip (their `indexed_vectors` is
+    // empty), and finally to a fresh index.
+    match ministr_core::index::rebuild_hnsw_from_store(storage, dim, Some(model_name)).await {
+        Ok(rebuilt) if !rebuilt.is_empty() => {
+            info!(
+                vectors = rebuilt.len(),
+                "rebuilt vector index from the SQLite source of truth"
+            );
+            return Ok(Arc::new(rebuilt));
+        }
+        Ok(_) => {
+            // No persisted indexed vectors — a legacy corpus. Fall through to
+            // the on-disk dump so pre-V24 corpora keep loading unchanged.
+        }
+        Err(e) => {
+            warn!(error = %e, "rebuild from SQLite source of truth failed; falling back to on-disk index");
+        }
+    }
+
     if index_dir.exists() {
         match HnswIndex::load(index_dir) {
             Ok(loaded) => match loaded.check_compatible(dim, model_name, index_dir) {
