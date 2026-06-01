@@ -1,13 +1,13 @@
 //! Embedding: dense, sparse, batch insertion, and vector deletion.
 
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::embedding::{DualEmbedder, Embedder};
 use crate::error::IngestionError;
 use crate::index::VectorIndex;
 use crate::mem_profile;
 use crate::storage::{SqliteStorage, Storage};
-use crate::types::{DocumentTree, Section, VectorId};
+use crate::types::{ContentId, DocumentTree, Section, VectorId};
 
 /// Maximum texts per embedding inference call.
 pub(super) const EMBED_BATCH_CHUNK: usize = 128;
@@ -320,4 +320,56 @@ pub(crate) async fn delete_document_vectors<S: Storage + ?Sized, I: VectorIndex 
 
     debug!(deleted, doc_id = %doc_id, "deleted document vectors");
     Ok(deleted)
+}
+
+/// Roll back a set of partially-indexed documents after an embedding failure:
+/// delete each document's vectors, its storage record, and its file-hash so
+/// `SQLite` and the vector index never disagree about whether a file was
+/// indexed — the Persist-stage "no partial document" invariant. Best-effort:
+/// per-document failures are logged and skipped, since the caller is already on
+/// the error path.
+pub(crate) async fn rollback_partial_documents<S, I>(docs: &[ContentId], storage: &S, index: &I)
+where
+    S: Storage + ?Sized,
+    I: VectorIndex + ?Sized,
+{
+    for doc_id in docs {
+        if let Err(e) = delete_document_vectors(doc_id, storage, index).await {
+            warn!(doc_id = %doc_id, error = %e, "rollback: delete vectors failed");
+        }
+        if let Err(e) = storage.delete_document(doc_id).await {
+            warn!(doc_id = %doc_id, error = %e, "rollback: delete document failed");
+        }
+        if let Err(e) = storage.delete_file_hash(&doc_id.0).await {
+            warn!(doc_id = %doc_id, error = %e, "rollback: delete file hash failed");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::index::HnswIndex;
+
+    #[tokio::test]
+    async fn rollback_deletes_a_documents_vectors() {
+        let storage = SqliteStorage::open_in_memory().expect("storage");
+        let index = HnswIndex::new(4, 16).expect("hnsw index");
+        index
+            .insert(
+                VectorId::doc_summary("doc1").as_str(),
+                &[1.0, 0.0, 0.0, 0.0],
+            )
+            .expect("insert vector");
+        assert_eq!(index.len(), 1);
+
+        rollback_partial_documents(
+            std::slice::from_ref(&ContentId("doc1".to_owned())),
+            &storage,
+            &index,
+        )
+        .await;
+
+        assert_eq!(index.len(), 0, "rollback removes the document's vectors");
+    }
 }

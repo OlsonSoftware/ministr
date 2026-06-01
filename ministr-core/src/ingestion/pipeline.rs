@@ -1829,19 +1829,7 @@ impl IngestionPipeline {
                 error = %err,
                 "embedding failed — rolling back partially-indexed documents",
             );
-            for doc_id in &docs_to_rollback {
-                if let Err(e) =
-                    super::embedding::delete_document_vectors(doc_id, storage, index).await
-                {
-                    warn!(doc_id = %doc_id, error = %e, "rollback: delete vectors failed");
-                }
-                if let Err(e) = storage.delete_document(doc_id).await {
-                    warn!(doc_id = %doc_id, error = %e, "rollback: delete document failed");
-                }
-                if let Err(e) = storage.delete_file_hash(&doc_id.0).await {
-                    warn!(doc_id = %doc_id, error = %e, "rollback: delete file hash failed");
-                }
-            }
+            super::embedding::rollback_partial_documents(&docs_to_rollback, storage, index).await;
         }
 
         let embed_count = embed_result?;
