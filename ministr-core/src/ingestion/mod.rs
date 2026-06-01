@@ -118,7 +118,16 @@ pub(crate) use embedding::delete_document_vectors;
 ///   `new` `instance_expression` + declared `type_identifier` positions as
 ///   `Uses`), not import-only. Scala corpora gain a real reference graph on
 ///   re-extraction.
-pub const EXTRACTOR_VERSION: i64 = 13;
+/// - **14**: The Go ref extractor (`code::refs::extract_refs_go`) now emits
+///   `Calls`/`Uses` edges (`call_expression` callees — bare or
+///   `selector_expression` method — as `Calls`; `type_identifier` in declared
+///   type positions + `composite_literal` types as `Uses`), not import-only.
+///   Go is intentionally `Calls`+`Uses` only — interface conformance is
+///   structural/implicit, so there is no `Implements` signal in the AST. Go
+///   corpora gain a reference graph on re-extraction. This completes the
+///   per-language edge-graph rollout (all 10 formerly import-only languages
+///   now emit a real graph).
+pub const EXTRACTOR_VERSION: i64 = 14;
 
 /// Version of the symbol-reference *resolution* pipeline.
 ///

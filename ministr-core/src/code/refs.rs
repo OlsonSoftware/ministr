@@ -1312,7 +1312,61 @@ impl ImportExtractor for GoImports {
 }
 
 fn extract_refs_go(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
-    extract_imports(tree, source, &GoImports)
+    // Imports from the root-level walker; the call/type graph from a full-tree
+    // walk — Go is import-only no more.
+    let mut refs = extract_imports(tree, source, &GoImports);
+    walk_go_refs(&tree.root_node(), source, &mut refs);
+    refs
+}
+
+/// Recursively emit `Calls`/`Uses` edges for Go. Complements [`GoImports`]
+/// (which handles `import`).
+///
+/// Go is deliberately **`Calls` + `Uses` only — no `Implements`**: interface
+/// conformance is *structural* (implicit), so a type that satisfies an
+/// interface never names it syntactically. There is no `implements`/`extends`
+/// clause to extract, and inferring conformance would require full type
+/// resolution the AST walker doesn't do.
+///
+/// - `call_expression` → `Calls` on the callee: a bare `identifier`
+///   (`helper()`), or the `field` of a `selector_expression` receiver chain
+///   (`pkg.Compute()` / `x.Method()` → `Compute` / `Method`).
+/// - `type_identifier` in any type position (parameters, struct fields, result
+///   types, `var`/`const` specs, AND the type of a `composite_literal`
+///   `T{...}`, which the grammar represents as a `type_identifier` child) →
+///   `Uses`. Go has no `new`; constructed values are composite literals.
+///   Builtin scalar names (`string`, `int`, …) are dropped by
+///   [`push_graph_ref`]'s primitive filter.
+///
+/// `from_context` is `None`; the line-based resolver attributes each edge to
+/// its enclosing symbol.
+fn walk_go_refs(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    match node.kind() {
+        "call_expression" => {
+            if let Some(func) = node.child_by_field_name("function") {
+                let name = match func.kind() {
+                    "identifier" => func.utf8_text(source).ok(),
+                    "selector_expression" => func
+                        .child_by_field_name("field")
+                        .and_then(|f| f.utf8_text(source).ok()),
+                    _ => None,
+                };
+                if let Some(name) = name {
+                    push_graph_ref(refs, name, RefKind::Calls, node_line(node));
+                }
+            }
+        }
+        "type_identifier" => {
+            if let Ok(name) = node.utf8_text(source) {
+                push_graph_ref(refs, name, RefKind::Uses, node_line(node));
+            }
+        }
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_go_refs(&child, source, refs);
+    }
 }
 
 // ---------------------------------------------------------------------------
