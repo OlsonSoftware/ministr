@@ -103,7 +103,11 @@ pub(crate) use embedding::delete_document_vectors;
 ///   likewise emits `Calls`/`Implements`/`Uses` edges (class base classes as
 ///   `Implements`, `call` sites, and `type` annotations), not import-only.
 ///   Python corpora gain a real reference graph on re-extraction.
-pub const EXTRACTOR_VERSION: i64 = 10;
+/// - **11**: The PHP ref extractor (`code::refs::extract_refs_php`) likewise
+///   emits `Calls`/`Implements`/`Uses` edges (`extends`/`implements` clauses,
+///   call/method/static-call sites, `new`, and `named_type` hints), not
+///   import-only. PHP corpora gain a real reference graph on re-extraction.
+pub const EXTRACTOR_VERSION: i64 = 11;
 
 /// Version of the symbol-reference *resolution* pipeline.
 ///

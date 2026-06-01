@@ -1544,8 +1544,105 @@ impl ImportExtractor for RubyImports {
 }
 
 fn extract_refs_php(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
-    extract_imports(tree, source, &PhpImports)
+    // Imports from the root walker; the call/heritage/type graph from a
+    // full-tree walk (mirrors Java/C#) — PHP is import-only no more.
+    let mut refs = extract_imports(tree, source, &PhpImports);
+    walk_php_refs(&tree.root_node(), source, &mut refs);
+    refs
 }
+
+/// Recursively emit `Calls`/`Implements`/`Uses` edges for PHP. Complements
+/// [`PhpImports`] (which handles `use`):
+///
+/// - `class_declaration` / `interface_declaration` / `trait_declaration` /
+///   `enum_declaration` → `Implements` for every type in a `base_clause`
+///   (`extends`) and a `class_interface_clause` (`implements`).
+/// - `function_call_expression` / `member_call_expression` /
+///   `scoped_call_expression` → `Calls` (the callee / method `name`).
+/// - `object_creation_expression` (`new T()`) + `named_type` annotations
+///   (property / parameter / return) → `Uses`. PHP scalar hints are
+///   `primitive_type` nodes, so they are naturally skipped.
+///
+/// `from_context` is `None`; the line-based resolver attributes each edge to
+/// its enclosing symbol.
+fn walk_php_refs(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    match node.kind() {
+        "class_declaration"
+        | "interface_declaration"
+        | "trait_declaration"
+        | "enum_declaration" => php_heritage(node, source, refs),
+        "function_call_expression" => {
+            if let Some(f) = node.child_by_field_name("function")
+                && let Some(name) = php_type_name(&f, source)
+            {
+                push_graph_ref(refs, name, RefKind::Calls, node_line(node));
+            }
+        }
+        "member_call_expression" | "scoped_call_expression" | "nullsafe_member_call_expression" => {
+            if let Some(n) = node.child_by_field_name("name")
+                && let Some(name) = php_type_name(&n, source)
+            {
+                push_graph_ref(refs, name, RefKind::Calls, node_line(node));
+            }
+        }
+        "object_creation_expression" => {
+            // `new Foo()` — the constructed type is the first name child.
+            let mut cursor = node.walk();
+            if let Some(name) = node
+                .children(&mut cursor)
+                .find(|c| matches!(c.kind(), "name" | "qualified_name"))
+                .and_then(|c| php_type_name(&c, source))
+            {
+                push_graph_ref(refs, name, RefKind::Uses, node_line(node));
+            }
+        }
+        "named_type" => {
+            if let Some(name) = php_type_name(node, source) {
+                push_graph_ref(refs, name, RefKind::Uses, node_line(node));
+            }
+        }
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_php_refs(&child, source, refs);
+    }
+}
+
+/// Emit `Implements` for every type in a declaration's `base_clause`
+/// (`extends`) and `class_interface_clause` (`implements`).
+fn php_heritage(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    let mut cursor = node.walk();
+    for clause in node.children(&mut cursor) {
+        if !matches!(clause.kind(), "base_clause" | "class_interface_clause") {
+            continue;
+        }
+        let mut cc = clause.walk();
+        for t in clause.children(&mut cc) {
+            if let Some(name) = php_type_name(&t, source) {
+                push_graph_ref(refs, name, RefKind::Implements, node_line(&clause));
+            }
+        }
+    }
+}
+
+/// The head type name of a PHP type node: a bare `name`, the final segment of
+/// a `qualified_name` (`\App\Base` → `Base`), or the inner name of a
+/// `named_type` wrapper.
+fn php_type_name<'a>(node: &tree_sitter::Node<'_>, source: &'a [u8]) -> Option<&'a str> {
+    match node.kind() {
+        "name" => node.utf8_text(source).ok(),
+        "qualified_name" | "named_type" => {
+            let mut cursor = node.walk();
+            node.children(&mut cursor)
+                .filter(|c| c.kind() == "name")
+                .last()
+                .and_then(|c| c.utf8_text(source).ok())
+        }
+        _ => None,
+    }
+}
+
 fn extract_refs_kotlin(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
     // Imports from the root walker; the call/heritage/type graph from a
     // full-tree walk (mirrors Java/C#) — Kotlin is import-only no more.
