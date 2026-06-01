@@ -219,4 +219,44 @@ mod tests {
         assert_eq!(count, 0);
         assert_eq!(index.len(), 0);
     }
+
+    /// Embedder that always fails — drives the documented `# Errors` contract:
+    /// a per-batch embedding failure must surface as `IngestionError::Embedding`
+    /// rather than being swallowed, and no vector lands in the index.
+    struct FailingEmbedder;
+
+    impl Embedder for FailingEmbedder {
+        fn embed(&self, _texts: &[&str]) -> Result<Vec<Vec<f32>>, IndexError> {
+            Err(IndexError::EmbeddingFailed {
+                reason: "boom".to_owned(),
+            })
+        }
+
+        fn dimension(&self) -> usize {
+            8
+        }
+    }
+
+    #[tokio::test]
+    async fn embed_stage_propagates_embedder_failure() {
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let embedder = FailingEmbedder;
+        let index = HnswIndex::new(8, 100).expect("hnsw index");
+        let storage = SqliteStorage::open_in_memory().expect("storage");
+
+        tx.send(vec![(VectorId::section("doc#s1"), "hello".to_owned())])
+            .await
+            .expect("send pairs");
+        drop(tx);
+
+        let err = run_embed_stage(rx, &storage, &embedder, None, None, &index, None)
+            .await
+            .expect_err("embedder failure must surface");
+
+        assert!(
+            matches!(err, IngestionError::Embedding { .. }),
+            "an embedder error surfaces as IngestionError::Embedding, got {err:?}"
+        );
+        assert_eq!(index.len(), 0, "no vectors inserted when embedding fails");
+    }
 }

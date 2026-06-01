@@ -316,3 +316,166 @@ fn maybe_persist_snapshot<I>(
         ),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::index::NullVectorIndex;
+    use crate::storage::SqliteStorage;
+
+    /// Zeroed stats with a known discovered count. Built via the public struct
+    /// literal because `IngestionStats::new` is private to the pipeline module.
+    fn fresh_stats(discovered: usize) -> IngestionStats {
+        IngestionStats {
+            files_discovered: discovered,
+            files_skipped: 0,
+            files_indexed: 0,
+            files_removed: 0,
+            files_failed: 0,
+            total_sections: 0,
+            total_claims: 0,
+            total_embeddings: 0,
+            failed_files: Vec::new(),
+        }
+    }
+
+    /// Write one markdown file under a fresh temp dir and return `(dir, item)`.
+    /// The dir is returned so the caller keeps it alive for the test's duration.
+    fn one_markdown_file() -> (tempfile::TempDir, FileItem) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let rel = "doc.md";
+        let path = dir.path().join(rel);
+        std::fs::write(
+            &path,
+            "# Title\n\nThis is a paragraph with enough words to form a real \
+             section body that the markdown parser keeps and the pipeline \
+             queues for embedding downstream.\n",
+        )
+        .expect("write fixture");
+        let item = FileItem {
+            path,
+            relative: rel.to_owned(),
+            root_id: None,
+            root_path: Some(dir.path().to_path_buf()),
+        };
+        (dir, item)
+    }
+
+    /// The Parse stage parses + stores a discovered file, accounts it into
+    /// `stats`, tracks it for rollback, and forwards its embedding pairs down
+    /// the bounded channel to the (here, test-owned) Embed stage. Drains the
+    /// receiver concurrently with `tokio::join!` — the stage `await`s on the
+    /// bounded `send`, so an isolated test must consume the downstream end or
+    /// the producer deadlocks on backpressure.
+    #[tokio::test]
+    async fn parse_stage_indexes_file_and_forwards_embedding_pairs() {
+        let pipeline = IngestionPipeline::new().with_min_section_tokens(0);
+        let storage = SqliteStorage::open_in_memory().expect("storage");
+        let index = NullVectorIndex;
+        let (_dir, item) = one_markdown_file();
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let indexed_doc_ids = Mutex::new(Vec::new());
+        let internal_ct = CancellationToken::new();
+        let mut stats = fresh_stats(1);
+
+        let wiring = ParseStageWiring {
+            concurrency: 2,
+            progress: None,
+            persist_every: None,
+            corpus_dir: None,
+            embed_tx: tx,
+            indexed_doc_ids: &indexed_doc_ids,
+            internal_ct: &internal_ct,
+            external_ct: None,
+        };
+
+        let drain = async {
+            let mut pairs = Vec::new();
+            while let Some(batch) = rx.recv().await {
+                pairs.extend(batch);
+            }
+            pairs
+        };
+        let run = run_parse_stage(
+            &pipeline,
+            vec![item],
+            &storage,
+            &index,
+            None,
+            &mut stats,
+            wiring,
+        );
+        let ((cancelled, _pending), forwarded) = tokio::join!(run, drain);
+
+        assert!(!cancelled, "no cancel token fired");
+        assert_eq!(stats.files_indexed, 1, "the one file was indexed");
+        assert!(stats.total_sections >= 1, "at least one section parsed");
+        assert!(
+            !forwarded.is_empty(),
+            "the parse stage forwarded embedding pairs downstream"
+        );
+        assert!(
+            indexed_doc_ids
+                .lock()
+                .expect("lock")
+                .iter()
+                .any(|c| c.0 == "doc.md"),
+            "the indexed doc is tracked for rollback"
+        );
+    }
+
+    /// A cancel token tripped before the stage starts short-circuits the parse
+    /// stream: nothing is parsed, nothing is forwarded, and the run reports
+    /// `cancelled = true`.
+    #[tokio::test]
+    async fn parse_stage_short_circuits_when_pre_cancelled() {
+        let pipeline = IngestionPipeline::new();
+        let storage = SqliteStorage::open_in_memory().expect("storage");
+        let index = NullVectorIndex;
+        let (_dir, item) = one_markdown_file();
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let indexed_doc_ids = Mutex::new(Vec::new());
+        let internal_ct = CancellationToken::new();
+        internal_ct.cancel(); // tripped before any file is parsed
+        let mut stats = fresh_stats(1);
+
+        let wiring = ParseStageWiring {
+            concurrency: 2,
+            progress: None,
+            persist_every: None,
+            corpus_dir: None,
+            embed_tx: tx,
+            indexed_doc_ids: &indexed_doc_ids,
+            internal_ct: &internal_ct,
+            external_ct: None,
+        };
+
+        let drain = async {
+            let mut batches = 0usize;
+            while rx.recv().await.is_some() {
+                batches += 1;
+            }
+            batches
+        };
+        let run = run_parse_stage(
+            &pipeline,
+            vec![item],
+            &storage,
+            &index,
+            None,
+            &mut stats,
+            wiring,
+        );
+        let ((cancelled, pending), forwarded_batches) = tokio::join!(run, drain);
+
+        assert!(
+            cancelled,
+            "the pre-tripped internal token marks the run cancelled"
+        );
+        assert_eq!(stats.files_indexed, 0, "no file was parsed after cancel");
+        assert!(pending.is_empty(), "no pending refs accumulated");
+        assert_eq!(forwarded_batches, 0, "nothing forwarded downstream");
+    }
+}
