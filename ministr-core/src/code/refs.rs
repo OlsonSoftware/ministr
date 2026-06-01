@@ -768,7 +768,97 @@ impl ImportExtractor for PythonImports {
 }
 
 fn extract_refs_python(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
-    extract_imports(tree, source, &PythonImports)
+    // Imports from the root walker; the call/heritage/type graph from a
+    // full-tree walk — Python is import-only no more.
+    let mut refs = extract_imports(tree, source, &PythonImports);
+    walk_python_refs(&tree.root_node(), source, &mut refs);
+    refs
+}
+
+/// Recursively emit `Calls`/`Implements`/`Uses` edges for Python. Complements
+/// [`PythonImports`] (which handles `import` / `from … import`):
+///
+/// - `class_definition` superclasses → `Implements` for each positional base
+///   (`class C(Base, Mixin)`); keyword args like `metaclass=…` are skipped.
+///   Python has no interfaces, so a base class IS the conformance signal (ABCs
+///   are the de-facto interfaces).
+/// - `call` → `Calls` (callee `identifier`, or the final `attribute` of a
+///   method call). Python has no `new`, so `Widget()` surfaces as
+///   `Calls(Widget)`.
+/// - `type` annotations (parameter / return / variable) → `Uses` for each
+///   named type inside (recursing generics; `None` carries no identifier).
+///
+/// `from_context` is `None`; the line-based resolver attributes each edge to
+/// its enclosing symbol.
+fn walk_python_refs(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    match node.kind() {
+        "class_definition" => python_heritage(node, source, refs),
+        "call" => python_call(node, source, refs),
+        "type" => python_type_uses(node, source, refs),
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_python_refs(&child, source, refs);
+    }
+}
+
+/// Emit an `Implements` edge for each positional base class in a
+/// `class_definition`'s `superclasses` argument list (skipping `keyword_argument`s
+/// such as `metaclass=…`).
+fn python_heritage(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    let Some(bases) = node.child_by_field_name("superclasses") else {
+        return;
+    };
+    let mut cursor = bases.walk();
+    for base in bases.children(&mut cursor) {
+        let name = match base.kind() {
+            "identifier" => base.utf8_text(source).ok(),
+            // `module.Base` — take the final attribute segment.
+            "attribute" => base
+                .child_by_field_name("attribute")
+                .and_then(|n| n.utf8_text(source).ok()),
+            _ => None,
+        };
+        if let Some(name) = name {
+            push_graph_ref(refs, name, RefKind::Implements, node_line(&base));
+        }
+    }
+}
+
+/// Emit a `Calls` edge from a `call`: callee `identifier` (`foo()`,
+/// `Widget()`), or the final `attribute` of a method call (`a.b.foo()` →
+/// `foo`).
+fn python_call(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    let Some(func) = node.child_by_field_name("function") else {
+        return;
+    };
+    let name = match func.kind() {
+        "identifier" => func.utf8_text(source).ok(),
+        "attribute" => func
+            .child_by_field_name("attribute")
+            .and_then(|n| n.utf8_text(source).ok()),
+        _ => None,
+    };
+    if let Some(name) = name {
+        push_graph_ref(refs, name, RefKind::Calls, node_line(node));
+    }
+}
+
+/// Emit `Uses` for every named type inside a `type` annotation subtree
+/// (recursing through subscripts/generics). `None` is a `none` node, not an
+/// `identifier`, so it is naturally skipped.
+fn python_type_uses(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    if node.kind() == "identifier" {
+        if let Ok(name) = node.utf8_text(source) {
+            push_graph_ref(refs, name, RefKind::Uses, node_line(node));
+        }
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        python_type_uses(&child, source, refs);
+    }
 }
 
 /// Extract refs from `import x` or `import x.y.z` statements.

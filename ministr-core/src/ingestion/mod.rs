@@ -99,7 +99,11 @@ pub(crate) use embedding::delete_document_vectors;
 ///   likewise emits `Calls`/`Implements`/`Uses` edges (`inheritance_specifier`
 ///   supertypes, `call_expression`, and `user_type` positions), not
 ///   import-only. Swift corpora gain a real reference graph on re-extraction.
-pub const EXTRACTOR_VERSION: i64 = 9;
+/// - **10**: The Python ref extractor (`code::refs::extract_refs_python`)
+///   likewise emits `Calls`/`Implements`/`Uses` edges (class base classes as
+///   `Implements`, `call` sites, and `type` annotations), not import-only.
+///   Python corpora gain a real reference graph on re-extraction.
+pub const EXTRACTOR_VERSION: i64 = 10;
 
 /// Version of the symbol-reference *resolution* pipeline.
 ///
