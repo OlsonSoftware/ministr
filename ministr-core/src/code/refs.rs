@@ -2087,7 +2087,94 @@ fn swift_call(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef
 }
 
 fn extract_refs_ruby(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
-    extract_imports(tree, source, &RubyImports)
+    // Imports (`require` stems) from the root walker; the call/heritage graph
+    // from a full-tree walk — Ruby is import-only no more.
+    let mut refs = extract_imports(tree, source, &RubyImports);
+    walk_ruby_refs(&tree.root_node(), source, &mut refs);
+    refs
+}
+
+/// Recursively emit `Calls`/`Implements`/`Uses` edges for Ruby. Complements
+/// [`RubyImports`] (which handles `require`/`require_relative`/`load`/`autoload`):
+///
+/// - `class` superclass (`class C < Base`) → `Implements(Base)`.
+/// - `include` / `prepend` / `extend` calls (Ruby's module-mixin mechanism —
+///   the de-facto interface) → `Implements` for each module argument.
+/// - other `call`s → `Calls` (the message `method` name). Ruby has no `new`
+///   keyword; `Widget.new` is a `.new` call whose receiver constant is the
+///   constructed class → `Uses(Widget)` (the `new` message itself is dropped).
+/// - `require`-family calls are skipped here (already handled as imports).
+///
+/// Ruby has no static type annotations, so `Uses` comes only from `.new`.
+/// `from_context` is `None`; the line-based resolver attributes each edge to
+/// its enclosing symbol.
+fn walk_ruby_refs(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    match node.kind() {
+        "class" => {
+            if let Some(sc) = node.child_by_field_name("superclass") {
+                let mut cursor = sc.walk();
+                for child in sc.children(&mut cursor) {
+                    if let Some(name) = ruby_const_name(&child, source) {
+                        push_graph_ref(refs, name, RefKind::Implements, node_line(&sc));
+                    }
+                }
+            }
+        }
+        "call" => ruby_call(node, source, refs),
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_ruby_refs(&child, source, refs);
+    }
+}
+
+/// Handle a Ruby `call`: mixin (`include`/`prepend`/`extend`) → `Implements`;
+/// `Constant.new` → `Uses(Constant)`; `require`-family → skipped (imports);
+/// everything else → `Calls(method)`.
+fn ruby_call(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    let Some(method) = node
+        .child_by_field_name("method")
+        .filter(|m| m.kind() == "identifier")
+        .and_then(|m| m.utf8_text(source).ok())
+    else {
+        return;
+    };
+    match method {
+        "include" | "prepend" | "extend" => {
+            if let Some(args) = node.child_by_field_name("arguments") {
+                let mut cursor = args.walk();
+                for arg in args.children(&mut cursor) {
+                    if let Some(name) = ruby_const_name(&arg, source) {
+                        push_graph_ref(refs, name, RefKind::Implements, node_line(node));
+                    }
+                }
+            }
+        }
+        "require" | "require_relative" | "load" | "autoload" => {
+            // Imports — already emitted by `RubyImports`.
+        }
+        "new" => {
+            if let Some(recv) = node.child_by_field_name("receiver")
+                && let Some(name) = ruby_const_name(&recv, source)
+            {
+                push_graph_ref(refs, name, RefKind::Uses, node_line(node));
+            }
+        }
+        other => push_graph_ref(refs, other, RefKind::Calls, node_line(node)),
+    }
+}
+
+/// Resolve a Ruby constant reference: a bare `constant`, or the final `name`
+/// segment of a `scope_resolution` (`A::B` → `B`).
+fn ruby_const_name<'a>(node: &tree_sitter::Node<'_>, source: &'a [u8]) -> Option<&'a str> {
+    match node.kind() {
+        "constant" => node.utf8_text(source).ok(),
+        "scope_resolution" => node
+            .child_by_field_name("name")
+            .and_then(|n| n.utf8_text(source).ok()),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

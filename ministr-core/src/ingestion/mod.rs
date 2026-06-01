@@ -107,7 +107,12 @@ pub(crate) use embedding::delete_document_vectors;
 ///   emits `Calls`/`Implements`/`Uses` edges (`extends`/`implements` clauses,
 ///   call/method/static-call sites, `new`, and `named_type` hints), not
 ///   import-only. PHP corpora gain a real reference graph on re-extraction.
-pub const EXTRACTOR_VERSION: i64 = 11;
+/// - **12**: The Ruby ref extractor (`code::refs::extract_refs_ruby`) now
+///   emits `Calls`/`Implements`/`Uses` edges (superclass + `include`/`prepend`/
+///   `extend` mixins as `Implements`, method calls as `Calls`, `Constant.new`
+///   as `Uses`), not import-only. Ruby corpora gain a real reference graph on
+///   re-extraction.
+pub const EXTRACTOR_VERSION: i64 = 12;
 
 /// Version of the symbol-reference *resolution* pipeline.
 ///
