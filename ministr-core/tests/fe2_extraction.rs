@@ -30,6 +30,7 @@
 mod langtest;
 
 use langtest::{IngestedProject, assert_range_invariant, assert_symbol};
+use ministr_core::code::GrammarRegistry;
 
 /// Assert the range invariant on **every** symbol in the project — the cheap,
 /// universal half of acceptance criterion #2. Returns the symbols so callers
@@ -896,4 +897,117 @@ function standalone(int $x): int
     assert_multiline(&shape);
     assert_symbol(&proj, "Circle", "struct", "app.php").await;
     assert_symbol(&proj, "standalone", "function", "app.php").await;
+}
+
+// ── Coverage guard ──────────────────────────────────────────────────────
+//
+// Acceptance #3: a guard that flags any registered grammar lacking an
+// extraction fixture. Every language this suite exercises in depth — one
+// `<lang>_extraction_edge_cases` test apiece — is listed in `FE2_COVERED`. The
+// remaining registered grammars are config/data/markup or niche languages
+// where the FE2 edge-case taxonomy (nested classes, overloads, generics,
+// decorators) does not apply; each is parked in `EXTRACTION_DEFERRED` with its
+// category so the omission is explicit, not silent.
+//
+// The guard FAILS when a registered grammar appears in neither set — so adding
+// a new language to `GrammarRegistry` forces a deliberate choice: write a
+// fixture (move it to `FE2_COVERED`) or document why it's deferred. This is the
+// semgrep "GA only when the matrix passes" gate, scoped to extraction.
+
+/// Languages with a dedicated `*_extraction_edge_cases` test in this file.
+const FE2_COVERED: &[&str] = &[
+    "rust",       // rust_extraction_edge_cases
+    "python",     // python_extraction_edge_cases
+    "javascript", // javascript_extraction_edge_cases
+    "typescript", // typescript_extraction_edge_cases
+    "tsx",        // tsx_extraction_edge_cases
+    "go",         // go_extraction_edge_cases
+    "java",       // java_extraction_edge_cases
+    "c",          // c_extraction_edge_cases
+    "cpp",        // cpp_extraction_edge_cases (+ fe_cpp.rs cross-file/.h story)
+    "ruby",       // ruby_extraction_edge_cases
+    "csharp",     // csharp_extraction_edge_cases
+    "swift",      // swift_extraction_edge_cases
+    "kotlin",     // kotlin_extraction_edge_cases
+    "scala",      // scala_extraction_edge_cases
+    "php",        // php_extraction_edge_cases
+];
+
+/// Registered grammars intentionally NOT in the FE2 edge-case matrix, with the
+/// reason. Adding a grammar here is the documented way to defer it; the guard
+/// enforces that every registered grammar is in exactly one of the two lists.
+const EXTRACTION_DEFERRED: &[(&str, &str)] = &[
+    ("bash", "shell scripts — function-only symbol model, no edge-case taxonomy"),
+    ("lua", "scripting — minimal type system; deferred"),
+    ("elixir", "functional/modules — separate symbol model; deferred"),
+    ("haskell", "functional — separate symbol model; deferred"),
+    ("ocaml", "functional — separate symbol model; deferred"),
+    ("ocaml_interface", "OCaml .mli interface grammar; deferred with ocaml"),
+    ("dart", "covered by bridge/ref suites; extraction edge cases deferred"),
+    ("r", "statistical scripting — function-only; deferred"),
+    ("hcl", "config (Terraform) — blocks/attrs, not code symbols"),
+    ("json", "data format — no code symbols"),
+    ("yaml", "data format — no code symbols"),
+    ("toml", "data format — no code symbols"),
+    ("sql", "query language — separate symbol model; deferred"),
+    ("zig", "systems — extraction edge cases deferred"),
+    ("proto", "IDL — message/service shapes; deferred"),
+    ("svelte", "single-file component — markup host; deferred"),
+    ("css", "stylesheet — selectors/rules, not code symbols"),
+    ("graphql", "IDL/schema — type defs; deferred"),
+    ("groovy", "JVM scripting (Gradle) — deferred"),
+    ("nix", "config/expression language — deferred"),
+    ("erlang", "functional — separate symbol model; deferred"),
+    ("powershell", "shell scripting — function-only; deferred"),
+    ("solidity", "smart contracts — contract/function shapes; deferred"),
+    ("objc", "covered by bridge/ref suites; extraction edge cases deferred"),
+    ("julia", "scientific — function/struct; deferred"),
+    ("cmake", "build config — commands, not code symbols"),
+    ("make", "build config — targets/rules, not code symbols"),
+];
+
+#[test]
+fn every_code_grammar_has_an_extraction_fixture() {
+    let registry = GrammarRegistry::global();
+    let registered: Vec<&'static str> = registry.language_names().collect();
+
+    // 1. Every FE2-covered language must actually be registered (catches a
+    //    typo or a grammar that was removed/feature-gated out).
+    for lang in FE2_COVERED {
+        assert!(
+            registry.language_by_name(lang).is_some(),
+            "FE2_COVERED lists `{lang}`, but it is not a registered grammar \
+             (typo, or the grammar was removed / its feature disabled?)",
+        );
+    }
+
+    // 2. Every registered grammar must be categorized — either it has a fixture
+    //    (FE2_COVERED) or it is explicitly deferred (EXTRACTION_DEFERRED). A new
+    //    grammar that is in neither fails here until someone decides.
+    let deferred: std::collections::HashSet<&str> =
+        EXTRACTION_DEFERRED.iter().map(|(l, _)| *l).collect();
+    let covered: std::collections::HashSet<&str> = FE2_COVERED.iter().copied().collect();
+
+    let mut uncategorized: Vec<&str> = registered
+        .iter()
+        .copied()
+        .filter(|l| !covered.contains(l) && !deferred.contains(l))
+        .collect();
+    uncategorized.sort_unstable();
+
+    assert!(
+        uncategorized.is_empty(),
+        "these registered grammars have no extraction fixture and are not in the \
+         deferral allowlist: {uncategorized:?}\n\
+         → add a `<lang>_extraction_edge_cases` test (and list it in FE2_COVERED), \
+         or add the language to EXTRACTION_DEFERRED with a reason.",
+    );
+
+    // 3. A language must not be in both lists (keeps the partition clean).
+    for lang in FE2_COVERED {
+        assert!(
+            !deferred.contains(lang),
+            "`{lang}` is in both FE2_COVERED and EXTRACTION_DEFERRED — pick one",
+        );
+    }
 }
