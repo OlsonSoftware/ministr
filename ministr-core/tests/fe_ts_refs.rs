@@ -10,14 +10,19 @@
 //! real "no related files" bug. File names encode the order (the harness
 //! ingests a directory in sorted path order).
 //!
-//! Two member-access-through-an-object shapes remain gaps and are pinned as
-//! flip-when-fixed baselines: namespace-member access (`import * as ns;
-//! ns.x()`) and dynamic `import()`. Both need module-member resolution the
-//! name-based resolver doesn't do (tracked: f-ts-namespace-dynamic-import-refs).
+//! Member-access-through-an-object shapes (namespace-member `ns.x()` and
+//! dynamic `import().x()`) now resolve by NAME: the JS/TS edge-graph walker
+//! (fe-edge-graph-typescript) emits a `RefKind::Calls` ref on the accessed
+//! member, which the name-based resolver binds cross-file. This is coarse —
+//! it matches the member name globally, not scoped to the specific imported
+//! module — so precise namespace-scoped resolution remains a refinement
+//! (tracked: f-ts-namespace-dynamic-import-refs). See the `_resolves_by_name`
+//! tests below.
 
 mod langtest;
 
 use langtest::{IngestedProject, assert_cross_file_ref};
+use ministr_core::types::RefKind;
 
 /// Ingest `files` and assert a symbol named `target` (defined in
 /// `def_suffix`) is referenced from `importer_suffix`.
@@ -174,17 +179,15 @@ async fn ts_tsx_to_ts_both_orders() {
     .await;
 }
 
-// ── Pinned gap baselines (flip when fixed) ────────────────────────────────
+// ── Member-access-through-an-object: resolves by NAME ─────────────────────
 
-/// BASELINE: namespace-member access does not resolve.
-///
-/// `import * as ns from './lib'; ns.member()` records only the namespace alias
-/// `ns` as an import (no real symbol), and the member access `ns.member` is not
-/// tracked — so `member` gets no cross-file edge. Needs module-member
-/// resolution (track namespace aliases → resolve `.member` against the imported
-/// module's exports). Tracked: f-ts-namespace-dynamic-import-refs.
+/// `import * as ns from './lib'; ns.member()` → the member call `ns.member`
+/// emits a `Calls(member)` ref, which the name-based resolver binds to the
+/// cross-file `member` export. Resolution is by member name, not scoped to
+/// the `ns` module (the precise-scope refinement is
+/// f-ts-namespace-dynamic-import-refs).
 #[tokio::test]
-async fn ts_namespace_member_access_baseline() {
+async fn ts_namespace_member_access_resolves_by_name() {
     let proj = IngestedProject::from_files(&[
         ("lib.ts", "export function member() { return 1; }\n"),
         (
@@ -193,22 +196,14 @@ async fn ts_namespace_member_access_baseline() {
         ),
     ])
     .await;
-    let edges = proj.refs_into("member", None).await;
-    let from_app = edges.iter().any(|e| e.from_file.ends_with("zapp.ts"));
-    assert!(
-        !from_app,
-        "namespace-member access now resolves — promote this baseline to a \
-         positive `assert_cross_file_ref`."
-    );
+    assert_cross_file_ref(&proj, "member", "lib.ts", "zapp.ts", Some(RefKind::Calls)).await;
 }
 
-/// BASELINE: dynamic `import()` member access does not resolve.
-///
-/// `const m = await import('./lib'); m.dyn()` binds the module to a local via
-/// an await expression; tracking that binding + resolving `m.dyn` is flow
-/// analysis the extractor does not do. Tracked: f-ts-namespace-dynamic-import-refs.
+/// `const m = await import('./lib'); m.dyn()` → the member call `m.dyn`
+/// emits a `Calls(dyn)` ref, bound by name to the cross-file `dyn` export.
+/// Same coarse-by-name caveat as namespace-member access above.
 #[tokio::test]
-async fn ts_dynamic_import_baseline() {
+async fn ts_dynamic_import_member_resolves_by_name() {
     let proj = IngestedProject::from_files(&[
         ("lib.ts", "export function dyn() { return 1; }\n"),
         (
@@ -217,11 +212,5 @@ async fn ts_dynamic_import_baseline() {
         ),
     ])
     .await;
-    let edges = proj.refs_into("dyn", None).await;
-    let from_app = edges.iter().any(|e| e.from_file.ends_with("zapp.ts"));
-    assert!(
-        !from_app,
-        "dynamic import() member access now resolves — promote this baseline to \
-         a positive `assert_cross_file_ref`."
-    );
+    assert_cross_file_ref(&proj, "dyn", "lib.ts", "zapp.ts", Some(RefKind::Calls)).await;
 }

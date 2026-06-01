@@ -77,7 +77,12 @@ pub(crate) use embedding::delete_document_vectors;
 ///   not just the upward walk from the root. Monorepos with a subdir app
 ///   (e.g. a Tauri app under `<repo>/app/src-tauri/`) now detect their
 ///   bridge framework and link cross-language endpoints on re-extraction.
-pub const EXTRACTOR_VERSION: i64 = 4;
+/// - **5**: The JS/TS/TSX ref extractor (`code::refs::extract_refs_js_ts`)
+///   now emits `Calls`/`Implements`/`Uses` edges (class `extends`/`implements`,
+///   call sites, `new`, and type annotations), not import-only. TS/JS corpora
+///   pick up a real reference graph (so `ministr_references`/`ministr_solid`
+///   stop starving) on re-extraction.
+pub const EXTRACTOR_VERSION: i64 = 5;
 
 /// Version of the symbol-reference *resolution* pipeline.
 ///

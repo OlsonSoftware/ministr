@@ -893,7 +893,183 @@ impl ImportExtractor for JsTsImports {
 }
 
 fn extract_refs_js_ts(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
-    extract_imports(tree, source, &JsTsImports)
+    // Imports come from the dedicated root-level walker; the call/heritage/
+    // type graph comes from a full-tree walk (call sites and type uses are
+    // nested deep inside method bodies). Together they give the JS/TS/TSX
+    // family a real Calls/Implements/Uses edge graph, not import-only.
+    let mut refs = extract_imports(tree, source, &JsTsImports);
+    walk_js_ts_refs(&tree.root_node(), source, &mut refs);
+    refs
+}
+
+/// Recursively emit `Calls`/`Implements`/`Uses` edges for the JS/TS/TSX
+/// family. Complements [`JsTsImports`] (which handles `import`/`require`):
+///
+/// - `class_declaration` heritage → `Implements` for each `extends` base and
+///   each `implements` interface; `interface_declaration extends` likewise.
+/// - `call_expression` → `Calls` (callee `identifier`, or the `.property` of
+///   a `member_expression` method call).
+/// - `new_expression` constructor + `type_annotation` type names → `Uses`.
+///
+/// `from_context` is left `None`; the line-based resolver attributes each
+/// edge to its enclosing symbol. Unresolved targets (builtins like `Promise`,
+/// host methods like `toString`) simply never bind to an in-corpus symbol.
+fn walk_js_ts_refs(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    match node.kind() {
+        "class_declaration" | "class" => js_ts_class_heritage(node, source, refs),
+        "interface_declaration" => js_ts_interface_heritage(node, source, refs),
+        "call_expression" => js_ts_call_ref(node, source, refs),
+        "new_expression" => js_ts_new_ref(node, source, refs),
+        "type_annotation" => js_ts_type_uses(node, source, refs),
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_js_ts_refs(&child, source, refs);
+    }
+}
+
+/// Push a `Calls`/`Implements`/`Uses` ref with the JS/TS defaults
+/// (`from_context = None`). `Uses`/`Implements` targets are filtered through
+/// [`is_primitive_type`]; `Calls` targets are not (a method named `new` is a
+/// real call, not a primitive type).
+fn push_js_ts_ref(refs: &mut Vec<RawRef>, name: &str, kind: RefKind, line: u32) {
+    if name.is_empty() {
+        return;
+    }
+    if matches!(kind, RefKind::Uses | RefKind::Implements) && is_primitive_type(name) {
+        return;
+    }
+    refs.push(RawRef {
+        target_name: name.to_string(),
+        kind,
+        line,
+        from_context: None,
+        target_crate: None,
+    });
+}
+
+/// Resolve the bound type name of a heritage/constructor node:
+/// `identifier`/`type_identifier` directly, the `.property` of a
+/// `member_expression`, the final segment of a `nested_type_identifier`, or
+/// the `name` of a `generic_type` (`implements IFoo<T>` → `IFoo`).
+fn js_ts_type_name<'a>(node: &tree_sitter::Node<'_>, source: &'a [u8]) -> Option<&'a str> {
+    match node.kind() {
+        "identifier" | "type_identifier" | "property_identifier" => node.utf8_text(source).ok(),
+        "member_expression" => node
+            .child_by_field_name("property")
+            .and_then(|p| p.utf8_text(source).ok()),
+        "nested_type_identifier" => node
+            .child_by_field_name("name")
+            .and_then(|n| n.utf8_text(source).ok()),
+        "generic_type" => node
+            .child_by_field_name("name")
+            .and_then(|n| js_ts_type_name(&n, source)),
+        _ => None,
+    }
+}
+
+/// Emit `Implements` edges from a `class_declaration`'s `class_heritage`
+/// (both `extends Base` and `implements I, J`).
+fn js_ts_class_heritage(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() != "class_heritage" {
+            continue;
+        }
+        let mut hc = child.walk();
+        for clause in child.children(&mut hc) {
+            match clause.kind() {
+                "extends_clause" => {
+                    if let Some(base) = clause.child_by_field_name("value")
+                        && let Some(name) = js_ts_type_name(&base, source)
+                    {
+                        push_js_ts_ref(refs, name, RefKind::Implements, node_line(&clause));
+                    }
+                }
+                "implements_clause" => {
+                    let mut ic = clause.walk();
+                    for t in clause.children(&mut ic) {
+                        if let Some(name) = js_ts_type_name(&t, source) {
+                            push_js_ts_ref(refs, name, RefKind::Implements, node_line(&clause));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Emit `Implements` edges from an `interface_declaration`'s
+/// `extends_type_clause` (`interface I extends A, B`).
+fn js_ts_interface_heritage(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() != "extends_type_clause" {
+            continue;
+        }
+        let mut ic = child.walk();
+        for t in child.children(&mut ic) {
+            if let Some(name) = js_ts_type_name(&t, source) {
+                push_js_ts_ref(refs, name, RefKind::Implements, node_line(&child));
+            }
+        }
+    }
+}
+
+/// Emit a `Calls` edge from a `call_expression` callee: a bare `identifier`
+/// (`helper()`) or the `.property` of a `member_expression` (`x.compute()`).
+fn js_ts_call_ref(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    let Some(func) = node.child_by_field_name("function") else {
+        return;
+    };
+    let callee = match func.kind() {
+        "identifier" => func.utf8_text(source).ok(),
+        "member_expression" => func
+            .child_by_field_name("property")
+            .and_then(|p| p.utf8_text(source).ok()),
+        _ => None,
+    };
+    if let Some(name) = callee {
+        push_js_ts_ref(refs, name, RefKind::Calls, node_line(node));
+    }
+}
+
+/// Emit a `Uses` edge from a `new_expression` constructor (`new Widget()`).
+fn js_ts_new_ref(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    if let Some(ctor) = node.child_by_field_name("constructor")
+        && let Some(name) = js_ts_type_name(&ctor, source)
+    {
+        push_js_ts_ref(refs, name, RefKind::Uses, node_line(node));
+    }
+}
+
+/// Emit `Uses` edges for every named type inside a `type_annotation`
+/// (parameter / field / return-type positions), recursing through unions,
+/// generics, and arrays. `predefined_type` nodes (`void`/`string`/...) carry
+/// no `type_identifier`, so they are naturally skipped.
+fn js_ts_type_uses(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    match node.kind() {
+        "type_identifier" => {
+            if let Ok(name) = node.utf8_text(source) {
+                push_js_ts_ref(refs, name, RefKind::Uses, node_line(node));
+            }
+        }
+        "nested_type_identifier" => {
+            if let Some(name) = node
+                .child_by_field_name("name")
+                .and_then(|n| n.utf8_text(source).ok())
+            {
+                push_js_ts_ref(refs, name, RefKind::Uses, node_line(node));
+            }
+        }
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        js_ts_type_uses(&child, source, refs);
+    }
 }
 
 /// Extract imported names from a JS/TS import statement.
