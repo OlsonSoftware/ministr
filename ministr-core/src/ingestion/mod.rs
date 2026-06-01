@@ -112,7 +112,13 @@ pub(crate) use embedding::delete_document_vectors;
 ///   `extend` mixins as `Implements`, method calls as `Calls`, `Constant.new`
 ///   as `Uses`), not import-only. Ruby corpora gain a real reference graph on
 ///   re-extraction.
-pub const EXTRACTOR_VERSION: i64 = 12;
+/// - **13**: The Scala ref extractor (`code::refs::extract_refs_scala`) now
+///   emits `Calls`/`Implements`/`Uses` edges (`extends_clause` base + `with`
+///   mixin traits as `Implements`, `call_expression` callees as `Calls`,
+///   `new` `instance_expression` + declared `type_identifier` positions as
+///   `Uses`), not import-only. Scala corpora gain a real reference graph on
+///   re-extraction.
+pub const EXTRACTOR_VERSION: i64 = 13;
 
 /// Version of the symbol-reference *resolution* pipeline.
 ///

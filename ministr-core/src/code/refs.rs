@@ -1748,7 +1748,98 @@ fn kotlin_call(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRe
 }
 
 fn extract_refs_scala(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
-    extract_imports(tree, source, &ScalaImports)
+    // Imports from the root-level walker; the call/heritage/type graph from a
+    // full-tree walk (mirrors the JS/TS family) — Scala is import-only no more.
+    let mut refs = extract_imports(tree, source, &ScalaImports);
+    walk_scala_refs(&tree.root_node(), source, &mut refs);
+    refs
+}
+
+/// Recursively emit `Calls`/`Implements`/`Uses` edges for Scala. Complements
+/// [`ScalaImports`] (which handles `import`):
+///
+/// - `extends_clause` (shared by `class`/`trait`/`object` definitions) → an
+///   `Implements` edge for every `type_identifier` child — the base class /
+///   trait AND each `with` mixin, since Scala lists them all as siblings under
+///   the one clause.
+/// - `call_expression` → `Calls` on the callee: a bare `identifier`
+///   (`helper()`), or the final member of a `field_expression` receiver chain
+///   (`dep.compute()` → `compute`).
+/// - `instance_expression` (`new Widget` / `new Widget()`) → `Uses` on the
+///   constructed `type_identifier`.
+/// - `type_identifier` in any other position (parameter / `val` / return
+///   types, generic arguments) → `Uses`; heritage and `new` type_identifiers
+///   are skipped here since they are already emitted as `Implements` / `Uses`.
+///
+/// `from_context` is `None`; the line-based resolver attributes each edge to
+/// its enclosing symbol.
+fn walk_scala_refs(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    match node.kind() {
+        "extends_clause" => {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "type_identifier"
+                    && let Ok(name) = child.utf8_text(source)
+                {
+                    push_graph_ref(refs, name, RefKind::Implements, node_line(&child));
+                }
+            }
+        }
+        "call_expression" => {
+            if let Some(callee) = node.child(0)
+                && let Some(name) = scala_callee_name(&callee, source)
+            {
+                push_graph_ref(refs, name, RefKind::Calls, node_line(node));
+            }
+        }
+        "instance_expression" => {
+            // `new T(...)` — the constructed type is the first type_identifier.
+            let mut cursor = node.walk();
+            if let Some(name) = node
+                .children(&mut cursor)
+                .find(|c| c.kind() == "type_identifier")
+                .and_then(|c| c.utf8_text(source).ok())
+            {
+                push_graph_ref(refs, name, RefKind::Uses, node_line(node));
+            }
+        }
+        "type_identifier" => {
+            // Skip heritage / constructor type_identifiers — already emitted as
+            // Implements (extends_clause) or Uses (instance_expression).
+            let in_heritage = node
+                .parent()
+                .is_some_and(|p| matches!(p.kind(), "extends_clause" | "instance_expression"));
+            if !in_heritage
+                && let Ok(name) = node.utf8_text(source)
+            {
+                push_graph_ref(refs, name, RefKind::Uses, node_line(node));
+            }
+        }
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_scala_refs(&child, source, refs);
+    }
+}
+
+/// The called method/function name of a Scala `call_expression` callee: a bare
+/// `identifier` directly, or the final `identifier` segment of a
+/// `field_expression` receiver chain (`a.b.compute` → `compute`). Other callee
+/// shapes (e.g. a curried `f()()` whose callee is itself a `call_expression`)
+/// return `None` — the inner call surfaces its own `Calls` edge on recursion.
+fn scala_callee_name<'a>(node: &tree_sitter::Node<'_>, source: &'a [u8]) -> Option<&'a str> {
+    match node.kind() {
+        "identifier" => node.utf8_text(source).ok(),
+        "field_expression" => {
+            let mut cursor = node.walk();
+            node.children(&mut cursor)
+                .filter(|c| c.kind() == "identifier")
+                .last()
+                .and_then(|c| c.utf8_text(source).ok())
+        }
+        _ => None,
+    }
 }
 fn extract_refs_java(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
     // Imports from the root-level walker; the call/heritage/type graph from a
