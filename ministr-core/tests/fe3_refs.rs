@@ -161,3 +161,84 @@ async fn cpp_cross_file_ref_both_orders() {
     )
     .await;
 }
+
+// ── PHP ────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn php_cross_file_ref_both_orders() {
+    resolves_both_orders(
+        "php",
+        "<?php\nfunction target() {\n    return 1;\n}\n",
+        "<?php\nfunction caller() {\n    return target();\n}\n",
+        "target",
+    )
+    .await;
+}
+
+// ── Kotlin ──────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn kotlin_cross_file_ref_both_orders() {
+    resolves_both_orders(
+        "kt",
+        "fun target(): Int {\n    return 1\n}\n",
+        "fun caller(): Int {\n    return target()\n}\n",
+        "target",
+    )
+    .await;
+}
+
+// ── Scala ──────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn scala_cross_file_ref_both_orders() {
+    resolves_both_orders(
+        "scala",
+        "object Lib {\n  def target(): Int = 1\n}\n",
+        "object Use {\n  def caller(): Int = Lib.target()\n}\n",
+        "target",
+    )
+    .await;
+}
+
+// ── C# ──────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn csharp_cross_file_ref_both_orders() {
+    resolves_both_orders(
+        "cs",
+        "public class Lib {\n    public static int Target() {\n        return 1;\n    }\n}\n",
+        "public class Use {\n    int Caller() {\n        return Lib.Target();\n    }\n}\n",
+        "Target",
+    )
+    .await;
+}
+
+// ── Swift ──────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn swift_cross_file_ref_both_orders() {
+    resolves_both_orders(
+        "swift",
+        "func target() -> Int {\n    return 1\n}\n",
+        "func caller() -> Int {\n    return target()\n}\n",
+        "target",
+    )
+    .await;
+}
+
+// ── Ruby ──────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn ruby_cross_file_ref_both_orders() {
+    // Use explicit call parens: a paren-less `target` parses as an identifier
+    // (could be a local var), so the Ruby ref extractor only emits a `Calls`
+    // edge for the unambiguous `target()` form.
+    resolves_both_orders(
+        "rb",
+        "def target\n  1\nend\n",
+        "def caller\n  target()\nend\n",
+        "target",
+    )
+    .await;
+}
