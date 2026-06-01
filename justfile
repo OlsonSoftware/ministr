@@ -85,6 +85,42 @@ reinstall:
 reinstall:
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\reinstall.ps1
 
+# ── Local data ───────────────────────────────────────────────────────
+
+# Destructive + irreversible. Wipes the daemon data dir (~/.ministr) — every
+# corpus's content.db + HNSW index, logs, socket, PID, onboarding markers —
+# after stopping the daemon. PRESERVES ~/.ministr/bin (so the `ministr`
+# command keeps working); per-project .ministr.toml files are untouched.
+# Corpora must be re-indexed afterward. For a TOTAL nuke incl. the installed
+# binary: `rm -rf ~/.ministr` then `just reinstall`. Unix-only (macOS/Linux).
+# Reset ALL local ministr data on this machine (stop daemon + wipe ~/.ministr, keep bin).
+[unix]
+[confirm("Wipe ALL local ministr corpora + index data in ~/.ministr (keeps ~/.ministr/bin)? Re-index needed afterward.")]
+reset-data:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    data_dir="$HOME/.ministr"
+    pid_file="$data_dir/ministrd.pid"
+    # 1. Stop the daemon first so it isn't writing while we wipe (and can't
+    #    flush in-memory state back to disk on shutdown). Prefer the PID file;
+    #    fall back to a pattern match for a stale/missing PID file.
+    if [ -f "$pid_file" ]; then
+        pid="$(cat "$pid_file" 2>/dev/null || true)"
+        if [ -n "${pid:-}" ] && kill -0 "$pid" 2>/dev/null; then
+            echo "stopping ministr daemon (pid $pid)…"
+            kill "$pid" 2>/dev/null || true
+            for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    fi
+    pkill -f '__daemon' 2>/dev/null || true
+    # 2. Wipe everything under the data dir EXCEPT the installed binary.
+    if [ -d "$data_dir" ]; then
+        echo "wiping $data_dir (preserving bin/)…"
+        find "$data_dir" -mindepth 1 -maxdepth 1 ! -name bin -exec rm -rf {} +
+    fi
+    echo "ministr data reset — re-index your corpora to rebuild."
+
 # ── Docker ───────────────────────────────────────────────────────────
 docker-build:
     docker build -t ministr .
