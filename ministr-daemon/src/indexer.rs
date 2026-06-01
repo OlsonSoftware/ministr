@@ -6,7 +6,7 @@
 //! management (SRP).
 
 use std::path::PathBuf;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use ministr_api::coherence::{CoherenceEvent, CoherenceKind};
@@ -15,27 +15,10 @@ use ministr_core::coherence::CoherenceEvent as CoreCoherenceEvent;
 use ministr_core::ingestion::IngestionPipeline;
 use ministr_core::storage::Storage;
 use ministr_core::types::ContentId;
-use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::registry::CorpusRegistry;
-
-/// Serializes corpus indexing across the whole daemon.
-///
-/// Embedding is a SYNCHRONOUS, GPU-bound call (`embedder.embed`) made on a
-/// Tokio worker thread inside the ingestion pipeline. The embedder is a single
-/// shared model (one GPU + a tokenizer lock), so concurrent indexers cannot
-/// embed in parallel anyway — and, far worse, when the number of concurrently
-/// indexing corpora reaches the Tokio worker-thread count, every worker ends
-/// up blocked inside `embed()` with none left to poll the pipeline's `.await`
-/// points (storage writes, status updates). The runtime then starves and the
-/// daemon hangs and never resumes — observed when many codebases index at
-/// once (e.g. a large engine tree split across dozens of corpora).
-///
-/// A single permit turns indexing into a serial queue: deadlock-free, and —
-/// given one shared GPU — no slower than the contended concurrent path.
-static INDEXING_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(1));
 
 /// How long the watcher waits for a *quiet* gap between events before
 /// treating the burst as finished.
@@ -73,10 +56,10 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
         )
     };
 
-    // Mark the corpus as Indexing BEFORE waiting on the indexing permit, so a
-    // corpus sitting in the serialized queue reports "indexing" rather than
-    // keeping its prior (Idle/"indexed") status with 0 files — otherwise a
-    // not-yet-started corpus misleadingly looks finished-but-empty.
+    // Mark the corpus as Indexing BEFORE waiting on an indexing slot, so a
+    // corpus sitting in the queue reports "indexing" rather than keeping its
+    // prior (Idle/"indexed") status with 0 files — otherwise a not-yet-started
+    // corpus misleadingly looks finished-but-empty.
     registry
         .set_status(
             corpus_id,
@@ -87,30 +70,24 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
         )
         .await;
 
-    // Serialize indexing daemon-wide so concurrent corpus re-indexes can't
-    // starve the Tokio runtime on synchronous embedding (see
-    // INDEXING_SEMAPHORE). Held for the whole ingest + persist + heal. The
-    // static semaphore is never closed, so `.ok()` is effectively infallible;
-    // on the impossible close we degrade to unserialized indexing rather than
-    // panic or drop the request.
-    let _index_permit = INDEXING_SEMAPHORE.acquire().await.ok();
+    // Acquire an indexing slot (f-ingest-coordinator): the scheduler serializes
+    // same-corpus indexing (a corpus never indexes concurrently with itself) and
+    // bounds total concurrency across corpora. Held for the whole ingest +
+    // persist + heal. This replaces the old INDEXING_SEMAPHORE(1) band-aid —
+    // embedding now runs off the Tokio runtime via the shared EmbeddingService,
+    // so multiple distinct corpora index concurrently up to the bound without
+    // starving the runtime.
+    let _slot = registry.scheduler().acquire(corpus_id).await;
 
     let local_paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
 
-    // ADR 0001 D1: route embedding through a dedicated service so the
-    // synchronous, GPU-bound embed() runs on its own thread and the pipeline's
-    // embed consumer never pins a Tokio worker (the runtime-starvation root
-    // cause). One service per ingest is sufficient while INDEXING_SEMAPHORE
-    // serializes corpora to one at a time (no GPU contention); when
-    // f-ingest-coordinator lifts that semaphore it will hoist a single shared
-    // service so all corpora feed one GPU-owning queue. The service joins its
-    // worker thread when `pipeline` drops at the end of this call.
-    let embedding_service = Arc::new(ministr_core::embedding::EmbeddingService::with_model(
-        Arc::clone(&embedder),
-    ));
+    // ADR 0001 D1: route embedding through the daemon's single shared
+    // EmbeddingService so the synchronous, GPU-bound embed() runs on its own
+    // thread and the pipeline's embed consumer never pins a Tokio worker. All
+    // corpora feed this one GPU-owning queue.
     let pipeline = IngestionPipeline::new()
         .with_progress(Arc::clone(&progress))
-        .with_embedding_service(embedding_service);
+        .with_embedding_service(registry.embedding_service());
 
     match pipeline
         .ingest_paths_with_embeddings(&local_paths, &*storage, &*embedder, &*index)

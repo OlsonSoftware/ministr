@@ -15,5 +15,6 @@ pub mod indexer;
 pub mod inference;
 pub mod persistence;
 pub mod registry;
+pub mod scheduler;
 pub mod state;
 pub mod transport;

@@ -18,7 +18,7 @@ use ministr_api::corpus::{CorpusInfo, IndexingStatus};
 use ministr_api::corpus_restorer::{CorpusRestoreError, CorpusRestorer};
 use ministr_core::config::MinistrConfig;
 use ministr_core::corpus_id::{CorpusIdError, canonical_corpus_paths, corpus_id_from_paths};
-use ministr_core::embedding::Embedder;
+use ministr_core::embedding::{Embedder, EmbeddingService};
 use ministr_core::index::{HnswIndex, VectorIndex, VectorIndexLoad};
 use ministr_core::ingestion::IngestionProgress;
 use ministr_core::service::QueryService;
@@ -31,6 +31,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::indexer;
+use crate::scheduler::IngestionScheduler;
 
 // -- Manifest persistence --
 
@@ -59,6 +60,13 @@ pub enum RegistryError {
 /// Central registry managing all indexed corpora.
 pub struct CorpusRegistry {
     embedder: Arc<dyn Embedder>,
+    /// Single shared embedding service (ADR 0001 D1), built once from
+    /// `embedder`. Every corpus's ingest routes embedding through this one
+    /// GPU-owning queue so the model is never contended across corpora.
+    embedding_service: Arc<EmbeddingService>,
+    /// Daemon-wide indexing concurrency policy: bounded parallelism +
+    /// per-corpus exclusion. Replaces the old `INDEXING_SEMAPHORE(1)` band-aid.
+    scheduler: IngestionScheduler,
     /// `Arc<CorpusHandle>` (not bare `CorpusHandle`) so `get()` can hand
     /// a corpus out by cloning the `Arc` and dropping the map guard —
     /// callers no longer hold a `RwLockReadGuard` across their `.await`s,
@@ -201,6 +209,9 @@ fn merge_live_info(
 impl CorpusRegistry {
     pub fn new(embedder: Arc<dyn Embedder>, config: MinistrConfig) -> Self {
         Self {
+            // Built before `embedder` is moved into the struct below.
+            embedding_service: Arc::new(EmbeddingService::with_model(Arc::clone(&embedder))),
+            scheduler: IngestionScheduler::with_default_concurrency(),
             embedder,
             corpora: RwLock::new(HashMap::new()),
             config,
@@ -210,6 +221,18 @@ impl CorpusRegistry {
             corpus_restorer: std::sync::OnceLock::new(),
             restore_locks: tokio::sync::Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The single shared embedding service (ADR 0001 D1). Cloned cheaply (it's
+    /// an `Arc`); every ingest sets it on its pipeline so embedding runs off the
+    /// Tokio runtime through one GPU-owning queue.
+    pub(crate) fn embedding_service(&self) -> Arc<EmbeddingService> {
+        Arc::clone(&self.embedding_service)
+    }
+
+    /// The ingestion scheduler — bounded concurrency + per-corpus exclusion.
+    pub(crate) fn scheduler(&self) -> &IngestionScheduler {
+        &self.scheduler
     }
 
     /// Wire a coherence sink so `register` will spawn a per-corpus
