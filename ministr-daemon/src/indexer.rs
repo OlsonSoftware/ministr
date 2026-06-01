@@ -6,7 +6,7 @@
 //! management (SRP).
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use ministr_api::coherence::{CoherenceEvent, CoherenceKind};
@@ -15,10 +15,27 @@ use ministr_core::coherence::CoherenceEvent as CoreCoherenceEvent;
 use ministr_core::ingestion::IngestionPipeline;
 use ministr_core::storage::Storage;
 use ministr_core::types::ContentId;
+use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::registry::CorpusRegistry;
+
+/// Serializes corpus indexing across the whole daemon.
+///
+/// Embedding is a SYNCHRONOUS, GPU-bound call (`embedder.embed`) made on a
+/// Tokio worker thread inside the ingestion pipeline. The embedder is a single
+/// shared model (one GPU + a tokenizer lock), so concurrent indexers cannot
+/// embed in parallel anyway — and, far worse, when the number of concurrently
+/// indexing corpora reaches the Tokio worker-thread count, every worker ends
+/// up blocked inside `embed()` with none left to poll the pipeline's `.await`
+/// points (storage writes, status updates). The runtime then starves and the
+/// daemon hangs and never resumes — observed when many codebases index at
+/// once (e.g. a large engine tree split across dozens of corpora).
+///
+/// A single permit turns indexing into a serial queue: deadlock-free, and —
+/// given one shared GPU — no slower than the contended concurrent path.
+static INDEXING_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(1));
 
 /// How long the watcher waits for a *quiet* gap between events before
 /// treating the burst as finished.
@@ -55,6 +72,14 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
             Arc::clone(&handle.prefetch),
         )
     };
+
+    // Serialize indexing daemon-wide so concurrent corpus re-indexes can't
+    // starve the Tokio runtime on synchronous embedding (see
+    // INDEXING_SEMAPHORE). Held for the whole ingest + persist + heal. The
+    // static semaphore is never closed, so `.ok()` is effectively infallible;
+    // on the impossible close we degrade to unserialized indexing rather than
+    // panic or drop the request.
+    let _index_permit = INDEXING_SEMAPHORE.acquire().await.ok();
 
     registry
         .set_status(
