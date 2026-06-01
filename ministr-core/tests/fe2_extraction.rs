@@ -565,3 +565,220 @@ struct Pair {
     assert_symbol(&proj, "Pair", "struct", "geo.hpp").await;
     assert_symbol(&proj, "dot", "function", "geo.hpp").await;
 }
+
+// ── Ruby ──────────────────────────────────────────────────────────────────
+//
+// Edge cases: a module with a constant, a class inside the module, subclassing
+// (`<`), a reopened class (defined twice), and a standalone method.
+
+#[tokio::test]
+async fn ruby_extraction_edge_cases() {
+    let proj = IngestedProject::from_files(&[(
+        "geometry.rb",
+        r#"module Geometry
+  PI = 3.14159
+
+  class Shape
+    def area
+      0
+    end
+  end
+
+  class Circle < Shape
+    def initialize(r)
+      @r = r
+    end
+
+    def area
+      PI * @r * @r
+    end
+  end
+end
+
+class Geometry::Shape
+  def describe
+    "shape"
+  end
+end
+
+def standalone(x)
+  x * 2
+end
+"#,
+    )])
+    .await;
+
+    assert_ranges_well_formed(&proj).await;
+
+    let geometry = assert_symbol(&proj, "Geometry", "module", "geometry.rb").await;
+    assert_multiline(&geometry);
+    // A subclass inside the module body IS extracted…
+    let circle = assert_symbol(&proj, "Circle", "struct", "geometry.rb").await;
+    assert_multiline(&circle);
+    // …and the *reopened* class (written with the `Geometry::Shape` path
+    // outside the module) is extracted under its qualified name.
+    assert_symbol(&proj, "Geometry::Shape", "struct", "geometry.rb").await;
+    assert_symbol(&proj, "standalone", "function", "geometry.rb").await;
+    // Methods are extracted even when their enclosing in-module class is not
+    // separately emitted (the plain `class Shape` body here): both `area`
+    // definitions appear as functions.
+    assert!(
+        proj.symbols_named("area").await.len() >= 2,
+        "both `area` method definitions should be extracted",
+    );
+}
+
+// ── C# ──────────────────────────────────────────────────────────────────
+//
+// Edge cases: a namespace, a generic class implementing an interface,
+// overloaded methods, a nested class, an expression-bodied method, and an
+// enum.
+
+#[tokio::test]
+async fn csharp_extraction_edge_cases() {
+    let proj = IngestedProject::from_files(&[(
+        "App.cs",
+        r#"namespace App
+{
+    public interface ISerializable
+    {
+        string Serialize();
+    }
+
+    public class Repository<T> : ISerializable
+    {
+        public string Serialize() => "repo";
+
+        public void Add(T item) { }
+
+        public void Add(T item, int count) { }
+
+        public class Cursor
+        {
+            public int Position;
+        }
+    }
+
+    public enum Color
+    {
+        Red,
+        Green,
+        Blue,
+    }
+}
+"#,
+    )])
+    .await;
+
+    assert_ranges_well_formed(&proj).await;
+
+    let iface = assert_symbol(&proj, "ISerializable", "trait", "App.cs").await;
+    assert_multiline(&iface);
+    let repo = assert_symbol(&proj, "Repository", "struct", "App.cs").await;
+    assert_multiline(&repo);
+    assert_symbol(&proj, "Color", "enum", "App.cs").await;
+    assert_symbol(&proj, "Serialize", "function", "App.cs").await;
+}
+
+// ── Swift ──────────────────────────────────────────────────────────────
+//
+// Edge cases: a protocol, a struct, a class with a protocol conformance, an
+// `extension` adding a method, an enum, and a generic free function.
+
+#[tokio::test]
+async fn swift_extraction_edge_cases() {
+    let proj = IngestedProject::from_files(&[(
+        "shapes.swift",
+        r#"protocol Drawable {
+    func draw()
+}
+
+struct Point {
+    var x: Int
+    var y: Int
+}
+
+class Shape: Drawable {
+    func draw() {}
+}
+
+extension Point {
+    func magnitude() -> Int {
+        return x * x + y * y
+    }
+}
+
+enum Direction {
+    case north
+    case south
+}
+
+func identity<T>(_ value: T) -> T {
+    return value
+}
+"#,
+    )])
+    .await;
+
+    assert_ranges_well_formed(&proj).await;
+
+    let point = assert_symbol(&proj, "Point", "struct", "shapes.swift").await;
+    assert_multiline(&point);
+    assert_symbol(&proj, "draw", "function", "shapes.swift").await;
+    assert_symbol(&proj, "magnitude", "function", "shapes.swift").await;
+    assert_symbol(&proj, "identity", "function", "shapes.swift").await;
+}
+
+// ── Kotlin ──────────────────────────────────────────────────────────────
+//
+// Edge cases: an interface, a generic class with `override`, a companion
+// object, a data class, an extension function, and an enum class.
+
+#[tokio::test]
+async fn kotlin_extraction_edge_cases() {
+    let proj = IngestedProject::from_files(&[(
+        "Repo.kt",
+        r#"interface Serializable {
+    fun serialize(): String
+}
+
+class Repository<T> : Serializable {
+    override fun serialize(): String = "repo"
+
+    companion object {
+        fun create(): Repository<Any> = Repository()
+    }
+}
+
+data class User(val id: Int, val name: String)
+
+fun String.shout(): String = this.uppercase()
+
+enum class Color {
+    RED,
+    GREEN,
+    BLUE,
+}
+"#,
+    )])
+    .await;
+
+    assert_ranges_well_formed(&proj).await;
+
+    // Kotlin's tree-sitter grammar uses `class_declaration` for interfaces and
+    // enum classes too, so the generic extractor maps them all to `struct`.
+    let repo = assert_symbol(&proj, "Repository", "struct", "Repo.kt").await;
+    assert_multiline(&repo);
+    assert_symbol(&proj, "Serializable", "struct", "Repo.kt").await;
+    assert_symbol(&proj, "User", "struct", "Repo.kt").await;
+    assert_symbol(&proj, "Color", "struct", "Repo.kt").await;
+    // Top-level (extension) functions are extracted. Class-member functions
+    // (`serialize`, the `companion object`'s `create`) are NOT emitted by the
+    // generic Kotlin path today — characterized here so a future improvement
+    // flips this assertion deliberately.
+    assert_symbol(&proj, "shout", "function", "Repo.kt").await;
+    assert!(
+        proj.symbols_named("serialize").await.is_empty(),
+        "class-member fns are not expected to be extracted for Kotlin yet, but `serialize` was",
+    );
+}
