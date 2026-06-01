@@ -109,3 +109,55 @@ async fn tsx_cross_file_ref_both_orders() {
     )
     .await;
 }
+
+// ── Go ──────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn go_cross_file_ref_both_orders() {
+    resolves_both_orders(
+        "go",
+        "package main\n\nfunc target() int {\n\treturn 1\n}\n",
+        "package main\n\nfunc caller() int {\n\treturn target()\n}\n",
+        "target",
+    )
+    .await;
+}
+
+// ── Java ──────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn java_cross_file_ref_both_orders() {
+    resolves_both_orders(
+        "java",
+        "public class Lib {\n    public static int target() {\n        return 1;\n    }\n}\n",
+        "public class Use {\n    int caller() {\n        return Lib.target();\n    }\n}\n",
+        "target",
+    )
+    .await;
+}
+
+// ── C ─────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn c_cross_file_ref_both_orders() {
+    resolves_both_orders(
+        "c",
+        "int target(void) {\n    return 1;\n}\n",
+        "int caller(void) {\n    return target();\n}\n",
+        "target",
+    )
+    .await;
+}
+
+// ── C++ ────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn cpp_cross_file_ref_both_orders() {
+    resolves_both_orders(
+        "cpp",
+        "int target() {\n    return 1;\n}\n",
+        "int caller() {\n    return target();\n}\n",
+        "target",
+    )
+    .await;
+}
