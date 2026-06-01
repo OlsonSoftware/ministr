@@ -8,9 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use futures::stream::{self, StreamExt};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, instrument, trace, warn};
+use tracing::{debug, info, instrument, warn};
 
 use crate::code::AstParser;
 use crate::code::bridge::linker::BridgeLinker;
@@ -353,16 +352,18 @@ pub(super) enum FileResult {
 }
 
 /// A file to be ingested, with its resolved relative path and optional root ID.
-struct FileItem {
-    path: PathBuf,
-    relative: String,
-    root_id: Option<String>,
+///
+/// `pub(super)` so the Parse stage can read the per-item fields it streams.
+pub(super) struct FileItem {
+    pub path: PathBuf,
+    pub relative: String,
+    pub root_id: Option<String>,
     /// Absolute corpus root the file was discovered under (when known).
     /// Used by `parse_and_store_file` to scope the ignore-dir guard to
     /// components inside the root — without this, a corpus rooted under
     /// an always-ignored ancestor name (e.g. `~/.ministr/remote/<hash>/`)
     /// would have every file rejected.
-    root_path: Option<PathBuf>,
+    pub root_path: Option<PathBuf>,
 }
 
 // ── BatchIngestionConfig ─────────────────────────────────────────────────────
@@ -1578,7 +1579,12 @@ impl IngestionPipeline {
     /// didn't complete is then **rolled back** (storage records + any
     /// already-written vectors) before the error is returned, so SQLite and
     /// the vector index never disagree about whether a file was indexed.
-    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    ///
+    /// Composes the two pipes-and-filters stages (ADR 0001 D3): the Parse
+    /// stage ([`super::parse_stage::run_parse_stage`], producer) feeds the
+    /// Embed stage ([`super::embed_stage::run_embed_stage`], consumer) over a
+    /// bounded channel, then rolls back on embed failure.
+    #[allow(clippy::too_many_arguments)]
     async fn run_producer_consumer<S, E, I>(
         &self,
         file_items: Vec<FileItem>,
@@ -1594,21 +1600,12 @@ impl IngestionPipeline {
         E: Embedder + ?Sized,
         I: VectorIndex + ?Sized,
     {
-        let concurrency = self.concurrency.unwrap_or_else(default_concurrency);
-        info!(
-            concurrency,
-            files = file_items.len(),
-            "starting concurrent file ingestion"
-        );
-
         let (embed_tx, embed_rx) = tokio::sync::mpsc::channel::<Vec<(VectorId, String)>>(16);
 
-        let mut all_pending_refs = Vec::new();
-        // PHASE4 chunk 4: `all_bridge_endpoints` used to be accumulated
-        // here, returned, and immediately discarded by both callers —
-        // `finalize_ingestion` rebuilds bridge data from `all_files`
-        // (see its doc comment) so the per-file batch is dead weight on
-        // a code-heavy corpus. Removed entirely.
+        // PHASE4 chunk 4: bridge endpoints used to be accumulated here,
+        // returned, and immediately discarded by both callers —
+        // `finalize_ingestion` rebuilds bridge data from `all_files` (see its
+        // doc comment) so the per-file batch was dead weight. Removed entirely.
 
         // Shared cancel signal: when the consumer errors it trips this token
         // so the producer stops scheduling new parses and exits promptly.
@@ -1616,177 +1613,33 @@ impl IngestionPipeline {
         let internal_ct = CancellationToken::new();
         let external_ct = ct;
 
-        // Track every document we actually persisted so we can roll back on
+        // Track every document the producer persisted so we can roll back on
         // embedding failure (bug #1: partial-write corpus corruption).
         let indexed_doc_ids: std::sync::Mutex<Vec<crate::types::ContentId>> =
             std::sync::Mutex::new(Vec::new());
 
-        let producer = async {
-            let mut cancelled = false;
-            let mut parse_stream = std::pin::pin!(
-                stream::iter(file_items)
-                    .take_while(|_| {
-                        let external_stop =
-                            external_ct.is_some_and(CancellationToken::is_cancelled);
-                        let internal_stop = internal_ct.is_cancelled();
-                        let stop = external_stop || internal_stop;
-                        async move { !stop }
-                    })
-                    .map(|item| {
-                        // Bug #6: announce the file as *started* — before the
-                        // parse kicks off — so the UI shows work in progress,
-                        // not the previous finished file.
-                        if let Some(ref progress) = self.progress {
-                            progress.set_current_file(&item.relative);
-                        }
-                        let internal_ct = internal_ct.clone();
-                        async move {
-                            // Bug #2 (partial): check cancellation at parse
-                            // entry so futures that `buffer_unordered` queued
-                            // before a cancel fires don't spend CPU parsing a
-                            // file the caller has already abandoned. Inner
-                            // parse steps remain non-cancelable — threading
-                            // the token through tree-sitter + extractors is
-                            // a follow-up.
-                            if internal_ct.is_cancelled()
-                                || external_ct.is_some_and(CancellationToken::is_cancelled)
-                            {
-                                return (item, Ok(FileResult::Skipped));
-                            }
-                            let result = self
-                                .parse_and_store_file(
-                                    &item.path,
-                                    &item.relative,
-                                    item.root_path.as_deref(),
-                                    storage,
-                                    index,
-                                    active_graph,
-                                )
-                                .await;
-                            (item, result)
-                        }
-                    })
-                    .buffer_unordered(concurrency)
-            );
-
-            while let Some((item, result)) = parse_stream.next().await {
-                match result {
-                    Ok(FileResult::Skipped) => {
-                        debug!(path = %item.relative, "unchanged, skipping");
-                        stats.files_skipped += 1;
-                    }
-                    Ok(FileResult::Indexed {
-                        sections,
-                        claims,
-                        pending_refs,
-                        embedding_pairs,
-                    }) => {
-                        debug!(path = %item.relative, sections, claims, "parsed and stored");
-                        stats.files_indexed += 1;
-                        stats.total_sections += sections;
-                        stats.total_claims += claims;
-                        all_pending_refs.extend(pending_refs);
-
-                        // PHASE4 chunk 4: periodic HNSW persist. Fires
-                        // only when *both* `persist_every` and a
-                        // `corpus_dir` are configured (callers that
-                        // bundle at end-of-ingest leave corpus_dir
-                        // unset — see [`with_corpus_dir`]). HNSW
-                        // persist is atomic (tmp-rename + fsync), so
-                        // we hold the in-memory graph for ongoing
-                        // inserts and the persisted snapshot is a
-                        // recoverable point-in-time copy. Sync call
-                        // inside an async block: persist is fast
-                        // enough on hot-disk to not warrant
-                        // spawn_blocking for the current corpus sizes.
-                        //
-                        // PHASE5 chunk 2: gate the call on
-                        // `!index.is_empty()`. `stats.files_indexed`
-                        // is bumped by the producer the moment a file
-                        // is parsed + stored, but the embedder runs
-                        // concurrently and may not have flushed any
-                        // vectors yet — the parser can race ahead by
-                        // many files. Calling `index.persist()` on an
-                        // empty HNSW returns "nb point 0" + a WARN log
-                        // every persist_every boundary until the
-                        // consumer catches up, which is loud and
-                        // useless. Mirrors PHASE3 Fix A's spirit for
-                        // the streaming path.
-                        if let (Some(n), Some(dir)) =
-                            (self.batch_config.persist_every, self.corpus_dir.as_ref())
-                            && n != 0
-                            && stats.files_indexed.is_multiple_of(n)
-                        {
-                            if index.is_empty() {
-                                trace!(
-                                    files_indexed = stats.files_indexed,
-                                    "skipping mid-run HNSW persist: index has no vectors yet",
-                                );
-                            } else {
-                                match index.persist(dir) {
-                                    Ok(()) => debug!(
-                                        files_indexed = stats.files_indexed,
-                                        dir = %dir.display(),
-                                        "mid-run HNSW persist snapshot"
-                                    ),
-                                    Err(e) => warn!(
-                                        files_indexed = stats.files_indexed,
-                                        error = %e,
-                                        "mid-run HNSW persist failed; continuing"
-                                    ),
-                                }
-                            }
-                        }
-
-                        // Track this doc for rollback on consumer failure.
-                        let doc_id = crate::types::ContentId(item.relative.clone());
-                        if let Ok(mut guard) = indexed_doc_ids.lock() {
-                            guard.push(doc_id.clone());
-                        }
-
-                        if let Some(ref progress) = self.progress {
-                            progress.add_sections_done(sections);
-                        }
-
-                        if let Some(ref rid) = item.root_id
-                            && let Err(e) = storage.set_document_root(&doc_id, rid).await
-                        {
-                            debug!(path = %item.relative, error = %e, "failed to set document root");
-                        }
-
-                        if !embedding_pairs.is_empty() {
-                            if let Some(ref progress) = self.progress {
-                                progress.add_embeddings_total(embedding_pairs.len());
-                            }
-                            if embed_tx.send(embedding_pairs).await.is_err() {
-                                // Consumer dropped rx — it errored. Stop.
-                                break;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        // Bug #5: record the failing path + reason so callers
-                        // can surface the failure without scraping logs.
-                        let reason = e.to_string();
-                        tracing::error!(path = %item.relative, error = %reason, "failed to ingest file");
-                        stats.files_failed += 1;
-                        stats.failed_files.push((item.relative.clone(), reason));
-                    }
-                }
-
-                if let Some(ref progress) = self.progress {
-                    progress.increment_done();
-                }
-            }
-            drop(embed_tx);
-
-            if external_ct.is_some_and(CancellationToken::is_cancelled)
-                || internal_ct.is_cancelled()
-            {
-                cancelled = true;
-            }
-            cancelled
-        };
+        // Parse stage (ADR 0001 D3): the producer. Streams the discovered
+        // files through `parse_and_store_file`, accounts stats, snapshots the
+        // HNSW periodically, tracks persisted docs for rollback, and forwards
+        // each file's embedding pairs into the Embed stage's channel.
+        let producer = super::parse_stage::run_parse_stage(
+            self,
+            file_items,
+            storage,
+            index,
+            active_graph,
+            stats,
+            super::parse_stage::ParseStageWiring {
+                concurrency: self.concurrency.unwrap_or_else(default_concurrency),
+                progress: self.progress.as_ref(),
+                persist_every: self.batch_config.persist_every,
+                corpus_dir: self.corpus_dir.as_deref(),
+                embed_tx,
+                indexed_doc_ids: &indexed_doc_ids,
+                internal_ct: &internal_ct,
+                external_ct,
+            },
+        );
 
         let dual = self
             .dual_embedder
@@ -1821,7 +1674,7 @@ impl IngestionPipeline {
             result
         };
 
-        let (was_cancelled, embed_result) = futures::join!(producer, consumer);
+        let ((was_cancelled, all_pending_refs), embed_result) = futures::join!(producer, consumer);
 
         // If the embedding side failed, roll back every document we persisted
         // so SQLite never has sections/claims/symbols without matching vectors.
@@ -1889,9 +1742,12 @@ impl IngestionPipeline {
     // ── Shared file processing (used by rooted + multi-path) ─────────────
 
     /// Parse, enrich, and store a single file. Embedding is deferred.
+    ///
+    /// `pub(super)` so the Parse stage ([`super::parse_stage::run_parse_stage`])
+    /// can drive it as the per-file unit of work.
     #[allow(clippy::too_many_arguments)]
     #[instrument(skip(self, storage, index, package_graph), fields(path = %relative_path))]
-    async fn parse_and_store_file<S, I>(
+    pub(super) async fn parse_and_store_file<S, I>(
         &self,
         file_path: &Path,
         relative_path: &str,

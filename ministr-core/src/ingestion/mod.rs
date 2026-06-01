@@ -14,6 +14,8 @@
 //! - [`symbols`] — code symbol extraction, reference resolution, bridge linking
 //! - [`process`] — shared per-document processing core
 //! - [`parse_pool`] — dedicated rayon CPU pool for off-runtime tree-sitter parsing
+//! - [`parse_stage`] — the Parse stage: producer fan-out + per-file accounting (ADR 0001 D3)
+//! - [`embed_stage`] — the Embed stage: drain/batch/embed/insert (ADR 0001 D3)
 //! - [`pipeline`] — `IngestionPipeline` orchestrator and public entry points
 
 mod discovery;
@@ -21,6 +23,7 @@ mod embed_stage;
 mod embedding;
 mod occurrences;
 mod parse_pool;
+mod parse_stage;
 mod pipeline;
 mod process;
 mod roots;
