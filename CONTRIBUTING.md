@@ -148,6 +148,37 @@ chore: bump fastembed to 5.1
 - **No mocking storage** — integration tests use real databases
 - Use `tempfile::tempdir()` for test fixtures — never test against a live working directory
 
+### Adding a language to the code-intelligence test matrix
+
+The multi-language e2e suite (FE2–FE6, in `ministr-core/tests/`) is gated so a
+new language can't land with silent coverage holes. The shared FE1 harness is
+`tests/langtest/mod.rs` (`IngestedProject::from_files` + `assert_symbol` /
+`assert_cross_file_ref` / `assert_range_invariant`). When you add a grammar to
+`GrammarRegistry` (or a `BridgeKind`), work this checklist — the coverage
+guards **fail CI** until it's done:
+
+1. **Extraction** (`tests/fe2_extraction.rs`): add a `<lang>_extraction_edge_cases`
+   test exercising the language's edge cases, and list the language in
+   `FE2_COVERED` (or, for a config/markup grammar with no symbol model, add it
+   to `EXTRACTION_DEFERRED` with a reason).
+2. **References** (`tests/fe3_refs.rs`): add a `<lang>_cross_file_ref_both_orders`
+   test (both ingest orders) and list it in `FE3_COVERED` (or `REF_DEFERRED`).
+3. **Import edge cases** (`tests/fe3b_import_edges.rs`): cover the language's
+   aliased / star / re-export / namespace import shapes, or characterize the
+   ones the name-based resolver doesn't map (with a follow-up).
+4. **Occurrence index** (`tests/fe5_invariants.rs` + `code::occurrence`): only if
+   the language gains an `extract_occurrences` arm.
+5. **Bridges** (`tests/bridge_fixtures.rs`): if the language participates in a
+   `BridgeKind`, add an e2e link fixture and list the kind in `BRIDGE_COVERED`.
+6. **The GA gate** (`tests/fe6_coverage_guard.rs`): update `CODE_LANGUAGES` /
+   `NON_CODE_DEFERRED` (code-language dimension) and `BRIDGE_COVERED` (bridge
+   dimension). This is the single cross-suite guard — it cross-checks the
+   `GrammarRegistry` and `BridgeKind` enums against the fixtures and is what
+   turns a missing fixture into a red CI run.
+
+All of these run under `just validate` (they are ordinary `cargo test`
+integration tests).
+
 ### Quality gates
 
 All of these must pass before merge:
