@@ -17,6 +17,7 @@
 //! - [`pipeline`] — `IngestionPipeline` orchestrator and public entry points
 
 mod discovery;
+mod embed_stage;
 mod embedding;
 mod occurrences;
 mod parse_pool;

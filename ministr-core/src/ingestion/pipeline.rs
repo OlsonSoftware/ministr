@@ -30,9 +30,7 @@ use crate::storage::traits::{FileHashRecord, Storage, SymbolFilter};
 use crate::types::{CorpusRoot, RootKind, VectorId};
 
 use super::discovery::{discover_files, discover_paths, is_in_ignored_dir};
-use super::embedding::{
-    EMBED_FLUSH_THRESHOLD, batch_embed_and_insert, collect_document_embeddings, embed_document,
-};
+use super::embedding::{batch_embed_and_insert, collect_document_embeddings, embed_document};
 use super::process::{ProcessOptions, store_enriched_document};
 use super::roots::{
     accumulate_language_stats, all_files_unchanged_by_mtime, compute_content_hash,
@@ -1797,19 +1795,18 @@ impl IngestionPipeline {
         let service_ref = self.embedding_service.as_deref();
         let internal_ct_for_consumer = internal_ct.clone();
         let consumer = async move {
-            let result = if let Some((dual_emb, full_storage)) = dual {
-                Self::run_embedding_consumer_dual(
-                    embed_rx,
-                    dual_emb.as_ref(),
-                    index,
-                    full_storage,
-                    progress_ref,
-                )
-                .await
-            } else {
-                Self::run_embedding_consumer(embed_rx, embedder, service_ref, index, progress_ref)
-                    .await
-            };
+            // The Embed stage (ADR 0001 D3): drain the producer channel, batch,
+            // embed (off-runtime via the shared service when set), and insert;
+            // the dual (Matryoshka) variant also stores full-dim vectors.
+            let result = super::embed_stage::run_embed_stage(
+                embed_rx,
+                embedder,
+                service_ref,
+                dual.map(|(d, s)| (d.as_ref(), s)),
+                index,
+                progress_ref,
+            )
+            .await;
             // Bug #4: trip the shared cancel so the producer exits instead of
             // continuing to persist files that will immediately be rolled back.
             if result.is_err() {
@@ -1855,108 +1852,6 @@ impl IngestionPipeline {
         }
 
         Ok((was_cancelled, embed_count, all_pending_refs))
-    }
-
-    /// Consume embedding pairs from the producer channel, batch them, and insert.
-    async fn run_embedding_consumer<E, I>(
-        mut embed_rx: tokio::sync::mpsc::Receiver<Vec<(VectorId, String)>>,
-        embedder: &E,
-        service: Option<&crate::embedding::EmbeddingService>,
-        index: &I,
-        progress: Option<&Arc<IngestionProgress>>,
-    ) -> Result<usize, IngestionError>
-    where
-        E: Embedder + ?Sized,
-        I: VectorIndex + ?Sized,
-    {
-        let mut total_embeddings = 0usize;
-        let mut buffer: Vec<(VectorId, String)> = Vec::new();
-        // Track whether we've signalled the `Embedding` phase yet — flip
-        // it on the FIRST batch received so SSE consumers see the phase
-        // change at the right moment. Before the first batch arrives,
-        // the producer is still parsing; flipping any earlier would
-        // misreport the work.
-        let mut phase_flipped = false;
-
-        while let Some(pairs) = embed_rx.recv().await {
-            if !phase_flipped && let Some(p) = progress {
-                p.set_phase(IngestionPhase::Embedding);
-                phase_flipped = true;
-            }
-            buffer.extend(pairs);
-            if buffer.len() >= EMBED_FLUSH_THRESHOLD {
-                let count = batch_embed_and_insert(&buffer, embedder, service, index).await?;
-                total_embeddings += count;
-                if let Some(p) = progress {
-                    p.add_embeddings_done(count);
-                }
-                buffer.clear();
-            }
-        }
-        if !buffer.is_empty() {
-            let count = batch_embed_and_insert(&buffer, embedder, service, index).await?;
-            total_embeddings += count;
-            if let Some(p) = progress {
-                p.add_embeddings_done(count);
-            }
-        }
-        Ok(total_embeddings)
-    }
-
-    /// Consume embedding pairs using a [`DualEmbedder`], storing both truncated
-    /// vectors in HNSW and full-dimension vectors in SQLite.
-    async fn run_embedding_consumer_dual<I>(
-        mut embed_rx: tokio::sync::mpsc::Receiver<Vec<(VectorId, String)>>,
-        dual_embedder: &dyn crate::embedding::DualEmbedder,
-        index: &I,
-        full_dim_storage: &crate::storage::SqliteStorage,
-        progress: Option<&Arc<IngestionProgress>>,
-    ) -> Result<usize, IngestionError>
-    where
-        I: VectorIndex + ?Sized,
-    {
-        let mut total_embeddings = 0usize;
-        let mut buffer: Vec<(VectorId, String)> = Vec::new();
-        // Mirror of the single-embedder path — flip phase on the
-        // first batch so SSE consumers see `Embedding` at the
-        // right moment.
-        let mut phase_flipped = false;
-
-        while let Some(pairs) = embed_rx.recv().await {
-            if !phase_flipped && let Some(p) = progress {
-                p.set_phase(IngestionPhase::Embedding);
-                phase_flipped = true;
-            }
-            buffer.extend(pairs);
-            if buffer.len() >= EMBED_FLUSH_THRESHOLD {
-                let count = super::embedding::batch_embed_and_insert_dual(
-                    &buffer,
-                    dual_embedder,
-                    index,
-                    full_dim_storage,
-                )
-                .await?;
-                total_embeddings += count;
-                if let Some(p) = progress {
-                    p.add_embeddings_done(count);
-                }
-                buffer.clear();
-            }
-        }
-        if !buffer.is_empty() {
-            let count = super::embedding::batch_embed_and_insert_dual(
-                &buffer,
-                dual_embedder,
-                index,
-                full_dim_storage,
-            )
-            .await?;
-            total_embeddings += count;
-            if let Some(p) = progress {
-                p.add_embeddings_done(count);
-            }
-        }
-        Ok(total_embeddings)
     }
 
     /// Resolve pending cross-references and store bridge links.
