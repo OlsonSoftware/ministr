@@ -124,6 +124,12 @@ ignore = "0.4"
 # Efficient sync primitives (no poisoning, smaller, faster)
 parking_lot = "0.12"
 
+# Data-parallel CPU thread pool. Used by ministr-core's ingestion path to
+# run blocking tree-sitter parsing on a dedicated pool, off the Tokio
+# runtime, so async IO workers aren't tied up during the CPU-heavy parse
+# phase of indexing.
+rayon = "1"
+
 # Logos — fast tokenizer used for languages without a tree-sitter
 # grammar (HLSL/GLSL shaders today; planned C++ fallback when
 # tree-sitter times out). Keep on workspace so each crate can opt in.

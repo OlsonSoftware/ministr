@@ -13,11 +13,13 @@
 //! - [`embedding`] — dense/sparse embedding, batch insert, vector deletion
 //! - [`symbols`] — code symbol extraction, reference resolution, bridge linking
 //! - [`process`] — shared per-document processing core
+//! - [`parse_pool`] — dedicated rayon CPU pool for off-runtime tree-sitter parsing
 //! - [`pipeline`] — `IngestionPipeline` orchestrator and public entry points
 
 mod discovery;
 mod embedding;
 mod occurrences;
+mod parse_pool;
 mod pipeline;
 mod process;
 mod roots;

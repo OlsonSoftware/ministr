@@ -53,6 +53,9 @@ futures = "0.3"
 glob.workspace = true
 ignore.workspace = true
 parking_lot.workspace = true
+# Dedicated CPU pool for off-runtime tree-sitter parsing (see
+# ingestion/parse_pool.rs).
+rayon.workspace = true
 logos.workspace = true
 tree-sitter.workspace = true
 tree-sitter-language.workspace = true

@@ -725,9 +725,14 @@ impl IngestionPipeline {
                 source: e,
             })?;
 
-        let content_str = String::from_utf8(content).map_err(|_| IngestionError::Encoding {
-            path: file_path.to_path_buf(),
-        })?;
+        // `Arc<str>` so the bytes can be shared into the off-runtime parse
+        // pool (which needs `'static`) without copying the file contents.
+        let content_str: Arc<str> =
+            Arc::from(
+                String::from_utf8(content).map_err(|_| IngestionError::Encoding {
+                    path: file_path.to_path_buf(),
+                })?,
+            );
 
         let hash = compute_content_hash(&content_str);
 
@@ -748,8 +753,13 @@ impl IngestionPipeline {
             return Ok(FileResult::Skipped);
         }
 
+        // Run the CPU-bound tree-sitter parse on the dedicated rayon pool,
+        // off the Tokio runtime (see `parse_pool`); the parser's internal
+        // PARSE_BUDGET timeout is preserved (it lives inside `parse`).
         let parser = self.parser_for(Path::new(relative_path));
-        let mut doc = parser.parse(Path::new(relative_path), &content_str)?;
+        let mut doc =
+            super::parse_pool::parse_on_pool(parser, PathBuf::from(relative_path), content_str)
+                .await?;
 
         let result = store_enriched_document(
             &mut doc,
@@ -2020,9 +2030,14 @@ impl IngestionPipeline {
                 source: e,
             })?;
 
-        let content_str = String::from_utf8(content).map_err(|_| IngestionError::Encoding {
-            path: file_path.to_path_buf(),
-        })?;
+        // `Arc<str>` so the bytes can be shared into the off-runtime parse
+        // pool (which needs `'static`) without copying the file contents.
+        let content_str: Arc<str> =
+            Arc::from(
+                String::from_utf8(content).map_err(|_| IngestionError::Encoding {
+                    path: file_path.to_path_buf(),
+                })?,
+            );
 
         let hash = compute_content_hash(&content_str);
 
@@ -2043,8 +2058,17 @@ impl IngestionPipeline {
             return Ok(FileResult::Skipped);
         }
 
+        // Run the CPU-bound tree-sitter parse on the dedicated rayon pool,
+        // off the Tokio runtime, so async workers stay free for IO and the
+        // embedding consumer while all cores parse. The parser's internal
+        // PARSE_BUDGET timeout is preserved (it lives inside `parse`).
         let parser = self.parser_for(Path::new(relative_path));
-        let mut doc = parser.parse(Path::new(relative_path), &content_str)?;
+        let mut doc = super::parse_pool::parse_on_pool(
+            parser,
+            PathBuf::from(relative_path),
+            Arc::clone(&content_str),
+        )
+        .await?;
 
         let result = store_enriched_document(
             &mut doc,
