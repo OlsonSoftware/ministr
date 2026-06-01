@@ -984,7 +984,6 @@ impl IngestionPipeline {
             .await
     }
 
-    #[allow(clippy::too_many_lines)] // orchestration entry point — each step is unique
     pub async fn ingest_directory_with_embeddings_rooted<S, E, I>(
         &self,
         dir: &Path,
@@ -999,72 +998,27 @@ impl IngestionPipeline {
         E: Embedder + ?Sized,
         I: VectorIndex + ?Sized,
     {
-        let detected_graph = if self.package_graph.is_none() {
-            crate::workspace::detect_workspace(dir).and_then(|ws| {
-                let graph = PackageGraph::from_cargo_workspace(dir, &ws.members);
-                if graph.is_empty() {
-                    None
-                } else {
-                    info!(
-                        packages = graph.packages().len(),
-                        kind = %ws.kind,
-                        "detected workspace, built package graph for cross-crate resolution"
-                    );
-                    Some(graph)
-                }
-            })
-        } else {
-            None
-        };
+        // Workspace → package graph for cross-crate ref resolution. `detected`
+        // is bound here so `active_graph` can borrow it for the whole run.
+        let detected_graph = self.detect_workspace_graph(dir);
         let active_graph = self.package_graph.as_ref().or(detected_graph.as_ref());
 
         if let Some(ref progress) = self.progress {
             progress.set_phase(IngestionPhase::Discovering);
         }
 
-        // Phase 7 (corpus-root stat-merkle short-circuit). Walk once,
-        // computing both the file list and a sorted BLAKE3 over each
-        // file's (rel_path, mtime_ns, size). When the freshly-computed
-        // hash matches the stored value for this corpus_id, we know
-        // *no file has been touched* since the last successful index
-        // and can return immediately — no parse, no embed, no SQL
-        // churn. Saves minutes-to-hours on `git pull && reindex` of
-        // large corpora that didn't actually change.
-        //
-        // When root_id is None (test / unrooted callers) we keep the
-        // legacy `discover_files` path — there's no key under which to
-        // remember the fingerprint.
-        let (root_hash, files): (Option<String>, Vec<PathBuf>) = if root_id.is_some() {
-            let (h, f) = super::discovery::compute_corpus_stat_merkle(dir)?;
-            (Some(h), f)
-        } else {
-            (None, discover_files(dir)?)
-        };
+        // Discover stage: walk once, producing the file list and (when rooted)
+        // a stat-merkle so an unchanged corpus can short-circuit the reindex.
+        let (root_hash, files) = Self::discover_files_and_hash(dir, root_id)?;
 
-        if let (Some(rid), Some(hash)) = (root_id, &root_hash)
-            && let Ok(Some(prior)) = storage.get_corpus_merkle(rid).await
-            && prior.root_hash == *hash
+        if let Some(stats) =
+            Self::corpus_merkle_short_circuit(storage, root_id, root_hash.as_deref(), files.len())
+                .await
         {
-            if prior.extractor_version == super::EXTRACTOR_VERSION {
-                info!(
-                    corpus_id = rid,
-                    file_count = files.len(),
-                    extractor_version = super::EXTRACTOR_VERSION,
-                    "corpus stat-merkle unchanged — short-circuiting reindex"
-                );
-                let mut stats = IngestionStats::new(files.len());
-                stats.files_skipped = files.len();
-                if let Some(ref progress) = self.progress {
-                    progress.complete();
-                }
-                return Ok(stats);
+            if let Some(ref progress) = self.progress {
+                progress.complete();
             }
-            info!(
-                corpus_id = rid,
-                stored_extractor_version = prior.extractor_version,
-                current_extractor_version = super::EXTRACTOR_VERSION,
-                "corpus stat-merkle matches but extractor version differs — re-extracting"
-            );
+            return Ok(stats);
         }
 
         let mut stats = IngestionStats::new(files.len());
@@ -1082,73 +1036,12 @@ impl IngestionPipeline {
             progress.start(files.len());
         }
 
-        // Register this corpus root *before* the producer/consumer loop:
-        // run_producer_consumer calls set_document_root per file, and that
-        // UPDATE is FK-constrained to corpus_roots, so the row must already
-        // exist or root_id silently stays NULL (the error is logged at
-        // debug and swallowed). The rooted entry point is otherwise the one
-        // ingestion path that never registers its root — only
-        // ingest_paths_with_embeddings did — which left root_id NULL and
-        // list_documents_by_root / list_corpus_roots empty for every
-        // rooted-path corpus. Guard on a non-empty discovery so a transient
-        // unreadable root can't stomp a prior good file_count with 0 (same
-        // footing as the orphan-sweep guard below).
-        if let Some(rid) = root_id
-            && !files.is_empty()
-        {
-            let roots = [(dir.to_path_buf(), rid.to_string())];
-            let mut root_lang_stats: std::collections::HashMap<
-                String,
-                std::collections::HashMap<String, usize>,
-            > = std::collections::HashMap::new();
-            let mut root_file_counts: std::collections::HashMap<String, usize> =
-                std::collections::HashMap::new();
-            accumulate_language_stats(&files, &roots, &mut root_lang_stats, &mut root_file_counts);
-            update_root_stats(storage, &roots, &root_lang_stats, &root_file_counts).await;
-        }
-
-        // Union the upward walk from the root with a scan of every manifest
-        // discovered *below* it — otherwise a monorepo's subdirectory app
-        // (e.g. a Tauri app under `<repo>/app/src-tauri/`) never registers its
-        // bridge framework and its commands never link.
-        let detected_kinds: Vec<BridgeKind> = {
-            let mut set: std::collections::BTreeSet<BridgeKind> =
-                detector::FrameworkDetector::detect(dir)
-                    .into_iter()
-                    .collect();
-            set.extend(detector::FrameworkDetector::detect_in_files(&files));
-            set.into_iter().collect()
-        };
-        let bridge_linker = create_linker_for_kinds(&detected_kinds);
-        if !detected_kinds.is_empty() {
-            info!(
-                kinds = ?detected_kinds,
-                "detected bridge frameworks for cross-language linking"
-            );
-        }
+        Self::register_corpus_root(storage, dir, root_id, &files).await;
+        let bridge_linker = Self::detect_bridge_linker(dir, &files);
 
         mem_profile::checkpoint("ingestion loop start (rooted)");
 
-        let file_items: Vec<FileItem> = files
-            .iter()
-            .map(|file_path| {
-                let raw_relative = file_path
-                    .strip_prefix(dir)
-                    .unwrap_or(file_path)
-                    .to_string_lossy()
-                    .to_string();
-                let relative = match root_id {
-                    Some(rid) => namespace_path(rid, &raw_relative),
-                    None => raw_relative,
-                };
-                FileItem {
-                    path: file_path.clone(),
-                    relative,
-                    root_id: root_id.map(String::from),
-                    root_path: Some(dir.to_path_buf()),
-                }
-            })
-            .collect();
+        let file_items = Self::build_file_items(&files, dir, root_id);
 
         // Snapshot (abs_path, relative_path) pairs for the bridge rebuild
         // pass. run_producer_consumer consumes file_items, but
@@ -1188,110 +1081,7 @@ impl IngestionPipeline {
         )
         .await;
 
-        // Cleanup stale docs (orphan GC) — keying-aware global sweep.
-        //
-        // Enumerate *every* document, not just those under the root being
-        // ingested. A document whose `root_id` is NULL (ingested via the
-        // unrooted entry point, by the CLI/worker, or before roots existed)
-        // is invisible to `list_documents_by_root(rid)` and would otherwise
-        // orphan forever — surviving every reindex of its own corpus. We
-        // mirror the global discovered-set diff the multi-path entry point
-        // uses (F32) so behaviour is consistent across entry points, but
-        // scope *deletion* by document ownership so a sibling root's
-        // documents in a shared multi-root index are never false-deleted.
-        //
-        // Guard: skip the sweep entirely on empty discovery. An empty
-        // `files` set is far more likely a transient unreadable / unmounted
-        // root than a genuinely emptied corpus, and a global diff would
-        // then delete every attributable document in the index.
-        if files.is_empty() {
-            warn!(
-                "skipping stale-doc cleanup: discovery returned 0 files (likely a transient unreadable root, not an emptied corpus)"
-            );
-        } else {
-            // Both stored forms a document under this dir can take:
-            // namespaced (`rid/rel`, root_id = Some) and bare-relative
-            // (`rel`, root_id = NULL). Keyed exactly as ingestion keys them
-            // above, so membership is an equality test, not a `stat`.
-            let discovered: std::collections::HashSet<String> = files
-                .iter()
-                .flat_map(|file_path| {
-                    let raw = file_path
-                        .strip_prefix(dir)
-                        .unwrap_or(file_path)
-                        .to_string_lossy()
-                        .into_owned();
-                    match root_id {
-                        Some(rid) => vec![namespace_path(rid, &raw), raw],
-                        None => vec![raw],
-                    }
-                })
-                .collect();
-
-            let existing_docs = storage
-                .list_documents()
-                .await
-                .map_err(IngestionError::from)?;
-
-            // Ownership is read from the source_path namespace prefix
-            // (`rid/…`), set by `namespace_path` at ingest. The `root_id`
-            // *column* is not written on this code path, so scope must not
-            // key off it. `this_prefix` is what this run namespaces under
-            // (None for an unrooted reindex).
-            let this_prefix = root_id.map(|rid| format!("{rid}/"));
-
-            // Does a *foreign* explicit root share this index? A bare-
-            // relative (NULL-keyed) document carries no attribution, so we
-            // reclaim such documents only when none is present — i.e. a
-            // single-corpus CLI/worker index, the only place NULL-keyed
-            // documents legitimately arise. In a genuine multi-root index
-            // they could belong to any sibling corpus.
-            let has_foreign_root = existing_docs.iter().any(|d| {
-                strip_root_prefix(&d.source_path).is_some()
-                    && this_prefix
-                        .as_deref()
-                        .is_none_or(|p| !d.source_path.starts_with(p))
-            });
-
-            for doc in &existing_docs {
-                // Never delete a document this run isn't authoritative for:
-                //   namespaced under our rid → ours.
-                //   namespaced under another → a sibling root, skip.
-                //   bare-relative (NULL-keyed) → ours only on an unrooted
-                //     reindex, or when no sibling root shares the index
-                //     (the F32.1 fix).
-                let attributable = if strip_root_prefix(&doc.source_path).is_some() {
-                    this_prefix
-                        .as_deref()
-                        .is_some_and(|p| doc.source_path.starts_with(p))
-                } else {
-                    root_id.is_none() || !has_foreign_root
-                };
-                if !attributable || discovered.contains(&doc.source_path) {
-                    continue;
-                }
-                debug!(path = %doc.source_path, "file removed, deleting from index");
-                super::embedding::delete_document_vectors(&doc.id, storage, index).await?;
-                storage
-                    .delete_document(&doc.id)
-                    .await
-                    .map_err(IngestionError::from)?;
-                storage
-                    .delete_file_hash(&doc.source_path)
-                    .await
-                    .map_err(IngestionError::from)?;
-                // Symbols live in their own table keyed by file_path (NOT
-                // cascaded by delete_document); without this they'd keep
-                // surfacing in symbol search forever. Runs after
-                // delete_document_vectors so the HNSW teardown could still
-                // enumerate them. symbol_refs cascade off symbols via FK.
-                storage
-                    .delete_symbols_for_file(&doc.source_path)
-                    .await
-                    .map_err(IngestionError::from)?;
-                stats.files_removed += 1;
-            }
-        }
+        Self::sweep_stale_documents(storage, index, dir, root_id, &files, &mut stats).await?;
 
         info!(
             indexed = stats.files_indexed,
@@ -1301,36 +1091,321 @@ impl IngestionPipeline {
             "ingestion with embeddings complete"
         );
 
-        // Phase 7 — record the new stat-merkle so the *next* reindex can
-        // short-circuit. Only persist when (a) we have a corpus key to
-        // store under and (b) we successfully computed a hash earlier
-        // (i.e. we took the rooted code path).
-        if let (Some(rid), Some(hash)) = (root_id, root_hash) {
-            let now_ns = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .ok()
-                .and_then(|d| i64::try_from(d.as_nanos()).ok())
-                .unwrap_or(0);
-            let record = crate::storage::traits::CorpusMerkleRecord {
-                corpus_id: rid.to_string(),
-                root_hash: hash,
-                file_count: i64::try_from(stats.files_discovered).unwrap_or(i64::MAX),
-                last_indexed_ns: now_ns,
-                extractor_version: super::EXTRACTOR_VERSION,
-            };
-            if let Err(e) = storage.upsert_corpus_merkle(&record).await {
-                // Don't fail the ingestion just because the merkle
-                // upsert blew up — the corpus is correctly indexed,
-                // we just lose the short-circuit on the next run.
-                tracing::warn!(error = ?e, "failed to upsert corpus_merkle (non-fatal)");
-            }
-        }
+        Self::persist_corpus_merkle(storage, root_id, root_hash, stats.files_discovered).await;
 
         if let Some(ref progress) = self.progress {
             progress.complete();
         }
 
         Ok(stats)
+    }
+
+    // ── Rooted-ingest stage helpers (extracted from the orchestrator) ─────
+
+    /// Workspace detection → package graph for cross-crate ref resolution.
+    /// Returns an *owned* graph the caller binds so `active_graph` can borrow
+    /// it for the whole run; `None` when a graph was already supplied or no
+    /// Cargo workspace is detected.
+    fn detect_workspace_graph(&self, dir: &Path) -> Option<PackageGraph> {
+        if self.package_graph.is_some() {
+            return None;
+        }
+        crate::workspace::detect_workspace(dir).and_then(|ws| {
+            let graph = PackageGraph::from_cargo_workspace(dir, &ws.members);
+            if graph.is_empty() {
+                None
+            } else {
+                info!(
+                    packages = graph.packages().len(),
+                    kind = %ws.kind,
+                    "detected workspace, built package graph for cross-crate resolution"
+                );
+                Some(graph)
+            }
+        })
+    }
+
+    /// Discover stage. Walks once, computing the file list and — for rooted
+    /// corpora — a sorted BLAKE3 stat-merkle over each file's
+    /// `(rel_path, mtime_ns, size)`. Unrooted callers (tests / ad-hoc) have no
+    /// key to remember a fingerprint under, so they take the legacy
+    /// `discover_files` path with no hash.
+    fn discover_files_and_hash(
+        dir: &Path,
+        root_id: Option<&str>,
+    ) -> Result<(Option<String>, Vec<PathBuf>), IngestionError> {
+        if root_id.is_some() {
+            let (h, f) = super::discovery::compute_corpus_stat_merkle(dir)?;
+            Ok((Some(h), f))
+        } else {
+            Ok((None, discover_files(dir)?))
+        }
+    }
+
+    /// Phase 7 corpus-root stat-merkle short-circuit. When the freshly-computed
+    /// `root_hash` matches the stored value for `root_id` *and* the extractor
+    /// version is current, no file has changed since the last successful index
+    /// — returns `Some(stats)` (everything counted skipped) so the caller can
+    /// bail before any parse/embed/SQL work. A version mismatch logs and
+    /// returns `None` (re-extract); a missing key / hash mismatch is also
+    /// `None` (proceed).
+    async fn corpus_merkle_short_circuit<S>(
+        storage: &S,
+        root_id: Option<&str>,
+        root_hash: Option<&str>,
+        file_count: usize,
+    ) -> Option<IngestionStats>
+    where
+        S: Storage + ?Sized,
+    {
+        let (Some(rid), Some(hash)) = (root_id, root_hash) else {
+            return None;
+        };
+        let Ok(Some(prior)) = storage.get_corpus_merkle(rid).await else {
+            return None;
+        };
+        if prior.root_hash.as_str() != hash {
+            return None;
+        }
+        if prior.extractor_version == super::EXTRACTOR_VERSION {
+            info!(
+                corpus_id = rid,
+                file_count,
+                extractor_version = super::EXTRACTOR_VERSION,
+                "corpus stat-merkle unchanged — short-circuiting reindex"
+            );
+            let mut stats = IngestionStats::new(file_count);
+            stats.files_skipped = file_count;
+            return Some(stats);
+        }
+        info!(
+            corpus_id = rid,
+            stored_extractor_version = prior.extractor_version,
+            current_extractor_version = super::EXTRACTOR_VERSION,
+            "corpus stat-merkle matches but extractor version differs — re-extracting"
+        );
+        None
+    }
+
+    /// Register this corpus root *before* the producer/consumer loop:
+    /// `run_producer_consumer` calls `set_document_root` per file, and that
+    /// UPDATE is FK-constrained to `corpus_roots`, so the row must already
+    /// exist or `root_id` silently stays NULL. Guarded on a non-empty
+    /// discovery so a transient unreadable root can't stomp a prior good
+    /// file_count with 0 (same footing as the orphan-sweep guard).
+    async fn register_corpus_root<S>(
+        storage: &S,
+        dir: &Path,
+        root_id: Option<&str>,
+        files: &[PathBuf],
+    ) where
+        S: Storage + ?Sized,
+    {
+        let Some(rid) = root_id else {
+            return;
+        };
+        if files.is_empty() {
+            return;
+        }
+        let roots = [(dir.to_path_buf(), rid.to_string())];
+        let mut root_lang_stats: std::collections::HashMap<
+            String,
+            std::collections::HashMap<String, usize>,
+        > = std::collections::HashMap::new();
+        let mut root_file_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        accumulate_language_stats(files, &roots, &mut root_lang_stats, &mut root_file_counts);
+        update_root_stats(storage, &roots, &root_lang_stats, &root_file_counts).await;
+    }
+
+    /// Detect bridge frameworks for cross-language linking. Unions the upward
+    /// walk from `dir` with a scan of every manifest discovered *below* it, so
+    /// a monorepo's subdirectory app (e.g. a Tauri app under
+    /// `<repo>/app/src-tauri/`) still registers its framework and links.
+    fn detect_bridge_linker(dir: &Path, files: &[PathBuf]) -> Option<BridgeLinker> {
+        let detected_kinds: Vec<BridgeKind> = {
+            let mut set: std::collections::BTreeSet<BridgeKind> =
+                detector::FrameworkDetector::detect(dir)
+                    .into_iter()
+                    .collect();
+            set.extend(detector::FrameworkDetector::detect_in_files(files));
+            set.into_iter().collect()
+        };
+        let linker = create_linker_for_kinds(&detected_kinds);
+        if !detected_kinds.is_empty() {
+            info!(
+                kinds = ?detected_kinds,
+                "detected bridge frameworks for cross-language linking"
+            );
+        }
+        linker
+    }
+
+    /// Build the per-file work items, namespacing each relative path under the
+    /// corpus `root_id` (when rooted) so documents are addressable as
+    /// `rid/rel`.
+    fn build_file_items(files: &[PathBuf], dir: &Path, root_id: Option<&str>) -> Vec<FileItem> {
+        files
+            .iter()
+            .map(|file_path| {
+                let raw_relative = file_path
+                    .strip_prefix(dir)
+                    .unwrap_or(file_path)
+                    .to_string_lossy()
+                    .to_string();
+                let relative = match root_id {
+                    Some(rid) => namespace_path(rid, &raw_relative),
+                    None => raw_relative,
+                };
+                FileItem {
+                    path: file_path.clone(),
+                    relative,
+                    root_id: root_id.map(String::from),
+                    root_path: Some(dir.to_path_buf()),
+                }
+            })
+            .collect()
+    }
+
+    /// Orphan-GC stale-doc sweep (F32) — a keying-aware global diff.
+    ///
+    /// Enumerates *every* document (a NULL-`root_id` doc is invisible to
+    /// `list_documents_by_root` and would orphan forever) but scopes
+    /// *deletion* by document ownership so a sibling root's docs in a shared
+    /// multi-root index are never false-deleted. Skipped entirely on empty
+    /// discovery — far more likely a transient unreadable root than a
+    /// genuinely emptied corpus, and a global diff would then delete every
+    /// attributable document in the index.
+    async fn sweep_stale_documents<S, I>(
+        storage: &S,
+        index: &I,
+        dir: &Path,
+        root_id: Option<&str>,
+        files: &[PathBuf],
+        stats: &mut IngestionStats,
+    ) -> Result<(), IngestionError>
+    where
+        S: Storage + ?Sized,
+        I: VectorIndex + ?Sized,
+    {
+        if files.is_empty() {
+            warn!(
+                "skipping stale-doc cleanup: discovery returned 0 files (likely a transient unreadable root, not an emptied corpus)"
+            );
+            return Ok(());
+        }
+
+        // Both stored forms a document under this dir can take: namespaced
+        // (`rid/rel`, root_id = Some) and bare-relative (`rel`, root_id = NULL).
+        // Keyed exactly as ingestion keys them, so membership is an equality
+        // test, not a `stat`.
+        let discovered: std::collections::HashSet<String> = files
+            .iter()
+            .flat_map(|file_path| {
+                let raw = file_path
+                    .strip_prefix(dir)
+                    .unwrap_or(file_path)
+                    .to_string_lossy()
+                    .into_owned();
+                match root_id {
+                    Some(rid) => vec![namespace_path(rid, &raw), raw],
+                    None => vec![raw],
+                }
+            })
+            .collect();
+
+        let existing_docs = storage
+            .list_documents()
+            .await
+            .map_err(IngestionError::from)?;
+
+        // Ownership is read from the source_path namespace prefix (`rid/…`),
+        // set by `namespace_path` at ingest. The `root_id` *column* is not
+        // written on this code path, so scope must not key off it.
+        // `this_prefix` is what this run namespaces under (None when unrooted).
+        let this_prefix = root_id.map(|rid| format!("{rid}/"));
+
+        // Does a *foreign* explicit root share this index? A bare-relative
+        // (NULL-keyed) document carries no attribution, so we reclaim such
+        // documents only when none is present — i.e. a single-corpus
+        // CLI/worker index, the only place NULL-keyed documents legitimately
+        // arise. In a genuine multi-root index they could belong to a sibling.
+        let has_foreign_root = existing_docs.iter().any(|d| {
+            strip_root_prefix(&d.source_path).is_some()
+                && this_prefix
+                    .as_deref()
+                    .is_none_or(|p| !d.source_path.starts_with(p))
+        });
+
+        for doc in &existing_docs {
+            // Never delete a document this run isn't authoritative for:
+            //   namespaced under our rid → ours.
+            //   namespaced under another → a sibling root, skip.
+            //   bare-relative (NULL-keyed) → ours only on an unrooted reindex,
+            //     or when no sibling root shares the index (the F32.1 fix).
+            let attributable = if strip_root_prefix(&doc.source_path).is_some() {
+                this_prefix
+                    .as_deref()
+                    .is_some_and(|p| doc.source_path.starts_with(p))
+            } else {
+                root_id.is_none() || !has_foreign_root
+            };
+            if !attributable || discovered.contains(&doc.source_path) {
+                continue;
+            }
+            debug!(path = %doc.source_path, "file removed, deleting from index");
+            super::embedding::delete_document_vectors(&doc.id, storage, index).await?;
+            storage
+                .delete_document(&doc.id)
+                .await
+                .map_err(IngestionError::from)?;
+            storage
+                .delete_file_hash(&doc.source_path)
+                .await
+                .map_err(IngestionError::from)?;
+            // Symbols live in their own table keyed by file_path (NOT cascaded
+            // by delete_document); without this they'd keep surfacing in symbol
+            // search forever. Runs after delete_document_vectors so the HNSW
+            // teardown could still enumerate them. symbol_refs cascade via FK.
+            storage
+                .delete_symbols_for_file(&doc.source_path)
+                .await
+                .map_err(IngestionError::from)?;
+            stats.files_removed += 1;
+        }
+        Ok(())
+    }
+
+    /// Phase 7 — record the new stat-merkle so the *next* reindex can
+    /// short-circuit. Only persists when we have a corpus key *and* a hash was
+    /// computed (i.e. the rooted path). A failed upsert is non-fatal: the
+    /// corpus is correctly indexed, we just lose next-run short-circuiting.
+    async fn persist_corpus_merkle<S>(
+        storage: &S,
+        root_id: Option<&str>,
+        root_hash: Option<String>,
+        files_discovered: usize,
+    ) where
+        S: Storage + ?Sized,
+    {
+        let (Some(rid), Some(hash)) = (root_id, root_hash) else {
+            return;
+        };
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .and_then(|d| i64::try_from(d.as_nanos()).ok())
+            .unwrap_or(0);
+        let record = crate::storage::traits::CorpusMerkleRecord {
+            corpus_id: rid.to_string(),
+            root_hash: hash,
+            file_count: i64::try_from(files_discovered).unwrap_or(i64::MAX),
+            last_indexed_ns: now_ns,
+            extractor_version: super::EXTRACTOR_VERSION,
+        };
+        if let Err(e) = storage.upsert_corpus_merkle(&record).await {
+            tracing::warn!(error = ?e, "failed to upsert corpus_merkle (non-fatal)");
+        }
     }
 
     // ── Entry point 5: multi-path with embeddings ────────────────────────
