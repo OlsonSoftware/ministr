@@ -929,11 +929,13 @@ fn walk_js_ts_refs(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<R
     }
 }
 
-/// Push a `Calls`/`Implements`/`Uses` ref with the JS/TS defaults
-/// (`from_context = None`). `Uses`/`Implements` targets are filtered through
+/// Push a `Calls`/`Implements`/`Uses` edge-graph ref with the shared defaults
+/// (`from_context = None`, so the line-based resolver attributes the `from`
+/// side). `Uses`/`Implements` targets are filtered through
 /// [`is_primitive_type`]; `Calls` targets are not (a method named `new` is a
-/// real call, not a primitive type).
-fn push_js_ts_ref(refs: &mut Vec<RawRef>, name: &str, kind: RefKind, line: u32) {
+/// real call, not a primitive type). Shared by the per-language edge-graph
+/// walkers (JS/TS, Java, …).
+fn push_graph_ref(refs: &mut Vec<RawRef>, name: &str, kind: RefKind, line: u32) {
     if name.is_empty() {
         return;
     }
@@ -984,14 +986,14 @@ fn js_ts_class_heritage(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut 
                     if let Some(base) = clause.child_by_field_name("value")
                         && let Some(name) = js_ts_type_name(&base, source)
                     {
-                        push_js_ts_ref(refs, name, RefKind::Implements, node_line(&clause));
+                        push_graph_ref(refs, name, RefKind::Implements, node_line(&clause));
                     }
                 }
                 "implements_clause" => {
                     let mut ic = clause.walk();
                     for t in clause.children(&mut ic) {
                         if let Some(name) = js_ts_type_name(&t, source) {
-                            push_js_ts_ref(refs, name, RefKind::Implements, node_line(&clause));
+                            push_graph_ref(refs, name, RefKind::Implements, node_line(&clause));
                         }
                     }
                 }
@@ -1012,7 +1014,7 @@ fn js_ts_interface_heritage(node: &tree_sitter::Node<'_>, source: &[u8], refs: &
         let mut ic = child.walk();
         for t in child.children(&mut ic) {
             if let Some(name) = js_ts_type_name(&t, source) {
-                push_js_ts_ref(refs, name, RefKind::Implements, node_line(&child));
+                push_graph_ref(refs, name, RefKind::Implements, node_line(&child));
             }
         }
     }
@@ -1032,7 +1034,7 @@ fn js_ts_call_ref(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<Ra
         _ => None,
     };
     if let Some(name) = callee {
-        push_js_ts_ref(refs, name, RefKind::Calls, node_line(node));
+        push_graph_ref(refs, name, RefKind::Calls, node_line(node));
     }
 }
 
@@ -1041,7 +1043,7 @@ fn js_ts_new_ref(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<Raw
     if let Some(ctor) = node.child_by_field_name("constructor")
         && let Some(name) = js_ts_type_name(&ctor, source)
     {
-        push_js_ts_ref(refs, name, RefKind::Uses, node_line(node));
+        push_graph_ref(refs, name, RefKind::Uses, node_line(node));
     }
 }
 
@@ -1053,7 +1055,7 @@ fn js_ts_type_uses(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<R
     match node.kind() {
         "type_identifier" => {
             if let Ok(name) = node.utf8_text(source) {
-                push_js_ts_ref(refs, name, RefKind::Uses, node_line(node));
+                push_graph_ref(refs, name, RefKind::Uses, node_line(node));
             }
         }
         "nested_type_identifier" => {
@@ -1061,7 +1063,7 @@ fn js_ts_type_uses(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<R
                 .child_by_field_name("name")
                 .and_then(|n| n.utf8_text(source).ok())
             {
-                push_js_ts_ref(refs, name, RefKind::Uses, node_line(node));
+                push_graph_ref(refs, name, RefKind::Uses, node_line(node));
             }
         }
         _ => {}
@@ -1461,8 +1463,121 @@ fn extract_refs_scala(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
     extract_imports(tree, source, &ScalaImports)
 }
 fn extract_refs_java(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
-    extract_imports(tree, source, &JavaImports)
+    // Imports from the root-level walker; the call/heritage/type graph from a
+    // full-tree walk (mirrors the JS/TS family) — Java is import-only no more.
+    let mut refs = extract_imports(tree, source, &JavaImports);
+    walk_java_refs(&tree.root_node(), source, &mut refs);
+    refs
 }
+
+/// Recursively emit `Calls`/`Implements`/`Uses` edges for Java. Complements
+/// [`JavaImports`] (which handles `import`):
+///
+/// - `class_declaration` → `Implements` for the `extends` superclass and each
+///   `implements` interface; `interface_declaration extends` likewise.
+/// - `method_invocation` → `Calls` (the `[name]` method, for both `foo()` and
+///   `obj.foo()`).
+/// - `object_creation_expression` (`new T()`) + every declared `[type]`
+///   position (fields, parameters, locals, return types) → `Uses`.
+///
+/// `from_context` is `None`; the line-based resolver attributes each edge to
+/// its enclosing symbol. Unresolved targets (JDK types, host methods) never
+/// bind to an in-corpus symbol.
+fn walk_java_refs(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    match node.kind() {
+        "class_declaration" => java_class_heritage(node, source, refs),
+        "interface_declaration" => java_interface_heritage(node, source, refs),
+        "method_invocation" => {
+            if let Some(name) = node
+                .child_by_field_name("name")
+                .and_then(|n| n.utf8_text(source).ok())
+            {
+                push_graph_ref(refs, name, RefKind::Calls, node_line(node));
+            }
+        }
+        "object_creation_expression"
+        | "field_declaration"
+        | "formal_parameter"
+        | "local_variable_declaration"
+        | "method_declaration" => {
+            if let Some(ty) = node.child_by_field_name("type") {
+                java_collect_type_uses(&ty, source, refs);
+            }
+        }
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_java_refs(&child, source, refs);
+    }
+}
+
+/// Emit `Implements` from a `class_declaration`'s `superclass` (`extends`) and
+/// `super_interfaces` (`implements`) fields.
+fn java_class_heritage(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    if let Some(sc) = node.child_by_field_name("superclass") {
+        java_collect_implements(&sc, source, refs);
+    }
+    if let Some(ifaces) = node.child_by_field_name("interfaces") {
+        java_collect_implements(&ifaces, source, refs);
+    }
+}
+
+/// Emit `Implements` from an `interface_declaration`'s `extends_interfaces`.
+fn java_interface_heritage(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "extends_interfaces" {
+            java_collect_implements(&child, source, refs);
+        }
+    }
+}
+
+/// Recursively emit `Implements` for every `type_identifier` (and the final
+/// segment of a `scoped_type_identifier`) within a heritage subtree.
+fn java_collect_implements(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    java_collect_type_names(node, source, refs, RefKind::Implements);
+}
+
+/// Recursively emit `Uses` for every named type within a type subtree
+/// (handles `generic_type` arguments and `scoped_type_identifier`).
+fn java_collect_type_uses(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    java_collect_type_names(node, source, refs, RefKind::Uses);
+}
+
+/// Shared type-name collector: walks a type/heritage subtree and pushes a ref
+/// of `kind` for each named type. `scoped_type_identifier` contributes only
+/// its final `name` segment (not the package path).
+fn java_collect_type_names(
+    node: &tree_sitter::Node<'_>,
+    source: &[u8],
+    refs: &mut Vec<RawRef>,
+    kind: RefKind,
+) {
+    match node.kind() {
+        "type_identifier" => {
+            if let Ok(name) = node.utf8_text(source) {
+                push_graph_ref(refs, name, kind, node_line(node));
+            }
+            return;
+        }
+        "scoped_type_identifier" => {
+            if let Some(name) = node
+                .child_by_field_name("name")
+                .and_then(|n| n.utf8_text(source).ok())
+            {
+                push_graph_ref(refs, name, kind, node_line(node));
+            }
+            return;
+        }
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        java_collect_type_names(&child, source, refs, kind);
+    }
+}
+
 fn extract_refs_csharp(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
     extract_imports(tree, source, &CSharpImports)
 }

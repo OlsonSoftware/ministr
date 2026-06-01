@@ -82,7 +82,12 @@ pub(crate) use embedding::delete_document_vectors;
 ///   call sites, `new`, and type annotations), not import-only. TS/JS corpora
 ///   pick up a real reference graph (so `ministr_references`/`ministr_solid`
 ///   stop starving) on re-extraction.
-pub const EXTRACTOR_VERSION: i64 = 5;
+/// - **6**: The Java ref extractor (`code::refs::extract_refs_java`) likewise
+///   emits `Calls`/`Implements`/`Uses` edges (class `extends`/`implements`,
+///   interface `extends`, `method_invocation`, `new`, and declared type
+///   positions), not import-only. Java corpora gain a real reference graph
+///   on re-extraction.
+pub const EXTRACTOR_VERSION: i64 = 6;
 
 /// Version of the symbol-reference *resolution* pipeline.
 ///
