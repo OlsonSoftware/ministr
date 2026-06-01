@@ -32,7 +32,7 @@ import type { CorpusInfo } from "../../lib/types";
 import { corpusLabel, corpusRoot } from "../../lib/corpus";
 import { formatEta, formatRelativeTime } from "../../lib/format";
 import { listContainer, listItem, spring } from "../../lib/motion";
-import { statusBadge } from "../../lib/status";
+import { corpusStatusBadge } from "../../lib/status";
 import { cn } from "../../lib/utils";
 import {
   useIndexingProgress,
@@ -377,9 +377,8 @@ function ProjectCard({
   ref,
 }: ProjectCardProps) {
   const indexing = corpus.status.state === "indexing";
-  const { variant: statusVariant, label: statusLabel } = statusBadge(
-    corpus.status,
-  );
+  const { variant: statusVariant, label: statusLabel } =
+    corpusStatusBadge(corpus);
   const filesDone = progress?.files_done ?? 0;
   const filesTotal = progress?.files_total ?? 0;
   const pct = filesTotal > 0 ? (filesDone / filesTotal) * 100 : 0;
@@ -520,9 +519,8 @@ function ProjectDetail({
   const filesDone = progress?.files_done ?? 0;
   const filesTotal = progress?.files_total ?? 0;
   const pct = filesTotal > 0 ? (filesDone / filesTotal) * 100 : 0;
-  const { variant: statusVariant, label: statusLabel } = statusBadge(
-    corpus.status,
-  );
+  const { variant: statusVariant, label: statusLabel } =
+    corpusStatusBadge(corpus);
 
   return (
     <div className="flex-1 min-w-0 min-h-0 overflow-y-auto border-l border-border-soft pl-5">

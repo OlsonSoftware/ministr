@@ -122,3 +122,28 @@ export function statusBadge(
     label: indexingLabel(status),
   };
 }
+
+/** True when a corpus has never produced any indexed content. The daemon's
+ *  `idle` state means BOTH "fully indexed" AND "not yet started / queued"
+ *  (see IndexingStatus), so file/section counts are the only way to tell a
+ *  finished corpus from an empty one. */
+export function isCorpusUnindexed(corpus: CorpusInfo): boolean {
+  return (
+    corpus.status.state === "idle" &&
+    corpus.files_indexed === 0 &&
+    corpus.sections_count === 0
+  );
+}
+
+/** Corpus-aware status badge. Without this, a never-indexed corpus renders
+ *  as "Ready"/green because its daemon status is `idle` — indistinguishable
+ *  from a fully-indexed one. Show "Not indexed" (muted) for an idle corpus
+ *  with zero indexed content so 0-file corpora never masquerade as done. */
+export function corpusStatusBadge(
+  corpus: CorpusInfo,
+): { variant: BadgeVariant; label: string } {
+  if (isCorpusUnindexed(corpus)) {
+    return { variant: "muted", label: "Not indexed" };
+  }
+  return statusBadge(corpus.status);
+}

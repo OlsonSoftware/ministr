@@ -73,14 +73,10 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
         )
     };
 
-    // Serialize indexing daemon-wide so concurrent corpus re-indexes can't
-    // starve the Tokio runtime on synchronous embedding (see
-    // INDEXING_SEMAPHORE). Held for the whole ingest + persist + heal. The
-    // static semaphore is never closed, so `.ok()` is effectively infallible;
-    // on the impossible close we degrade to unserialized indexing rather than
-    // panic or drop the request.
-    let _index_permit = INDEXING_SEMAPHORE.acquire().await.ok();
-
+    // Mark the corpus as Indexing BEFORE waiting on the indexing permit, so a
+    // corpus sitting in the serialized queue reports "indexing" rather than
+    // keeping its prior (Idle/"indexed") status with 0 files — otherwise a
+    // not-yet-started corpus misleadingly looks finished-but-empty.
     registry
         .set_status(
             corpus_id,
@@ -90,6 +86,14 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
             },
         )
         .await;
+
+    // Serialize indexing daemon-wide so concurrent corpus re-indexes can't
+    // starve the Tokio runtime on synchronous embedding (see
+    // INDEXING_SEMAPHORE). Held for the whole ingest + persist + heal. The
+    // static semaphore is never closed, so `.ok()` is effectively infallible;
+    // on the impossible close we degrade to unserialized indexing rather than
+    // panic or drop the request.
+    let _index_permit = INDEXING_SEMAPHORE.acquire().await.ok();
 
     let local_paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
     let pipeline = IngestionPipeline::new().with_progress(Arc::clone(&progress));
