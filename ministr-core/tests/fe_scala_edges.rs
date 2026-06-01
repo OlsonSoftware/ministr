@@ -31,7 +31,10 @@ async fn scala_extends_class_both_orders() {
     // Definition-before-subclass (a_base.scala < b_economy.scala).
     assert_edge(
         &[
-            ("a_base.scala", "class BaseService {\n  def ping(): Unit = {}\n}\n"),
+            (
+                "a_base.scala",
+                "class BaseService {\n  def ping(): Unit = {}\n}\n",
+            ),
             (
                 "b_economy.scala",
                 "class EconomyService extends BaseService {\n  def run(): Unit = {}\n}\n",
@@ -51,7 +54,10 @@ async fn scala_extends_class_both_orders() {
                 "a_economy.scala",
                 "class OtherService extends OtherBase {\n  def go(): Unit = {}\n}\n",
             ),
-            ("b_base.scala", "class OtherBase {\n  def go(): Unit = {}\n}\n"),
+            (
+                "b_base.scala",
+                "class OtherBase {\n  def go(): Unit = {}\n}\n",
+            ),
         ],
         "OtherBase",
         "b_base.scala",
@@ -110,7 +116,10 @@ async fn scala_calls_cross_file_both_orders() {
                 "a_caller.scala",
                 "object Caller {\n  def run(): Int = compute()\n}\n",
             ),
-            ("b_lib.scala", "object Lib2 {\n  def compute(): Int = 2\n}\n"),
+            (
+                "b_lib.scala",
+                "object Lib2 {\n  def compute(): Int = 2\n}\n",
+            ),
         ],
         "compute",
         "b_lib.scala",
@@ -125,7 +134,10 @@ async fn scala_new_emits_uses_cross_file() {
     // `new Widget()` → a Uses edge onto the constructed class.
     assert_edge(
         &[
-            ("widget.scala", "class Widget {\n  def draw(): Unit = {}\n}\n"),
+            (
+                "widget.scala",
+                "class Widget {\n  def draw(): Unit = {}\n}\n",
+            ),
             (
                 "factory.scala",
                 "class Factory {\n  def make(): Widget = new Widget()\n}\n",

@@ -1863,9 +1863,7 @@ fn walk_scala_refs(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<R
             let in_heritage = node
                 .parent()
                 .is_some_and(|p| matches!(p.kind(), "extends_clause" | "instance_expression"));
-            if !in_heritage
-                && let Ok(name) = node.utf8_text(source)
-            {
+            if !in_heritage && let Ok(name) = node.utf8_text(source) {
                 push_graph_ref(refs, name, RefKind::Uses, node_line(node));
             }
         }

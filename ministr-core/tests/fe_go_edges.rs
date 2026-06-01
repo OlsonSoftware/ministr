@@ -32,7 +32,10 @@ async fn go_calls_cross_file_both_orders() {
     // Definition-before-caller (a_lib.go < b_caller.go).
     assert_edge(
         &[
-            ("a_lib.go", "package demo\n\nfunc Helper() int {\n\treturn 1\n}\n"),
+            (
+                "a_lib.go",
+                "package demo\n\nfunc Helper() int {\n\treturn 1\n}\n",
+            ),
             (
                 "b_caller.go",
                 "package demo\n\nfunc Run() int {\n\treturn Helper()\n}\n",
@@ -52,7 +55,10 @@ async fn go_calls_cross_file_both_orders() {
                 "a_caller.go",
                 "package demo\n\nfunc Run() int {\n\treturn Compute()\n}\n",
             ),
-            ("b_lib.go", "package demo\n\nfunc Compute() int {\n\treturn 2\n}\n"),
+            (
+                "b_lib.go",
+                "package demo\n\nfunc Compute() int {\n\treturn 2\n}\n",
+            ),
         ],
         "Compute",
         "b_lib.go",
@@ -91,7 +97,10 @@ async fn go_parameter_type_emits_uses_cross_file() {
     // type position distinct from a composite literal).
     assert_edge(
         &[
-            ("shape.go", "package demo\n\ntype Shape struct {\n\tSides int\n}\n"),
+            (
+                "shape.go",
+                "package demo\n\ntype Shape struct {\n\tSides int\n}\n",
+            ),
             (
                 "draw.go",
                 "package demo\n\nfunc Draw(s Shape) int {\n\treturn s.Sides\n}\n",

@@ -68,7 +68,13 @@ detection across 40+ languages.
         let vecs = embedder.embed(&texts).expect("embed batch");
 
         let labels = [
-            "query", "query#2", "CHANGELOG", "README", "code", "empty", "whitespace",
+            "query",
+            "query#2",
+            "CHANGELOG",
+            "README",
+            "code",
+            "empty",
+            "whitespace",
         ];
         eprintln!("=== norms + cosine(query, x) ===");
         for (i, v) in vecs.iter().enumerate() {
@@ -216,8 +222,12 @@ detection across 40+ languages.
             }
         };
 
-        let q1 = embedder.embed(&["deferred cross-file reference resolution"]).unwrap();
-        let q2 = embedder.embed(&["niagara fluid simulation gpu emitter"]).unwrap();
+        let q1 = embedder
+            .embed(&["deferred cross-file reference resolution"])
+            .unwrap();
+        let q2 = embedder
+            .embed(&["niagara fluid simulation gpu emitter"])
+            .unwrap();
         let zero = vec![0.0f32; 384];
 
         eprintln!("\n--- ministr (multi-d6edc116) ---");
@@ -229,7 +239,10 @@ detection across 40+ languages.
         let pdir = data_dir.join("corpora/multi-a02ba540/index"); // ministr-private
         if pdir.exists() {
             let pindex = HnswIndex::load(&pdir).expect("load ministr-private");
-            eprintln!("\n--- ministr-private (multi-a02ba540) len={} ---", pindex.len());
+            eprintln!(
+                "\n--- ministr-private (multi-a02ba540) len={} ---",
+                pindex.len()
+            );
             probe("private q1", &pindex, &q1[0]);
             probe("private q2", &pindex, &q2[0]);
         }
@@ -256,7 +269,9 @@ detection across 40+ languages.
             index.insert(&format!("doc-{i}"), v).expect("insert");
         }
 
-        let qv = embedder.embed(&["authentication token validation"]).expect("q");
+        let qv = embedder
+            .embed(&["authentication token validation"])
+            .expect("q");
         let pre = index.search_knn(&qv[0], 4).expect("pre search");
         eprintln!("=== PRE-persist ===");
         for h in &pre {
