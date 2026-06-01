@@ -335,3 +335,233 @@ export class Panel {
     assert_symbol(&proj, "Card", "function", "card.tsx").await;
     assert_symbol(&proj, "Panel", "struct", "card.tsx").await;
 }
+
+// ── Go ────────────────────────────────────────────────────────────────────
+//
+// Edge cases: a structural interface, an embedded struct + a promoted method,
+// a pointer-receiver constructor, generic type params (`Map[T, R]`), and a
+// const.
+
+#[tokio::test]
+async fn go_extraction_edge_cases() {
+    let proj = IngestedProject::from_files(&[(
+        "main.go",
+        r#"package main
+
+type Reader interface {
+	Read(p []byte) (int, error)
+}
+
+type Base struct {
+	ID int
+}
+
+func (b Base) Describe() string {
+	return "base"
+}
+
+// User embeds Base, promoting Describe().
+type User struct {
+	Base
+	Name string
+}
+
+func NewUser(name string) *User {
+	return &User{Name: name}
+}
+
+func Map[T any, R any](xs []T, f func(T) R) []R {
+	out := make([]R, 0, len(xs))
+	for _, x := range xs {
+		out = append(out, f(x))
+	}
+	return out
+}
+
+const MaxUsers = 100
+"#,
+    )])
+    .await;
+
+    assert_ranges_well_formed(&proj).await;
+
+    // Go `type X struct {…}` / `type X interface {…}` declarations extract as
+    // kind `type` (the generic Go path maps type_declaration → ItemKind::Type),
+    // not `struct`/`trait`.
+    let base = assert_symbol(&proj, "Base", "type", "main.go").await;
+    assert_multiline(&base);
+    assert_symbol(&proj, "User", "type", "main.go").await;
+    assert_symbol(&proj, "Reader", "type", "main.go").await;
+    assert_symbol(&proj, "NewUser", "function", "main.go").await;
+    assert_symbol(&proj, "Map", "function", "main.go").await;
+    // Promoted/receiver method on the embedded Base.
+    assert_symbol(&proj, "Describe", "function", "main.go").await;
+}
+
+// ── Java ──────────────────────────────────────────────────────────────────
+//
+// Edge cases: a generic class implementing an interface, overloaded methods,
+// an `@Override` annotation, a nested inner class + a static nested class, and
+// an enum.
+
+#[tokio::test]
+async fn java_extraction_edge_cases() {
+    let proj = IngestedProject::from_files(&[(
+        "Box.java",
+        r#"public interface Shape {
+    double area();
+}
+
+public class Box<T> implements Shape {
+    private T content;
+
+    @Override
+    public double area() {
+        return 0.0;
+    }
+
+    public void put(T item) {
+        this.content = item;
+    }
+
+    public void put(T item, int count) {
+        this.content = item;
+    }
+
+    public class Label {
+        String text;
+    }
+
+    public static class Builder {
+        Box<Object> build() {
+            return new Box<>();
+        }
+    }
+}
+
+enum Color {
+    RED,
+    GREEN,
+    BLUE,
+}
+"#,
+    )])
+    .await;
+
+    assert_ranges_well_formed(&proj).await;
+
+    let shape = assert_symbol(&proj, "Shape", "trait", "Box.java").await;
+    assert_multiline(&shape);
+    let boxc = assert_symbol(&proj, "Box", "struct", "Box.java").await;
+    assert_multiline(&boxc);
+    assert_symbol(&proj, "Color", "enum", "Box.java").await;
+    assert_symbol(&proj, "area", "function", "Box.java").await;
+}
+
+// ── C ─────────────────────────────────────────────────────────────────────
+//
+// Edge cases: a named struct, a `typedef struct` (anonymous body), a union, an
+// enum, a function prototype vs definition (same name), a `static` function,
+// and a function-pointer typedef.
+
+#[tokio::test]
+async fn c_extraction_edge_cases() {
+    let proj = IngestedProject::from_files(&[(
+        "lib.c",
+        r#"#include <stddef.h>
+
+struct Point {
+    int x;
+    int y;
+};
+
+typedef struct {
+    double re;
+    double im;
+} Complex;
+
+union Value {
+    int i;
+    float f;
+};
+
+enum Status {
+    OK,
+    ERR,
+};
+
+int add(int a, int b);
+
+int add(int a, int b) {
+    return a + b;
+}
+
+static void helper(void) {
+}
+"#,
+    )])
+    .await;
+
+    assert_ranges_well_formed(&proj).await;
+
+    let point = assert_symbol(&proj, "Point", "struct", "lib.c").await;
+    assert_multiline(&point);
+    assert_symbol(&proj, "Status", "enum", "lib.c").await;
+    assert_symbol(&proj, "add", "function", "lib.c").await;
+    assert_symbol(&proj, "helper", "function", "lib.c").await;
+}
+
+// ── C++ ────────────────────────────────────────────────────────────────────
+//
+// Edge cases: a namespace, a class template with type params, a nested class,
+// an `enum class`, and a plain struct. (fe_cpp.rs covers the cross-file ref +
+// `.h` ambiguity story; this focuses on extraction-shape edge cases.)
+
+#[tokio::test]
+async fn cpp_extraction_edge_cases() {
+    let proj = IngestedProject::from_files(&[(
+        "geo.hpp",
+        r#"#ifndef GEO_HPP
+#define GEO_HPP
+
+namespace geo {
+
+template <typename T>
+class Vec {
+public:
+    T x, y;
+    T dot(const Vec<T>& o) const {
+        return x * o.x + y * o.y;
+    }
+
+    class Iterator {
+    public:
+        int pos;
+    };
+};
+
+enum class Kind {
+    A,
+    B,
+    C,
+};
+
+struct Pair {
+    int a;
+    int b;
+};
+
+}  // namespace geo
+
+#endif
+"#,
+    )])
+    .await;
+
+    assert_ranges_well_formed(&proj).await;
+
+    let vec = assert_symbol(&proj, "Vec", "struct", "geo.hpp").await;
+    assert_multiline(&vec);
+    assert_symbol(&proj, "Pair", "struct", "geo.hpp").await;
+    assert_symbol(&proj, "dot", "function", "geo.hpp").await;
+}
