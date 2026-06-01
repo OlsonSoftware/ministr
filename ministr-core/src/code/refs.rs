@@ -1457,8 +1457,109 @@ fn extract_refs_php(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
     extract_imports(tree, source, &PhpImports)
 }
 fn extract_refs_kotlin(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
-    extract_imports(tree, source, &KotlinImports)
+    // Imports from the root walker; the call/heritage/type graph from a
+    // full-tree walk (mirrors Java/C#) — Kotlin is import-only no more.
+    let mut refs = extract_imports(tree, source, &KotlinImports);
+    walk_kotlin_refs(&tree.root_node(), source, &mut refs);
+    refs
 }
+
+/// Recursively emit `Calls`/`Implements`/`Uses` edges for Kotlin. Complements
+/// [`KotlinImports`] (which handles `import`):
+///
+/// - `delegation_specifier` (the supertype list of a class/interface) →
+///   `Implements` for the named supertype, whether a bare `user_type`
+///   (interface / plain base) or a `constructor_invocation` (`Base()`).
+/// - `call_expression` → `Calls` (callee `identifier`, or the final segment
+///   of a `navigation_expression` receiver chain). Kotlin has no `new`, so a
+///   constructor call `Widget()` surfaces here as `Calls(Widget)`.
+/// - `user_type` in any type position (parameters, properties, return types,
+///   generics) → `Uses`; heritage `user_type`s are skipped here since they
+///   are already emitted as `Implements`.
+///
+/// `from_context` is `None`; the line-based resolver attributes each edge to
+/// its enclosing symbol.
+fn walk_kotlin_refs(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    match node.kind() {
+        "delegation_specifier" => {
+            if let Some(ut) = kotlin_specifier_user_type(node)
+                && let Some(name) = kotlin_user_type_head(&ut, source)
+            {
+                push_graph_ref(refs, name, RefKind::Implements, node_line(node));
+            }
+        }
+        "call_expression" => kotlin_call(node, source, refs),
+        "user_type" => {
+            // Skip heritage user_types (already emitted as Implements via the
+            // enclosing delegation_specifier / constructor_invocation).
+            let in_heritage = node.parent().is_some_and(|p| {
+                matches!(p.kind(), "delegation_specifier" | "constructor_invocation")
+            });
+            if !in_heritage && let Some(name) = kotlin_user_type_head(node, source) {
+                push_graph_ref(refs, name, RefKind::Uses, node_line(node));
+            }
+        }
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_kotlin_refs(&child, source, refs);
+    }
+}
+
+/// The head type name of a `user_type` (its first `identifier` child), e.g.
+/// `List<Foo>` → `List`. Nested generic arguments are separate `user_type`
+/// nodes handled by the recursion.
+fn kotlin_user_type_head<'a>(node: &tree_sitter::Node<'_>, source: &'a [u8]) -> Option<&'a str> {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .find(|c| c.kind() == "identifier")
+        .and_then(|c| c.utf8_text(source).ok())
+}
+
+/// Find the supertype `user_type` of a `delegation_specifier`: either a direct
+/// `user_type` child, or the one inside a `constructor_invocation` (`Base()`).
+fn kotlin_specifier_user_type<'t>(node: &tree_sitter::Node<'t>) -> Option<tree_sitter::Node<'t>> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "user_type" => return Some(child),
+            "constructor_invocation" => {
+                let mut cc = child.walk();
+                if let Some(ut) = child.children(&mut cc).find(|g| g.kind() == "user_type") {
+                    return Some(ut);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Emit a `Calls` edge from a `call_expression`: callee `identifier` (`foo()`,
+/// `Widget()`), or the final `identifier` of a `navigation_expression`
+/// receiver chain (`a.b.foo()` → `foo`).
+fn kotlin_call(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    let Some(callee) = node.child(0) else {
+        return;
+    };
+    let name = match callee.kind() {
+        "identifier" => callee.utf8_text(source).ok(),
+        "navigation_expression" => {
+            let mut cursor = callee.walk();
+            callee
+                .children(&mut cursor)
+                .filter(|c| c.kind() == "identifier")
+                .last()
+                .and_then(|c| c.utf8_text(source).ok())
+        }
+        _ => None,
+    };
+    if let Some(name) = name {
+        push_graph_ref(refs, name, RefKind::Calls, node_line(node));
+    }
+}
+
 fn extract_refs_scala(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
     extract_imports(tree, source, &ScalaImports)
 }
