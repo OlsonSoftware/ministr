@@ -35,7 +35,9 @@ use ministr_core::code::GrammarRegistry;
 /// Assert the range invariant on **every** symbol in the project — the cheap,
 /// universal half of acceptance criterion #2. Returns the symbols so callers
 /// can layer language-specific assertions on top without re-querying.
-async fn assert_ranges_well_formed(proj: &IngestedProject) -> Vec<ministr_core::storage::SymbolRecord> {
+async fn assert_ranges_well_formed(
+    proj: &IngestedProject,
+) -> Vec<ministr_core::storage::SymbolRecord> {
     let symbols = proj.all_symbols().await;
     assert!(
         !symbols.is_empty(),
@@ -141,8 +143,7 @@ pub enum Shape {
     assert!(
         syms.iter()
             .find(|s| s.name == "Container")
-            .map(|s| !s.signature.is_empty())
-            .unwrap_or(false),
+            .is_some_and(|s| !s.signature.is_empty()),
         "Container should carry a non-empty signature",
     );
 }
@@ -257,7 +258,7 @@ export default function main() {
 async fn typescript_extraction_edge_cases() {
     let proj = IngestedProject::from_files(&[(
         "repo.ts",
-        r#"export interface Repository<T> {
+        r"export interface Repository<T> {
   get(id: string): T | undefined;
 }
 
@@ -285,7 +286,7 @@ namespace Geometry {
     return 3.14 * r * r;
   }
 }
-"#,
+",
     )])
     .await;
 
@@ -307,7 +308,7 @@ namespace Geometry {
 async fn tsx_extraction_edge_cases() {
     let proj = IngestedProject::from_files(&[(
         "card.tsx",
-        r#"interface Props {
+        r"interface Props {
   title: string;
 }
 
@@ -325,7 +326,7 @@ export class Panel {
     return this.props.title;
   }
 }
-"#,
+",
     )])
     .await;
 
@@ -409,7 +410,7 @@ const MaxUsers = 100
 async fn java_extraction_edge_cases() {
     let proj = IngestedProject::from_files(&[(
         "Box.java",
-        r#"public interface Shape {
+        r"public interface Shape {
     double area();
 }
 
@@ -445,7 +446,7 @@ enum Color {
     GREEN,
     BLUE,
 }
-"#,
+",
     )])
     .await;
 
@@ -469,7 +470,7 @@ enum Color {
 async fn c_extraction_edge_cases() {
     let proj = IngestedProject::from_files(&[(
         "lib.c",
-        r#"#include <stddef.h>
+        r"#include <stddef.h>
 
 struct Point {
     int x;
@@ -499,7 +500,7 @@ int add(int a, int b) {
 
 static void helper(void) {
 }
-"#,
+",
     )])
     .await;
 
@@ -522,7 +523,7 @@ static void helper(void) {
 async fn cpp_extraction_edge_cases() {
     let proj = IngestedProject::from_files(&[(
         "geo.hpp",
-        r#"#ifndef GEO_HPP
+        r"#ifndef GEO_HPP
 #define GEO_HPP
 
 namespace geo {
@@ -555,7 +556,7 @@ struct Pair {
 }  // namespace geo
 
 #endif
-"#,
+",
     )])
     .await;
 
@@ -690,7 +691,7 @@ async fn csharp_extraction_edge_cases() {
 async fn swift_extraction_edge_cases() {
     let proj = IngestedProject::from_files(&[(
         "shapes.swift",
-        r#"protocol Drawable {
+        r"protocol Drawable {
     func draw()
 }
 
@@ -717,7 +718,7 @@ enum Direction {
 func identity<T>(_ value: T) -> T {
     return value
 }
-"#,
+",
     )])
     .await;
 
@@ -793,7 +794,7 @@ enum class Color {
 async fn scala_extraction_edge_cases() {
     let proj = IngestedProject::from_files(&[(
         "app.scala",
-        r#"package app
+        r"package app
 
 trait Shape {
   def area: Double
@@ -814,7 +815,7 @@ object Repository {
 sealed trait Color
 case object Red extends Color
 case object Green extends Color
-"#,
+",
     )])
     .await;
 
@@ -937,13 +938,25 @@ const FE2_COVERED: &[&str] = &[
 /// reason. Adding a grammar here is the documented way to defer it; the guard
 /// enforces that every registered grammar is in exactly one of the two lists.
 const EXTRACTION_DEFERRED: &[(&str, &str)] = &[
-    ("bash", "shell scripts — function-only symbol model, no edge-case taxonomy"),
+    (
+        "bash",
+        "shell scripts — function-only symbol model, no edge-case taxonomy",
+    ),
     ("lua", "scripting — minimal type system; deferred"),
-    ("elixir", "functional/modules — separate symbol model; deferred"),
+    (
+        "elixir",
+        "functional/modules — separate symbol model; deferred",
+    ),
     ("haskell", "functional — separate symbol model; deferred"),
     ("ocaml", "functional — separate symbol model; deferred"),
-    ("ocaml_interface", "OCaml .mli interface grammar; deferred with ocaml"),
-    ("dart", "covered by bridge/ref suites; extraction edge cases deferred"),
+    (
+        "ocaml_interface",
+        "OCaml .mli interface grammar; deferred with ocaml",
+    ),
+    (
+        "dart",
+        "covered by bridge/ref suites; extraction edge cases deferred",
+    ),
     ("r", "statistical scripting — function-only; deferred"),
     ("hcl", "config (Terraform) — blocks/attrs, not code symbols"),
     ("json", "data format — no code symbols"),
@@ -959,8 +972,14 @@ const EXTRACTION_DEFERRED: &[(&str, &str)] = &[
     ("nix", "config/expression language — deferred"),
     ("erlang", "functional — separate symbol model; deferred"),
     ("powershell", "shell scripting — function-only; deferred"),
-    ("solidity", "smart contracts — contract/function shapes; deferred"),
-    ("objc", "covered by bridge/ref suites; extraction edge cases deferred"),
+    (
+        "solidity",
+        "smart contracts — contract/function shapes; deferred",
+    ),
+    (
+        "objc",
+        "covered by bridge/ref suites; extraction edge cases deferred",
+    ),
     ("julia", "scientific — function/struct; deferred"),
     ("cmake", "build config — commands, not code symbols"),
     ("make", "build config — targets/rules, not code symbols"),
