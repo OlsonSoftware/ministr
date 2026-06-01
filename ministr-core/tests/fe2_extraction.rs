@@ -782,3 +782,118 @@ enum class Color {
         "class-member fns are not expected to be extracted for Kotlin yet, but `serialize` was",
     );
 }
+
+// ── Scala ──────────────────────────────────────────────────────────────
+//
+// Edge cases: a trait, a case class extending it, a generic class, a companion
+// object, a sealed trait + case objects, and a standalone def.
+
+#[tokio::test]
+async fn scala_extraction_edge_cases() {
+    let proj = IngestedProject::from_files(&[(
+        "app.scala",
+        r#"package app
+
+trait Shape {
+  def area: Double
+}
+
+case class Circle(radius: Double) extends Shape {
+  def area: Double = math.Pi * radius * radius
+}
+
+class Repository[T] {
+  def add(item: T): Unit = {}
+}
+
+object Repository {
+  def empty[T]: Repository[T] = new Repository[T]
+}
+
+sealed trait Color
+case object Red extends Color
+case object Green extends Color
+"#,
+    )])
+    .await;
+
+    let syms = assert_ranges_well_formed(&proj).await;
+
+    let circle = assert_symbol(&proj, "Circle", "struct", "app.scala").await;
+    assert_multiline(&circle);
+    assert_symbol(&proj, "Repository", "struct", "app.scala").await;
+    // The trait carries a `trait` kind.
+    assert!(
+        syms.iter().any(|s| s.name == "Shape" && s.kind == "trait"),
+        "Scala `trait Shape` should extract as kind `trait`.\nGot: {:?}",
+        syms.iter()
+            .map(|s| format!("{} ({})", s.name, s.kind))
+            .collect::<Vec<_>>(),
+    );
+}
+
+// ── PHP ────────────────────────────────────────────────────────────────
+//
+// Edge cases: a namespace, an interface, an abstract class implementing it, a
+// subclass with a promoted-property constructor, a trait, a backed enum, and a
+// standalone function.
+
+#[tokio::test]
+async fn php_extraction_edge_cases() {
+    let proj = IngestedProject::from_files(&[(
+        "app.php",
+        r#"<?php
+
+namespace App;
+
+interface Serializable
+{
+    public function serialize(): string;
+}
+
+abstract class Shape implements Serializable
+{
+    abstract public function area(): float;
+
+    public function serialize(): string
+    {
+        return "shape";
+    }
+}
+
+class Circle extends Shape
+{
+    public function __construct(private float $radius) {}
+
+    public function area(): float
+    {
+        return 3.14 * $this->radius * $this->radius;
+    }
+}
+
+trait Loggable
+{
+    public function log(): void {}
+}
+
+enum Suit: string
+{
+    case Hearts = 'H';
+    case Spades = 'S';
+}
+
+function standalone(int $x): int
+{
+    return $x * 2;
+}
+"#,
+    )])
+    .await;
+
+    assert_ranges_well_formed(&proj).await;
+
+    let shape = assert_symbol(&proj, "Shape", "struct", "app.php").await;
+    assert_multiline(&shape);
+    assert_symbol(&proj, "Circle", "struct", "app.php").await;
+    assert_symbol(&proj, "standalone", "function", "app.php").await;
+}
