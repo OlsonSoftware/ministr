@@ -87,7 +87,11 @@ pub(crate) use embedding::delete_document_vectors;
 ///   interface `extends`, `method_invocation`, `new`, and declared type
 ///   positions), not import-only. Java corpora gain a real reference graph
 ///   on re-extraction.
-pub const EXTRACTOR_VERSION: i64 = 6;
+/// - **7**: The C# ref extractor (`code::refs::extract_refs_csharp`) likewise
+///   emits `Calls`/`Implements`/`Uses` edges (`base_list` heritage,
+///   `invocation_expression`, `new`, and declared type/return positions),
+///   not import-only. C# corpora gain a real reference graph on re-extraction.
+pub const EXTRACTOR_VERSION: i64 = 7;
 
 /// Version of the symbol-reference *resolution* pipeline.
 ///

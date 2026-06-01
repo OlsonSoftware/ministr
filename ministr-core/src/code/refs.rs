@@ -1579,8 +1579,145 @@ fn java_collect_type_names(
 }
 
 fn extract_refs_csharp(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
-    extract_imports(tree, source, &CSharpImports)
+    // Imports from the root walker; the call/heritage/type graph from a
+    // full-tree walk (mirrors Java) — C# is import-only no more.
+    let mut refs = extract_imports(tree, source, &CSharpImports);
+    walk_csharp_refs(&tree.root_node(), source, &mut refs);
+    refs
 }
+
+/// Recursively emit `Calls`/`Implements`/`Uses` edges for C#. Complements
+/// [`CSharpImports`] (which handles `using`):
+///
+/// - `class_declaration` / `interface_declaration` / `struct_declaration` /
+///   `record_declaration` → `Implements` for every `base_list` entry (C#
+///   merges the base class and interfaces into one list — all are emitted).
+/// - `invocation_expression` → `Calls` (callee `identifier`, or the `[name]`
+///   of a `member_access_expression`).
+/// - `object_creation_expression` (`new T()`) + every declared `[type]` /
+///   `[returns]` position (fields, locals, parameters, properties, return
+///   types) → `Uses`.
+///
+/// `from_context` is `None`; the line-based resolver attributes each edge to
+/// its enclosing symbol. C# type positions hold a bare `identifier`, so the
+/// walker only reads the explicit type/heritage fields (never a free
+/// identifier, which would also match locals and method names).
+fn walk_csharp_refs(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    match node.kind() {
+        "class_declaration"
+        | "interface_declaration"
+        | "struct_declaration"
+        | "record_declaration"
+        | "record_struct_declaration" => {
+            csharp_heritage(node, source, refs);
+        }
+        "invocation_expression" => csharp_call(node, source, refs),
+        "object_creation_expression"
+        | "variable_declaration"
+        | "parameter"
+        | "property_declaration" => {
+            if let Some(ty) = node.child_by_field_name("type") {
+                csharp_collect_type_uses(&ty, source, refs);
+            }
+        }
+        "method_declaration" => {
+            if let Some(ty) = node.child_by_field_name("returns") {
+                csharp_collect_type_uses(&ty, source, refs);
+            }
+        }
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_csharp_refs(&child, source, refs);
+    }
+}
+
+/// Emit an `Implements` edge for each entry of a type's `base_list`.
+fn csharp_heritage(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() != "base_list" {
+            continue;
+        }
+        let mut bc = child.walk();
+        for base in child.children(&mut bc) {
+            if let Some(name) = csharp_type_head_name(&base, source) {
+                push_graph_ref(refs, name, RefKind::Implements, node_line(&child));
+            }
+        }
+    }
+}
+
+/// Emit a `Calls` edge from an `invocation_expression`'s callee: a bare
+/// `identifier` (`Foo()`) or the `[name]` of a `member_access_expression`
+/// (`obj.Foo()`).
+fn csharp_call(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    let Some(func) = node.child_by_field_name("function") else {
+        return;
+    };
+    let callee = match func.kind() {
+        "identifier" => func.utf8_text(source).ok(),
+        "member_access_expression" => func
+            .child_by_field_name("name")
+            .and_then(|n| n.utf8_text(source).ok()),
+        _ => None,
+    };
+    if let Some(name) = callee {
+        push_graph_ref(refs, name, RefKind::Calls, node_line(node));
+    }
+}
+
+/// The principal (head) type name of a heritage/type node: an `identifier`
+/// directly, the leading name of a `generic_name` (`IList<T>` → `IList`), or
+/// the final segment of a `qualified_name`. Punctuation children return
+/// `None`.
+fn csharp_type_head_name<'a>(node: &tree_sitter::Node<'_>, source: &'a [u8]) -> Option<&'a str> {
+    match node.kind() {
+        "identifier" => node.utf8_text(source).ok(),
+        "generic_name" => {
+            let mut cursor = node.walk();
+            node.children(&mut cursor)
+                .find(|c| c.kind() == "identifier")
+                .and_then(|c| c.utf8_text(source).ok())
+        }
+        "qualified_name" => node
+            .child_by_field_name("name")
+            .and_then(|n| n.utf8_text(source).ok()),
+        _ => None,
+    }
+}
+
+/// Emit `Uses` for every named type within a type subtree (the head type plus
+/// any generic arguments / array element / nullable inner type). `var`
+/// (`implicit_type`) and predefined types carry no `identifier`, so they are
+/// naturally skipped.
+fn csharp_collect_type_uses(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    match node.kind() {
+        "identifier" => {
+            if let Ok(name) = node.utf8_text(source) {
+                push_graph_ref(refs, name, RefKind::Uses, node_line(node));
+            }
+            return;
+        }
+        "qualified_name" => {
+            // Emit only the final segment; the qualifier path isn't a symbol.
+            if let Some(name) = node
+                .child_by_field_name("name")
+                .and_then(|n| n.utf8_text(source).ok())
+            {
+                push_graph_ref(refs, name, RefKind::Uses, node_line(node));
+            }
+            return;
+        }
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        csharp_collect_type_uses(&child, source, refs);
+    }
+}
+
 fn extract_refs_swift(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
     extract_imports(tree, source, &SwiftImports)
 }
