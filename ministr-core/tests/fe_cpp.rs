@@ -3,17 +3,20 @@
 //! Proves the shared `langtest` harness on a real multi-file C++ project:
 //! ingest → symbol extraction → reference-graph query. C++ is deliberately the
 //! first language proven because its cross-file model (`#include`, not symbol
-//! imports) and its `.h` header ambiguity are the most likely to expose gaps.
+//! imports) and its `.h` header ambiguity were the most likely to expose gaps.
 //!
-//! Two real gaps this file pins as baselines (for FE2/FE3 to close):
-//! - `.h` headers are parsed as **C**, so C++ declarations inside a `.h` are
-//!   mis-extracted (see `dot_h_header_with_cpp_content_is_parsed_as_c`).
-//! - C/C++ emit only `#include` refs (header *paths*), so no cross-file
-//!   *symbol* edge resolves today (see `cpp_cross_file_ref_baseline`).
+//! Two real gaps the harness surfaced here are now FIXED and guarded by
+//! positive assertions:
+//! - `.h` headers are treated as C **and** C++ (routed to the C++ grammar),
+//!   so a C++ class in a `.h` extracts correctly
+//!   (`dot_h_header_with_cpp_content_extracts_as_cpp`).
+//! - C/C++ now emit call + type-use refs, so cross-file *symbol* edges resolve
+//!   in both file orders (`cpp_cross_file_refs_resolve`,
+//!   `cpp_cross_file_ref_importer_before_definition`).
 
 mod langtest;
 
-use langtest::{IngestedProject, assert_range_invariant, assert_symbol};
+use langtest::{IngestedProject, assert_cross_file_ref, assert_range_invariant, assert_symbol};
 use ministr_core::types::RefKind;
 
 /// A two-file C++ project using an **unambiguous** `.hpp` header (so the C++
@@ -107,51 +110,84 @@ async fn cpp_extraction_end_to_end() {
     let _main = assert_symbol(&proj, "main", "function", "main.cpp").await;
 }
 
-/// Characterizes C++ cross-file reference resolution as it stands today.
+/// C++ cross-file references resolve via call + type-use edges.
 ///
 /// `main.cpp` calls `add()` and uses `Point`, both defined in `geometry.hpp`.
-/// In a fully-resolved graph there would be a cross-file edge
-/// `main.cpp → geometry.hpp` for each. Today C/C++ ref extraction emits only
-/// `#include` references (whose target is the header *path*, not a symbol), so
-/// **no cross-file symbol edge resolves**. This test pins that baseline so FE3
-/// (C++ cross-file call/use resolution) has a precise before/after, and proves
-/// the harness ref surface itself works on C++ (returns a coherent edge set).
+/// C/C++ ref extraction now emits `Calls`/`Uses` refs (not just `#include`
+/// paths), and the unified c/cpp ref family lets them resolve across files.
+/// This is the definition-before-importer order (`geometry.hpp` < `main.cpp`).
 #[tokio::test]
-async fn cpp_cross_file_ref_baseline() {
+async fn cpp_cross_file_refs_resolve() {
     let proj = IngestedProject::from_files(&cpp_project()).await;
 
-    let add_edges = proj.refs_into("add", None).await;
-    let point_edges = proj.refs_into("Point", None).await;
+    // Call edge: main.cpp's compute() calls add() in geometry.hpp.
+    assert_cross_file_ref(
+        &proj,
+        "add",
+        "geometry.hpp",
+        "main.cpp",
+        Some(RefKind::Calls),
+    )
+    .await;
 
-    // BASELINE (current behavior): C/C++ produce no cross-file symbol edges.
-    // When FE3 adds call/use resolution this assertion flips — update it then.
-    assert!(
-        add_edges.is_empty() && point_edges.is_empty(),
-        "C++ cross-file symbol edges unexpectedly resolved (add={}, Point={}). \
-         If FE3 landed C++ call/use resolution, convert this baseline into a \
-         positive assert_cross_file_ref check.",
-        add_edges.len(),
-        point_edges.len(),
-    );
-
-    // Whatever (if anything) resolves must be internally consistent.
-    for e in &add_edges {
-        assert_eq!(e.to_name, "add");
-        assert!(matches!(
-            e.kind,
-            RefKind::Calls | RefKind::Uses | RefKind::Imports
-        ));
-    }
+    // Type-use edge: main.cpp's compute() declares a `Point` from geometry.hpp.
+    assert_cross_file_ref(
+        &proj,
+        "Point",
+        "geometry.hpp",
+        "main.cpp",
+        Some(RefKind::Uses),
+    )
+    .await;
 }
 
-/// Pins the `.h`-header ambiguity as a baseline: a `.h` file containing C++
-/// (`class` with an inline method) is parsed with the **C** grammar (the
-/// registry maps `.h` → C, `.hpp/.hxx/.hh` → C++). Under the C grammar the
-/// C++ `class` is mis-extracted — notably **not** as a `struct`. Most
-/// real-world C++ ships declarations in `.h`, so this is a meaningful coverage
-/// gap (tracked for FE2). When `.h` disambiguation lands, this test flips.
+/// The same C++ cross-file edge must resolve in the **importer-before-definition**
+/// order (the deferred second-pass case that was the real "no related files"
+/// bug for TS). File names are chosen so the caller sorts first
+/// (`a_caller.cpp` < `z_geometry.hpp`) and is therefore ingested before the
+/// definition file.
 #[tokio::test]
-async fn dot_h_header_with_cpp_content_is_parsed_as_c() {
+async fn cpp_cross_file_ref_importer_before_definition() {
+    let proj = IngestedProject::from_files(&[
+        (
+            "a_caller.cpp",
+            r#"#include "z_geometry.hpp"
+
+int run() {
+    return ping(7);
+}
+"#,
+        ),
+        (
+            "z_geometry.hpp",
+            r"#ifndef Z_GEOMETRY_HPP
+#define Z_GEOMETRY_HPP
+
+int ping(int n) {
+    return n + 1;
+}
+
+#endif
+",
+        ),
+    ])
+    .await;
+
+    assert_cross_file_ref(
+        &proj,
+        "ping",
+        "z_geometry.hpp",
+        "a_caller.cpp",
+        Some(RefKind::Calls),
+    )
+    .await;
+}
+
+/// `.h` headers are treated as C **and** C++: a `.h` file containing a C++
+/// class extracts the class as a `struct` (routed to the C++ grammar, a
+/// near-superset of C). Promoted from the former `.h`-parsed-as-C baseline.
+#[tokio::test]
+async fn dot_h_header_with_cpp_content_extracts_as_cpp() {
     let proj = IngestedProject::from_files(&[(
         "widget.h",
         r"// A C++ class living in a .h header (the common real-world case).
@@ -164,15 +200,8 @@ public:
     )])
     .await;
 
-    let widgets = proj.symbols_named("Widget").await;
-    // Baseline: under the C grammar, `class Widget` is NOT recognized as a
-    // struct. (It currently surfaces as a function-like node.) Asserting the
-    // negative keeps the test honest without over-fitting the exact wrong kind.
-    let as_struct = widgets.iter().any(|s| s.kind == "struct");
-    assert!(
-        !as_struct,
-        "`.h` header now extracts the C++ class `Widget` as a struct — \
-         the `.h`→C++ disambiguation gap appears fixed. Promote this baseline \
-         to a positive C++ extraction assertion (and add `.h` to the C++ matrix)."
-    );
+    let widget = assert_symbol(&proj, "Widget", "struct", "widget.h").await;
+    assert_range_invariant(&widget);
+    // The member method is extracted too (C++ class body, not a C function).
+    let _doubled = assert_symbol(&proj, "doubled", "function", "widget.h").await;
 }

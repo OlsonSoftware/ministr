@@ -161,9 +161,21 @@ impl GrammarRegistry {
             // Includes C++20 module interfaces (`.cppm` Clang / `.ixx`
             // MSVC) and template-implementation headers (`.tpp`/`.ipp`/
             // `.inl`) — all plain C++ the grammar already parses.
+            //
+            // `.h` is deliberately claimed by C++ too: it is genuinely
+            // ambiguous (C and C++ both use it), and most real-world C++
+            // ships class/template declarations in `.h` headers. The C++
+            // grammar is a near-superset of C for symbol extraction, so a
+            // `.h` is "treated as C and C++": C content still extracts, and
+            // C++ content (class/template/namespace) no longer mis-extracts.
+            // Registration order matters — `c` registers `.h` first, then
+            // this (cpp, registered after) overwrites the ext→lang mapping,
+            // so `.h`→cpp when lang-cpp is enabled and falls back to `c`
+            // when it isn't. The c/cpp ref-resolution family is unified in
+            // `languages_compatible`, so `.h`/`.c`/`.cpp`/`.hpp` cross-resolve.
             &[
-                "cpp", "cc", "cxx", "c++", "hpp", "hxx", "hh", "h++", "cppm", "ixx", "tpp", "ipp",
-                "inl",
+                "cpp", "cc", "cxx", "c++", "h", "hpp", "hxx", "hh", "h++", "cppm", "ixx", "tpp",
+                "ipp", "inl",
             ],
             tree_sitter_unreal_cpp::LANGUAGE.into(),
         );

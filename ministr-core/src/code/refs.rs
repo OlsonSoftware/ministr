@@ -1475,29 +1475,96 @@ fn extract_go_package_name(node: &tree_sitter::Node<'_>, source: &[u8]) -> Optio
 // C / C++
 // ---------------------------------------------------------------------------
 
-/// Extract `#include` references from C / C++ source.
+/// Extract cross-references from C / C++ source.
 ///
-/// Walks the tree recursively (includes can sit inside `preproc_ifdef`
-/// header guards or `extern "C"` linkage_specification blocks) looking for
-/// `preproc_include` nodes. The reference target is the include path with
-/// brackets/quotes stripped — e.g. `<stdio.h>` → `stdio.h`,
-/// `"foo/bar.h"` → `foo/bar.h`.
+/// Walks the tree recursively (refs can sit inside `preproc_ifdef` header
+/// guards, `extern "C"` linkage_specification blocks, namespaces, classes,
+/// and function bodies) collecting three kinds of reference:
+///
+/// - `preproc_include` → `Imports` whose target is the include path with
+///   brackets/quotes stripped (`<stdio.h>` → `stdio.h`, `"foo/bar.h"` →
+///   `foo/bar.h`).
+/// - `call_expression` → `Calls` on the callee name (`add(...)` →
+///   `Calls(add)`, `obj.method(...)`/`obj->method(...)` → `Calls(method)`,
+///   `Ns::fn(...)` → `Calls(fn)`).
+/// - `type_identifier` → `Uses` on the named type (`Point p;` → `Uses(Point)`).
+///   Primitive types are `primitive_type` nodes, so they are naturally
+///   excluded.
+///
+/// `#include` alone never resolves to a symbol (its target is a file path),
+/// so the call/use refs are what give C/C++ real cross-file symbol edges,
+/// resolved by name against the unified c/cpp ref family.
 fn extract_refs_c_cpp(tree: &tree_sitter::Tree, source: &[u8]) -> Vec<RawRef> {
     let mut refs = Vec::new();
-    walk_c_includes(&tree.root_node(), source, &mut refs);
+    walk_c_refs(&tree.root_node(), source, &mut refs);
     refs
 }
 
-fn walk_c_includes(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+fn walk_c_refs(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    match node.kind() {
+        "preproc_include" => {
+            if let Some(path) = extract_c_include_path(node, source) {
+                refs.push(import_ref(path, node_line(node)));
+            }
+        }
+        "call_expression" => extract_c_call_ref(node, source, refs),
+        "type_identifier" => {
+            if let Ok(name) = node.utf8_text(source) {
+                let name = name.trim();
+                if !name.is_empty() {
+                    refs.push(c_use_ref(name.to_string(), node_line(node)));
+                }
+            }
+        }
+        _ => {}
+    }
+
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if child.kind() == "preproc_include" {
-            if let Some(path) = extract_c_include_path(&child, source) {
-                refs.push(import_ref(path, node_line(&child)));
-            }
-        } else {
-            // Recurse into preproc guards, linkage_specification, namespaces, etc.
-            walk_c_includes(&child, source, refs);
+        walk_c_refs(&child, source, refs);
+    }
+}
+
+/// A `Uses` ref with no `from_context` — attributed to the enclosing symbol
+/// by line during resolution.
+fn c_use_ref(name: String, line: u32) -> RawRef {
+    RawRef {
+        target_name: name,
+        kind: RefKind::Uses,
+        line,
+        from_context: None,
+        target_crate: None,
+    }
+}
+
+/// Extract a `Calls` ref from a C/C++ `call_expression`'s callee.
+fn extract_c_call_ref(node: &tree_sitter::Node<'_>, source: &[u8], refs: &mut Vec<RawRef>) {
+    let Some(func) = node.child_by_field_name("function") else {
+        return;
+    };
+    let line = node_line(node);
+    let name = match func.kind() {
+        "identifier" => func.utf8_text(source).ok(),
+        // `obj.method()` / `obj->method()` — the `field` is the method name.
+        "field_expression" => func
+            .child_by_field_name("field")
+            .and_then(|f| f.utf8_text(source).ok()),
+        // `Ns::fn()` / `Type::method()` — the `name` field is the callee.
+        "qualified_identifier" => func
+            .child_by_field_name("name")
+            .and_then(|n| n.utf8_text(source).ok()),
+        _ => None,
+    };
+    if let Some(name) = name {
+        let name = name.trim();
+        if !name.is_empty() {
+            refs.push(RawRef {
+                target_name: name.to_string(),
+                kind: RefKind::Calls,
+                line,
+                from_context: None,
+                target_crate: None,
+            });
         }
     }
 }

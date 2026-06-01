@@ -545,12 +545,19 @@ fn filter_primary(matches: &[SymbolRecord]) -> Vec<&SymbolRecord> {
 /// `cn`/`corpusLabel` "no related files" bug). Collapse them to one
 /// family for ref-compatibility so the import edge resolves.
 fn languages_compatible(source_path: &str, target_path: &str) -> bool {
-    /// Map a canonical grammar name to its ref-resolution family. Only
-    /// the JS/TS ecosystem needs collapsing; every other language is its
-    /// own family (identity), preserving the strict cross-language guard.
+    /// Map a canonical grammar name to its ref-resolution family. The
+    /// JS/TS and C/C++ ecosystems each collapse to one family; every other
+    /// language is its own family (identity), preserving the strict
+    /// cross-language guard.
     fn family(lang: &str) -> &str {
         match lang {
             "javascript" | "typescript" | "tsx" => "js_ts",
+            // C and C++ share one translation/preprocessor world: `.h`
+            // headers are consumed by both, and `.h` is routed to the C++
+            // grammar (a near-superset of C). Collapsing them to one family
+            // lets a `.cpp`/`.c` translation unit resolve cross-file
+            // references into symbols declared in a sibling `.h`/`.hpp`.
+            "c" | "cpp" => "c_cpp",
             other => other,
         }
     }
