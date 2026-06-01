@@ -366,6 +366,22 @@ pub(super) struct FileItem {
     pub root_path: Option<PathBuf>,
 }
 
+/// Ambient inputs for one ingest run, grouped as a parameter object (Fowler's
+/// *Introduce Parameter Object*) so the producer/consumer entry point stays
+/// within the argument budget.
+///
+/// Every field is a shared borrow over a single lifetime `'a`: the Parse stage
+/// (producer) and Embed stage (consumer) both read these while `join!`ed, so
+/// none may be `&mut`. This is also the natural seam for the eventual
+/// Coordinator to thread one context through the staged composition.
+struct IngestContext<'a, S: ?Sized, E: ?Sized, I: ?Sized> {
+    storage: &'a S,
+    embedder: &'a E,
+    index: &'a I,
+    active_graph: Option<&'a PackageGraph>,
+    ct: Option<&'a CancellationToken>,
+}
+
 // ── BatchIngestionConfig ─────────────────────────────────────────────────────
 
 /// Tuning knobs for streaming ingestion (PHASE4 chunk 3 scaffolding).
@@ -1146,12 +1162,14 @@ impl IngestionPipeline {
         let (was_cancelled, embed_count, pending_refs) = self
             .run_producer_consumer(
                 file_items,
-                storage,
-                embedder,
-                index,
-                active_graph,
+                IngestContext {
+                    storage,
+                    embedder,
+                    index,
+                    active_graph,
+                    ct,
+                },
                 &mut stats,
-                ct,
             )
             .await?;
 
@@ -1475,12 +1493,14 @@ impl IngestionPipeline {
         let (_was_cancelled, embed_count, pending_refs) = self
             .run_producer_consumer(
                 file_items,
-                storage,
-                embedder,
-                index,
-                active_graph,
+                IngestContext {
+                    storage,
+                    embedder,
+                    index,
+                    active_graph,
+                    ct: None,
+                },
                 &mut stats,
-                None,
             )
             .await?;
         stats.total_embeddings = embed_count;
@@ -1584,22 +1604,28 @@ impl IngestionPipeline {
     /// stage ([`super::parse_stage::run_parse_stage`], producer) feeds the
     /// Embed stage ([`super::embed_stage::run_embed_stage`], consumer) over a
     /// bounded channel, then rolls back on embed failure.
-    #[allow(clippy::too_many_arguments)]
+    ///
+    /// Takes its backends + cancellation as an [`IngestContext`] parameter
+    /// object; it is destructured immediately so the body reads as before.
     async fn run_producer_consumer<S, E, I>(
         &self,
         file_items: Vec<FileItem>,
-        storage: &S,
-        embedder: &E,
-        index: &I,
-        active_graph: Option<&PackageGraph>,
+        cx: IngestContext<'_, S, E, I>,
         stats: &mut IngestionStats,
-        ct: Option<&CancellationToken>,
     ) -> Result<(bool, usize, Vec<PendingRef>), IngestionError>
     where
         S: Storage + ?Sized,
         E: Embedder + ?Sized,
         I: VectorIndex + ?Sized,
     {
+        let IngestContext {
+            storage,
+            embedder,
+            index,
+            active_graph,
+            ct,
+        } = cx;
+
         let (embed_tx, embed_rx) = tokio::sync::mpsc::channel::<Vec<(VectorId, String)>>(16);
 
         // PHASE4 chunk 4: bridge endpoints used to be accumulated here,
