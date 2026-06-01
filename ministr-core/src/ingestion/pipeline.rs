@@ -2471,3 +2471,317 @@ mod phase5_chunk2_persist_gate_tests {
             .expect("persist with at least one vector must succeed");
     }
 }
+
+#[cfg(test)]
+mod rooted_helper_tests {
+    //! Isolation coverage for the stage helpers extracted from
+    //! `ingest_directory_with_embeddings_rooted` (ADR 0001 D3, slice 4). Each
+    //! runs against in-memory fakes (`SqliteStorage::open_in_memory` +
+    //! [`NullVectorIndex`]) — no real embedder, no on-disk corpus.
+    //!
+    //! The crown jewel is the [`IngestionPipeline::sweep_stale_documents`]
+    //! attribution matrix (F32 / F32.1): the data-loss-critical logic where a
+    //! wrong call would delete a *sibling corpus's* documents. `sweep` builds
+    //! its `discovered` set from `files` + `dir` by pure string ops, so these
+    //! tests need no filesystem — only crafted `source_path`s in storage.
+
+    use std::path::{Path, PathBuf};
+
+    use super::{IngestionPipeline, IngestionStats};
+    use crate::index::NullVectorIndex;
+    use crate::ingestion::EXTRACTOR_VERSION;
+    use crate::storage::traits::CorpusMerkleRecord;
+    use crate::storage::{SqliteStorage, Storage};
+    use crate::types::{ContentId, DocumentTree};
+
+    // A corpus root id is `root-` + 16 ASCII-hex chars (21 chars) — the exact
+    // shape `strip_root_prefix` recognises as a namespace prefix. Anything
+    // else is treated as bare/NULL-keyed, so the fixtures must use this form.
+    const ROOT_A: &str = "root-000000000000000a";
+    const ROOT_B: &str = "root-000000000000000b";
+
+    fn doc(id: &str, source_path: &str) -> DocumentTree {
+        DocumentTree {
+            id: ContentId(id.into()),
+            title: String::new(),
+            source_path: source_path.into(),
+            sections: vec![],
+            summary: None,
+        }
+    }
+
+    async fn insert(storage: &SqliteStorage, id: &str, source_path: &str) {
+        storage
+            .insert_document(&doc(id, source_path))
+            .await
+            .expect("insert document");
+    }
+
+    async fn surviving_paths(storage: &SqliteStorage) -> Vec<String> {
+        let mut paths: Vec<String> = storage
+            .list_documents()
+            .await
+            .expect("list documents")
+            .into_iter()
+            .map(|d| d.source_path)
+            .collect();
+        paths.sort();
+        paths
+    }
+
+    // ── build_file_items ─────────────────────────────────────────────────
+
+    #[test]
+    fn build_file_items_namespaces_when_rooted() {
+        let dir = Path::new("/corpus");
+        let files = [PathBuf::from("/corpus/src/lib.rs")];
+        let items = IngestionPipeline::build_file_items(&files, dir, Some(ROOT_A));
+        assert_eq!(items.len(), 1);
+        let it = &items[0];
+        assert_eq!(it.relative, format!("{ROOT_A}/src/lib.rs"));
+        assert_eq!(it.root_id.as_deref(), Some(ROOT_A));
+        assert_eq!(it.root_path.as_deref(), Some(dir));
+        assert_eq!(it.path, PathBuf::from("/corpus/src/lib.rs"));
+    }
+
+    #[test]
+    fn build_file_items_bare_when_unrooted() {
+        let dir = Path::new("/corpus");
+        let files = [PathBuf::from("/corpus/src/lib.rs")];
+        let items = IngestionPipeline::build_file_items(&files, dir, None);
+        assert_eq!(items[0].relative, "src/lib.rs");
+        assert_eq!(items[0].root_id, None);
+    }
+
+    // ── corpus_merkle_short_circuit ──────────────────────────────────────
+
+    async fn store_merkle(storage: &SqliteStorage, hash: &str, extractor_version: i64) {
+        storage
+            .upsert_corpus_merkle(&CorpusMerkleRecord {
+                corpus_id: ROOT_A.to_string(),
+                root_hash: hash.to_string(),
+                file_count: 3,
+                last_indexed_ns: 0,
+                extractor_version,
+            })
+            .await
+            .expect("upsert merkle");
+    }
+
+    #[tokio::test]
+    async fn short_circuit_when_hash_and_version_match() {
+        let storage = SqliteStorage::open_in_memory().expect("open");
+        store_merkle(&storage, "HASH", EXTRACTOR_VERSION).await;
+        let out =
+            IngestionPipeline::corpus_merkle_short_circuit(&storage, Some(ROOT_A), Some("HASH"), 7)
+                .await;
+        assert_eq!(
+            out.expect("unchanged corpus must short-circuit")
+                .files_skipped,
+            7
+        );
+    }
+
+    #[tokio::test]
+    async fn no_short_circuit_when_extractor_version_differs() {
+        let storage = SqliteStorage::open_in_memory().expect("open");
+        store_merkle(&storage, "HASH", EXTRACTOR_VERSION - 1).await;
+        let out =
+            IngestionPipeline::corpus_merkle_short_circuit(&storage, Some(ROOT_A), Some("HASH"), 7)
+                .await;
+        assert!(out.is_none(), "a stale extractor version must re-extract");
+    }
+
+    #[tokio::test]
+    async fn no_short_circuit_when_hash_absent_or_differs() {
+        let storage = SqliteStorage::open_in_memory().expect("open");
+        // No merkle stored at all → proceed.
+        assert!(
+            IngestionPipeline::corpus_merkle_short_circuit(&storage, Some(ROOT_A), Some("HASH"), 7)
+                .await
+                .is_none()
+        );
+        // Stored, but the freshly-computed hash differs → proceed.
+        store_merkle(&storage, "STORED", EXTRACTOR_VERSION).await;
+        assert!(
+            IngestionPipeline::corpus_merkle_short_circuit(
+                &storage,
+                Some(ROOT_A),
+                Some("DIFFERENT"),
+                7,
+            )
+            .await
+            .is_none()
+        );
+    }
+
+    // ── sweep_stale_documents — the F32 / F32.1 attribution matrix ────────
+
+    #[tokio::test]
+    async fn sweep_deletes_only_undiscovered_owned_docs() {
+        let storage = SqliteStorage::open_in_memory().expect("open");
+        let index = NullVectorIndex;
+        let dir = Path::new("/corpus");
+        insert(&storage, "keep", &format!("{ROOT_A}/keep.rs")).await; // ours, discovered
+        insert(&storage, "gone", &format!("{ROOT_A}/gone.rs")).await; // ours, undiscovered
+
+        let files = [PathBuf::from("/corpus/keep.rs")];
+        let mut stats = IngestionStats::new(files.len());
+        IngestionPipeline::sweep_stale_documents(
+            &storage,
+            &index,
+            dir,
+            Some(ROOT_A),
+            &files,
+            &mut stats,
+        )
+        .await
+        .expect("sweep");
+
+        assert_eq!(stats.files_removed, 1);
+        assert_eq!(
+            surviving_paths(&storage).await,
+            vec![format!("{ROOT_A}/keep.rs")]
+        );
+    }
+
+    #[tokio::test]
+    async fn sweep_never_touches_a_sibling_root() {
+        let storage = SqliteStorage::open_in_memory().expect("open");
+        let index = NullVectorIndex;
+        let dir = Path::new("/corpus");
+        insert(&storage, "ours-gone", &format!("{ROOT_A}/gone.rs")).await; // ours, undiscovered
+        insert(&storage, "sibling", &format!("{ROOT_B}/keep.rs")).await; // foreign root
+
+        let files = [PathBuf::from("/corpus/unrelated.rs")];
+        let mut stats = IngestionStats::new(files.len());
+        IngestionPipeline::sweep_stale_documents(
+            &storage,
+            &index,
+            dir,
+            Some(ROOT_A),
+            &files,
+            &mut stats,
+        )
+        .await
+        .expect("sweep");
+
+        // Our undiscovered doc is gone; the sibling root is never touched.
+        assert_eq!(stats.files_removed, 1);
+        assert_eq!(
+            surviving_paths(&storage).await,
+            vec![format!("{ROOT_B}/keep.rs")]
+        );
+    }
+
+    #[tokio::test]
+    async fn sweep_keeps_bare_docs_when_a_foreign_root_shares_the_index() {
+        // F32.1: a bare/NULL-keyed doc carries no attribution, so when a
+        // foreign explicit root shares the index we must NOT reclaim it.
+        let storage = SqliteStorage::open_in_memory().expect("open");
+        let index = NullVectorIndex;
+        let dir = Path::new("/corpus");
+        insert(&storage, "sibling", &format!("{ROOT_B}/x.rs")).await; // foreign root present
+        insert(&storage, "bare", "orphan.rs").await; // bare, undiscovered
+
+        let files = [PathBuf::from("/corpus/unrelated.rs")];
+        let mut stats = IngestionStats::new(files.len());
+        IngestionPipeline::sweep_stale_documents(
+            &storage,
+            &index,
+            dir,
+            Some(ROOT_A),
+            &files,
+            &mut stats,
+        )
+        .await
+        .expect("sweep");
+
+        assert_eq!(
+            stats.files_removed, 0,
+            "bare doc must survive a foreign-root index"
+        );
+        assert_eq!(
+            surviving_paths(&storage).await,
+            vec!["orphan.rs".to_string(), format!("{ROOT_B}/x.rs")]
+        );
+    }
+
+    #[tokio::test]
+    async fn sweep_reclaims_bare_docs_when_no_foreign_root_present() {
+        // F32.1: a single-corpus index (no foreign root) is the only place
+        // NULL-keyed docs legitimately arise, so the bare orphan IS reclaimed.
+        let storage = SqliteStorage::open_in_memory().expect("open");
+        let index = NullVectorIndex;
+        let dir = Path::new("/corpus");
+        insert(&storage, "bare-keep", "kept.rs").await; // bare, discovered
+        insert(&storage, "bare-gone", "orphan.rs").await; // bare, undiscovered
+
+        let files = [PathBuf::from("/corpus/kept.rs")];
+        let mut stats = IngestionStats::new(files.len());
+        IngestionPipeline::sweep_stale_documents(
+            &storage,
+            &index,
+            dir,
+            Some(ROOT_A),
+            &files,
+            &mut stats,
+        )
+        .await
+        .expect("sweep");
+
+        assert_eq!(stats.files_removed, 1);
+        assert_eq!(surviving_paths(&storage).await, vec!["kept.rs".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn sweep_skips_entirely_on_empty_discovery() {
+        // Guard: an empty `files` set is far more likely a transient unreadable
+        // root than a genuinely emptied corpus, so nothing is deleted.
+        let storage = SqliteStorage::open_in_memory().expect("open");
+        let index = NullVectorIndex;
+        let dir = Path::new("/corpus");
+        insert(&storage, "ours-gone", &format!("{ROOT_A}/gone.rs")).await; // undiscovered, but…
+
+        let files: [PathBuf; 0] = [];
+        let mut stats = IngestionStats::new(0);
+        IngestionPipeline::sweep_stale_documents(
+            &storage,
+            &index,
+            dir,
+            Some(ROOT_A),
+            &files,
+            &mut stats,
+        )
+        .await
+        .expect("sweep");
+
+        assert_eq!(
+            stats.files_removed, 0,
+            "empty discovery must delete nothing"
+        );
+        assert_eq!(
+            surviving_paths(&storage).await,
+            vec![format!("{ROOT_A}/gone.rs")]
+        );
+    }
+
+    #[tokio::test]
+    async fn sweep_unrooted_reclaims_bare_docs() {
+        // An unrooted reindex (root_id = None) owns the bare-keyed docs.
+        let storage = SqliteStorage::open_in_memory().expect("open");
+        let index = NullVectorIndex;
+        let dir = Path::new("/corpus");
+        insert(&storage, "keep", "keep.rs").await; // discovered
+        insert(&storage, "gone", "gone.rs").await; // undiscovered
+
+        let files = [PathBuf::from("/corpus/keep.rs")];
+        let mut stats = IngestionStats::new(files.len());
+        IngestionPipeline::sweep_stale_documents(&storage, &index, dir, None, &files, &mut stats)
+            .await
+            .expect("sweep");
+
+        assert_eq!(stats.files_removed, 1);
+        assert_eq!(surviving_paths(&storage).await, vec!["keep.rs".to_string()]);
+    }
+}
