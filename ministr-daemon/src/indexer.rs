@@ -96,7 +96,21 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
     let _index_permit = INDEXING_SEMAPHORE.acquire().await.ok();
 
     let local_paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-    let pipeline = IngestionPipeline::new().with_progress(Arc::clone(&progress));
+
+    // ADR 0001 D1: route embedding through a dedicated service so the
+    // synchronous, GPU-bound embed() runs on its own thread and the pipeline's
+    // embed consumer never pins a Tokio worker (the runtime-starvation root
+    // cause). One service per ingest is sufficient while INDEXING_SEMAPHORE
+    // serializes corpora to one at a time (no GPU contention); when
+    // f-ingest-coordinator lifts that semaphore it will hoist a single shared
+    // service so all corpora feed one GPU-owning queue. The service joins its
+    // worker thread when `pipeline` drops at the end of this call.
+    let embedding_service = Arc::new(ministr_core::embedding::EmbeddingService::with_model(
+        Arc::clone(&embedder),
+    ));
+    let pipeline = IngestionPipeline::new()
+        .with_progress(Arc::clone(&progress))
+        .with_embedding_service(embedding_service);
 
     match pipeline
         .ingest_paths_with_embeddings(&local_paths, &*storage, &*embedder, &*index)

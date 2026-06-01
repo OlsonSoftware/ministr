@@ -491,6 +491,13 @@ pub struct IngestionPipeline {
     /// path is forwarded straight to `VectorIndex::persist`, so it must
     /// be the same directory the caller hands off to bundle export.
     corpus_dir: Option<PathBuf>,
+    /// Optional dedicated embedding service (ADR 0001 D1). When set, the
+    /// single-embedder consumer routes each batch through it — the model runs
+    /// on the service's own thread and this task `await`s without blocking a
+    /// Tokio worker. The daemon sets this so concurrent-capable indexing never
+    /// starves the runtime. `None` (tests, `ministr index`, web fetch) keeps
+    /// the inline path. Does not affect the dual (Matryoshka) consumer.
+    embedding_service: Option<Arc<crate::embedding::EmbeddingService>>,
 }
 
 impl Default for IngestionPipeline {
@@ -515,6 +522,7 @@ impl IngestionPipeline {
             full_dim_storage: None,
             batch_config: BatchIngestionConfig::default(),
             corpus_dir: None,
+            embedding_service: None,
         }
     }
 
@@ -554,6 +562,21 @@ impl IngestionPipeline {
     ) -> Self {
         self.dual_embedder = Some(dual_embedder);
         self.full_dim_storage = Some(storage);
+        self
+    }
+
+    /// Route embedding through a dedicated
+    /// [`EmbeddingService`](crate::embedding::EmbeddingService) (ADR 0001 D1)
+    /// instead of calling the synchronous embedder inline on a Tokio worker.
+    /// Set by the daemon so concurrent-capable indexing never starves the
+    /// async runtime. Affects only the single-embedder consumer path; the
+    /// dual (Matryoshka) path is unchanged.
+    #[must_use]
+    pub fn with_embedding_service(
+        mut self,
+        service: Arc<crate::embedding::EmbeddingService>,
+    ) -> Self {
+        self.embedding_service = Some(service);
         self
     }
 
@@ -906,7 +929,13 @@ impl IngestionPipeline {
         if parser_kind == ParserKind::Code {
             let sym_result = extract_code_symbols(source_path, content, storage, None).await?;
             if !sym_result.embedding_pairs.is_empty() {
-                batch_embed_and_insert(&sym_result.embedding_pairs, embedder, index).await?;
+                batch_embed_and_insert(
+                    &sym_result.embedding_pairs,
+                    embedder,
+                    self.embedding_service.as_deref(),
+                    index,
+                )
+                .await?;
             }
         }
 
@@ -1765,6 +1794,7 @@ impl IngestionPipeline {
             .as_ref()
             .zip(self.full_dim_storage.as_ref());
         let progress_ref = self.progress.as_ref();
+        let service_ref = self.embedding_service.as_deref();
         let internal_ct_for_consumer = internal_ct.clone();
         let consumer = async move {
             let result = if let Some((dual_emb, full_storage)) = dual {
@@ -1777,7 +1807,8 @@ impl IngestionPipeline {
                 )
                 .await
             } else {
-                Self::run_embedding_consumer(embed_rx, embedder, index, progress_ref).await
+                Self::run_embedding_consumer(embed_rx, embedder, service_ref, index, progress_ref)
+                    .await
             };
             // Bug #4: trip the shared cancel so the producer exits instead of
             // continuing to persist files that will immediately be rolled back.
@@ -1830,6 +1861,7 @@ impl IngestionPipeline {
     async fn run_embedding_consumer<E, I>(
         mut embed_rx: tokio::sync::mpsc::Receiver<Vec<(VectorId, String)>>,
         embedder: &E,
+        service: Option<&crate::embedding::EmbeddingService>,
         index: &I,
         progress: Option<&Arc<IngestionProgress>>,
     ) -> Result<usize, IngestionError>
@@ -1853,7 +1885,7 @@ impl IngestionPipeline {
             }
             buffer.extend(pairs);
             if buffer.len() >= EMBED_FLUSH_THRESHOLD {
-                let count = batch_embed_and_insert(&buffer, embedder, index).await?;
+                let count = batch_embed_and_insert(&buffer, embedder, service, index).await?;
                 total_embeddings += count;
                 if let Some(p) = progress {
                     p.add_embeddings_done(count);
@@ -1862,7 +1894,7 @@ impl IngestionPipeline {
             }
         }
         if !buffer.is_empty() {
-            let count = batch_embed_and_insert(&buffer, embedder, index).await?;
+            let count = batch_embed_and_insert(&buffer, embedder, service, index).await?;
             total_embeddings += count;
             if let Some(p) = progress {
                 p.add_embeddings_done(count);

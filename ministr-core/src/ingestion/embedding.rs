@@ -72,9 +72,16 @@ pub(super) fn collect_document_embeddings(doc: &DocumentTree, pairs: &mut Vec<(V
 }
 
 /// Embed and insert a batch of `(id, text)` pairs into the vector index.
+///
+/// When `service` is `Some`, each chunk is embedded through the dedicated
+/// [`EmbeddingService`](crate::embedding::EmbeddingService) (ADR 0001 D1): the
+/// model runs on the service's own thread and this task `await`s without
+/// blocking a Tokio worker. When `None`, the embedder is called inline (the
+/// path tests / `ministr index` / web fetch use).
 pub(super) async fn batch_embed_and_insert<E: Embedder + ?Sized, I: VectorIndex + ?Sized>(
     pairs: &[(VectorId, String)],
     embedder: &E,
+    service: Option<&crate::embedding::EmbeddingService>,
     index: &I,
 ) -> Result<usize, IngestionError> {
     if pairs.is_empty() {
@@ -84,13 +91,24 @@ pub(super) async fn batch_embed_and_insert<E: Embedder + ?Sized, I: VectorIndex 
     let num_chunks = pairs.len().div_ceil(EMBED_BATCH_CHUNK);
 
     for (i, chunk) in pairs.chunks(EMBED_BATCH_CHUNK).enumerate() {
-        let text_refs: Vec<&str> = chunk.iter().map(|(_, t)| t.as_str()).collect();
         mem_profile::checkpoint_every(5, i, "before embedder.embed()");
-        let vectors = embedder
-            .embed(&text_refs)
-            .map_err(|e| IngestionError::Embedding {
-                reason: e.to_string(),
-            })?;
+        let vectors = if let Some(svc) = service {
+            // Off-runtime: the service thread owns the model; we await its
+            // reply without pinning a Tokio worker for the GPU call.
+            let texts: Vec<String> = chunk.iter().map(|(_, t)| t.clone()).collect();
+            svc.embed(texts)
+                .await
+                .map_err(|e| IngestionError::Embedding {
+                    reason: e.to_string(),
+                })?
+        } else {
+            let text_refs: Vec<&str> = chunk.iter().map(|(_, t)| t.as_str()).collect();
+            embedder
+                .embed(&text_refs)
+                .map_err(|e| IngestionError::Embedding {
+                    reason: e.to_string(),
+                })?
+        };
         mem_profile::checkpoint_every(5, i, "after embedder.embed()");
 
         for ((vid, _), vector) in chunk.iter().zip(vectors.iter()) {
