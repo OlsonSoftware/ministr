@@ -365,6 +365,37 @@ impl DaemonClient {
         Ok(())
     }
 
+    /// Unregister a corpus AND purge its on-disk index directory.
+    ///
+    /// Same as [`Self::unregister_corpus`] but passes `?purge=true` so the
+    /// daemon — which owns the corpus data directory — deletes it after
+    /// teardown. Used by the desktop "remove project" action so the GUI
+    /// never has to reach into `~/.ministr/corpora` itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] if the corpus doesn't exist or the purge fails.
+    pub async fn unregister_corpus_purge(&self, corpus_id: &str) -> Result<(), ClientError> {
+        self.delete(&format!("/api/v1/corpora/{corpus_id}?purge=true"))
+            .await?;
+        Ok(())
+    }
+
+    /// Reindex a corpus: purge its on-disk index and re-register it, so the
+    /// daemon re-resolves the corpus's `.ministr.toml` config and re-embeds
+    /// from scratch. The rebuild is daemon-side (it owns the data directory).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] if the corpus doesn't exist or the rebuild fails.
+    pub async fn reindex_corpus(
+        &self,
+        corpus_id: &str,
+    ) -> Result<RegisterCorpusResponse, ClientError> {
+        self.post(&format!("/api/v1/corpora/{corpus_id}/reindex"), &())
+            .await
+    }
+
     /// Replace an existing corpus's path set without dropping its sessions.
     ///
     /// The new paths must canonicalise to the same `corpus_id` as the

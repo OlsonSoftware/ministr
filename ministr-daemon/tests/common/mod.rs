@@ -67,6 +67,21 @@ pub struct TestDaemon {
 }
 
 impl TestDaemon {
+    /// The daemon's `config.data_dir` — corpora live under
+    /// `data_dir()/corpora/{corpus_id}`. Exposed so tests can assert the
+    /// on-disk purge behavior of reindex / delete-with-purge.
+    ///
+    /// Only some integration-test binaries use this, so the allow keeps
+    /// `-D warnings` clean in the ones that don't. The `_tmp_dir` field is
+    /// underscore-prefixed because it's normally held only for its `Drop`;
+    /// this accessor is the one intentional read.
+    #[allow(dead_code, clippy::used_underscore_binding)]
+    pub fn data_dir(&self) -> &std::path::Path {
+        self._tmp_dir.path()
+    }
+}
+
+impl TestDaemon {
     /// Start a daemon with the standard pre-populated test corpus
     /// (documents, embeddings, symbols, bridges, relationships).
     pub async fn start() -> Self {

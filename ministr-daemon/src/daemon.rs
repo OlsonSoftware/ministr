@@ -87,6 +87,7 @@ pub fn corpora_write_router(state: AppState) -> Router {
     Router::new()
         .route("/api/v1/corpora", post(register_corpus))
         .route("/api/v1/corpora/{id}/clone", post(clone_repo))
+        .route("/api/v1/corpora/{id}/reindex", post(reindex_corpus))
         .route(
             "/api/v1/corpora/{id}",
             axum::routing::delete(unregister_corpus),
@@ -1004,13 +1005,48 @@ async fn corpus_status(State(state): State<AppState>, Path(id): Path<String>) ->
     }
 }
 
+/// Query params for [`unregister_corpus`].
+#[derive(serde::Deserialize, Default)]
+struct UnregisterQuery {
+    /// When `true`, also delete the corpus's on-disk index directory after
+    /// unregistering. Defaults to `false` so the cloud/test DELETE path is
+    /// unchanged; the desktop "remove project" action sets it so the GUI
+    /// never reaches into `~/.ministr/corpora` itself (gd3a).
+    #[serde(default)]
+    purge: bool,
+}
+
 async fn unregister_corpus(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<UnregisterQuery>,
     tenant: Option<Extension<TenantId>>,
 ) -> impl IntoResponse {
+    // Capture the data dir BEFORE unregister — the handle is removed (and
+    // dropped) by unregister, so afterwards we can no longer resolve it.
+    let data_dir = if q.purge {
+        state
+            .registry
+            .get(&id)
+            .await
+            .ok()
+            .map(|h| h.data_dir.clone())
+    } else {
+        None
+    };
+
     match state.registry.unregister(&id).await {
         Ok(()) => {
+            // Purge the on-disk index if requested. `unregister` has already
+            // awaited task teardown, so handles are closed and the directory
+            // can be removed (the Windows sharing-violation race is handled
+            // by remove_dir_all_robust).
+            if let Some(dir) = data_dir
+                && let Err(e) = ministr_core::fs_util::remove_dir_all_robust(&dir).await
+            {
+                tracing::error!(path = %dir.display(), error = %e, "purge after unregister failed");
+                return err(StatusCode::INTERNAL_SERVER_ERROR, "purge_failed", e).into_response();
+            }
             // F3.7b — audit corpus.deleted only on actual removal. A
             // re-DELETE that misses falls through to the NotFound arm
             // below and never pollutes the audit feed.
@@ -1018,6 +1054,64 @@ async fn unregister_corpus(
             StatusCode::NO_CONTENT.into_response()
         }
         Err(e) => err(StatusCode::NOT_FOUND, "not_found", e).into_response(),
+    }
+}
+
+/// `POST /api/v1/corpora/{id}/reindex` — purge a corpus's on-disk index and
+/// re-register it (a rebuild), so the daemon re-resolves the corpus's
+/// `.ministr.toml` config and re-embeds from scratch.
+///
+/// The purge is daemon-side because the daemon owns `handle.data_dir`; this
+/// is what lets the desktop GUI trigger a reindex as a pure `DaemonClient`
+/// call without touching the corpus storage itself (gd3a). Mirrors the
+/// teardown→purge→register flow the GUI's in-process `reindex_corpus` used to
+/// run locally.
+async fn reindex_corpus(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    tenant: Option<Extension<TenantId>>,
+) -> impl IntoResponse {
+    // Cloud mode (an IndexJobSink is wired) drives indexing through the job
+    // queue, not an in-process purge+register — the local rebuild flow
+    // doesn't apply. The desktop sidecar never has a sink.
+    if state.index_job_sink.is_some() {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "reindex_unsupported",
+            "reindex is not supported in cloud (job-queue) mode",
+        )
+        .into_response();
+    }
+
+    // Capture paths + data dir from the live handle before tearing it down.
+    let (paths, data_dir) = match state.registry.get(&id).await {
+        Ok(h) => (h.info.read().await.paths.clone(), h.data_dir.clone()),
+        Err(e) => return err(StatusCode::NOT_FOUND, "not_found", e).into_response(),
+    };
+
+    // Propagate unregister failure: registering after a failed unregister
+    // would leave the old handle alive alongside a fresh one.
+    if let Err(e) = state.registry.unregister(&id).await {
+        return err(StatusCode::NOT_FOUND, "not_found", e).into_response();
+    }
+
+    // A re-index is a *rebuild*: purge the on-disk index so stale/orphaned
+    // entries for deleted files don't survive. Teardown is already awaited.
+    if let Err(e) = ministr_core::fs_util::remove_dir_all_robust(&data_dir).await {
+        tracing::error!(path = %data_dir.display(), error = %e, "reindex: purge failed");
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "purge_failed", e).into_response();
+    }
+
+    match state.registry.register(&paths).await {
+        Ok((corpus_id, indexing_started)) => {
+            audit_corpus_action(&state, tenant.as_ref(), "corpus.reindexed", &corpus_id);
+            Json(RegisterCorpusResponse {
+                corpus_id,
+                indexing_started,
+            })
+            .into_response()
+        }
+        Err(e) => err(StatusCode::BAD_REQUEST, "register_failed", e).into_response(),
     }
 }
 
