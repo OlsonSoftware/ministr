@@ -1014,6 +1014,33 @@ pub async fn cmd_serve_proxy_stdio(
 
     // Resolve the primary corpus + session.
     let client = std::sync::Arc::new(ministr_api::client::DaemonClient::new());
+
+    // gd1-proxy-autospawn: ensure a headless daemon is alive before we
+    // register. `ministr serve` IS the CLI that hosts the hidden `__daemon`
+    // subcommand, so the daemon binary is our own `current_exe`. When no daemon
+    // owns the socket we self-exec `<current_exe> __daemon` (detached, so it
+    // outlives this proxy) and attach once it answers — this is what makes MCP
+    // work headless, with no desktop GUI running. Non-fatal: if the spawn fails
+    // the `register_corpus` below still surfaces the clear "is the daemon
+    // running?" error.
+    match std::env::current_exe() {
+        Ok(exe) => match client
+            .ensure_daemon_spawned(&exe, std::time::Duration::from_secs(10))
+            .await
+        {
+            Ok(true) => eprintln!("ministr: spawned headless daemon ({})", exe.display()),
+            Ok(false) => eprintln!("ministr: attached to running daemon"),
+            Err(e) => {
+                eprintln!(
+                    "ministr: warning — could not ensure daemon ({e}); registration may fail"
+                );
+            }
+        },
+        Err(e) => {
+            eprintln!("ministr: warning — current_exe() failed ({e}); cannot auto-spawn daemon");
+        }
+    }
+
     let corpus_id = match client.register_corpus(corpus_paths).await {
         Ok(resp) => {
             eprintln!(
