@@ -179,6 +179,45 @@ pub struct IngestionProgressEvent {
     pub error: Option<String>,
 }
 
+/// Per-corpus ingestion-progress snapshot — the point-in-time form of the
+/// live counters the daemon's per-corpus progress SSE streams. Unlike
+/// [`IngestionProgressEvent`] (string `status`/`phase` for the SSE wire), this
+/// mirrors the in-process `IngestionProgress` shape the desktop app consumes:
+/// numeric `status` (0 = pending, 1 = running, 2 = complete). Returned in bulk
+/// by `GET /api/v1/progress` so a GUI that no longer hosts its own indexer can
+/// poll every corpus's progress over UDS (gd2b).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct IngestionProgressInfo {
+    /// Corpus identifier this snapshot belongs to.
+    pub corpus_id: String,
+    /// Status: `0` = pending, `1` = running, `2` = complete.
+    pub status: u8,
+    /// Current ingestion phase (`"idle"`, `"discovering"`, `"parsing"`,
+    /// `"embedding"`, `"finalizing"`).
+    pub phase: String,
+    /// Total files discovered for ingestion.
+    pub files_total: usize,
+    /// Files processed so far.
+    pub files_done: usize,
+    /// Sections created so far.
+    pub sections_done: usize,
+    /// Total embeddings to generate.
+    pub embeddings_total: usize,
+    /// Embeddings generated so far.
+    pub embeddings_done: usize,
+    /// Relative path of the file currently being processed (empty if idle).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub current_file: String,
+}
+
+/// Response for `GET /api/v1/progress` — one [`IngestionProgressInfo`] per
+/// registered corpus (gd2b).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ProgressSnapshotResponse {
+    /// Progress snapshot for every registered corpus.
+    pub corpora: Vec<IngestionProgressInfo>,
+}
+
 /// Compact bundle manifest for API responses.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BundleManifestApi {

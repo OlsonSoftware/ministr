@@ -43,6 +43,21 @@ async fn test_corpus_status() {
 }
 
 #[tokio::test]
+async fn test_ingestion_progress_snapshot() {
+    // gd2b — the all-corpora progress snapshot the desktop GUI polls over UDS.
+    let daemon = TestDaemon::start().await;
+    let client = daemon.client();
+
+    let snapshot = client.ingestion_progress().await.unwrap();
+    assert_eq!(snapshot.len(), 1, "one registered corpus");
+    let p = &snapshot[0];
+    assert_eq!(p.corpus_id, daemon.corpus_id);
+    // status is the numeric form (0 pending / 1 running / 2 complete) the app
+    // consumes; a restored corpus reports a terminal/idle state, never running.
+    assert_ne!(p.status, 1, "restored corpus is not actively indexing");
+}
+
+#[tokio::test]
 async fn test_survey() {
     let daemon = TestDaemon::start().await;
     let client = daemon.client();

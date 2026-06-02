@@ -370,6 +370,24 @@ impl DaemonClient {
         self.get(&format!("/api/v1/corpora/{corpus_id}")).await
     }
 
+    /// Snapshot ingestion progress for every registered corpus.
+    ///
+    /// The point-in-time form of the per-corpus progress SSE — lets a GUI that
+    /// no longer hosts its own in-process indexer poll the daemon's live
+    /// progress counters over UDS (gd2b). The desktop app's progress commands
+    /// poll this at their existing cadence and compute ETA / change-detection
+    /// client-side, exactly as they did against in-process atomics.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn ingestion_progress(
+        &self,
+    ) -> Result<Vec<crate::corpus::IngestionProgressInfo>, ClientError> {
+        let resp: crate::corpus::ProgressSnapshotResponse = self.get("/api/v1/progress").await?;
+        Ok(resp.corpora)
+    }
+
     /// Unregister a corpus.
     ///
     /// # Errors

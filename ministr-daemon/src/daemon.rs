@@ -69,6 +69,7 @@ pub fn corpora_read_router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/bridge/graph", get(bridge_graph))
         .route("/api/v1/corpora/{id}/compress", post(compress_content))
         .route("/api/v1/corpora/{id}/progress", get(ingestion_progress))
+        .route("/api/v1/progress", get(ingestion_progress_all))
         .route("/api/v1/corpora/{id}/coherence", get(coherence_stream))
         .route("/api/v1/corpora/{id}/prefetch", get(prefetch_metrics))
         .route(
@@ -1927,6 +1928,34 @@ async fn ask_handler(
 // ---------------------------------------------------------------------------
 // Ingestion progress SSE
 // ---------------------------------------------------------------------------
+
+/// `GET /api/v1/progress` — point-in-time ingestion-progress snapshot for every
+/// registered corpus (gd2b). The desktop GUI polls this over UDS to drive its
+/// live `IndexingPanel` now that it no longer hosts an in-process indexer; ETA
+/// and change-detection stay client-side, exactly as they were against the
+/// app's old in-process atomics. Reads the in-memory `IngestionProgress` (the
+/// self-hosted / desktop path — no `IndexJobSink`).
+async fn ingestion_progress_all(State(state): State<AppState>) -> impl IntoResponse {
+    let corpora = state.registry.corpora().read().await;
+    let snapshot: Vec<ministr_api::corpus::IngestionProgressInfo> = corpora
+        .iter()
+        .map(|(corpus_id, handle)| {
+            let p = &handle.progress;
+            ministr_api::corpus::IngestionProgressInfo {
+                corpus_id: corpus_id.clone(),
+                status: p.status(),
+                phase: p.phase().as_str().to_string(),
+                files_total: p.files_total(),
+                files_done: p.files_done(),
+                sections_done: p.sections_done(),
+                embeddings_total: p.embeddings_total(),
+                embeddings_done: p.embeddings_done(),
+                current_file: p.current_file(),
+            }
+        })
+        .collect();
+    Json(ministr_api::corpus::ProgressSnapshotResponse { corpora: snapshot })
+}
 
 async fn ingestion_progress(
     State(state): State<AppState>,

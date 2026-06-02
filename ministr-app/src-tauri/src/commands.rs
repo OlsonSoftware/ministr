@@ -1508,23 +1508,28 @@ pub async fn symbol_definition(
 }
 
 /// Get ingestion progress for all corpora.
+///
+/// gd2b: routed over UDS to the daemon's all-corpora progress snapshot
+/// (`GET /api/v1/progress`). The daemon owns the indexer now, so its in-memory
+/// `IngestionProgress` is the source of truth; the app just maps the API type
+/// onto the frontend DTO field-for-field.
 #[tauri::command]
-pub async fn ingestion_progress(
-    state: State<'_, AppState>,
-) -> Result<Vec<IngestionProgressInfo>, CommandError> {
-    let guard = state.registry.corpora().read().await;
-    Ok(guard
-        .iter()
-        .map(|(corpus_id, handle)| IngestionProgressInfo {
-            corpus_id: corpus_id.clone(),
-            status: handle.progress.status(),
-            phase: handle.progress.phase().as_str().to_string(),
-            files_total: handle.progress.files_total(),
-            files_done: handle.progress.files_done(),
-            sections_done: handle.progress.sections_done(),
-            embeddings_total: handle.progress.embeddings_total(),
-            embeddings_done: handle.progress.embeddings_done(),
-            current_file: handle.progress.current_file(),
+pub async fn ingestion_progress() -> Result<Vec<IngestionProgressInfo>, CommandError> {
+    let snapshot = ministr_api::client::DaemonClient::new()
+        .ingestion_progress()
+        .await?;
+    Ok(snapshot
+        .into_iter()
+        .map(|p| IngestionProgressInfo {
+            corpus_id: p.corpus_id,
+            status: p.status,
+            phase: p.phase,
+            files_total: p.files_total,
+            files_done: p.files_done,
+            sections_done: p.sections_done,
+            embeddings_total: p.embeddings_total,
+            embeddings_done: p.embeddings_done,
+            current_file: p.current_file,
         })
         .collect())
 }
@@ -1570,13 +1575,10 @@ pub struct IndexingProgressEvent {
 // readability gain.
 #[allow(clippy::too_many_lines)]
 pub async fn indexing_progress_events(
-    state: State<'_, AppState>,
     on_event: Channel<IndexingProgressEvent>,
 ) -> Result<(), CommandError> {
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
-
-    let registry = state.registry.clone();
 
     tauri::async_runtime::spawn(async move {
         // Per-corpus tracking for change-detection + ETA. We only emit when
@@ -1602,16 +1604,26 @@ pub async fn indexing_progress_events(
             )
             .unwrap_or(u64::MAX);
 
-            let guard = registry.corpora().read().await;
-            for (corpus_id, handle) in guard.iter() {
-                let p = &handle.progress;
-                let status = p.status();
-                let files_total = p.files_total();
-                let files_done = p.files_done();
-                let embeddings_total = p.embeddings_total();
-                let embeddings_done = p.embeddings_done();
-                let phase = p.phase().as_str().to_string();
-                let current_file = p.current_file();
+            // gd2b: source the snapshot from the daemon over UDS instead of an
+            // in-process registry. The daemon owns the indexer now; the 250ms
+            // poll cadence + change-detection + ETA below are unchanged.
+            // Daemon momentarily unreachable (e.g. restart window) — skip this
+            // tick and retry next; the frontend keeps its last frame.
+            let Ok(snapshot) = ministr_api::client::DaemonClient::new()
+                .ingestion_progress()
+                .await
+            else {
+                continue;
+            };
+            for info in &snapshot {
+                let corpus_id = &info.corpus_id;
+                let status = info.status;
+                let files_total = info.files_total;
+                let files_done = info.files_done;
+                let embeddings_total = info.embeddings_total;
+                let embeddings_done = info.embeddings_done;
+                let phase = info.phase.clone();
+                let current_file = info.current_file.clone();
 
                 let track = tracks.entry(corpus_id.clone()).or_insert(Track {
                     last_status: u8::MAX,
@@ -1692,7 +1704,7 @@ pub async fn indexing_progress_events(
                     phase: phase.clone(),
                     files_total,
                     files_done,
-                    sections_done: p.sections_done(),
+                    sections_done: info.sections_done,
                     embeddings_total,
                     embeddings_done,
                     current_file: current_file.clone(),
@@ -1711,7 +1723,6 @@ pub async fn indexing_progress_events(
                     return;
                 }
             }
-            drop(guard);
         }
     });
 
