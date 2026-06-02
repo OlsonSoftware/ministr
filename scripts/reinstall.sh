@@ -255,25 +255,34 @@ if [ "$OS" = "macos" ]; then
     stop_ministr
 
     if [ ! -d "$APP_BUNDLE/Contents/MacOS" ]; then
-        if [ ! -d "$RELEASED_BUNDLE/Contents/MacOS" ]; then
-            cat >&2 <<EOF
-   No ministr.app bundle found at either $APP_BUNDLE or $RELEASED_BUNDLE.
-   This recipe only updates the inner binary; it cannot build the
-   .app bundle from scratch. Install the released .pkg from
-   https://ministr.ai (or this repo's GitHub Releases page) to lay down
-   the signed bundle skeleton, then re-run this recipe — it clones that
-   bundle into ~/Applications and swaps in your freshly-built dev binary.
-   (Post-F31 the signed + notarized .pkg is built in CI, not from a
-   local just recipe — see RELEASE.md.)
-EOF
-            exit 1
+        if [ -d "$RELEASED_BUNDLE/Contents/MacOS" ]; then
+            # Fast path: a released (signed + notarized) bundle is already in
+            # /Applications. We can't write inside that *sealed* bundle, so
+            # clone its skeleton to a user-owned ~/Applications copy and swap
+            # our freshly-built dev binary in below. `ditto` preserves resource
+            # forks / xattrs / ACLs better than `cp -R`.
+            echo "==> First-run bootstrap: cloning bundle skeleton from $RELEASED_BUNDLE..."
+            mkdir -p "$HOME/Applications"
+            ditto "$RELEASED_BUNDLE" "$APP_BUNDLE"
+        else
+            # No bundle anywhere — a clean machine, or the bundles were removed.
+            # Build a complete .app from source with Tauri instead of bailing:
+            # `just reinstall` should be self-sufficient and must NOT require the
+            # released .pkg as a prerequisite. `tauri build --bundles app` skips
+            # the slower .dmg/.pkg packaging and emits a full, runnable bundle at
+            # target/release/bundle/macos/ministr.app, which we then install like
+            # any other. The signed +notarized .pkg for end users is still built
+            # in CI (see RELEASE.md) — this is purely the local dev install.
+            echo "==> No ministr.app bundle found — building one from source (tauri build --bundles app)..."
+            ( cd ministr-app && pnpm tauri build --bundles app )
+            FRESH_BUNDLE="target/release/bundle/macos/ministr.app"
+            if [ ! -d "$FRESH_BUNDLE/Contents/MacOS" ]; then
+                echo "   tauri build did not produce $FRESH_BUNDLE — aborting." >&2
+                exit 1
+            fi
+            mkdir -p "$HOME/Applications"
+            ditto "$FRESH_BUNDLE" "$APP_BUNDLE"
         fi
-        echo "==> First-run bootstrap: cloning bundle skeleton from $RELEASED_BUNDLE..."
-        mkdir -p "$HOME/Applications"
-        # ditto preserves resource forks, xattrs, ACLs better than cp -R.
-        # The clone goes to a user-owned path so subsequent writes don't
-        # need sudo and don't hit the notarized-bundle seal.
-        ditto "$RELEASED_BUNDLE" "$APP_BUNDLE"
     fi
 
     echo "==> Installing Tauri app to $APP_BUNDLE (atomic replace)..."
