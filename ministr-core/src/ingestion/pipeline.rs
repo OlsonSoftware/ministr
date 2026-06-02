@@ -569,6 +569,16 @@ pub struct IngestionPipeline {
     /// starves the runtime. `None` (tests, `ministr index`, web fetch) keeps
     /// the inline path. Does not affect the dual (Matryoshka) consumer.
     embedding_service: Option<Arc<crate::embedding::EmbeddingService>>,
+    /// Heuristic Contextual Retrieval (rq): when `true`, each section's embed
+    /// text is prefixed with a compact structural breadcrumb (heading path)
+    /// before embedding. Default `false` — production embed text is
+    /// byte-identical to the verbatim section, so flipping this forces a full
+    /// re-index. The rq0 real-embedder A/B (`just eval-quality`, all-MiniLM,
+    /// 72 queries) measured this prefix as a *mixed* lever: MRR +0.017,
+    /// nDCG@5 +0.010, P@5 +0.011, but R@5 −0.007 (the breadcrumb tokens push a
+    /// borderline doc out of top-5). Kept default-OFF on that net; exposed as
+    /// an opt-in so per-corpus callers + future code-corpus evals can measure it.
+    contextualize_embeddings: bool,
 }
 
 impl Default for IngestionPipeline {
@@ -594,6 +604,7 @@ impl IngestionPipeline {
             batch_config: BatchIngestionConfig::default(),
             corpus_dir: None,
             embedding_service: None,
+            contextualize_embeddings: false,
         }
     }
 
@@ -648,6 +659,22 @@ impl IngestionPipeline {
         service: Arc<crate::embedding::EmbeddingService>,
     ) -> Self {
         self.embedding_service = Some(service);
+        self
+    }
+
+    /// Enable heuristic Contextual Retrieval (rq) for this pipeline: each
+    /// section's embed text is prefixed with a compact structural breadcrumb
+    /// (heading path) before embedding.
+    ///
+    /// Default is `false` (verbatim embed text). Turning this on changes the
+    /// embedded text, so an existing corpus must be **fully re-indexed** to
+    /// benefit. The rq0 real-embedder A/B measured the prefix as a *mixed*
+    /// lever (MRR/nDCG/P@5 up, R@5 slightly down) on the doc-heavy eval corpus,
+    /// which is why it ships opt-in rather than default-on. See the
+    /// `contextualize_embeddings` field docs for the measured deltas.
+    #[must_use]
+    pub fn with_contextual_embeddings(mut self, on: bool) -> Self {
+        self.contextualize_embeddings = on;
         self
     }
 
@@ -2036,11 +2063,11 @@ impl IngestionPipeline {
         .await?;
 
         // Collect document embedding pairs (deferred for batch embedding).
-        // `false` = verbatim embed text; heuristic Contextual Retrieval
-        // (rq-contextual-retrieval) is opt-in and wired via a pipeline flag in
-        // the rq-contextual-wire follow-up.
+        // Heuristic Contextual Retrieval (rq) is opt-in via
+        // [`Self::with_contextual_embeddings`]; default `false` keeps the embed
+        // text byte-identical to the verbatim section (no forced re-index).
         let mut embedding_pairs: Vec<(VectorId, String)> = Vec::new();
-        collect_document_embeddings(&doc, &mut embedding_pairs, false);
+        collect_document_embeddings(&doc, &mut embedding_pairs, self.contextualize_embeddings);
 
         // For code files: extract symbols and collect symbol embedding pairs
         let parser_kind = self

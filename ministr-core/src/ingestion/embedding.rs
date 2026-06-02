@@ -36,9 +36,11 @@ pub(super) async fn embed_document<
         texts.push(summary.clone());
     }
 
-    // Heuristic Contextual Retrieval is opt-in (rq-contextual-retrieval); the
-    // immediate path keeps the verbatim embed text until the pipeline flag +
-    // rq0 gating land (rq-contextual-wire).
+    // Heuristic Contextual Retrieval (rq) is opt-in and exposed on the
+    // streaming pipeline via `IngestionPipeline::with_contextual_embeddings`.
+    // This immediate (all-three-levels) path has no pipeline handle, so it
+    // always embeds verbatim — the rq0 A/B measured the prefix as a mixed lever
+    // (kept default-OFF), so the immediate path matches the production default.
     collect_embeddable_items(&doc.sections, &mut ids, &mut texts, false);
 
     if texts.is_empty() {
