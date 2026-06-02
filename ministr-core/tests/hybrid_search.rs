@@ -1,0 +1,161 @@
+//! End-to-end hybrid (dense + sparse) retrieval test.
+//!
+//! The dense (HNSW) and sparse (inverted-index) machinery plus the RRF fusion in
+//! [`MultiResolutionSearch`] all exist, but nothing exercised the *fused* path
+//! end-to-end (only `inverted.rs` unit tests). This pins the contract
+//! deterministically with mock embedders and crafted indices (no model
+//! download): a query whose exact identifier lives in one section is ranked #1
+//! only once sparse fusion is enabled — the exact-identifier recovery that
+//! hybrid retrieval buys for code (rq4).
+
+use ministr_core::embedding::{Embedder, SparseEmbedder, SparseVector};
+use ministr_core::error::IndexError;
+use ministr_core::index::{HnswIndex, InvertedIndex, SparseIndex, VectorIndex};
+use ministr_core::search::{MultiResolutionSearch, SearchConfig};
+use ministr_core::types::VectorId;
+
+/// Dense embedder that returns one fixed query vector regardless of input — lets
+/// the test control dense ranking directly via the inserted document vectors.
+struct FixedDenseEmbedder {
+    query: Vec<f32>,
+}
+
+impl Embedder for FixedDenseEmbedder {
+    fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, IndexError> {
+        Ok(texts.iter().map(|_| self.query.clone()).collect())
+    }
+
+    fn dimension(&self) -> usize {
+        self.query.len()
+    }
+}
+
+/// Sparse embedder that activates one fixed vocabulary index (standing in for
+/// the query's exact identifier token) regardless of input.
+struct FixedSparseEmbedder {
+    index: u32,
+}
+
+impl SparseEmbedder for FixedSparseEmbedder {
+    fn embed_sparse(&self, texts: &[&str]) -> Result<Vec<SparseVector>, IndexError> {
+        Ok(texts
+            .iter()
+            .map(|_| SparseVector {
+                indices: vec![self.index],
+                values: vec![1.0],
+            })
+            .collect())
+    }
+}
+
+const TARGET: &str = "sym-rate_limiter::TokenBucket";
+const DISTRACTOR_A: &str = "sym-cache::LruCache";
+const DISTRACTOR_B: &str = "sym-retry::Backoff";
+const IDENT_TOKEN: u32 = 7;
+
+fn vid(content: &str) -> VectorId {
+    VectorId::section(content)
+}
+
+#[test]
+fn hybrid_recovers_exact_identifier_that_dense_misses() {
+    // Dense index: craft cosine so a DISTRACTOR is closest to the query and the
+    // TARGET is the farthest — dense-only must NOT rank the target first.
+    let dense = HnswIndex::new(4, 1000).unwrap();
+    dense
+        .insert(vid(DISTRACTOR_A).as_str(), &[1.0, 0.0, 0.0, 0.0])
+        .unwrap();
+    dense
+        .insert(vid(DISTRACTOR_B).as_str(), &[0.9, 0.1, 0.0, 0.0])
+        .unwrap();
+    dense
+        .insert(vid(TARGET).as_str(), &[0.0, 1.0, 0.0, 0.0])
+        .unwrap();
+
+    // Sparse index: only the TARGET activates the query's identifier token.
+    let sparse = InvertedIndex::new();
+    sparse
+        .insert_sparse(vid(TARGET).as_str(), &[IDENT_TOKEN], &[1.0])
+        .unwrap();
+    sparse
+        .insert_sparse(vid(DISTRACTOR_A).as_str(), &[3], &[1.0])
+        .unwrap();
+    sparse
+        .insert_sparse(vid(DISTRACTOR_B).as_str(), &[4], &[1.0])
+        .unwrap();
+
+    let dense_embedder = FixedDenseEmbedder {
+        query: vec![1.0, 0.0, 0.0, 0.0],
+    };
+    let sparse_embedder = FixedSparseEmbedder { index: IDENT_TOKEN };
+
+    let searcher =
+        MultiResolutionSearch::new(&dense_embedder, &dense).with_sparse(&sparse_embedder, &sparse);
+
+    // Dense-only (sparse_weight = 0): the distractor closest in vector space wins,
+    // and the exact-identifier target is NOT first.
+    let dense_only = SearchConfig {
+        raw_k: 10,
+        top_k: 3,
+        sparse_weight: 0.0,
+        rerank_top_k: None,
+    };
+    let dense_results = searcher.search("TokenBucket", dense_only).unwrap();
+    assert!(!dense_results.is_empty(), "dense search returned nothing");
+    assert_eq!(
+        dense_results[0].vector_id.content_id(),
+        DISTRACTOR_A,
+        "dense-only should rank the vector-space-nearest distractor first"
+    );
+    assert_ne!(
+        dense_results[0].vector_id.content_id(),
+        TARGET,
+        "dense-only should NOT recover the exact-identifier target"
+    );
+
+    // Hybrid (sparse_weight > 0): RRF fuses in the exact sparse match and
+    // promotes the target to #1.
+    let hybrid = SearchConfig {
+        raw_k: 10,
+        top_k: 3,
+        sparse_weight: 0.7,
+        rerank_top_k: None,
+    };
+    let hybrid_results = searcher.search("TokenBucket", hybrid).unwrap();
+    assert_eq!(
+        hybrid_results[0].vector_id.content_id(),
+        TARGET,
+        "hybrid RRF should recover the exact-identifier target to #1"
+    );
+}
+
+#[test]
+fn sparse_weight_is_inert_without_sparse_components() {
+    // A dense-only searcher (no `with_sparse`) must ignore sparse_weight and not
+    // panic — backward compatibility for the default survey path.
+    let dense = HnswIndex::new(4, 1000).unwrap();
+    dense
+        .insert(vid(DISTRACTOR_A).as_str(), &[1.0, 0.0, 0.0, 0.0])
+        .unwrap();
+    dense
+        .insert(vid(TARGET).as_str(), &[0.0, 1.0, 0.0, 0.0])
+        .unwrap();
+
+    let dense_embedder = FixedDenseEmbedder {
+        query: vec![1.0, 0.0, 0.0, 0.0],
+    };
+    let searcher = MultiResolutionSearch::new(&dense_embedder, &dense);
+
+    let cfg = SearchConfig {
+        raw_k: 10,
+        top_k: 2,
+        sparse_weight: 0.7,
+        rerank_top_k: None,
+    };
+    let results = searcher.search("anything", cfg).unwrap();
+    assert_eq!(
+        results[0].vector_id.content_id(),
+        DISTRACTOR_A,
+        "without sparse components, sparse_weight is ignored (pure dense)"
+    );
+}
