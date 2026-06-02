@@ -70,6 +70,7 @@ pub fn corpora_read_router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/compress", post(compress_content))
         .route("/api/v1/corpora/{id}/progress", get(ingestion_progress))
         .route("/api/v1/progress", get(ingestion_progress_all))
+        .route("/api/v1/sessions", get(list_all_sessions))
         .route("/api/v1/corpora/{id}/coherence", get(coherence_stream))
         .route("/api/v1/corpora/{id}/prefetch", get(prefetch_metrics))
         .route(
@@ -2451,6 +2452,60 @@ async fn create_session(
         Json(CreateSessionResponse { session_id }),
     )
         .into_response()
+}
+
+/// `GET /api/v1/sessions` — full per-session economics across every registered
+/// corpus (gd2c-rest). The desktop Sessions view polls this over UDS; the
+/// daemon owns the session registries now, so it builds the snapshot the GUI
+/// previously assembled from its own in-process handles.
+async fn list_all_sessions(State(state): State<AppState>) -> impl IntoResponse {
+    let guard = state.registry.corpora().read().await;
+    let mut sessions = Vec::new();
+    for (corpus_id, handle) in guard.iter() {
+        let reg = handle.sessions.lock().await;
+        for sid in reg.session_ids() {
+            if let Some(entry) = reg.get_session(&sid) {
+                let status = entry.budget.usage_status();
+                let metrics = entry.session.metrics();
+                let cfg = entry.budget.config();
+                #[allow(clippy::cast_precision_loss)]
+                let compression_ratio = if metrics.cumulative_tokens_delivered > 0 {
+                    metrics.total_tokens_saved() as f64 / metrics.cumulative_tokens_delivered as f64
+                } else {
+                    0.0
+                };
+                sessions.push(ministr_api::session::SessionInfo {
+                    session_id: sid.clone(),
+                    corpus_id: corpus_id.clone(),
+                    level: format!("{:?}", status.level).to_lowercase(),
+                    tokens_used: status.tokens_used,
+                    tokens_remaining: status.tokens_remaining,
+                    utilization: status.utilization,
+                    delivered_count: entry.session.delivered_ids().len(),
+                    current_turn: entry.session.current_turn(),
+                    total_deliveries: metrics.total_deliveries,
+                    cumulative_tokens_delivered: metrics.cumulative_tokens_delivered,
+                    total_tokens_saved: metrics.total_tokens_saved(),
+                    total_evictions: metrics.total_evictions,
+                    total_compressions: metrics.total_compressions,
+                    cumulative_tokens_evicted: metrics.cumulative_tokens_evicted,
+                    cumulative_tokens_compressed: metrics.cumulative_tokens_compressed,
+                    delta_updates: metrics.delta_updates,
+                    dedup_hits: metrics.dedup_hits,
+                    compression_ratio,
+                    context_window_tokens: cfg.max_context_tokens,
+                    pressure_threshold: cfg.pressure_threshold,
+                    critical_threshold: cfg.critical_threshold,
+                    parent_session_id: entry
+                        .parent_session_id
+                        .as_ref()
+                        .map(std::string::ToString::to_string),
+                    client_name: entry.client_name.clone(),
+                });
+            }
+        }
+    }
+    Json(ministr_api::session::ListSessionsResponse { sessions }).into_response()
 }
 
 async fn session_usage(

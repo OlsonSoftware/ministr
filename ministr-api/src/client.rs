@@ -388,6 +388,19 @@ impl DaemonClient {
         Ok(resp.corpora)
     }
 
+    /// List every active session across all corpora with full economics.
+    ///
+    /// Backs the desktop Sessions view now that the daemon owns the session
+    /// registries (gd2c-rest).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn list_sessions(&self) -> Result<Vec<crate::session::SessionInfo>, ClientError> {
+        let resp: crate::session::ListSessionsResponse = self.get("/api/v1/sessions").await?;
+        Ok(resp.sessions)
+    }
+
     /// Unregister a corpus.
     ///
     /// # Errors

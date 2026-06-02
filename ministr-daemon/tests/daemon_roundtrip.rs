@@ -58,6 +58,19 @@ async fn test_ingestion_progress_snapshot() {
 }
 
 #[tokio::test]
+async fn test_list_sessions_snapshot() {
+    // gd2c-rest — the all-corpora sessions list the desktop Sessions view polls
+    // over UDS. A freshly-started daemon has a registered corpus but no active
+    // sessions, so the list is empty; this exercises the endpoint + the
+    // SessionInfo serialization roundtrip.
+    let daemon = TestDaemon::start().await;
+    let client = daemon.client();
+
+    let sessions = client.list_sessions().await.unwrap();
+    assert!(sessions.is_empty(), "no active sessions on a fresh daemon");
+}
+
+#[tokio::test]
 async fn test_survey() {
     let daemon = TestDaemon::start().await;
     let client = daemon.client();

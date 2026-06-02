@@ -6,7 +6,6 @@ use ministr_api::activity::ActivityEvent;
 use ministr_api::coherence::CoherenceEvent;
 use ministr_api::corpus::{CorpusInfo, RegisterCorpusResponse};
 use ministr_api::status::DaemonStatus;
-use ministr_core::session::UsageLevel;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
@@ -841,62 +840,43 @@ pub struct SessionDetail {
 }
 
 /// List all active sessions across all corpora.
+///
+/// gd2c-rest: routed over UDS to the daemon's all-corpora sessions endpoint
+/// (`GET /api/v1/sessions`). The daemon owns the session registries now; the
+/// app maps the API `SessionInfo` onto the frontend DTO field-for-field.
 #[tauri::command]
-pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionDetail>, CommandError> {
-    let guard = state.registry.corpora().read().await;
-    let mut sessions = Vec::new();
-
-    for (corpus_id, handle) in guard.iter() {
-        let reg = handle.sessions.lock().await;
-        for sid in reg.session_ids() {
-            if let Some(entry) = reg.get_session(&sid) {
-                let status = entry.budget.usage_status();
-                let metrics = entry.session.metrics();
-                let cfg = entry.budget.config();
-                #[allow(clippy::cast_precision_loss)]
-                let compression_ratio = if metrics.cumulative_tokens_delivered > 0 {
-                    metrics.total_tokens_saved() as f64 / metrics.cumulative_tokens_delivered as f64
-                } else {
-                    0.0
-                };
-                sessions.push(SessionDetail {
-                    session_id: sid.clone(),
-                    corpus_id: corpus_id.clone(),
-                    level: match entry.budget.level() {
-                        UsageLevel::Normal => "normal",
-                        UsageLevel::Elevated => "elevated",
-                        UsageLevel::Critical => "critical",
-                    }
-                    .to_string(),
-                    tokens_used: status.tokens_used,
-                    tokens_remaining: status.tokens_remaining,
-                    utilization: status.utilization,
-                    delivered_count: entry.session.delivered_ids().len(),
-                    current_turn: entry.session.current_turn(),
-                    total_deliveries: metrics.total_deliveries,
-                    cumulative_tokens_delivered: metrics.cumulative_tokens_delivered,
-                    total_tokens_saved: metrics.total_tokens_saved(),
-                    total_evictions: metrics.total_evictions,
-                    total_compressions: metrics.total_compressions,
-                    cumulative_tokens_evicted: metrics.cumulative_tokens_evicted,
-                    cumulative_tokens_compressed: metrics.cumulative_tokens_compressed,
-                    delta_updates: metrics.delta_updates,
-                    dedup_hits: metrics.dedup_hits,
-                    compression_ratio,
-                    context_window_tokens: cfg.max_context_tokens,
-                    pressure_threshold: cfg.pressure_threshold,
-                    critical_threshold: cfg.critical_threshold,
-                    parent_session_id: entry
-                        .parent_session_id
-                        .as_ref()
-                        .map(std::string::ToString::to_string),
-                    client_name: entry.client_name.clone(),
-                });
-            }
-        }
-    }
-
-    Ok(sessions)
+pub async fn list_sessions() -> Result<Vec<SessionDetail>, CommandError> {
+    let sessions = ministr_api::client::DaemonClient::new()
+        .list_sessions()
+        .await?;
+    Ok(sessions
+        .into_iter()
+        .map(|s| SessionDetail {
+            session_id: s.session_id,
+            corpus_id: s.corpus_id,
+            level: s.level,
+            tokens_used: s.tokens_used,
+            tokens_remaining: s.tokens_remaining,
+            utilization: s.utilization,
+            delivered_count: s.delivered_count,
+            current_turn: s.current_turn,
+            total_deliveries: s.total_deliveries,
+            cumulative_tokens_delivered: s.cumulative_tokens_delivered,
+            total_tokens_saved: s.total_tokens_saved,
+            total_evictions: s.total_evictions,
+            total_compressions: s.total_compressions,
+            cumulative_tokens_evicted: s.cumulative_tokens_evicted,
+            cumulative_tokens_compressed: s.cumulative_tokens_compressed,
+            delta_updates: s.delta_updates,
+            dedup_hits: s.dedup_hits,
+            compression_ratio: s.compression_ratio,
+            context_window_tokens: s.context_window_tokens,
+            pressure_threshold: s.pressure_threshold,
+            critical_threshold: s.critical_threshold,
+            parent_session_id: s.parent_session_id,
+            client_name: s.client_name,
+        })
+        .collect())
 }
 
 /// File info for the corpus treemap.
@@ -1735,8 +1715,14 @@ pub async fn indexing_progress_events(
 
 /// Phase events streamed from `ask_corpus` to the frontend so the UI can
 /// render retrieving → synthesizing → done without faking progress.
+///
+/// gd2c-rest: `ask_corpus` now routes over the daemon's request/response ask
+/// endpoint, so only `Done` / `Error` are emitted today. The intermediate
+/// phase variants stay as the frontend wire contract — they're reconstructed
+/// when gd2c-ask restores phased streaming over a daemon SSE-ask endpoint.
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[allow(dead_code)]
 pub enum AskPhase {
     /// Verified cache hit — answer is about to arrive in `Done`.
     CacheHit { source_ids: Vec<String> },
@@ -1777,74 +1763,24 @@ pub enum AskPhase {
 
 /// Synthesize an answer for a natural-language question against a corpus.
 ///
-/// Streams phase events on `progress` so the UI can render skeletons that
-/// resolve into real content. The full answer is also returned via the
-/// final `Done` event; the command's `Result` is just a success signal.
+/// gd2c-rest: routed over UDS to the daemon's ask endpoint (the daemon owns the
+/// `QueryService` + inference backend now). That endpoint is request/response,
+/// so the intermediate phase skeletons (`CacheHit` / `Analyzed` /
+/// `RetrievedCandidates` / `Reranked` / `Retrieved` / `Verified`) are not
+/// streamed — only the final `Done` (or `Error`) fires; the synthesized answer
+/// is identical. Restoring the live phase stream over UDS is a dedicated
+/// follow-up (gd2c-ask: a daemon SSE-ask endpoint + a streaming client).
 #[tauri::command]
 pub async fn ask_corpus(
-    state: State<'_, AppState>,
     corpus_id: String,
     query: String,
     progress: Channel<AskPhase>,
 ) -> Result<(), CommandError> {
     let started = std::time::Instant::now();
-    let _permit = state
-        .query_semaphore
-        .acquire()
+    match ministr_api::client::DaemonClient::new()
+        .ask(&corpus_id, &query, None)
         .await
-        .map_err(|e| e.to_string())?;
-
-    let guard = state.registry.corpora().read().await;
-    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
-
-    let progress_for_callback = progress.clone();
-    let result = ministr_daemon::ask::ask_with_progress(
-        &query,
-        &handle.service,
-        &handle.storage,
-        state.inference.as_ref(),
-        move |event| {
-            let phase = match event {
-                ministr_daemon::ask::AskEvent::CacheHit { source_ids } => {
-                    AskPhase::CacheHit { source_ids }
-                }
-                ministr_daemon::ask::AskEvent::Analyzed {
-                    sub_questions,
-                    hyde_preview,
-                    symbol_hints,
-                    bridge_relevant,
-                } => AskPhase::Analyzed {
-                    sub_questions,
-                    hyde_preview,
-                    symbol_hints,
-                    bridge_relevant,
-                },
-                ministr_daemon::ask::AskEvent::RetrievedCandidates {
-                    by_strategy,
-                    merged_ids,
-                } => AskPhase::RetrievedCandidates {
-                    by_strategy,
-                    merged_ids,
-                },
-                ministr_daemon::ask::AskEvent::Reranked { source_ids } => {
-                    AskPhase::Reranked { source_ids }
-                }
-                ministr_daemon::ask::AskEvent::Retrieved { source_ids } => {
-                    AskPhase::Retrieved { source_ids }
-                }
-                ministr_daemon::ask::AskEvent::Verified { unsupported_claims } => {
-                    AskPhase::Verified { unsupported_claims }
-                }
-            };
-            // Channel send only fails if the frontend dropped the receiver,
-            // in which case there's nothing useful to do here.
-            let _ = progress_for_callback.send(phase);
-        },
-    )
-    .await;
-    drop(guard);
-
-    match result {
+    {
         Ok(r) => {
             let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
             let _ = progress.send(AskPhase::Done {
@@ -1886,9 +1822,7 @@ pub struct InferenceHealth {
 /// `available: false` so users find out about missing dependencies before
 /// typing a question rather than after.
 #[tauri::command]
-pub async fn inference_health(
-    _state: State<'_, AppState>,
-) -> Result<InferenceHealth, CommandError> {
+pub async fn inference_health() -> Result<InferenceHealth, CommandError> {
     // The default backend is ClaudeCliInference, which spawns `claude -p`.
     // A PATH probe is the cheapest reliable readiness signal.
     let binary = if cfg!(windows) {

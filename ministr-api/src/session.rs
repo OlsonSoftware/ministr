@@ -34,6 +34,69 @@ pub struct SessionUsageResponse {
     pub utilization: f64,
 }
 
+/// Full per-session economics + budget snapshot for the all-sessions list
+/// (gd2c-rest). The point-in-time form the desktop Sessions view renders,
+/// aggregated across every corpus by `GET /api/v1/sessions`.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SessionInfo {
+    /// Session identifier.
+    pub session_id: String,
+    /// Corpus this session belongs to.
+    pub corpus_id: String,
+    /// Pressure level: `"normal"`, `"elevated"`, or `"critical"`.
+    pub level: String,
+    /// Estimated tokens consumed by delivered content.
+    pub tokens_used: usize,
+    /// Estimated tokens remaining before budget pressure.
+    pub tokens_remaining: usize,
+    /// Utilization ratio (0.0–1.0).
+    pub utilization: f64,
+    /// Distinct content ids delivered so far this session.
+    pub delivered_count: usize,
+    /// Current turn counter.
+    pub current_turn: u32,
+    /// Total delivery operations.
+    pub total_deliveries: u64,
+    /// Cumulative tokens delivered (gross, pre-savings).
+    pub cumulative_tokens_delivered: u64,
+    /// Tokens saved by dedup + eviction + compression combined.
+    pub total_tokens_saved: u64,
+    /// Total eviction operations.
+    pub total_evictions: u64,
+    /// Total compression operations.
+    pub total_compressions: u64,
+    /// Tokens freed by eviction.
+    pub cumulative_tokens_evicted: u64,
+    /// Tokens freed by compression.
+    pub cumulative_tokens_compressed: u64,
+    /// Deliveries that changed since last seen (delta updates).
+    pub delta_updates: u64,
+    /// Deliveries short-circuited by dedup.
+    pub dedup_hits: u64,
+    /// `total_tokens_saved / cumulative_tokens_delivered` (0.0 when none).
+    pub compression_ratio: f64,
+    /// Effective context window in tokens (env-driven).
+    pub context_window_tokens: usize,
+    /// Fractional pressure threshold.
+    pub pressure_threshold: f64,
+    /// Fractional critical threshold.
+    pub critical_threshold: f64,
+    /// Parent session id when created on behalf of a subagent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<String>,
+    /// MCP `clientInfo.name` captured at initialize.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_name: Option<String>,
+}
+
+/// Response for `GET /api/v1/sessions` — every active session across all
+/// corpora (gd2c-rest).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ListSessionsResponse {
+    /// Active sessions across all registered corpora.
+    pub sessions: Vec<SessionInfo>,
+}
+
 /// Prefetch cache metrics for a corpus.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PrefetchMetricsResponse {
