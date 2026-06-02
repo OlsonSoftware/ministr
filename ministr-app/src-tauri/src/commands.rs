@@ -28,29 +28,27 @@ pub async fn list_corpora() -> Result<Vec<CorpusInfo>, CommandError> {
 }
 
 /// Register a new corpus by paths.
+///
+/// gd3: routed over UDS to the headless daemon — the single writer — so the
+/// new corpus is immediately visible to `list_corpora` (gd2, sidecar) and to
+/// MCP clients, instead of writing the GUI's in-process registry.
 #[tauri::command]
-pub async fn register_corpus(
-    state: State<'_, AppState>,
-    paths: Vec<String>,
-) -> Result<RegisterCorpusResponse, CommandError> {
-    let (corpus_id, indexing_started) = state.registry.register(&paths).await?;
-    Ok(RegisterCorpusResponse {
-        corpus_id,
-        indexing_started,
-    })
+pub async fn register_corpus(paths: Vec<String>) -> Result<RegisterCorpusResponse, CommandError> {
+    ministr_api::client::DaemonClient::new()
+        .register_corpus(&paths)
+        .await
+        .map_err(Into::into)
 }
 
 /// Unregister a corpus.
+///
+/// gd3: routed over UDS to the daemon registry (the single writer).
 #[tauri::command]
-pub async fn unregister_corpus(
-    state: State<'_, AppState>,
-    corpus_id: String,
-) -> Result<(), CommandError> {
-    state
-        .registry
-        .unregister(&corpus_id)
+pub async fn unregister_corpus(corpus_id: String) -> Result<(), CommandError> {
+    ministr_api::client::DaemonClient::new()
+        .unregister_corpus(&corpus_id)
         .await
-        .map_err(CommandError::from)
+        .map_err(Into::into)
 }
 
 /// Get daemon status (memory, uptime, corpora, autostart).
@@ -76,7 +74,6 @@ pub async fn daemon_status(app: AppHandle) -> Result<DaemonStatus, CommandError>
 #[tauri::command]
 pub async fn add_project_dialog(
     app: AppHandle,
-    state: State<'_, AppState>,
 ) -> Result<Option<RegisterCorpusResponse>, CommandError> {
     use tauri_plugin_dialog::DialogExt;
 
@@ -87,49 +84,25 @@ pub async fn add_project_dialog(
     };
 
     let path = folder.to_string();
-    let (corpus_id, indexing_started) = state.registry.register(&[path]).await?;
-    Ok(Some(RegisterCorpusResponse {
-        corpus_id,
-        indexing_started,
-    }))
+    // gd3: register over UDS (the daemon is the single writer).
+    let resp = ministr_api::client::DaemonClient::new()
+        .register_corpus(&[path])
+        .await?;
+    Ok(Some(resp))
 }
 
 /// Remove a project and clean up its index data.
+///
+/// gd3: routed over UDS as a single daemon operation — `?purge=true` so the
+/// daemon (which owns the corpus data directory) unregisters AND deletes the
+/// on-disk index. The GUI no longer reaches into `~/.ministr/corpora`.
 #[tauri::command]
-pub async fn remove_project(
-    state: State<'_, AppState>,
-    corpus_id: String,
-) -> Result<(), CommandError> {
+pub async fn remove_project(corpus_id: String) -> Result<(), CommandError> {
     tracing::info!(corpus_id = %corpus_id, "remove_project called from frontend");
-
-    // Get data_dir before unregistering.
-    let data_dir = {
-        let guard = state.registry.corpora().read().await;
-        guard.get(&corpus_id).map(|h| h.data_dir.clone())
-    };
-
-    state.registry.unregister(&corpus_id).await.map_err(|e| {
-        tracing::error!(corpus_id = %corpus_id, error = %e, "unregister failed");
-        CommandError::from(e)
-    })?;
-
-    // Clean up index data. `unregister` has already awaited task teardown,
-    // and `remove_dir_all_robust` retries the Windows handle-close race —
-    // so a failure here is real and must be surfaced, not swallowed.
-    if let Some(dir) = data_dir {
-        ministr_core::fs_util::remove_dir_all_robust(&dir)
-            .await
-            .map_err(|e| {
-                tracing::error!(path = %dir.display(), error = %e, "failed to delete corpus data");
-                CommandError::new(
-                    ErrorKind::Io,
-                    format!("failed to delete corpus data at {}: {e}", dir.display()),
-                )
-            })?;
-        tracing::info!(path = %dir.display(), "cleaned up corpus data");
-    }
-
-    Ok(())
+    ministr_api::client::DaemonClient::new()
+        .unregister_corpus_purge(&corpus_id)
+        .await
+        .map_err(Into::into)
 }
 
 /// One linked project as shown in the Linked Projects panel.
@@ -257,57 +230,18 @@ pub async fn linked_project_remove(
 }
 
 /// Trigger a full re-index of a corpus.
+///
+/// gd3: routed over UDS to the daemon's reindex endpoint (gd3a), which
+/// purges the on-disk index and re-registers daemon-side so the config is
+/// re-resolved and the corpus re-embedded from scratch.
 #[tauri::command]
-pub async fn trigger_reindex(
-    state: State<'_, AppState>,
-    corpus_id: String,
-) -> Result<(), CommandError> {
+pub async fn trigger_reindex(corpus_id: String) -> Result<(), CommandError> {
     tracing::info!(corpus_id = %corpus_id, "trigger_reindex called from frontend");
-    reindex_corpus(state.inner(), &corpus_id).await
-}
-
-/// Purge a corpus's on-disk index and re-register it, so the daemon
-/// re-resolves the corpus's config (`.ministr.toml`) and re-embeds from
-/// scratch. Shared by [`trigger_reindex`] and [`set_corpus_config`] — a config
-/// change is only honored after a rebuild, so both go through one path.
-async fn reindex_corpus(state: &AppState, corpus_id: &str) -> Result<(), CommandError> {
-    // Get the paths and data dir for this corpus.
-    let (paths, data_dir) = {
-        let guard = state.registry.corpora().read().await;
-        let Some(h) = guard.get(corpus_id) else {
-            tracing::warn!(corpus_id = %corpus_id, "reindex_corpus: corpus not found");
-            return Err(CommandError::not_found(format!(
-                "corpus '{corpus_id}' not found"
-            )));
-        };
-        (h.info.read().await.paths.clone(), h.data_dir.clone())
-    };
-
-    tracing::info!(corpus_id = %corpus_id, paths = ?paths, "reindex_corpus: purge + re-register");
-
-    // Propagate unregister failure: proceeding to register after a failed
-    // unregister would leave the old handle (cancellation token, watcher,
-    // sessions) alive alongside a fresh one — split, inconsistent state.
-    state.registry.unregister(corpus_id).await.map_err(|e| {
-        tracing::error!(corpus_id = %corpus_id, error = %e, "reindex_corpus: unregister failed");
-        CommandError::from(e)
-    })?;
-
-    // A re-index is a *rebuild*: purge the on-disk index so stale/orphaned
-    // entries for deleted files don't survive. `unregister` has already
-    // awaited task teardown, so the handles are closed.
-    ministr_core::fs_util::remove_dir_all_robust(&data_dir)
+    ministr_api::client::DaemonClient::new()
+        .reindex_corpus(&corpus_id)
         .await
-        .map_err(|e| {
-            tracing::error!(path = %data_dir.display(), error = %e, "reindex_corpus: purge failed");
-            CommandError::new(
-                ErrorKind::Io,
-                format!("failed to purge corpus data at {}: {e}", data_dir.display()),
-            )
-        })?;
-
-    state.registry.register(&paths).await?;
-    Ok(())
+        .map(|_| ())
+        .map_err(Into::into)
 }
 
 /// Persist a corpus's per-corpus config (`model` / `dimension` /
@@ -324,24 +258,18 @@ async fn reindex_corpus(state: &AppState, corpus_id: &str) -> Result<(), Command
 /// [`RepoConfig::set_corpus_config`](ministr_core::config::RepoConfig::set_corpus_config)).
 #[tauri::command]
 pub async fn set_corpus_config(
-    state: State<'_, AppState>,
     corpus_id: String,
     model: Option<String>,
     dimension: Option<usize>,
     rerank_depth: Option<usize>,
 ) -> Result<(), CommandError> {
+    let client = ministr_api::client::DaemonClient::new();
+
     // The `.ministr.toml` lives at the corpus's repo root. Derive it from the
     // first registered path: a directory path *is* the root; a file path's
-    // parent is.
-    let paths = {
-        let guard = state.registry.corpora().read().await;
-        let Some(h) = guard.get(&corpus_id) else {
-            return Err(CommandError::not_found(format!(
-                "corpus '{corpus_id}' not found"
-            )));
-        };
-        h.info.read().await.paths.clone()
-    };
+    // parent is. gd3: the paths come from the daemon over UDS (its registry is
+    // the single source of truth) rather than an in-process handle.
+    let paths = client.corpus_status(&corpus_id).await?.paths;
     let first = paths.first().ok_or_else(|| {
         CommandError::invalid_input(format!("corpus '{corpus_id}' has no paths to configure"))
     })?;
@@ -371,8 +299,12 @@ pub async fn set_corpus_config(
         "persisted per-corpus config to .ministr.toml — re-indexing"
     );
 
-    // Re-index so the daemon re-resolves the new config and re-embeds.
-    reindex_corpus(state.inner(), &corpus_id).await
+    // Re-index over UDS so the daemon re-resolves the new config and re-embeds.
+    client
+        .reindex_corpus(&corpus_id)
+        .await
+        .map(|_| ())
+        .map_err(Into::into)
 }
 
 /// One supported embedding model, surfaced to the GUI's per-corpus model
@@ -511,10 +443,15 @@ pub async fn add_project_from_tray(handle: &AppHandle) {
     };
 
     let path = folder.to_string();
-    let state = handle.state::<AppState>();
-    match state.registry.register(std::slice::from_ref(&path)).await {
-        Ok((corpus_id, _)) => {
-            tracing::info!(corpus_id, path, "project added from tray");
+    // gd3: register over UDS so the tray-added corpus lands in the single
+    // daemon registry (visible to list_corpora + MCP), not the GUI's
+    // in-process one.
+    match ministr_api::client::DaemonClient::new()
+        .register_corpus(std::slice::from_ref(&path))
+        .await
+    {
+        Ok(resp) => {
+            tracing::info!(corpus_id = resp.corpus_id, path, "project added from tray");
         }
         Err(e) => {
             tracing::warn!(error = %e, path, "failed to add project from tray");
@@ -804,10 +741,11 @@ pub async fn detect_projects() -> Result<Vec<DetectedProject>, CommandError> {
 /// unrelated corpus's state, so registering a sibling project will never
 /// destroy a neighbour's sessions. Per-path errors are warned and skipped.
 #[tauri::command]
-pub async fn register_projects_batch(
-    state: State<'_, AppState>,
-    paths: Vec<String>,
-) -> Result<Vec<String>, CommandError> {
+pub async fn register_projects_batch(paths: Vec<String>) -> Result<Vec<String>, CommandError> {
+    // gd3: each registration round-trips through the daemon over UDS (the
+    // single writer); the local `.ministr.toml` discovery/resolution is
+    // unchanged.
+    let client = ministr_api::client::DaemonClient::new();
     let mut registered = Vec::new();
     for path in &paths {
         let project_dir = std::path::Path::new(path);
@@ -818,8 +756,8 @@ pub async fn register_projects_batch(
                 || vec![path.clone()],
                 |(base, rc)| rc.resolve_local_paths(&base),
             );
-        match state.registry.register(&resolved).await {
-            Ok((corpus_id, _)) => registered.push(corpus_id),
+        match client.register_corpus(&resolved).await {
+            Ok(resp) => registered.push(resp.corpus_id),
             Err(e) => {
                 tracing::warn!(error = %e, path, "failed to register project in batch");
             }
