@@ -192,6 +192,24 @@ async fn eval_retrieval_real_embedder() {
     // not a doc-corpus metric gain. A code-heavy corpus with genuinely
     // over-budget symbols is needed to positively measure cAST (see
     // rq-eval-corpus-bigcode). Floors NOT raised (split did not improve them).
+    //
+    // rq-eval-corpus-bigcode (2026-06-02): added eval/corpus/command_router.rs
+    // — a genuinely OVER-BUDGET `dispatch_control_frame` fn (~650 cl100k tokens)
+    // — plus 3 ground-truth queries hitting only its TAIL arms (75 queries now).
+    // cAST A/B re-run: the split now FIRES (sections 50 ON vs 42 OFF; the fn
+    // splits into ~8 lossless parts), and the model truncates the whole-chunk
+    // when OFF — yet the 3 tail queries score R@5=1.00/RR=1.00 in BOTH arms.
+    // FINDING (inconclusive, deeper than the rq3 note): recall@5/MRR on this
+    // tiny single-domain corpus is COMPETITION-INSENSITIVE — the over-budget
+    // symbol is the only topical match for "shard watermark / phantom replica /
+    // quorum lease", so even a truncated, head-dominated embedding ranks #1.
+    // Top-k recall cannot isolate tail-recovery here; a discriminating
+    // measurement needs distractor code sections OR a direct embedding-similarity
+    // probe cosine(query, tail_part) vs cosine(query, whole_truncated). The
+    // fixture is kept (first over-budget code symbol in the corpus; enables rq1
+    // truncation + rq6 too); both arms stay above floors (aggregate R@5 0.820 ON
+    // / 0.809 OFF over 75 q). Floors left as-is (the 3 tail queries are trivially
+    // satisfied on this corpus and must not be read as a cAST win).
     const BASELINE_RECALL_AT_5: f64 = 0.77;
     const BASELINE_NDCG_AT_5: f64 = 0.82;
     const BASELINE_MRR: f64 = 0.88;

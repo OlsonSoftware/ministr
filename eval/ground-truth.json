@@ -485,6 +485,24 @@
         { "section_id": "embedding-pipeline.md#embedding-pipeline/batch-embedding-and-normalization", "relevance": 3 },
         { "section_id": "vector_store.rs#vector_store::cosine_similarity", "relevance": 2 }
       ]
+    },
+    {
+      "query": "how is the shard watermark checkpoint flushed to a durable offset",
+      "expected": [
+        { "section_id": "command_router.rs#command_router::dispatch_control_frame", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "evict a phantom replica to the cold tier and reclaim its slot",
+      "expected": [
+        { "section_id": "command_router.rs#command_router::dispatch_control_frame", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "renew the quorum lease before the heartbeat epoch expires",
+      "expected": [
+        { "section_id": "command_router.rs#command_router::dispatch_control_frame", "relevance": 3 }
+      ]
     }
   ]
 }
