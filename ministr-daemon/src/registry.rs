@@ -1311,14 +1311,27 @@ impl CorpusRegistry {
             }
         }
 
+        // cq-priority cold-start size signal: seed files_indexed + sections_count
+        // from the on-disk content.db so a corpus re-registered after a daemon
+        // restart (or any re-register of a previously-indexed corpus) starts with
+        // its TRUE size instead of a placeholder 0. This lets the
+        // IngestionCoordinator's shortest-job-first dispatch order a cold-start
+        // restore-storm by real size (not pure FIFO), and makes the
+        // /api/v1/corpora readout correct before the first reindex. These are the
+        // same counts `indexer::run`'s `update_stats` writes, so the seed matches
+        // the post-reindex value (no visible jump). A brand-new corpus has an
+        // empty db → 0 → treated as small (prompt first index).
+        let files_indexed = storage.document_count().await.unwrap_or(0);
+        let sections_count = storage.section_count().await.unwrap_or(0);
+
         Ok(CorpusHandle {
             info: Arc::new(RwLock::new(CorpusInfo {
                 id: corpus_id.to_string(),
                 display_name,
                 paths: paths.to_vec(),
                 status: IndexingStatus::Idle,
-                files_indexed: 0,
-                sections_count: 0,
+                files_indexed,
+                sections_count,
                 embeddings_count: index.len(),
                 active_sessions: 0,
                 last_indexed: None,
@@ -1937,5 +1950,90 @@ mod tests {
             Some(("c1".to_string(), std::path::PathBuf::from("/tmp/c1")))
         );
         assert!(rx2.try_recv().is_err(), "second sink must not receive");
+    }
+
+    // -- cq-priority cold-start size signal --
+
+    /// A minimal document with `sections` sections, for populating a test
+    /// content.db so `document_count`/`section_count` return known values.
+    fn cold_start_doc(id: &str, sections: usize) -> ministr_core::types::DocumentTree {
+        use ministr_core::types::{ContentId, DocumentTree, Section, SectionId};
+        DocumentTree {
+            id: ContentId(id.into()),
+            title: id.into(),
+            source_path: id.into(),
+            sections: (0..sections)
+                .map(|i| Section {
+                    id: SectionId(format!("{id}#s{i}")),
+                    heading_path: vec![format!("s{i}")],
+                    depth: 1,
+                    text: format!("section {i} of {id}"),
+                    structural_nodes: vec![],
+                    children: vec![],
+                    claims: vec![],
+                    summary: None,
+                })
+                .collect(),
+            summary: None,
+        }
+    }
+
+    fn test_registry_in(data_dir: &std::path::Path) -> CorpusRegistry {
+        let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder { dim: 4 });
+        let config = MinistrConfig {
+            data_dir: data_dir.to_path_buf(),
+            ..MinistrConfig::default()
+        };
+        CorpusRegistry::new(embedder, config)
+    }
+
+    #[tokio::test]
+    async fn create_handle_seeds_size_from_existing_content_db() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let registry = test_registry_in(tmp.path());
+
+        // Pre-stage an already-indexed content.db at the path `create_handle`
+        // opens, as if this corpus had been indexed in a prior daemon session.
+        let corpus_id = "cs-seed-test";
+        let corpus_dir = tmp.path().join("corpora").join(corpus_id);
+        std::fs::create_dir_all(&corpus_dir).unwrap();
+        let db = corpus_dir.join("content.db");
+        {
+            let storage = SqliteStorage::open(&db).unwrap();
+            storage
+                .insert_document(&cold_start_doc("a.md", 2))
+                .await
+                .unwrap();
+            storage
+                .insert_document(&cold_start_doc("b.md", 1))
+                .await
+                .unwrap();
+        }
+
+        // The fresh handle (cold-restart / re-register path) reports the on-disk
+        // size immediately — not the placeholder 0 — so cq-priority can order a
+        // restore-storm by real size instead of FIFO.
+        let corpus_path = tmp.path().to_str().unwrap().to_string();
+        let handle = registry
+            .create_handle(corpus_id, &[corpus_path], "cs".to_string())
+            .await
+            .unwrap();
+        let info = handle.info.read().await;
+        assert_eq!(info.files_indexed, 2, "two documents on disk");
+        assert_eq!(info.sections_count, 3, "three sections total");
+    }
+
+    #[tokio::test]
+    async fn create_handle_on_empty_db_seeds_zero() {
+        // A brand-new corpus (no prior index) seeds 0 → treated as small →
+        // prompt first-time indexing (unchanged behavior).
+        let tmp = tempfile::TempDir::new().unwrap();
+        let registry = test_registry_in(tmp.path());
+        let corpus_path = tmp.path().to_str().unwrap().to_string();
+        let handle = registry
+            .create_handle("brand-new", &[corpus_path], "n".to_string())
+            .await
+            .unwrap();
+        assert_eq!(handle.info.read().await.files_indexed, 0);
     }
 }
