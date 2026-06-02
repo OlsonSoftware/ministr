@@ -18,7 +18,7 @@ use ministr_api::corpus::{CorpusInfo, IndexingStatus};
 use ministr_api::corpus_restorer::{CorpusRestoreError, CorpusRestorer};
 use ministr_core::config::MinistrConfig;
 use ministr_core::corpus_id::{CorpusIdError, canonical_corpus_paths, corpus_id_from_paths};
-use ministr_core::embedding::{Embedder, EmbeddingService};
+use ministr_core::embedding::{Embedder, EmbeddingService, FastReranker};
 use ministr_core::index::{HnswIndex, VectorIndex, VectorIndexLoad};
 use ministr_core::ingestion::IngestionProgress;
 use ministr_core::service::QueryService;
@@ -1157,11 +1157,37 @@ impl CorpusRegistry {
 
         let query_storage = SqliteStorage::open(&db_path)
             .map_err(|e| RegistryError::Storage(format!("open query db: {e}")))?;
-        let service = QueryService::new(
+        let mut service = QueryService::new(
             query_storage,
             Arc::clone(&self.embedder),
             Arc::clone(&index),
         );
+
+        // rq5b: attach a cross-encoder reranker to the production query path
+        // when one is configured (default OFF — `reranker_model = None`). A
+        // reranker is an optional relevance enhancement, so a bad model name
+        // or a failed load must NOT break the corpus: warn and serve the
+        // dense/hybrid path unchanged. Every corpus's `QueryService` (the one
+        // the daemon REST API, the Tauri GUI, and the MCP server all answer
+        // through) gets the same reranker, so the flag can't be half-applied.
+        if let Some(model) = self.config.reranker_model.as_deref() {
+            match FastReranker::new(model, self.config.data_dir.to_str()) {
+                Ok(reranker) => {
+                    service = service.with_reranker(Arc::new(reranker));
+                    info!(
+                        corpus_id,
+                        reranker_model = model,
+                        "cross-encoder reranker attached"
+                    );
+                }
+                Err(e) => warn!(
+                    corpus_id,
+                    reranker_model = model,
+                    error = %e,
+                    "failed to build reranker — serving without it",
+                ),
+            }
+        }
 
         Ok(CorpusHandle {
             info: Arc::new(RwLock::new(CorpusInfo {

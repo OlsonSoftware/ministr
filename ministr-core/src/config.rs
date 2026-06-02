@@ -37,6 +37,17 @@ pub struct MinistrConfig {
 
     /// Prefetch configuration.
     pub prefetch: PrefetchConfig,
+
+    /// Cross-encoder reranker model for the query path (rq5b). `None` (the
+    /// default) leaves reranking OFF — the dense/hybrid path is unchanged.
+    /// When set to a supported model name (e.g. `"bge-reranker-base"`), the
+    /// daemon attaches a `FastReranker` to every corpus's `QueryService` so
+    /// `survey()` rescoring runs the cross-encoder. Flipping this on by
+    /// default is gated by the rq5-eval win/regress measurement.
+    ///
+    /// Supported: `bge-reranker-base`, `bge-reranker-v2-m3`,
+    /// `jina-reranker-v1-turbo-en`, `jina-reranker-v2-base-multilingual`.
+    pub reranker_model: Option<String>,
 }
 
 impl Default for MinistrConfig {
@@ -48,6 +59,7 @@ impl Default for MinistrConfig {
             default_context_budget: 100_000,
             corpus_paths: Vec::new(),
             prefetch: PrefetchConfig::default(),
+            reranker_model: None,
         }
     }
 }
@@ -951,6 +963,20 @@ fn expand_tilde(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── rq5b: cross-encoder reranker config flag (default OFF) ───────────────
+
+    #[test]
+    fn reranker_model_defaults_off() {
+        assert_eq!(MinistrConfig::default().reranker_model, None);
+    }
+
+    #[test]
+    fn reranker_model_parsed_from_toml() {
+        let cfg = MinistrConfig::from_toml("reranker_model = \"bge-reranker-base\"\n")
+            .expect("valid toml");
+        assert_eq!(cfg.reranker_model.as_deref(), Some("bge-reranker-base"));
+    }
 
     // ── parity-epic: the per-corpus config-resolution seam contract ──────────
     // resolve_effective_corpus_config is the single seam both the CLI and the
