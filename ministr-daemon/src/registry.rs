@@ -18,7 +18,9 @@ use ministr_api::corpus::{CorpusInfo, IndexingStatus};
 use ministr_api::corpus_restorer::{CorpusRestoreError, CorpusRestorer};
 use ministr_core::config::MinistrConfig;
 use ministr_core::corpus_id::{CorpusIdError, canonical_corpus_paths, corpus_id_from_paths};
-use ministr_core::embedding::{Embedder, EmbeddingService, FastReranker};
+use ministr_core::embedding::{
+    DualEmbedder, Embedder, EmbeddingService, FastReranker, MatryoshkaEmbedder,
+};
 use ministr_core::index::{HnswIndex, VectorIndex, VectorIndexLoad};
 use ministr_core::ingestion::IngestionProgress;
 use ministr_core::service::QueryService;
@@ -135,6 +137,19 @@ pub struct CorpusHandle {
     /// else the daemon default. `indexer::run` resolves the corpus's embedder
     /// from this so ingest and query share one vector space.
     pub model: String,
+    /// The corpus's effective Matryoshka truncation dimension
+    /// (parity-registry-knobs) — its `.ministr.toml` `[corpus] dimension`, else
+    /// `None` (full model dimension). When `Some`, both `create_handle` (query)
+    /// and `indexer::run` (ingest) wrap the pooled embedder in a
+    /// [`MatryoshkaEmbedder`] at this dimension via [`apply_dimension`], so the
+    /// HNSW index, ingest, and query all share ONE truncated vector space —
+    /// exactly as the CLI's `init_infrastructure` does.
+    pub dimension: Option<usize>,
+    /// The corpus's effective two-stage rerank depth (parity-registry-knobs) —
+    /// its `.ministr.toml` `[corpus] rerank_depth`. Only effective when
+    /// `dimension` is `Some`; threaded into the `QueryService` via
+    /// `with_matryoshka_rerank` (defaulting to 100, matching the CLI).
+    pub rerank_depth: Option<usize>,
     /// `Arc` so `list()` (and any read-mostly status path) can clone the
     /// handle out and drop the corpora-map guard *before* awaiting the
     /// session lock. Accessors are unchanged — `Arc` derefs to the
@@ -1177,26 +1192,44 @@ impl CorpusRegistry {
                 .map_err(|e| RegistryError::Storage(format!("open db: {e}")))?,
         );
 
-        // parity-seam-registry-routing: resolve THIS corpus's effective
-        // embedding model (its `.ministr.toml` `[corpus] model`, else the
-        // daemon default) via the shared seam, and bind the corpus's index +
-        // QueryService to that model's embedder. The default model returns the
-        // daemon's seeded shared embedder (zero change); a per-corpus model is
-        // built + cached once. `indexer::run` reads `handle.model` and resolves
-        // the same embedder, so ingest and query share one vector space.
-        let model = resolve_corpus_model(paths, &self.config);
+        // parity-seam-registry-routing + parity-registry-knobs: resolve THIS
+        // corpus's FULL effective config (its `.ministr.toml` `[corpus]` model
+        // / dimension / rerank_depth, else the daemon defaults) via the shared
+        // seam, and bind the corpus's index + QueryService to it. The default
+        // model returns the daemon's seeded shared embedder (zero change); a
+        // per-corpus model is built + cached once. A configured `dimension`
+        // additionally wraps that embedder in a `MatryoshkaEmbedder` so the
+        // HNSW index is built at the TRUNCATED dim and the QueryService gets
+        // two-stage `rerank_depth` reranking — exactly as the CLI's
+        // `init_infrastructure` does. `indexer::run` reads `handle.model` +
+        // `handle.dimension` and applies the SAME `apply_dimension`, so ingest
+        // and query share one (possibly truncated) vector space.
+        let cfg = resolve_corpus_config(paths, &self.config);
+        let model = cfg.model.clone();
         let pooled = self.embedder_for(&model)?;
+        let (embedder, dual) = apply_dimension(&pooled.embedder, cfg.dimension)?;
 
-        let dim = pooled.embedder.dimension();
+        let dim = embedder.dimension();
         let index = load_or_create_index(&index_dir, dim, &model, &storage).await?;
 
         let query_storage = SqliteStorage::open(&db_path)
             .map_err(|e| RegistryError::Storage(format!("open query db: {e}")))?;
-        let mut service = QueryService::new(
-            query_storage,
-            Arc::clone(&pooled.embedder),
-            Arc::clone(&index),
-        );
+        let mut service =
+            QueryService::new(query_storage, Arc::clone(&embedder), Arc::clone(&index));
+
+        // parity-registry-knobs: two-stage Matryoshka reranking when a
+        // per-corpus `dimension` is configured (mirrors the CLI's `build_server`
+        // wiring). `rerank_depth` defaults to 100 — the same default the CLI's
+        // `InfrastructureContext` applies.
+        if let Some(dual) = dual {
+            service = service.with_matryoshka_rerank(dual, cfg.rerank_depth.unwrap_or(100));
+            info!(
+                corpus_id,
+                dimension = cfg.dimension,
+                rerank_depth = cfg.rerank_depth.unwrap_or(100),
+                "per-corpus Matryoshka truncation + rerank applied"
+            );
+        }
 
         // rq5b: attach a cross-encoder reranker to the production query path
         // when one is configured (default OFF — `reranker_model = None`). A
@@ -1242,6 +1275,8 @@ impl CorpusRegistry {
             index,
             service,
             model,
+            dimension: cfg.dimension,
+            rerank_depth: cfg.rerank_depth,
             sessions: Arc::new(tokio::sync::Mutex::new(SessionRegistry::new(
                 UsageConfig::default(),
             ))),
@@ -1257,16 +1292,20 @@ impl CorpusRegistry {
     }
 }
 
-/// Resolve a corpus's effective embedding model from its first local path's
-/// `.ministr.toml` (`[corpus] model`), falling back to the daemon default.
+/// Resolve a corpus's FULL effective per-corpus config from its first local
+/// path's `.ministr.toml` (`[corpus]` `model` / `dimension` / `rerank_depth` /
+/// …), falling back to the daemon defaults.
 ///
 /// Best-effort by design (parity-seam-registry-routing): a missing or
 /// unparseable `.ministr.toml`, or a non-local path (e.g. a restored cloud
-/// corpus whose source files aren't on this pod), yields the default model —
+/// corpus whose source files aren't on this pod), yields the default config —
 /// so registration never fails just because a per-corpus override can't be
 /// discovered. Routes through the same `resolve_effective_corpus_config` seam
 /// the CLI uses, so the surfaces cannot drift.
-fn resolve_corpus_model(paths: &[String], config: &MinistrConfig) -> String {
+fn resolve_corpus_config(
+    paths: &[String],
+    config: &MinistrConfig,
+) -> ministr_core::config::EffectiveCorpusConfig {
     let repo_cfg = paths.first().and_then(|p| {
         let path = std::path::Path::new(p);
         let dir = if path.is_dir() {
@@ -1281,7 +1320,47 @@ fn resolve_corpus_model(paths: &[String], config: &MinistrConfig) -> String {
         None,
         config,
     )
-    .model
+}
+
+/// The corpus embedder a configured `dimension` resolves to: the embedder used
+/// for the HNSW index + ingest (truncated when Matryoshka is active), plus the
+/// optional [`DualEmbedder`] handle the `QueryService` reranks at full
+/// dimension with.
+type DimensionedEmbedder = (Arc<dyn Embedder>, Option<Arc<dyn DualEmbedder>>);
+
+/// Apply a corpus's effective Matryoshka truncation `dimension` to its pooled
+/// embedder (parity-registry-knobs).
+///
+/// `None` → the pooled embedder unchanged (full model dimension, zero
+/// behavioural change — the default-model path). `Some(target)` → wrap it in a
+/// [`MatryoshkaEmbedder`] that returns `target`-dimension vectors for HNSW
+/// indexing + ingest, plus the [`DualEmbedder`] handle the `QueryService` uses
+/// for full-dimension two-stage reranking. This is the SAME truncation the
+/// CLI's `init_infrastructure` builds, and it is the single seam BOTH the query
+/// path (`create_handle`) and the ingest path (`indexer::run`) call so the two
+/// can't drift into different vector spaces.
+///
+/// # Errors
+///
+/// Returns [`RegistryError::Embedder`] when `target` exceeds the model's native
+/// dimension (an invalid Matryoshka truncation).
+pub(crate) fn apply_dimension(
+    pooled: &Arc<dyn Embedder>,
+    dimension: Option<usize>,
+) -> Result<DimensionedEmbedder, RegistryError> {
+    match dimension {
+        Some(target) => {
+            let matryoshka = Arc::new(
+                MatryoshkaEmbedder::new(Arc::clone(pooled), target).map_err(|e| {
+                    RegistryError::Embedder(format!("matryoshka dimension {target}: {e}"))
+                })?,
+            );
+            let embedder: Arc<dyn Embedder> = Arc::clone(&matryoshka) as _;
+            let dual: Arc<dyn DualEmbedder> = matryoshka;
+            Ok((embedder, Some(dual)))
+        }
+        None => Ok((Arc::clone(pooled), None)),
+    }
 }
 
 /// Bridge a per-corpus coherence broadcast into the app-level ring buffer.
@@ -1542,6 +1621,65 @@ mod tests {
             symbols_count: 0,
             model: "all-MiniLM-L6-v2".into(),
         }
+    }
+
+    /// Minimal full-dimension embedder for the `apply_dimension` parity tests
+    /// (no model load). Returns a fixed-dimension vector per text.
+    #[derive(Debug)]
+    struct FixedDimEmbedder {
+        dim: usize,
+    }
+
+    impl Embedder for FixedDimEmbedder {
+        fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, ministr_core::error::IndexError> {
+            Ok(texts.iter().map(|_| vec![0.1f32; self.dim]).collect())
+        }
+
+        fn dimension(&self) -> usize {
+            self.dim
+        }
+    }
+
+    // parity-registry-knobs: `apply_dimension` is the single seam BOTH the
+    // registry query path (`create_handle`) and the ingest path (`indexer::run`)
+    // call, so it MUST truncate the corpus's vector space when a per-corpus
+    // `dimension` is configured — and leave the full-dim default untouched
+    // otherwise. These prove the behavior the parity gate documents.
+
+    #[test]
+    fn apply_dimension_none_is_identity_full_dim() {
+        let pooled: Arc<dyn Embedder> = Arc::new(FixedDimEmbedder { dim: 384 });
+        let (embedder, dual) = apply_dimension(&pooled, None).expect("identity must not fail");
+        assert_eq!(embedder.dimension(), 384, "no dimension → full model dim");
+        assert!(
+            dual.is_none(),
+            "no dimension → no Matryoshka dual for rerank"
+        );
+    }
+
+    #[test]
+    fn apply_dimension_some_truncates_and_yields_dual() {
+        let pooled: Arc<dyn Embedder> = Arc::new(FixedDimEmbedder { dim: 384 });
+        let (embedder, dual) =
+            apply_dimension(&pooled, Some(256)).expect("valid truncation must succeed");
+        assert_eq!(
+            embedder.dimension(),
+            256,
+            "the index + ingest must run at the truncated dim"
+        );
+        assert!(
+            dual.is_some(),
+            "a configured dimension must yield the dual embedder the QueryService reranks with"
+        );
+    }
+
+    #[test]
+    fn apply_dimension_rejects_target_above_native_dim() {
+        let pooled: Arc<dyn Embedder> = Arc::new(FixedDimEmbedder { dim: 384 });
+        // A truncation larger than the model's native dim is invalid — it must
+        // surface as a clear error, not silently fall back (the parity epic's
+        // "no surface silently ignores a configured knob" rule).
+        assert!(apply_dimension(&pooled, Some(512)).is_err());
     }
 
     #[test]

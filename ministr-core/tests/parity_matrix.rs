@@ -57,18 +57,22 @@ const MATRIX: &[Row] = &[
         daemon_registry: Honored::Yes,
     },
     // dimension / rerank_depth — the CLI threads them (`ResolvedConfig`
-    // `resolved_dimension` / `rerank_depth`); the registry routes only the
-    // embedder, not the Matryoshka truncation dim, so it does NOT apply them
-    // per-corpus yet.
+    // `resolved_dimension` / `rerank_depth`); the registry now applies them too
+    // (parity-registry-knobs): `create_handle` wraps the per-corpus embedder in
+    // a `MatryoshkaEmbedder` at the configured dimension (truncated HNSW index +
+    // ingest via the shared `apply_dimension` seam) and attaches
+    // `with_matryoshka_rerank(dual, rerank_depth)` on the `QueryService` —
+    // exactly the CLI's `init_infrastructure`/`build_server` wiring. Honored
+    // end-to-end on both surfaces.
     Row {
         knob: "dimension",
         cli_one_shot: Honored::Yes,
-        daemon_registry: Honored::NotYet("parity-registry-knobs"),
+        daemon_registry: Honored::Yes,
     },
     Row {
         knob: "rerank_depth",
         cli_one_shot: Honored::Yes,
-        daemon_registry: Honored::NotYet("parity-registry-knobs"),
+        daemon_registry: Honored::Yes,
     },
     // parser / min_section_tokens / claim_extraction — these live only in the
     // per-corpus `meta.toml`, and NEITHER ingestion entry point passes a
@@ -180,14 +184,22 @@ fn model_is_honored_end_to_end_via_the_shared_seam() {
 
 #[test]
 fn known_registry_gaps_are_tracked_never_silent() {
-    // The registry applies the per-corpus MODEL but not the other knobs yet (it
-    // routes the embedder, not the Matryoshka dim or the meta.toml knobs). Every
-    // non-model registry cell MUST be `NotYet(non-empty tracking ref)` — a
+    // The registry now applies the per-corpus MODEL (embedder pool,
+    // parity-seam-registry-routing) AND the Matryoshka DIMENSION + RERANK_DEPTH
+    // (parity-registry-knobs). The only remaining gaps are the `meta.toml`-only
+    // knobs — neither ingestion entry point loads a `CorpusConfig` yet. Every
+    // still-ungated registry cell MUST be `NotYet(non-empty tracking ref)` — a
     // regression that flips one to `Yes` without the wiring, or drops the
-    // tracking ref, fails here.
+    // tracking ref, fails here; and a regression that drops one of the applied
+    // knobs back to `NotYet` fails the `Yes` arm.
     for r in MATRIX {
-        if r.knob == "model" {
-            assert_eq!(r.daemon_registry, Honored::Yes);
+        if matches!(r.knob, "model" | "dimension" | "rerank_depth") {
+            assert_eq!(
+                r.daemon_registry,
+                Honored::Yes,
+                "registry knob `{}` is applied — must be `Yes`",
+                r.knob
+            );
         } else {
             assert!(
                 matches!(r.daemon_registry, Honored::NotYet(t) if !t.is_empty()),

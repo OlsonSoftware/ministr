@@ -12,6 +12,7 @@ use std::time::Duration;
 use ministr_api::coherence::{CoherenceEvent, CoherenceKind};
 use ministr_api::corpus::IndexingStatus;
 use ministr_core::coherence::CoherenceEvent as CoreCoherenceEvent;
+use ministr_core::embedding::EmbeddingService;
 use ministr_core::ingestion::IngestionPipeline;
 use ministr_core::storage::Storage;
 use ministr_core::types::ContentId;
@@ -19,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::embedder_pool::PooledEmbedder;
-use crate::registry::CorpusRegistry;
+use crate::registry::{CorpusRegistry, apply_dimension};
 
 /// How long the watcher waits for a *quiet* gap between events before
 /// treating the burst as finished.
@@ -41,7 +42,7 @@ const DEBOUNCE_MAX_WINDOW: Duration = Duration::from_secs(10);
 // helper just to satisfy the lint would obscure the flow.
 #[allow(clippy::too_many_lines)]
 pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
-    let (storage, model, index, data_dir, index_dir, progress, prefetch) = {
+    let (storage, model, dimension, index, data_dir, index_dir, progress, prefetch) = {
         let corpora = registry.corpora().read().await;
         let Some(handle) = corpora.get(corpus_id) else {
             return;
@@ -49,6 +50,7 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
         (
             Arc::clone(&handle.storage),
             handle.model.clone(),
+            handle.dimension,
             Arc::clone(&handle.index),
             handle.data_dir.clone(),
             handle.data_dir.join("index"),
@@ -91,7 +93,10 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
     // construction. By the time `run` fires, `create_handle` has already built
     // (or failed) this model, so the lookup is a cache hit; the error arm is a
     // defensive guard, not the normal path.
-    let PooledEmbedder { embedder, service } = match registry.embedder_for(&model) {
+    let PooledEmbedder {
+        embedder: pooled_embedder,
+        service: pooled_service,
+    } = match registry.embedder_for(&model) {
         Ok(pooled) => pooled,
         Err(e) => {
             error!(corpus_id, model = %model, error = %e, "embedder unavailable for corpus model — cannot index");
@@ -110,10 +115,45 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
         info!(corpus_id, model = %model, "indexing with per-corpus embedding model");
     }
 
+    // parity-registry-knobs: when the corpus configures a Matryoshka truncation
+    // `dimension`, ingest must produce TRUNCATED vectors so they land in the
+    // truncated-dim HNSW index `create_handle` built (via the same
+    // `apply_dimension` seam) — otherwise ingest writes full-dim vectors into a
+    // truncated index. We wrap the pooled embedder identically, then route it
+    // through a fresh per-corpus `EmbeddingService` so the truncated embed still
+    // runs off the Tokio runtime (ADR 0001 D1). The default-dimension path keeps
+    // the shared, model-pooled service unchanged.
+    let (embedder, service) = match apply_dimension(&pooled_embedder, dimension) {
+        Ok((embedder, _dual)) => {
+            let service = if dimension.is_some() {
+                info!(
+                    corpus_id,
+                    dimension, "indexing with per-corpus Matryoshka truncation"
+                );
+                Arc::new(EmbeddingService::with_model(Arc::clone(&embedder)))
+            } else {
+                pooled_service
+            };
+            (embedder, service)
+        }
+        Err(e) => {
+            error!(corpus_id, model = %model, error = %e, "invalid per-corpus dimension — cannot index");
+            registry
+                .set_status(
+                    corpus_id,
+                    IndexingStatus::Error {
+                        message: e.to_string(),
+                    },
+                )
+                .await;
+            return;
+        }
+    };
+
     // ADR 0001 D1 (refined by parity-seam-registry-routing): route embedding
-    // through this model's dedicated EmbeddingService so the synchronous,
-    // GPU-bound embed() runs on its own thread and the pipeline's embed consumer
-    // never pins a Tokio worker. Corpora sharing a model share one queue.
+    // through a dedicated EmbeddingService so the synchronous, GPU-bound embed()
+    // runs on its own thread and the pipeline's embed consumer never pins a
+    // Tokio worker. Corpora sharing a model+dimension share one queue.
     let pipeline = IngestionPipeline::new()
         .with_progress(Arc::clone(&progress))
         .with_embedding_service(service);

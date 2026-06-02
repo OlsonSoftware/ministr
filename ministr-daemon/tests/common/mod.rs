@@ -311,6 +311,8 @@ fn build_corpus_handle(
         index,
         service,
         model: "all-MiniLM-L6-v2".into(),
+        dimension: None,
+        rerank_depth: None,
         sessions: Arc::new(tokio::sync::Mutex::new(SessionRegistry::new(
             UsageConfig::default(),
         ))),
