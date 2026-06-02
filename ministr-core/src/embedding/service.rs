@@ -209,6 +209,34 @@ fn worker_loop(
     }
 }
 
+/// Re-run the forward a few times if it returns non-finite output.
+///
+/// Observed in the field: under concurrent indexing the shared service merges
+/// requests into one GPU forward, and that whole forward occasionally comes
+/// back non-finite (a transient Metal glitch) — a clean re-index of the SAME
+/// inputs then succeeds, so it is not deterministic on the data. Retrying the
+/// forward recovers the real embeddings instead of dropping the sections; a
+/// small backoff lets the device settle. Any residual non-finite after the
+/// retries is handled per-request by [`sanitize_batch`] (zero + skip), so a
+/// genuinely-bad input still can't roll back the corpus.
+fn embed_with_retry(model: &dyn Embedder, refs: &[&str]) -> Result<Vec<Vec<f32>>, IndexError> {
+    const MAX_TRIES: u32 = 3;
+    let mut out = model.embed(refs)?;
+    for attempt in 1..MAX_TRIES {
+        if !out.iter().flatten().any(|x| !x.is_finite()) {
+            return Ok(out);
+        }
+        tracing::warn!(
+            attempt,
+            batch = refs.len(),
+            "embedding forward returned non-finite values; retrying (likely a transient GPU glitch)"
+        );
+        std::thread::sleep(Duration::from_millis(u64::from(attempt) * 25));
+        out = model.embed(refs)?;
+    }
+    Ok(out)
+}
+
 /// Run one model forward over every text in `batch`, then deliver each request
 /// the slice of vectors that corresponds to its own inputs.
 fn process_batch(model: &dyn Embedder, batch: Vec<EmbedRequest>) {
@@ -217,7 +245,7 @@ fn process_batch(model: &dyn Embedder, batch: Vec<EmbedRequest>) {
         .flat_map(|req| req.texts.iter().map(String::as_str))
         .collect();
 
-    match model.embed(&refs) {
+    match embed_with_retry(model, &refs) {
         Ok(all_vectors) => {
             if all_vectors.len() != refs.len() {
                 let reason = format!(
@@ -449,5 +477,51 @@ mod tests {
         let svc = EmbeddingService::with_model(Arc::new(CountingEmbedder::new(4)));
         let _ = svc.embed(vec!["warm".to_owned()]).await.expect("embed");
         drop(svc); // must return promptly (worker joins on channel close)
+    }
+
+    /// Returns non-finite output for the first `fail_until` calls, then valid
+    /// vectors — models a transient GPU glitch that a re-run recovers from.
+    struct FlakyEmbedder {
+        dim: usize,
+        calls: Arc<AtomicUsize>,
+        fail_until: usize,
+    }
+
+    impl Embedder for FlakyEmbedder {
+        fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, IndexError> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            let bad = n < self.fail_until;
+            Ok(texts
+                .iter()
+                .map(|_| {
+                    let mut v = vec![0.0_f32; self.dim];
+                    v[0] = if bad { f32::NAN } else { 1.0 };
+                    v
+                })
+                .collect())
+        }
+
+        fn dimension(&self) -> usize {
+            self.dim
+        }
+    }
+
+    #[test]
+    fn embed_with_retry_recovers_from_transient_non_finite() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let model = FlakyEmbedder {
+            dim: 4,
+            calls: Arc::clone(&calls),
+            fail_until: 2, // first two forwards non-finite, third clean
+        };
+        let out = embed_with_retry(&model, &["a", "b"]).expect("retry path returns Ok");
+        assert!(
+            out.iter().flatten().all(|x| x.is_finite()),
+            "retry recovered finite vectors"
+        );
+        assert!(
+            calls.load(Ordering::SeqCst) >= 3,
+            "retried the forward until it came back clean"
+        );
     }
 }
