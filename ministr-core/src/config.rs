@@ -834,6 +834,69 @@ impl RepoConfig {
         repo_root.join(CORPUS_CONFIG_FILENAME)
     }
 
+    /// Set per-corpus config fields in `repo_root`'s `.ministr.toml` `[corpus]`
+    /// table, preserving the rest of the file's formatting and comments.
+    ///
+    /// This is the write half of the per-corpus config seam
+    /// (parity-gui-corpus-config): a GUI/daemon caller persists a corpus's
+    /// `model` / `dimension` / `rerank_depth` to the **same** `[corpus]` table
+    /// that [`resolve_effective_corpus_config`] reads, so what is written is
+    /// honored at ingest (model via the registry embedder pool; dimension +
+    /// rerank_depth via the registry's Matryoshka wiring) — no write-then-ignore
+    /// footgun.
+    ///
+    /// The file (and the `[corpus]` table) is created if absent. A `None`
+    /// argument leaves that field **untouched**, so a model-only edit can't
+    /// silently wipe a hand-set `dimension`. Mirrors [`Self::add_linked_project`]'s
+    /// format-preserving `toml_edit` round-trip.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] if the file can't be read/written or contains
+    /// invalid TOML, or if `[corpus]` exists but is not a table.
+    pub fn set_corpus_config(
+        repo_root: &Path,
+        model: Option<&str>,
+        dimension: Option<usize>,
+        rerank_depth: Option<usize>,
+    ) -> Result<(), StorageError> {
+        use toml_edit::{DocumentMut, Item, Table, value};
+
+        let config_path = Self::config_path_in(repo_root);
+        let existing = match std::fs::read_to_string(&config_path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(StorageError::from(e)),
+        };
+        let mut doc = existing
+            .parse::<DocumentMut>()
+            .map_err(|e| StorageError::Serialization {
+                reason: format!("invalid TOML in {}: {e}", config_path.display()),
+            })?;
+
+        let table = doc
+            .entry("corpus")
+            .or_insert(Item::Table(Table::new()))
+            .as_table_mut()
+            .ok_or_else(|| StorageError::Serialization {
+                reason: "`corpus` exists but is not a table".to_string(),
+            })?;
+        // Emit the `[corpus]` header even when the table was created fresh.
+        table.set_implicit(false);
+
+        if let Some(m) = model {
+            table["model"] = value(m);
+        }
+        if let Some(d) = dimension {
+            table["dimension"] = value(i64::try_from(d).unwrap_or(i64::MAX));
+        }
+        if let Some(r) = rerank_depth {
+            table["rerank_depth"] = value(i64::try_from(r).unwrap_or(i64::MAX));
+        }
+
+        std::fs::write(&config_path, doc.to_string()).map_err(StorageError::from)
+    }
+
     /// Add (or update) a `[[linked]]` entry in `repo_root`'s `.ministr.toml`,
     /// preserving the rest of the file's formatting and comments.
     ///
@@ -1430,6 +1493,81 @@ mod tests {
             resolved[0].corpus_paths,
             vec![child.to_string_lossy().to_string()]
         );
+    }
+
+    // ── parity-gui-corpus-config-write-seam: the [corpus] write path ─────────
+    // set_corpus_config is the GUI/daemon write half of the per-corpus config
+    // seam — it MUST land model/dimension/rerank_depth in the SAME `[corpus]`
+    // table resolve_effective_corpus_config reads, preserve the rest of the
+    // file, and create it when absent.
+
+    #[test]
+    fn set_corpus_config_writes_knobs_and_preserves_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        // A hand-authored file with a comment + an existing paths entry.
+        std::fs::write(
+            root.join(CORPUS_CONFIG_FILENAME),
+            "# hand-authored — keep me\n[corpus]\npaths = [\"src\"]\n",
+        )
+        .unwrap();
+
+        RepoConfig::set_corpus_config(
+            root,
+            Some("jina-embeddings-v2-base-code"),
+            Some(256),
+            Some(50),
+        )
+        .unwrap();
+
+        // Round-trips through the SAME discovery the CLI + daemon seam use.
+        let (_, cfg) = RepoConfig::discover(root).unwrap().unwrap();
+        assert_eq!(
+            cfg.corpus.model.as_deref(),
+            Some("jina-embeddings-v2-base-code")
+        );
+        assert_eq!(cfg.corpus.dimension, Some(256));
+        assert_eq!(cfg.corpus.rerank_depth, Some(50));
+        // Pre-existing content survives the format-preserving edit.
+        assert_eq!(cfg.corpus.paths, vec!["src".to_string()]);
+        let raw = std::fs::read_to_string(root.join(CORPUS_CONFIG_FILENAME)).unwrap();
+        assert!(
+            raw.contains("# hand-authored — keep me"),
+            "comment must survive: {raw}"
+        );
+    }
+
+    #[test]
+    fn set_corpus_config_creates_file_when_absent() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        assert!(!root.join(CORPUS_CONFIG_FILENAME).exists());
+
+        RepoConfig::set_corpus_config(root, Some("all-MiniLM-L6-v2"), None, None).unwrap();
+
+        let (_, cfg) = RepoConfig::discover(root).unwrap().unwrap();
+        assert_eq!(cfg.corpus.model.as_deref(), Some("all-MiniLM-L6-v2"));
+        // A `None` argument leaves the field unset, not zeroed.
+        assert_eq!(cfg.corpus.dimension, None);
+        assert_eq!(cfg.corpus.rerank_depth, None);
+    }
+
+    #[test]
+    fn set_corpus_config_none_model_preserves_existing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        // Seed a model, then edit only the dimension — the model must remain.
+        RepoConfig::set_corpus_config(root, Some("jina-embeddings-v2-base-code"), None, None)
+            .unwrap();
+        RepoConfig::set_corpus_config(root, None, Some(128), None).unwrap();
+
+        let (_, cfg) = RepoConfig::discover(root).unwrap().unwrap();
+        assert_eq!(
+            cfg.corpus.model.as_deref(),
+            Some("jina-embeddings-v2-base-code"),
+            "a dimension-only edit must not wipe a previously-set model"
+        );
+        assert_eq!(cfg.corpus.dimension, Some(128));
     }
 
     #[test]

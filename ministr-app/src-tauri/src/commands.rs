@@ -274,12 +274,19 @@ pub async fn trigger_reindex(
     corpus_id: String,
 ) -> Result<(), CommandError> {
     tracing::info!(corpus_id = %corpus_id, "trigger_reindex called from frontend");
+    reindex_corpus(state.inner(), &corpus_id).await
+}
 
+/// Purge a corpus's on-disk index and re-register it, so the daemon
+/// re-resolves the corpus's config (`.ministr.toml`) and re-embeds from
+/// scratch. Shared by [`trigger_reindex`] and [`set_corpus_config`] — a config
+/// change is only honored after a rebuild, so both go through one path.
+async fn reindex_corpus(state: &AppState, corpus_id: &str) -> Result<(), CommandError> {
     // Get the paths and data dir for this corpus.
     let (paths, data_dir) = {
         let guard = state.registry.corpora().read().await;
-        let Some(h) = guard.get(&corpus_id) else {
-            tracing::warn!(corpus_id = %corpus_id, "trigger_reindex: corpus not found");
+        let Some(h) = guard.get(corpus_id) else {
+            tracing::warn!(corpus_id = %corpus_id, "reindex_corpus: corpus not found");
             return Err(CommandError::not_found(format!(
                 "corpus '{corpus_id}' not found"
             )));
@@ -287,13 +294,13 @@ pub async fn trigger_reindex(
         (h.info.read().await.paths.clone(), h.data_dir.clone())
     };
 
-    tracing::info!(corpus_id = %corpus_id, paths = ?paths, "trigger_reindex: purge + re-register");
+    tracing::info!(corpus_id = %corpus_id, paths = ?paths, "reindex_corpus: purge + re-register");
 
     // Propagate unregister failure: proceeding to register after a failed
     // unregister would leave the old handle (cancellation token, watcher,
     // sessions) alive alongside a fresh one — split, inconsistent state.
-    state.registry.unregister(&corpus_id).await.map_err(|e| {
-        tracing::error!(corpus_id = %corpus_id, error = %e, "trigger_reindex: unregister failed");
+    state.registry.unregister(corpus_id).await.map_err(|e| {
+        tracing::error!(corpus_id = %corpus_id, error = %e, "reindex_corpus: unregister failed");
         CommandError::from(e)
     })?;
 
@@ -303,7 +310,7 @@ pub async fn trigger_reindex(
     ministr_core::fs_util::remove_dir_all_robust(&data_dir)
         .await
         .map_err(|e| {
-            tracing::error!(path = %data_dir.display(), error = %e, "trigger_reindex: purge failed");
+            tracing::error!(path = %data_dir.display(), error = %e, "reindex_corpus: purge failed");
             CommandError::new(
                 ErrorKind::Io,
                 format!("failed to purge corpus data at {}: {e}", data_dir.display()),
@@ -312,6 +319,71 @@ pub async fn trigger_reindex(
 
     state.registry.register(&paths).await?;
     Ok(())
+}
+
+/// Persist a corpus's per-corpus config (`model` / `dimension` /
+/// `rerank_depth`) to its `.ministr.toml` `[corpus]` table — the SAME file the
+/// CLI and the daemon's per-corpus config seam read — then re-index so the
+/// change takes effect.
+///
+/// parity-gui-corpus-config-write-seam: lets a GUI-only user opt a corpus into
+/// e.g. a code-specialised model (`jina-embeddings-v2-base-code`) or Matryoshka
+/// truncation, and have the daemon actually honor it — model via the registry
+/// embedder pool, `dimension` + `rerank_depth` via the registry's Matryoshka wiring
+/// — with no write-then-ignore footgun. A `None` argument leaves that field
+/// untouched. The write is format-preserving (see
+/// [`RepoConfig::set_corpus_config`](ministr_core::config::RepoConfig::set_corpus_config)).
+#[tauri::command]
+pub async fn set_corpus_config(
+    state: State<'_, AppState>,
+    corpus_id: String,
+    model: Option<String>,
+    dimension: Option<usize>,
+    rerank_depth: Option<usize>,
+) -> Result<(), CommandError> {
+    // The `.ministr.toml` lives at the corpus's repo root. Derive it from the
+    // first registered path: a directory path *is* the root; a file path's
+    // parent is.
+    let paths = {
+        let guard = state.registry.corpora().read().await;
+        let Some(h) = guard.get(&corpus_id) else {
+            return Err(CommandError::not_found(format!(
+                "corpus '{corpus_id}' not found"
+            )));
+        };
+        h.info.read().await.paths.clone()
+    };
+    let first = paths.first().ok_or_else(|| {
+        CommandError::invalid_input(format!("corpus '{corpus_id}' has no paths to configure"))
+    })?;
+    let p = std::path::Path::new(first);
+    let repo_root = if p.is_dir() {
+        p.to_path_buf()
+    } else {
+        p.parent().map_or_else(
+            || std::path::PathBuf::from("."),
+            std::path::Path::to_path_buf,
+        )
+    };
+
+    ministr_core::config::RepoConfig::set_corpus_config(
+        &repo_root,
+        model.as_deref(),
+        dimension,
+        rerank_depth,
+    )
+    .map_err(|e| CommandError::internal(e.to_string()))?;
+    tracing::info!(
+        corpus_id = %corpus_id,
+        repo_root = %repo_root.display(),
+        ?model,
+        ?dimension,
+        ?rerank_depth,
+        "persisted per-corpus config to .ministr.toml — re-indexing"
+    );
+
+    // Re-index so the daemon re-resolves the new config and re-embeds.
+    reindex_corpus(state.inner(), &corpus_id).await
 }
 
 /// Result of an agent-config repair pass.
