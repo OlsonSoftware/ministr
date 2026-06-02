@@ -1152,6 +1152,83 @@ impl CorpusRegistry {
         self.ensure_present(corpus_id).await
     }
 
+    /// Resolve a corpus ID to its handle, lazily loading it from the
+    /// on-disk manifest on a self-hosted miss (gd5).
+    ///
+    /// Like [`get`](Self::get), but when the corpus isn't in the in-memory
+    /// map AND no cloud `CorpusRestorer` is wired, it consults the on-disk
+    /// corpus manifest for the corpus's paths and `register`s (loads) it on
+    /// demand. This makes a query that arrives *before* the daemon's
+    /// background `restore()` (or the proxy's backgrounded registration)
+    /// has warmed the corpus load it instead of returning 404 — the seam
+    /// that lets the MCP proxy serve its handshake before any corpus is
+    /// loaded (gd5).
+    ///
+    /// Concurrent lazy loads of the same id serialise on the per-corpus
+    /// restore mutex, so a burst of startup queries loads the HNSW index
+    /// at most once. (A lazy load racing the background `restore()`'s own
+    /// `register` for the same id can still load twice — bounded, and the
+    /// atomic check-and-insert in `register` keeps it correct, never
+    /// orphaning a handle.)
+    ///
+    /// # Errors
+    ///
+    /// [`RegistryError::NotFound`] when the corpus is in neither the map
+    /// nor the manifest; otherwise any [`register`](Self::register) error.
+    pub async fn get_or_lazy_load(
+        self: &Arc<Self>,
+        corpus_id: &str,
+    ) -> Result<Arc<CorpusHandle>, RegistryError> {
+        // Fast path + cloud lazy-restore path.
+        if let Some(handle) = self.corpora.read().await.get(corpus_id).cloned() {
+            return Ok(handle);
+        }
+        if self.corpus_restorer.get().is_some() {
+            return self.ensure_present(corpus_id).await;
+        }
+
+        // Self-hosted lazy load. Serialise with concurrent lazy loads on
+        // the per-corpus mutex so a cold corpus's index loads at most once.
+        let lock = self.restore_lock(corpus_id).await;
+        let _guard = lock.lock().await;
+        if let Some(handle) = self.corpora.read().await.get(corpus_id).cloned() {
+            return Ok(handle);
+        }
+        let Some(paths) = self.manifest_paths_for(corpus_id).await else {
+            return Err(RegistryError::NotFound {
+                id: corpus_id.to_string(),
+            });
+        };
+        self.register(&paths).await?;
+        self.corpora
+            .read()
+            .await
+            .get(corpus_id)
+            .cloned()
+            .ok_or_else(|| RegistryError::NotFound {
+                id: corpus_id.to_string(),
+            })
+    }
+
+    /// Look up a corpus's registered paths from the durable repo (cloud)
+    /// or the on-disk manifest (self-hosted) WITHOUT loading the corpus.
+    /// Backs [`get_or_lazy_load`](Self::get_or_lazy_load) (gd5).
+    async fn manifest_paths_for(&self, corpus_id: &str) -> Option<Vec<String>> {
+        if let Some(repo) = self.corpora_repo.get().cloned() {
+            let rows = repo.list().await.ok()?;
+            return rows
+                .into_iter()
+                .find(|r| r.corpus_id == corpus_id)
+                .map(|r| r.paths);
+        }
+        let json = std::fs::read_to_string(self.manifest_path()).ok()?;
+        let entries: Vec<ManifestEntry> = serde_json::from_str(&json).ok()?;
+        entries
+            .into_iter()
+            .find(|e| e.id == corpus_id)
+            .map(|e| e.paths)
+    }
+
     /// Extract a corpus's `info` handle without holding the corpora-map
     /// guard across the subsequent `.await`.
     ///

@@ -338,7 +338,11 @@ fn err(status: StatusCode, code: &str, msg: impl std::fmt::Display) -> impl Into
 /// serialise register / unregister.
 macro_rules! get_corpus {
     ($state:expr, $id:expr) => {
-        match $state.registry.get($id).await {
+        // gd5: `get_or_lazy_load` (vs `get`) loads a known-but-cold corpus
+        // from the manifest on demand, so a query that arrives before the
+        // background restore / proxy registration has warmed it succeeds
+        // instead of 404ing.
+        match $state.registry.get_or_lazy_load($id).await {
             Ok(handle) => handle,
             Err(e) => return err(StatusCode::NOT_FOUND, "not_found", e).into_response(),
         }
