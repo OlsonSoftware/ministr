@@ -259,6 +259,32 @@ To switch models, set `default_model` in `~/.ministr/config.toml` (or per-corpus
 default_model = "jina-embeddings-v2-base-code"
 ```
 
+### Choosing a model for your corpus
+
+There is no single best embedding model — the right choice depends on what the
+corpus mostly contains:
+
+| Corpus is mostly… | Recommended model | Why |
+|---|---|---|
+| **Code** | `jina-embeddings-v2-base-code` (768d) | Code-specialized; **measured win** on a text-to-code retrieval bake-off — R@5 0.673 vs 0.635, nDCG@5 0.604 vs 0.550, MRR 0.681 vs 0.604 against `all-MiniLM-L6-v2`. |
+| **Prose / docs / markdown** | `all-MiniLM-L6-v2` (384d, default) | The default wins **every** metric on doc-heavy retrieval; the code model *regresses* on prose. |
+
+The trade-off is real and goes both ways: the code model helps code and hurts
+prose, so don't set it globally for a mixed or doc-heavy workspace. Two ways to
+apply it:
+
+- **All-code workspace** — set it globally in `~/.ministr/config.toml`
+  (`default_model = "jina-embeddings-v2-base-code"`); the daemon and the CLI
+  both pick it up.
+- **One code repo among others** — set `[corpus] model =
+  "jina-embeddings-v2-base-code"` in that repo's `.ministr.toml`. The `ministr`
+  CLI honors this per-repo override (`corpus.model` > global `default_model`).
+
+Changing a corpus's model changes its vector dimension (here 384 → 768), so the
+corpus is **re-indexed** the next time it is built — the index detects the
+model/dimension change on load, discards the stale vectors, and rebuilds. No
+manual step is required.
+
 ## Environment Variables
 
 | Variable | Description |
