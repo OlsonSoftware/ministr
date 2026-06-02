@@ -2425,7 +2425,9 @@ async fn create_session(
 ) -> impl IntoResponse {
     let handle = get_corpus!(&state, &id);
 
-    let session_id = generate_session_id();
+    // gd5: honor a caller-provided session id (the MCP proxy pre-picks it so
+    // it can serve before this backgrounded call runs); else generate one.
+    let session_id = req.session_id.clone().unwrap_or_else(generate_session_id);
     let budget_tokens = req.budget_tokens.unwrap_or(100_000);
     let data_dir = handle.data_dir.clone();
 

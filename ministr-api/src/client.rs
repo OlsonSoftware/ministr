@@ -871,7 +871,35 @@ impl DaemonClient {
         corpus_id: &str,
         budget_tokens: Option<usize>,
     ) -> Result<crate::session::CreateSessionResponse, ClientError> {
-        let req = crate::session::CreateSessionRequest { budget_tokens };
+        let req = crate::session::CreateSessionRequest {
+            budget_tokens,
+            session_id: None,
+        };
+        self.post(&format!("/api/v1/corpora/{corpus_id}/sessions"), &req)
+            .await
+    }
+
+    /// Create a session under a caller-chosen `session_id` (gd5).
+    ///
+    /// Lets the MCP proxy pick the session id up front — so it can build its
+    /// backend and serve the MCP handshake immediately — then create the
+    /// session in the background under that same id. Idempotent: if the id
+    /// already exists (e.g. a query already lazily touched it) the daemon's
+    /// `get_or_create` returns the existing entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn create_session_with_id(
+        &self,
+        corpus_id: &str,
+        budget_tokens: Option<usize>,
+        session_id: &str,
+    ) -> Result<crate::session::CreateSessionResponse, ClientError> {
+        let req = crate::session::CreateSessionRequest {
+            budget_tokens,
+            session_id: Some(session_id.to_string()),
+        };
         self.post(&format!("/api/v1/corpora/{corpus_id}/sessions"), &req)
             .await
     }

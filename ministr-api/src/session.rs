@@ -12,6 +12,12 @@ pub struct CreateSessionRequest {
     /// Maximum context budget in tokens (default: 100 000).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub budget_tokens: Option<usize>,
+    /// Caller-provided session id (gd5). When set, the daemon creates the
+    /// session under THIS id instead of generating one — this lets the MCP
+    /// proxy pick the id up front so it can build its backend and serve the
+    /// handshake *before* the (backgrounded) session creation completes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 /// Response after creating a session.

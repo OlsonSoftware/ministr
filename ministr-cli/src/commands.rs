@@ -979,6 +979,29 @@ pub async fn cmd_serve_http(
 // ministr serve --proxy
 // ---------------------------------------------------------------------------
 
+/// A linked project the proxy will serve, with its locally-derived corpus id +
+/// pre-picked session id (gd5) — built before any daemon round-trip so the MCP
+/// server can be constructed and served immediately.
+struct LinkedPlan {
+    label: String,
+    corpus_id: String,
+    session_id: String,
+    paths: Vec<String>,
+}
+
+/// Generate an opaque, locally-unique session id for the proxy to hand to its
+/// backend up front (gd5) — `seed` disambiguates the primary (0) from each
+/// linked project so a burst of same-nanosecond calls can't collide. The
+/// daemon treats the id as opaque (`get_or_create` keys on the string), so the
+/// exact shape doesn't matter — only uniqueness.
+fn gen_proxy_session_id(seed: usize) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("sess-{nanos:x}-{seed:x}")
+}
+
 /// `ministr serve --proxy` — thin MCP proxy over stdin/stdout.
 ///
 /// Connects to the ministr daemon at `~/.ministr/ministrd.sock` and routes
@@ -1041,112 +1064,81 @@ pub async fn cmd_serve_proxy_stdio(
         }
     }
 
-    let corpus_id = match client.register_corpus(corpus_paths).await {
-        Ok(resp) => {
-            eprintln!(
-                "ministr: primary corpus {} registered (indexing_started={})",
-                resp.corpus_id, resp.indexing_started
-            );
-            resp.corpus_id
-        }
-        Err(e) => {
-            return Err(miette::miette!(
-                "corpus registration failed: {e} — is the daemon running?"
-            ));
-        }
+    // gd5: compute the primary corpus_id LOCALLY (it's deterministic from the
+    // canonicalised paths — the same functions `register` uses) and pick the
+    // session id up front. This lets us build the backend and serve the MCP
+    // handshake IMMEDIATELY; the actual register + create_session run in the
+    // background, and the daemon lazy-loads the corpus on the first query
+    // (CorpusRegistry::get_or_lazy_load). No more blocking the handshake on
+    // every corpus's HNSW load.
+    let primary_corpus_id = match ministr_core::corpus_id::canonical_corpus_paths(corpus_paths)
+        .and_then(|c| ministr_core::corpus_id::corpus_id_from_paths(&c))
+    {
+        Ok(id) => id,
+        Err(e) => return Err(miette::miette!("invalid primary corpus paths: {e}")),
     };
-    let session_id = match client.create_session(&corpus_id, None).await {
-        Ok(resp) => {
-            eprintln!("ministr: primary session {} created", resp.session_id);
-            resp.session_id
-        }
-        Err(e) => {
-            return Err(miette::miette!("session creation failed: {e}"));
-        }
-    };
+    let primary_session_id = gen_proxy_session_id(0);
 
-    // Resolve each linked project's (corpus_id, session_id) so the agent
-    // can target it by label via the `project: "<label>"` argument on any
-    // shared MCP tool. Failures are logged but non-fatal — the primary
-    // corpus stays usable.
-    //
-    // Register them CONCURRENTLY: each registration triggers a per-corpus
-    // create_handle (open SQLite + load the HNSW index) on the daemon, and
-    // awaiting them in series made the MCP handshake wait for the sum of
-    // every linked project's load time. A JoinSet collapses that to the
-    // slowest single project.
+    // Resolve each linked project's (label, corpus_id, session_id, paths)
+    // locally too — the agent targets it by label via the `project: "<label>"`
+    // argument on any shared MCP tool.
+    let mut linked_plans: Vec<LinkedPlan> = Vec::new();
+    for (i, project) in linked.iter().enumerate() {
+        let paths = project.corpus_paths.clone();
+        if paths.is_empty() {
+            eprintln!(
+                "ministr: warning — linked project '{}' has no corpus paths, skipping",
+                project.label
+            );
+            continue;
+        }
+        match ministr_core::corpus_id::canonical_corpus_paths(&paths)
+            .and_then(|c| ministr_core::corpus_id::corpus_id_from_paths(&c))
+        {
+            Ok(corpus_id) => linked_plans.push(LinkedPlan {
+                label: project.label.clone(),
+                corpus_id,
+                session_id: gen_proxy_session_id(i + 1),
+                paths,
+            }),
+            Err(e) => eprintln!(
+                "ministr: warning — linked '{}' has invalid paths ({e}), skipping",
+                project.label
+            ),
+        }
+    }
+
+    // Build the backends with the locally-derived ids — zero daemon round-trips.
     let mut linked_backends: std::collections::HashMap<
         String,
         std::sync::Arc<ministr_mcp::backend::DaemonBackend>,
     > = std::collections::HashMap::new();
-    let mut linked_cleanup: Vec<(String, String)> = Vec::new();
-    let mut linked_set: tokio::task::JoinSet<Option<(String, String, String)>> =
-        tokio::task::JoinSet::new();
-    for project in linked {
-        let label = project.label.clone();
-        let paths: Vec<String> = project.corpus_paths.clone();
-        if paths.is_empty() {
-            eprintln!("ministr: warning — linked project '{label}' has no corpus paths, skipping");
-            continue;
-        }
-        let task_client = std::sync::Arc::clone(&client);
-        linked_set.spawn(async move {
-            // Pass the linked-project label as display_name so the tray UI
-            // shows "BurntSushi-ripgrep" rather than the basename of the
-            // (possibly content-hashed) clone dir.
-            match task_client
-                .register_corpus_with_display_name(&paths, Some(label.clone()))
-                .await
-            {
-                Ok(resp) => match task_client.create_session(&resp.corpus_id, None).await {
-                    Ok(sresp) => {
-                        eprintln!(
-                            "ministr: linked '{label}' → corpus {}, session {} (indexing_started={})",
-                            resp.corpus_id, sresp.session_id, resp.indexing_started
-                        );
-                        Some((label, resp.corpus_id, sresp.session_id))
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "ministr: warning — linked '{label}' session creation failed: {e}"
-                        );
-                        None
-                    }
-                },
-                Err(e) => {
-                    eprintln!("ministr: warning — linked '{label}' corpus registration failed: {e}");
-                    None
-                }
-            }
-        });
-    }
-    while let Some(joined) = linked_set.join_next().await {
-        if let Ok(Some((label, linked_corpus_id, linked_session_id))) = joined {
-            linked_cleanup.push((linked_corpus_id.clone(), linked_session_id.clone()));
-            let backend = ministr_mcp::backend::DaemonBackend::new(
-                std::sync::Arc::clone(&client),
-                linked_corpus_id,
-                Some(linked_session_id),
-            );
-            linked_backends.insert(label, std::sync::Arc::new(backend));
-        }
+    for lp in &linked_plans {
+        let backend = ministr_mcp::backend::DaemonBackend::new(
+            std::sync::Arc::clone(&client),
+            lp.corpus_id.clone(),
+            Some(lp.session_id.clone()),
+        );
+        linked_backends.insert(lp.label.clone(), std::sync::Arc::new(backend));
     }
 
-    eprintln!("ministr: starting MCP proxy on stdio (daemon-backend mode)");
     let mut server = if linked_backends.is_empty() {
         ministr_mcp::server::MinistrServer::with_daemon_backend(
             std::sync::Arc::clone(&client),
-            corpus_id.clone(),
-            session_id.clone(),
+            primary_corpus_id.clone(),
+            primary_session_id.clone(),
         )
     } else {
         let default_backend = std::sync::Arc::new(ministr_mcp::backend::DaemonBackend::new(
             std::sync::Arc::clone(&client),
-            corpus_id.clone(),
-            Some(session_id.clone()),
+            primary_corpus_id.clone(),
+            Some(primary_session_id.clone()),
         ));
         let multi = ministr_mcp::backend::DaemonMultiBackend::new(default_backend, linked_backends);
-        ministr_mcp::server::MinistrServer::with_daemon_multi_backend(multi, session_id.clone())
+        ministr_mcp::server::MinistrServer::with_daemon_multi_backend(
+            multi,
+            primary_session_id.clone(),
+        )
     };
 
     // Prune local-only tools — fetch / clone / refresh / task all need
@@ -1158,9 +1150,80 @@ pub async fn cmd_serve_proxy_stdio(
         corpus_paths.iter().map(std::path::PathBuf::from).collect();
     server.prune_tools(&local_paths);
 
+    // gd5: register the primary + linked corpora (and create their sessions
+    // under the pre-picked ids) in the BACKGROUND, so serving the handshake
+    // below isn't blocked on any corpus's create_handle / HNSW load. A query
+    // that lands before this finishes lazy-loads its corpus daemon-side, and
+    // `create_session_with_id` is idempotent on the id we already handed the
+    // backend. Best-effort: failures are logged, never fatal.
+    {
+        let bg_client = std::sync::Arc::clone(&client);
+        let primary_paths = corpus_paths.to_vec();
+        let primary_sid = primary_session_id.clone();
+        let linked_bg: Vec<(String, Vec<String>, String)> = linked_plans
+            .iter()
+            .map(|lp| (lp.label.clone(), lp.paths.clone(), lp.session_id.clone()))
+            .collect();
+        tokio::spawn(async move {
+            match bg_client.register_corpus(&primary_paths).await {
+                Ok(resp) => {
+                    eprintln!(
+                        "ministr: primary corpus {} registered (indexing_started={})",
+                        resp.corpus_id, resp.indexing_started
+                    );
+                    if let Err(e) = bg_client
+                        .create_session_with_id(&resp.corpus_id, None, &primary_sid)
+                        .await
+                    {
+                        eprintln!("ministr: warning — primary session creation failed: {e}");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("ministr: warning — primary corpus registration failed: {e}");
+                }
+            }
+            for (label, paths, sid) in linked_bg {
+                match bg_client
+                    .register_corpus_with_display_name(&paths, Some(label.clone()))
+                    .await
+                {
+                    Ok(resp) => {
+                        eprintln!(
+                            "ministr: linked '{label}' → corpus {} (indexing_started={})",
+                            resp.corpus_id, resp.indexing_started
+                        );
+                        if let Err(e) = bg_client
+                            .create_session_with_id(&resp.corpus_id, None, &sid)
+                            .await
+                        {
+                            eprintln!(
+                                "ministr: warning — linked '{label}' session creation failed: {e}"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "ministr: warning — linked '{label}' corpus registration failed: {e}"
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    // Cleanup ids are known up front now (we picked them), so teardown doesn't
+    // depend on the background registration having completed.
     let cleanup_client = std::sync::Arc::clone(&client);
-    let cleanup_corpus = corpus_id;
-    let cleanup_session = session_id;
+    let cleanup_corpus = primary_corpus_id;
+    let cleanup_session = primary_session_id;
+    let linked_cleanup: Vec<(String, String)> = linked_plans
+        .iter()
+        .map(|lp| (lp.corpus_id.clone(), lp.session_id.clone()))
+        .collect();
+
+    eprintln!(
+        "ministr: starting MCP proxy on stdio (daemon-backend mode; corpora registering in background)"
+    );
 
     let service = server
         .serve(rmcp::transport::stdio())
