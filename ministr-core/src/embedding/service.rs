@@ -127,8 +127,10 @@ impl EmbeddingService {
     /// # Errors
     ///
     /// Returns [`IndexError::EmbeddingFailed`] if the service is shutting down,
-    /// the worker has gone away, the model errors, or the model produces a
-    /// degenerate (non-finite or all-zero) vector.
+    /// the worker has gone away, or the model itself errors. A degenerate
+    /// (non-finite/all-zero) vector is NOT an error — it is zeroed and skipped
+    /// at index-insert time (see `validate_batch`), so it can't roll back a
+    /// whole corpus.
     pub async fn embed(&self, texts: Vec<String>) -> EmbedReply {
         if texts.is_empty() {
             return Ok(Vec::new());
@@ -233,7 +235,7 @@ fn process_batch(model: &dyn Embedder, batch: Vec<EmbedRequest>) {
             let mut vectors = all_vectors.into_iter();
             for req in batch {
                 let slice: Vec<Vec<f32>> = vectors.by_ref().take(req.texts.len()).collect();
-                let _ = req.reply.send(validate_batch(slice));
+                let _ = req.reply.send(Ok(sanitize_batch(slice)));
             }
         }
         Err(e) => {
@@ -247,23 +249,40 @@ fn process_batch(model: &dyn Embedder, batch: Vec<EmbedRequest>) {
     }
 }
 
-/// Degenerate-vector guard, mirroring the HNSW insert guard (commit `fb3015a`):
-/// reject the result if any vector is non-finite or an all-zero vector, so a
-/// poisoned vector can never reach the index.
-fn validate_batch(vectors: Vec<Vec<f32>>) -> EmbedReply {
-    for v in &vectors {
-        if v.iter().any(|x| !x.is_finite()) {
-            return Err(IndexError::EmbeddingFailed {
-                reason: "embedding contains non-finite values".to_owned(),
-            });
-        }
-        if !v.is_empty() && v.iter().all(|x| *x == 0.0) {
-            return Err(IndexError::EmbeddingFailed {
-                reason: "embedding is a degenerate zero vector".to_owned(),
-            });
+/// Degenerate-vector guard, matching the HNSW insert guard (commit `fb3015a`):
+/// a non-finite or all-zero vector is **zeroed and skipped at index-insert
+/// time** (both `HnswIndex::insert` and `rebuild_hnsw_from_store` drop
+/// zero/non-finite vectors), NOT failed.
+///
+/// This previously returned `Err` on the first bad vector, which propagated up
+/// to `run_producer_consumer` and rolled back the **entire corpus** — a single
+/// degenerate section (e.g. a UE C++ file whose embedding came back non-finite)
+/// took down the whole index, surfacing as a corpus stuck at ERROR / 0 files.
+/// The inline embed path never did this (it relies on the insert-time guard),
+/// so routing through the `EmbeddingService` was a silent regression. We now
+/// zero the offending vectors (so `SQLite` never stores NaN/±inf) and count
+/// them in a warning, then continue — the good sections still index.
+fn sanitize_batch(mut vectors: Vec<Vec<f32>>) -> Vec<Vec<f32>> {
+    let mut degenerate = 0usize;
+    for v in &mut vectors {
+        let non_finite = v.iter().any(|x| !x.is_finite());
+        let all_zero = !v.is_empty() && v.iter().all(|x| *x == 0.0);
+        if non_finite || all_zero {
+            degenerate += 1;
+            for x in v.iter_mut() {
+                *x = 0.0;
+            }
         }
     }
-    Ok(vectors)
+    if degenerate > 0 {
+        tracing::warn!(
+            degenerate,
+            total = vectors.len(),
+            "embedding batch contained degenerate (non-finite/zero) vectors; \
+             zeroed them (skipped at index insert) instead of failing the batch"
+        );
+    }
+    vectors
 }
 
 #[cfg(test)]
@@ -391,15 +410,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn degenerate_zero_vector_is_rejected() {
+    async fn degenerate_vector_is_zeroed_not_failed() {
         let mut model = CountingEmbedder::new(4);
         model.zero = true;
         let svc = EmbeddingService::with_model(Arc::new(model));
-        let err = svc.embed(vec!["anything".to_owned()]).await.unwrap_err();
+        // A degenerate (all-zero) embedding must NOT fail the batch — it's
+        // zeroed and skipped at index-insert time, so the rest of the corpus
+        // still indexes (a single bad section can't roll back the whole corpus).
+        let out = svc
+            .embed(vec!["anything".to_owned()])
+            .await
+            .expect("degenerate vector must not fail the batch");
+        assert_eq!(out.len(), 1);
+        assert!(out[0].iter().all(|x| *x == 0.0), "degenerate vector zeroed");
+    }
+
+    #[test]
+    fn sanitize_batch_zeroes_degenerate_vectors_instead_of_erroring() {
+        let vectors = vec![
+            vec![1.0, 2.0, 3.0],           // good — untouched
+            vec![f32::NAN, 1.0, 2.0],      // non-finite — zeroed
+            vec![f32::INFINITY, 0.0, 0.0], // non-finite — zeroed
+            vec![0.0, 0.0, 0.0],           // all-zero — left zero
+        ];
+        let out = sanitize_batch(vectors);
+        assert_eq!(out.len(), 4);
         assert!(
-            matches!(err, IndexError::EmbeddingFailed { .. }),
-            "degenerate vector must be rejected, got {err:?}"
+            (out[0][0] - 1.0).abs() < f32::EPSILON && out[0][1..].iter().all(|x| x.is_finite()),
+            "good vector preserved"
         );
+        assert!(out[1].iter().all(|x| *x == 0.0), "NaN vector zeroed");
+        assert!(out[2].iter().all(|x| *x == 0.0), "inf vector zeroed");
+        assert!(out[3].iter().all(|x| *x == 0.0), "zero vector stays zero");
     }
 
     #[tokio::test]
