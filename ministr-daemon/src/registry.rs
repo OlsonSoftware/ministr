@@ -854,6 +854,20 @@ impl CorpusRegistry {
             return Ok((corpus_id, false));
         }
 
+        // gd8: serialize concurrent loads of the SAME corpus on the per-corpus
+        // mutex so its HNSW rebuilds AT MOST ONCE. The daemon's restore(), the
+        // MCP proxy's register, and lazy-load all race to load a cold corpus;
+        // gd7 made the proxy register concurrently with restore, so a corpus was
+        // rebuilt twice at once — doubling warm-up time under CPU contention.
+        // Different corpora take different locks, so restore stays parallel
+        // across corpora. Held across create_handle so the loser just waits and
+        // then finds the corpus loaded (idempotent), doing no redundant rebuild.
+        let load_lock = self.restore_lock(&corpus_id).await;
+        let _load_guard = load_lock.lock().await;
+        if self.corpora.read().await.contains_key(&corpus_id) {
+            return Ok((corpus_id, false));
+        }
+
         // gd6/gd9: mark this corpus "warming" (registered, loading) for the
         // duration of create_handle's HNSW rebuild, so `warming_placeholders`
         // can surface it the whole time. Sourcing warming from the on-disk
@@ -1202,12 +1216,10 @@ impl CorpusRegistry {
     /// that lets the MCP proxy serve its handshake before any corpus is
     /// loaded (gd5).
     ///
-    /// Concurrent lazy loads of the same id serialise on the per-corpus
-    /// restore mutex, so a burst of startup queries loads the HNSW index
-    /// at most once. (A lazy load racing the background `restore()`'s own
-    /// `register` for the same id can still load twice — bounded, and the
-    /// atomic check-and-insert in `register` keeps it correct, never
-    /// orphaning a handle.)
+    /// Concurrent loads of the same id — a burst of startup queries, the
+    /// background `restore()`, and the proxy's `register` — all serialise on
+    /// the per-corpus restore mutex *inside* `register` (gd8), so a cold
+    /// corpus's HNSW rebuilds at most once (no double-rebuild / wasted CPU).
     ///
     /// # Errors
     ///
@@ -1225,13 +1237,9 @@ impl CorpusRegistry {
             return self.ensure_present(corpus_id).await;
         }
 
-        // Self-hosted lazy load. Serialise with concurrent lazy loads on
-        // the per-corpus mutex so a cold corpus's index loads at most once.
-        let lock = self.restore_lock(corpus_id).await;
-        let _guard = lock.lock().await;
-        if let Some(handle) = self.corpora.read().await.get(corpus_id).cloned() {
-            return Ok(handle);
-        }
+        // Self-hosted lazy load. `register` (gd8) now dedups concurrent loads of
+        // the same id on the per-corpus mutex, so we must NOT take that lock here
+        // too — `register` re-acquires it and the tokio mutex is non-reentrant.
         let Some(paths) = self.manifest_paths_for(corpus_id).await else {
             return Err(RegistryError::NotFound {
                 id: corpus_id.to_string(),
