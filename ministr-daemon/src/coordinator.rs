@@ -79,9 +79,9 @@ struct PendingJob {
 #[derive(Default)]
 struct QueueState {
     /// Pending corpora keyed by id — at most one entry each, so repeated
-    /// enqueues for the same corpus collapse onto one slot (latest paths win,
-    /// original FIFO position preserved). Selection is shortest-job-first by
-    /// `(priority, seq)`.
+    /// enqueues for the same corpus collapse onto one slot (their paths
+    /// unioned, original FIFO position preserved). Selection is
+    /// shortest-job-first by `(priority, seq)`.
     pending: HashMap<String, PendingJob>,
     /// Corpora with a job currently in flight (holding a permit). Selection
     /// skips these, giving per-corpus exclusion without head-of-line blocking.
@@ -92,11 +92,24 @@ struct QueueState {
 
 impl QueueState {
     /// Record (or refresh) a pending job for `corpus_id` at `priority`. If the
-    /// corpus is already queued, its paths + priority are updated in place and
-    /// its original FIFO position (`seq`) is preserved — it is not re-queued.
+    /// corpus is already queued, the request coalesces onto the existing slot:
+    /// the requested paths are **unioned** into it (lossless coalescing — no
+    /// concurrently-requested path is dropped), the priority is refreshed to the
+    /// latest estimate, and the original FIFO position (`seq`) is preserved — it
+    /// is not re-queued.
+    ///
+    /// The union (rather than latest-wins-replace) matters when two different
+    /// path sets land on one corpus before it dispatches — e.g. an
+    /// `update_corpus_paths` "added" set collapsing with the file watcher's
+    /// full-set enqueue, or vice versa. Re-ingesting the union is always safe
+    /// because ingestion is incremental (unchanged files are skipped).
     fn upsert(&mut self, corpus_id: String, paths: Vec<String>, priority: usize) {
         if let Some(job) = self.pending.get_mut(&corpus_id) {
-            job.paths = paths;
+            for p in paths {
+                if !job.paths.contains(&p) {
+                    job.paths.push(p);
+                }
+            }
             job.priority = priority;
         } else {
             let seq = self.next_seq;
@@ -277,18 +290,52 @@ mod tests {
     }
 
     #[test]
-    fn same_corpus_enqueues_coalesce_to_one_slot_latest_paths_win() {
+    fn same_corpus_enqueues_coalesce_to_one_slot_unioning_paths() {
         let mut q = QueueState::default();
-        q.upsert("a".into(), paths("old"), EQ);
-        q.upsert("a".into(), paths("new"), EQ);
+        // Two different path sets for one queued corpus (e.g. an
+        // update_corpus_paths "added" set + a watcher full-set enqueue).
+        q.upsert("a".into(), vec!["p1".into()], EQ);
+        q.upsert("a".into(), vec!["p2".into(), "p1".into()], EQ);
 
         let job = q.take_next_dispatchable().unwrap();
         assert_eq!(job.corpus_id, "a");
-        assert_eq!(job.paths, paths("new"), "the latest enqueue's paths win");
+        assert_eq!(
+            job.paths,
+            vec!["p1".to_string(), "p2".to_string()],
+            "the collapsed job ingests the union of all requested paths, deduped"
+        );
         assert!(
             q.take_next_dispatchable().is_none(),
             "the two enqueues collapsed onto a single queued job"
         );
+    }
+
+    #[test]
+    fn coalescing_while_running_unions_all_requests_into_one_followup() {
+        let mut q = QueueState::default();
+        // `a` starts indexing.
+        q.upsert("a".into(), vec!["p1".into()], EQ);
+        assert_eq!(q.take_next_dispatchable().unwrap().corpus_id, "a"); // busy
+
+        // While `a` runs, two more requests arrive with distinct paths.
+        q.upsert("a".into(), vec!["p2".into()], EQ);
+        q.upsert("a".into(), vec!["p3".into(), "p2".into()], EQ);
+        assert!(
+            q.take_next_dispatchable().is_none(),
+            "a is still busy — nothing else dispatchable"
+        );
+
+        // When `a` finishes, the two follow-up requests have collapsed into a
+        // single job covering the union of their paths.
+        q.busy.remove("a");
+        let followup = q.take_next_dispatchable().unwrap();
+        assert_eq!(followup.corpus_id, "a");
+        assert_eq!(
+            followup.paths,
+            vec!["p2".to_string(), "p3".to_string()],
+            "one follow-up job ingests the union of every request made while running"
+        );
+        assert!(q.take_next_dispatchable().is_none());
     }
 
     #[test]
