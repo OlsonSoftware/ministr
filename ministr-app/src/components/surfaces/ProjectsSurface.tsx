@@ -30,7 +30,8 @@ import { AnimatePresence, motion } from "motion/react";
 
 import type { CorpusInfo } from "../../lib/types";
 import { corpusLabel, corpusRoot } from "../../lib/corpus";
-import { formatEta, formatRelativeTime } from "../../lib/format";
+import { toCorpusViewModel } from "../../lib/corpusFleet";
+import { formatRelativeTime } from "../../lib/format";
 import { listContainer, listItem, spring } from "../../lib/motion";
 import { corpusStatusBadge } from "../../lib/status";
 import { cn } from "../../lib/utils";
@@ -47,7 +48,7 @@ import { ContentTray } from "../ui/content-tray";
 import { EmptyState } from "../ui/empty-state";
 import { H1 } from "../ui/heading";
 import { MetricTile } from "../ui/metric-tile";
-import { Progress } from "../ui/progress";
+import { IndexingPanel } from "../IndexingPanel";
 import { AdaptiveSurface } from "../ui/adaptive-surface";
 import { ProjectSessions } from "./ProjectSessions";
 import { LinkedProjectsPanel } from "./LinkedProjectsPanel";
@@ -376,24 +377,12 @@ function ProjectCard({
   onRemove,
   ref,
 }: ProjectCardProps) {
-  const indexing = corpus.status.state === "indexing";
+  // One consolidated view model (lib/corpusFleet) — the single source of truth
+  // every corpus/indexing component renders from.
+  const vm = toCorpusViewModel(corpus, progress);
+  const indexing = vm.isIndexing;
   const { variant: statusVariant, label: statusLabel } =
     corpusStatusBadge(corpus);
-  const filesDone = progress?.files_done ?? 0;
-  const filesTotal = progress?.files_total ?? 0;
-  // During the GPU-bound embedding phase the parser is backpressured by the
-  // bounded parse→embed channel, so the file counter stalls for seconds while
-  // embeddings keep streaming in. Drive the live readout by whichever metric is
-  // actually moving — files while parsing, vectors while embedding — so the bar
-  // stays granular end-to-end. (The backend emits an event per embedding batch;
-  // see `indexing_progress_events`.)
-  const embDone = progress?.embeddings_done ?? 0;
-  const embTotal = progress?.embeddings_total ?? 0;
-  const embedding = progress?.phase === "embedding" && embTotal > 0;
-  const headDone = embedding ? embDone : filesDone;
-  const headTotal = embedding ? embTotal : filesTotal;
-  const headUnit = embedding ? "vectors" : "files";
-  const pct = headTotal > 0 ? (headDone / headTotal) * 100 : 0;
 
   return (
     <motion.div
@@ -464,18 +453,7 @@ function ProjectCard({
 
       {indexing ? (
         <div className="mt-3">
-          <div className="flex justify-between text-mono-mini font-mono uppercase tracking-[0.08em] text-warning mb-1.5">
-            <span>
-              {headDone.toLocaleString()} / {headTotal.toLocaleString()}{" "}
-              {headUnit}
-            </span>
-            <span className="tabular-nums">
-              {progress?.estimated_remaining_secs != null
-                ? formatEta(progress.estimated_remaining_secs)
-                : "ETA …"}
-            </span>
-          </div>
-          <Progress tone="warning" value={pct} />
+          <IndexingPanel vm={vm} compact />
         </div>
       ) : (
         <div className="flex items-center justify-between mt-2 text-mono-mini font-mono uppercase tracking-[0.08em] text-text-dim">
@@ -528,22 +506,8 @@ function ProjectDetail({
     );
   }
 
-  const indexing = corpus.status.state === "indexing";
-  const filesDone = progress?.files_done ?? 0;
-  const filesTotal = progress?.files_total ?? 0;
-  // During the GPU-bound embedding phase the parser is backpressured by the
-  // bounded parse→embed channel, so the file counter stalls for seconds while
-  // embeddings keep streaming in. Drive the live readout by whichever metric is
-  // actually moving — files while parsing, vectors while embedding — so the bar
-  // stays granular end-to-end. (The backend emits an event per embedding batch;
-  // see `indexing_progress_events`.)
-  const embDone = progress?.embeddings_done ?? 0;
-  const embTotal = progress?.embeddings_total ?? 0;
-  const embedding = progress?.phase === "embedding" && embTotal > 0;
-  const headDone = embedding ? embDone : filesDone;
-  const headTotal = embedding ? embTotal : filesTotal;
-  const headUnit = embedding ? "vectors" : "files";
-  const pct = headTotal > 0 ? (headDone / headTotal) * 100 : 0;
+  const vm = toCorpusViewModel(corpus, progress);
+  const indexing = vm.isIndexing;
   const { variant: statusVariant, label: statusLabel } =
     corpusStatusBadge(corpus);
 
@@ -571,25 +535,8 @@ function ProjectDetail({
         </div>
 
         {indexing && (
-          <ContentTray compact className="space-y-2">
-            <div className="flex justify-between text-mono-mini font-mono uppercase tracking-[0.08em] text-warning">
-              <span>
-                {progress?.phase ? `${progress.phase} · ` : ""}
-                {headDone.toLocaleString()} / {headTotal.toLocaleString()}{" "}
-                {headUnit}
-              </span>
-              <span className="tabular-nums">
-                {progress?.estimated_remaining_secs != null
-                  ? formatEta(progress.estimated_remaining_secs)
-                  : "ETA …"}
-              </span>
-            </div>
-            <Progress tone="warning" value={pct} />
-            {progress?.current_file && (
-              <p className="font-mono text-mono-mini text-text-dim truncate">
-                {progress.current_file}
-              </p>
-            )}
+          <ContentTray compact>
+            <IndexingPanel vm={vm} />
           </ContentTray>
         )}
 
