@@ -1469,19 +1469,18 @@ fn home_dir() -> Option<String> {
 /// files from the host filesystem.
 #[tauri::command]
 pub async fn read_source_excerpt(
-    state: State<'_, AppState>,
     corpus_id: String,
     file_path: String,
     line_start: u32,
     line_end: u32,
 ) -> Result<String, CommandError> {
-    // Snapshot the corpus's root paths under the registry lock, then
-    // drop the guard so the canonicalize awaits don't hold it.
-    let roots: Vec<String> = {
-        let guard = state.registry.corpora().read().await;
-        let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
-        handle.info.read().await.paths.clone()
-    };
+    // gd2c: the corpus's root paths (which bound the path-scope security
+    // check below) come from the daemon over UDS, not the in-process
+    // registry. The canonicalize + scope check + line read stay app-local.
+    let roots: Vec<String> = ministr_api::client::DaemonClient::new()
+        .corpus_status(&corpus_id)
+        .await?
+        .paths;
 
     // Canonicalize both sides so symlinks / `..` segments / relative paths
     // can't be used to step outside a corpus root. canonicalize() implicitly
