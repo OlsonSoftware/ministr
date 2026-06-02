@@ -107,6 +107,13 @@ eval-bakeoff-code:
 eval-dump-code-ids:
     cargo test -p ministr-core --test eval_retrieval -- --ignored --nocapture dump_code_corpus_ids
 
+# cq-throughput (BENCH): drive 25+ mixed-size corpora through the real
+# IngestionCoordinator queue (cq-queue/priority/coalesce) with a fast mock
+# embedder and print end-to-end throughput (corpora/s, files/s). Measures
+# coordinator + pipeline orchestration, not embedding speed.
+cq-throughput-bench:
+    cargo test -p ministr-daemon --test throughput_bench -- --ignored --nocapture --exact coordinator_throughput_25_corpora
+
 bench-all:
     cargo bench -p ministr-core
 
