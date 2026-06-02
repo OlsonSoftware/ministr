@@ -653,3 +653,115 @@ impl QueryService {
         Ok(candidates)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{QueryService, RERANK_BLEND, SurveyResult};
+    use crate::embedding::{RerankScore, Reranker};
+    use crate::error::IndexError;
+
+    /// Cross-encoder that returns a caller-supplied score per input document
+    /// (index-aligned). No model, fully deterministic.
+    struct FixedReranker {
+        scores: Vec<f32>,
+    }
+
+    impl Reranker for FixedReranker {
+        fn rerank(&self, _query: &str, documents: &[&str]) -> Result<Vec<RerankScore>, IndexError> {
+            Ok(documents
+                .iter()
+                .enumerate()
+                .map(|(index, _)| RerankScore {
+                    index,
+                    score: self.scores[index],
+                })
+                .collect())
+        }
+    }
+
+    /// Cross-encoder that only scores the first document (exercises the
+    /// defensive "reranker returned fewer scores than results" path).
+    struct PartialReranker;
+
+    impl Reranker for PartialReranker {
+        fn rerank(
+            &self,
+            _query: &str,
+            _documents: &[&str],
+        ) -> Result<Vec<RerankScore>, IndexError> {
+            Ok(vec![RerankScore {
+                index: 0,
+                score: 1.0,
+            }])
+        }
+    }
+
+    fn sr(content_id: &str, score: f32) -> SurveyResult {
+        SurveyResult {
+            content_id: content_id.to_string(),
+            resolution: "section".to_string(),
+            score,
+            text: format!("text for {content_id}"),
+            heading_path: None,
+            source_corpus: None,
+        }
+    }
+
+    #[test]
+    fn rerank_promotes_high_cross_encoder_score_over_prior() {
+        // Priors say A is best, C is worst. The cross-encoder INVERTS that:
+        // C is the most relevant. With RERANK_BLEND=0.8 the cross-encoder
+        // dominates, so C should be promoted to #1 and A demoted.
+        let results = vec![sr("A", 0.9), sr("B", 0.5), sr("C", 0.1)];
+        let reranker = FixedReranker {
+            scores: vec![0.0, 0.5, 1.0],
+        };
+
+        let out = QueryService::rerank_results("query", results, 3, &reranker).unwrap();
+
+        assert_eq!(out.len(), 3);
+        assert_eq!(
+            out[0].content_id, "C",
+            "cross-encoder winner should rank #1"
+        );
+        assert_eq!(out[1].content_id, "B");
+        assert_eq!(out[2].content_id, "A", "prior winner should be demoted");
+
+        // The blend keeps the prior in the mix: C's composed score is
+        // RERANK_BLEND*1.0 + (1-RERANK_BLEND)*0.0, not a bare 1.0.
+        let expected_c = RERANK_BLEND * 1.0 + (1.0 - RERANK_BLEND) * 0.0;
+        assert!((out[0].score - expected_c).abs() < 1e-6);
+    }
+
+    #[test]
+    fn rerank_truncates_to_top_k() {
+        let results = vec![sr("A", 0.9), sr("B", 0.5), sr("C", 0.1)];
+        let reranker = FixedReranker {
+            scores: vec![0.0, 0.5, 1.0],
+        };
+
+        let out = QueryService::rerank_results("query", results, 2, &reranker).unwrap();
+
+        assert_eq!(out.len(), 2, "should truncate to top_k after reranking");
+        assert_eq!(out[0].content_id, "C");
+        assert_eq!(out[1].content_id, "B");
+    }
+
+    #[test]
+    fn rerank_empty_results_is_noop() {
+        let reranker = FixedReranker { scores: vec![] };
+        let out = QueryService::rerank_results("query", Vec::new(), 5, &reranker).unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn rerank_handles_missing_scores_without_panic() {
+        // The reranker only scores index 0; the others fall back to their prior.
+        // The defensive None path must not panic and must keep every input.
+        let results = vec![sr("A", 0.2), sr("B", 0.9)];
+        let out = QueryService::rerank_results("query", results, 5, &PartialReranker).unwrap();
+        assert_eq!(out.len(), 2, "no result should be dropped");
+        let ids: Vec<&str> = out.iter().map(|r| r.content_id.as_str()).collect();
+        assert!(ids.contains(&"A") && ids.contains(&"B"));
+    }
+}
