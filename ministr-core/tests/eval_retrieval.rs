@@ -124,6 +124,83 @@ async fn eval_retrieval_regression_gate() {
     );
 }
 
+/// Real-embedder retrieval quality on the committed eval corpus — the
+/// instrument the whole retrieval-quality (rq-epic) program is judged against.
+///
+/// Unlike [`eval_corpus_retrieval_quality`] (which uses the `HashEmbedder` mock
+/// and therefore measures nothing about real semantics), this loads the REAL
+/// default embedding model (`all-MiniLM-L6-v2` via ONNX/fastembed) and reports
+/// actual recall@k / nDCG@k / MRR, plus a regression gate against committed
+/// baseline floors.
+///
+/// `#[ignore]` on purpose: it downloads/loads a model (network + compute), so
+/// it must NEVER run in the default `cargo test` / CI gate. Run it with:
+///
+/// ```text
+/// just eval-quality
+/// ```
+///
+/// SEEDING / TIGHTENING THE GATE: the `BASELINE_*` floors below are
+/// conservative real-model lower bounds chosen to catch a degenerate index
+/// without false-failing on first run. After a `just eval-quality` run, read
+/// the printed metrics and raise each floor to ~0.05 under the observed value
+/// so the gate becomes a real regression detector for the RQ chunks
+/// (rq1 truncation, rq2 model swap, rq3 chunking, rq4 hybrid, rq5 rerank).
+#[tokio::test]
+#[ignore = "loads a real embedding model (network/compute); run via `just eval-quality`"]
+async fn eval_retrieval_real_embedder() {
+    use ministr_core::embedding::FastEmbedder;
+
+    // Conservative floors: a working real model clears these comfortably; a
+    // degenerate/broken index does not. Re-seed from a `just eval-quality` run.
+    const BASELINE_RECALL_AT_5: f64 = 0.10;
+    const BASELINE_NDCG_AT_5: f64 = 0.08;
+    const BASELINE_MRR: f64 = 0.10;
+
+    let Some((corpus_path, ground_truth)) = load_eval_data() else {
+        eprintln!("Skipping eval: eval/ data not found");
+        return;
+    };
+
+    let embedder = FastEmbedder::new("all-MiniLM-L6-v2", None)
+        .expect("failed to load real embedding model (all-MiniLM-L6-v2)");
+    let results = run_eval_with_embedder(&corpus_path, &ground_truth, &embedder, true).await;
+
+    eprintln!();
+    eprintln!("=== Real-embedder retrieval quality (all-MiniLM-L6-v2) ===");
+    eprintln!("Queries:     {}", results.query_count);
+    eprintln!("Mean P@5:    {:.3}", results.mean_precision);
+    eprintln!(
+        "Mean R@5:    {:.3}   (baseline floor {BASELINE_RECALL_AT_5})",
+        results.mean_recall
+    );
+    eprintln!(
+        "MRR:         {:.3}   (baseline floor {BASELINE_MRR})",
+        results.mrr
+    );
+    eprintln!(
+        "Mean nDCG@5: {:.3}   (baseline floor {BASELINE_NDCG_AT_5})",
+        results.mean_ndcg
+    );
+    eprintln!("(to tighten the gate: raise the BASELINE_* floors to ~0.05 under these)");
+
+    assert!(
+        results.mean_recall >= BASELINE_RECALL_AT_5,
+        "recall@5 {:.3} regressed below baseline floor {BASELINE_RECALL_AT_5}",
+        results.mean_recall
+    );
+    assert!(
+        results.mean_ndcg >= BASELINE_NDCG_AT_5,
+        "nDCG@5 {:.3} regressed below baseline floor {BASELINE_NDCG_AT_5}",
+        results.mean_ndcg
+    );
+    assert!(
+        results.mrr >= BASELINE_MRR,
+        "MRR {:.3} regressed below baseline floor {BASELINE_MRR}",
+        results.mrr
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

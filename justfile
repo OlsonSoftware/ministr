@@ -71,6 +71,14 @@ release-preflight: validate msrv
 bench:
     cargo bench --bench search -p ministr-core
 
+# Real-embedder retrieval-quality eval + regression gate (rq0). Loads the real
+# embedding model (downloads on first run) and reports recall@k/nDCG@k/MRR over
+# eval/corpus + eval/ground-truth.json. Deliberately OUTSIDE `just validate` so
+# CI never downloads a model. Re-seed the BASELINE_* floors in
+# tests/eval_retrieval.rs from the printed numbers to tighten the gate.
+eval-quality:
+    cargo test -p ministr-core --test eval_retrieval -- --ignored --nocapture eval_retrieval_real_embedder
+
 bench-all:
     cargo bench -p ministr-core
 
