@@ -87,6 +87,13 @@ eval-quality:
 eval-truncation:
     cargo test -p ministr-core --test eval_retrieval -- --ignored --nocapture measure_truncation_content_loss
 
+# RQ2 embedder bake-off: benchmark candidate embedding models against the eval
+# golden set and print a dim / P@5 / R@5 / MRR / nDCG@5 comparison table.
+# Downloads several models on first run (some large, e.g. bge-m3). Use the
+# spread to pick a default; the production swap is a separate re-index step.
+eval-bakeoff:
+    cargo test -p ministr-core --test eval_retrieval -- --ignored --nocapture eval_model_bakeoff
+
 bench-all:
     cargo bench -p ministr-core
 

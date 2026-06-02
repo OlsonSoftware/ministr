@@ -230,6 +230,75 @@ async fn eval_retrieval_real_embedder() {
     );
 }
 
+/// RQ2 — embedder bake-off: benchmark candidate embedding models against the
+/// eval golden set and print a comparison table (dim + P@5/R@5/MRR/nDCG@5).
+///
+/// Use the printed spread to pick a default; the production swap is a separate
+/// step (a dimension change forces a full re-index of every corpus). The
+/// candidate set is the fastembed-runnable 2026 field — `nomic-embed-code` (7B)
+/// and `voyage-code-3` (API-only) are not locally runnable and are excluded.
+/// `jina-embeddings-v2-base-code` is the code-specialized entry; `bge-m3` is the
+/// 2026 general SOTA (large download, listed last). Per-model load failures are
+/// reported and skipped rather than aborting the run.
+///
+/// `#[ignore]`: downloads several embedding models (network/compute). Run via:
+///
+/// ```text
+/// just eval-bakeoff
+/// ```
+#[tokio::test]
+#[ignore = "downloads several embedding models; run via `just eval-bakeoff`"]
+async fn eval_model_bakeoff() {
+    use ministr_core::embedding::FastEmbedder;
+
+    const CANDIDATES: &[&str] = &[
+        "all-MiniLM-L6-v2", // baseline (current default)
+        "bge-small-en-v1.5",
+        "bge-base-en-v1.5",
+        "gte-base-en-v1.5",
+        "jina-embeddings-v2-base-code", // code-specialized
+        "nomic-embed-text-v1.5",        // Matryoshka
+        "all-mpnet-base-v2",
+        "bge-m3", // 2026 general SOTA (large)
+    ];
+
+    let Some((corpus_path, ground_truth)) = load_eval_data() else {
+        eprintln!("Skipping: eval/ data not found");
+        return;
+    };
+
+    eprintln!();
+    eprintln!(
+        "=== RQ2 embedder bake-off ({} queries) ===",
+        ground_truth.queries.len()
+    );
+    eprintln!(
+        "{:<32} {:>4}  {:>6} {:>6} {:>6} {:>6}",
+        "model", "dim", "P@5", "R@5", "MRR", "nDCG@5"
+    );
+    for name in CANDIDATES {
+        match FastEmbedder::new(name, None) {
+            Ok(embedder) => {
+                let r = run_eval_with_embedder(&corpus_path, &ground_truth, &embedder, false).await;
+                eprintln!(
+                    "{:<32} {:>4}  {:>6.3} {:>6.3} {:>6.3} {:>6.3}",
+                    name,
+                    embedder.dimension(),
+                    r.mean_precision,
+                    r.mean_recall,
+                    r.mrr,
+                    r.mean_ndcg
+                );
+            }
+            Err(e) => eprintln!("{name:<32} FAILED to load: {e}"),
+        }
+    }
+    eprintln!(
+        "(directional: small {}-query corpus; read the spread, not a single point)",
+        ground_truth.queries.len()
+    );
+}
+
 /// RQ1 — quantify how much section content the embedding truncation cap
 /// silently drops.
 ///
