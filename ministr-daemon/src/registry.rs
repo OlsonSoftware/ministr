@@ -716,8 +716,8 @@ impl CorpusRegistry {
         // completed the first index) are logged and skipped — they'll
         // restore on demand via `ensure_present` on first query.
         let cloud_mode = self.corpus_restorer.get().is_some() && self.corpora_repo.get().is_some();
-        for entry in &live {
-            if cloud_mode {
+        if cloud_mode {
+            for entry in &live {
                 match self.ensure_present(&entry.id).await {
                     Ok(_) => {}
                     Err(RegistryError::NotFound { .. }) => {
@@ -742,9 +742,36 @@ impl CorpusRegistry {
                         );
                     }
                 }
-            } else if let Err(e) = self.register(&entry.paths).await {
-                warn!(corpus_id = %entry.id, error = %e, "failed to restore corpus");
             }
+        } else {
+            // Self-hosted: restore corpora CONCURRENTLY (bounded) so they all
+            // surface at once instead of trickling into the GUI one-by-one.
+            // Each `register` runs `create_handle`, which opens the corpus's
+            // SQLite and loads/rebuilds its HNSW index from disk — seconds per
+            // corpus, and previously awaited strictly in series. The bound keeps
+            // a fleet of large indexes from all loading at once; the
+            // IngestionCoordinator still governs the actual re-index concurrency.
+            const RESTORE_CONCURRENCY: usize = 8;
+            let sem = Arc::new(tokio::sync::Semaphore::new(RESTORE_CONCURRENCY));
+            let mut set = tokio::task::JoinSet::new();
+            for entry in &live {
+                let this = Arc::clone(self);
+                let paths = entry.paths.clone();
+                let id = entry.id.clone();
+                // The semaphore is owned locally and never closed, so
+                // acquire_owned cannot fail; bail out of the loop defensively
+                // rather than panic if that invariant ever changes.
+                let Ok(permit) = Arc::clone(&sem).acquire_owned().await else {
+                    break;
+                };
+                set.spawn(async move {
+                    let _permit = permit;
+                    if let Err(e) = this.register(&paths).await {
+                        warn!(corpus_id = %id, error = %e, "failed to restore corpus");
+                    }
+                });
+            }
+            while set.join_next().await.is_some() {}
         }
 
         // If two live manifest entries canonicalised to the same id,
@@ -1206,6 +1233,10 @@ impl CorpusRegistry {
     /// (`unregister`/`update_corpus_paths` propagate; `register` logs and
     /// continues since the in-memory corpus is still usable).
     async fn save_manifest(&self) -> Result<(), RegistryError> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        // Per-process counter for unique manifest tmp-file names.
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+
         let entries: Vec<ManifestEntry> = {
             let corpora = self.corpora.read().await;
             let mut entries = Vec::with_capacity(corpora.len());
@@ -1222,8 +1253,18 @@ impl CorpusRegistry {
         let path = self.manifest_path();
         let json = serde_json::to_string_pretty(&entries)
             .map_err(|e| RegistryError::Storage(format!("serialize manifest: {e}")))?;
-        std::fs::write(&path, json).map_err(|e| {
-            RegistryError::Storage(format!("write manifest {}: {e}", path.display()))
+        // Atomic write (unique tmp + rename) so concurrent saves — e.g. the
+        // parallel corpus restore on startup — can never tear the manifest.
+        let tmp = path.with_extension(format!(
+            "tmp.{}.{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&tmp, json).map_err(|e| {
+            RegistryError::Storage(format!("write manifest tmp {}: {e}", tmp.display()))
+        })?;
+        std::fs::rename(&tmp, &path).map_err(|e| {
+            RegistryError::Storage(format!("rename manifest {}: {e}", path.display()))
         })?;
         Ok(())
     }
