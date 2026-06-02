@@ -2035,9 +2035,12 @@ impl IngestionPipeline {
         )
         .await?;
 
-        // Collect document embedding pairs (deferred for batch embedding)
+        // Collect document embedding pairs (deferred for batch embedding).
+        // `false` = verbatim embed text; heuristic Contextual Retrieval
+        // (rq-contextual-retrieval) is opt-in and wired via a pipeline flag in
+        // the rq-contextual-wire follow-up.
         let mut embedding_pairs: Vec<(VectorId, String)> = Vec::new();
-        collect_document_embeddings(&doc, &mut embedding_pairs);
+        collect_document_embeddings(&doc, &mut embedding_pairs, false);
 
         // For code files: extract symbols and collect symbol embedding pairs
         let parser_kind = self

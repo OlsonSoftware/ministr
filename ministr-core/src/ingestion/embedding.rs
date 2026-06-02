@@ -36,7 +36,10 @@ pub(super) async fn embed_document<
         texts.push(summary.clone());
     }
 
-    collect_embeddable_items(&doc.sections, &mut ids, &mut texts);
+    // Heuristic Contextual Retrieval is opt-in (rq-contextual-retrieval); the
+    // immediate path keeps the verbatim embed text until the pipeline flag +
+    // rq0 gating land (rq-contextual-wire).
+    collect_embeddable_items(&doc.sections, &mut ids, &mut texts, false);
 
     if texts.is_empty() {
         return Ok(0);
@@ -75,7 +78,16 @@ pub(super) async fn embed_document<
 }
 
 /// Collect embeddable `(id, text)` pairs from a document tree without embedding.
-pub(super) fn collect_document_embeddings(doc: &DocumentTree, pairs: &mut Vec<(VectorId, String)>) {
+///
+/// When `contextualize` is true, each section's embed text is prefixed with a
+/// compact structural breadcrumb (heuristic Contextual Retrieval, rq); when
+/// false the text is embedded verbatim (the default — production behaviour is
+/// byte-identical so no re-index is forced).
+pub(super) fn collect_document_embeddings(
+    doc: &DocumentTree,
+    pairs: &mut Vec<(VectorId, String)>,
+    contextualize: bool,
+) {
     if let Some(ref summary) = doc.summary
         && !summary.trim().is_empty()
     {
@@ -84,7 +96,7 @@ pub(super) fn collect_document_embeddings(doc: &DocumentTree, pairs: &mut Vec<(V
 
     let mut ids = Vec::new();
     let mut texts = Vec::new();
-    collect_embeddable_items(&doc.sections, &mut ids, &mut texts);
+    collect_embeddable_items(&doc.sections, &mut ids, &mut texts, contextualize);
     pairs.extend(ids.into_iter().zip(texts));
 }
 
@@ -253,22 +265,35 @@ pub(super) async fn batch_embed_and_insert_dual<I: VectorIndex + ?Sized>(
 }
 
 /// Recursively collect embeddable items (section summaries, section texts, claims).
+///
+/// When `contextualize` is true, section summaries and section texts are
+/// prefixed with their structural breadcrumb (see [`contextualize_text`]);
+/// claims (already atomic facts) and the verbatim path are left unchanged.
 fn collect_embeddable_items(
     sections: &[Section],
     ids: &mut Vec<VectorId>,
     texts: &mut Vec<String>,
+    contextualize: bool,
 ) {
     for section in sections {
         if let Some(ref summary) = section.summary
             && !summary.trim().is_empty()
         {
             ids.push(VectorId::sec_summary(section.id.as_ref()));
-            texts.push(summary.clone());
+            texts.push(if contextualize {
+                contextualize_text(&section.heading_path, summary)
+            } else {
+                summary.clone()
+            });
         }
 
         if !section.text.trim().is_empty() {
             ids.push(VectorId::section(section.id.as_ref()));
-            texts.push(section.text.clone());
+            texts.push(if contextualize {
+                contextualize_text(&section.heading_path, &section.text)
+            } else {
+                section.text.clone()
+            });
         }
 
         for claim in &section.claims {
@@ -278,8 +303,48 @@ fn collect_embeddable_items(
             }
         }
 
-        collect_embeddable_items(&section.children, ids, texts);
+        collect_embeddable_items(&section.children, ids, texts, contextualize);
     }
+}
+
+/// Heuristic Contextual Retrieval: prepend a compact structural breadcrumb from
+/// `heading_path` to a chunk's embed text so the chunk carries its file/symbol
+/// location (Anthropic Contextual Retrieval, non-LLM variant).
+///
+/// - Non-empty heading segments are joined with ` › `.
+/// - A path-like first segment is compacted to its file name (the full corpus
+///   path would otherwise add noise + tokens to every chunk).
+/// - Idempotent: if `text` already starts with the breadcrumb it is returned
+///   unchanged, so re-contextualizing is a no-op.
+/// - Empty/blank heading_path returns the text verbatim.
+fn contextualize_text(heading_path: &[String], text: &str) -> String {
+    let crumbs: Vec<&str> = heading_path
+        .iter()
+        .enumerate()
+        .filter_map(|(i, h)| {
+            let h = h.trim();
+            if h.is_empty() {
+                return None;
+            }
+            // Compact a path-like first crumb (e.g. a full source path) to its
+            // final component so the prefix stays short.
+            Some(if i == 0 {
+                h.rsplit(['/', '\\']).next().unwrap_or(h)
+            } else {
+                h
+            })
+        })
+        .collect();
+
+    if crumbs.is_empty() {
+        return text.to_string();
+    }
+
+    let prefix = crumbs.join(" › ");
+    if text.starts_with(&prefix) {
+        return text.to_string();
+    }
+    format!("{prefix}\n\n{text}")
 }
 
 /// Delete all vectors associated with a document from the index.
@@ -440,5 +505,89 @@ mod tests {
         .await;
 
         assert_eq!(index.len(), 0, "rollback removes the document's vectors");
+    }
+
+    // rq-contextual-retrieval — heuristic Contextual Retrieval prefix.
+
+    use crate::types::SectionId;
+
+    fn section(id: &str, heading: Vec<&str>, text: &str) -> Section {
+        Section {
+            id: SectionId(id.to_string()),
+            heading_path: heading.into_iter().map(String::from).collect(),
+            depth: 2,
+            text: text.to_string(),
+            structural_nodes: vec![],
+            children: vec![],
+            claims: vec![],
+            summary: None,
+        }
+    }
+
+    #[test]
+    fn contextualize_compacts_path_first_crumb() {
+        let hp = vec![
+            "/Users/x/rate_limiter.rs".to_string(),
+            "function try_admit".to_string(),
+        ];
+        assert_eq!(
+            contextualize_text(&hp, "pub fn try_admit() {}"),
+            "rate_limiter.rs › function try_admit\n\npub fn try_admit() {}"
+        );
+    }
+
+    #[test]
+    fn contextualize_joins_doc_headings() {
+        let hp = vec!["Auth System".to_string(), "Token Management".to_string()];
+        assert_eq!(
+            contextualize_text(&hp, "JWTs are signed."),
+            "Auth System › Token Management\n\nJWTs are signed."
+        );
+    }
+
+    #[test]
+    fn contextualize_empty_or_blank_heading_is_verbatim() {
+        assert_eq!(contextualize_text(&[], "BODY"), "BODY");
+        assert_eq!(
+            contextualize_text(&[String::new(), "   ".to_string()], "BODY"),
+            "BODY"
+        );
+    }
+
+    #[test]
+    fn contextualize_is_idempotent() {
+        let hp = vec!["a.rs".to_string(), "fn x".to_string()];
+        let once = contextualize_text(&hp, "BODY");
+        let twice = contextualize_text(&hp, &once);
+        assert_eq!(once, twice, "re-contextualizing must be a no-op");
+    }
+
+    #[test]
+    fn collect_embeddable_items_verbatim_when_off() {
+        let secs = vec![section(
+            "s1",
+            vec!["/x/rate_limiter.rs", "function try_admit"],
+            "pub fn try_admit() {}",
+        )];
+        let mut ids = Vec::new();
+        let mut texts = Vec::new();
+        collect_embeddable_items(&secs, &mut ids, &mut texts, false);
+        assert_eq!(texts, vec!["pub fn try_admit() {}".to_string()]);
+    }
+
+    #[test]
+    fn collect_embeddable_items_prefixes_when_on() {
+        let secs = vec![section(
+            "s1",
+            vec!["/x/rate_limiter.rs", "function try_admit"],
+            "pub fn try_admit() {}",
+        )];
+        let mut ids = Vec::new();
+        let mut texts = Vec::new();
+        collect_embeddable_items(&secs, &mut ids, &mut texts, true);
+        assert_eq!(
+            texts,
+            vec!["rate_limiter.rs › function try_admit\n\npub fn try_admit() {}".to_string()]
+        );
     }
 }
