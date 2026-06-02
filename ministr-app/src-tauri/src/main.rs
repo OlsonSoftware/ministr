@@ -21,7 +21,7 @@ use ministr_core::config::MinistrConfig;
 use ministr_core::embedding;
 use ministr_daemon::registry::CorpusRegistry;
 use ministr_daemon::state::AppState;
-use tauri::{AppHandle, Manager};
+use tauri::Manager;
 use tracing::info;
 
 #[allow(clippy::too_many_lines)] // entrypoint composes plugins + 50+ commands
@@ -100,14 +100,11 @@ fn main() {
             tray::build_tray(app)?;
 
             // --- Auto-detect .ministr.toml on first launch ---
-            let detect_state = state.clone();
-            let detect_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                auto_detect_projects(&detect_state, &detect_handle).await;
-            });
+            // gd4: registers detected projects with the daemon over UDS.
+            tauri::async_runtime::spawn(auto_detect_projects());
 
-            // --- Periodic tray refresh (tooltip + Recent/Indexing submenus) ---
-            tray::spawn_refresh_loop(app.handle().clone(), state.clone());
+            // --- Periodic tray refresh (tooltip) ---
+            tray::spawn_refresh_loop(app.handle().clone());
 
             info!("ministr app started");
             Ok(())
@@ -196,7 +193,7 @@ fn main() {
 }
 
 /// Scan common project directories for `.ministr.toml` files on first launch.
-async fn auto_detect_projects(state: &AppState, _handle: &AppHandle) {
+async fn auto_detect_projects() {
     /// Mark first-launch auto-detect as done. A failed write isn't
     /// fatal (the scan just re-runs next launch) but must not be silent
     /// — a persistently unwritable data dir is worth surfacing.
@@ -216,10 +213,23 @@ async fn auto_detect_projects(state: &AppState, _handle: &AppHandle) {
         return;
     }
 
-    // Only scan if no corpora are currently registered.
-    if !state.registry.list().await.is_empty() {
-        mark_done(&sentinel);
-        return;
+    // gd4: the corpus registry belongs to the daemon now — query + register
+    // over UDS instead of an in-process registry.
+    let client = ministr_api::client::DaemonClient::new();
+
+    // Only scan if no corpora are currently registered. If the daemon isn't
+    // reachable yet (startup race), skip WITHOUT marking done so the scan
+    // retries on the next launch rather than silently never running.
+    match client.list_corpora().await {
+        Ok(corpora) if !corpora.is_empty() => {
+            mark_done(&sentinel);
+            return;
+        }
+        Ok(_) => {}
+        Err(e) => {
+            tracing::warn!(error = %e, "auto-detect: daemon unreachable, retrying next launch");
+            return;
+        }
     }
 
     // Reuse the shared, cross-platform scanner on a blocking thread so
@@ -249,7 +259,7 @@ async fn auto_detect_projects(state: &AppState, _handle: &AppHandle) {
                 |(base, rc)| rc.resolve_local_paths(&base),
             );
 
-        if let Err(e) = state.registry.register(&resolved).await {
+        if let Err(e) = client.register_corpus(&resolved).await {
             tracing::warn!(error = %e, path, "failed to auto-register project");
         }
     }

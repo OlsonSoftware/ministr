@@ -9,7 +9,6 @@
 //! refreshes every 10s with live counts so the user can see ministr
 //! is alive at a glance.
 
-use ministr_daemon::state::AppState;
 use tauri::{
     AppHandle, Emitter, Manager,
     menu::{MenuBuilder, MenuItemBuilder},
@@ -102,13 +101,16 @@ fn build_menu(
 /// F2.7 — the tooltip now leads with a cloud-status dot
 /// ([`cloud_status_dot`]) so a glance at the menu bar tells the user
 /// whether the cloud connection is healthy.
-pub fn spawn_refresh_loop(handle: AppHandle, state: AppState) {
+pub fn spawn_refresh_loop(handle: AppHandle) {
     tauri::async_runtime::spawn(async move {
+        // gd4: counts come from the daemon over UDS (its registry is the single
+        // source of truth); the GUI no longer keeps an in-process registry.
+        let client = ministr_api::client::DaemonClient::new();
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-            let corpora = state.registry.list().await;
+            let corpora = client.list_corpora().await.unwrap_or_default();
 
-            let (parent_count, subagent_count) = count_sessions_by_lineage(&state).await;
+            let (parent_count, subagent_count) = count_sessions_by_lineage(&client).await;
             let total_sessions = parent_count + subagent_count;
             let rss = ministr_core::mem_profile::rss_mb().unwrap_or(0.0);
             // When subagents are attached, surface the breakdown so the
@@ -166,30 +168,19 @@ fn cloud_status_dot(corpora: &[ministr_api::corpus::CorpusInfo]) -> &'static str
 /// Count active sessions across all corpora, split by whether the
 /// session has a parent (subagent) or not (top-level).
 ///
-/// The whole loop runs without crossing an `.await` once the corpora
-/// map guard is taken: we use `try_lock` on each per-corpus session
-/// registry and skip any that's contended this tick. That keeps the
-/// registry-map read lifetime bounded by sync work (O(corpora · sessions))
-/// instead of tokio scheduler interleavings, so concurrent
-/// register/unregister writers don't block on us. The tooltip is
-/// informational and refreshes every 10s — missing one tick on a
-/// briefly-busy corpus self-heals on the next.
-async fn count_sessions_by_lineage(state: &AppState) -> (usize, usize) {
+/// gd4: sourced from the daemon's `/api/v1/sessions` snapshot over UDS (the
+/// daemon owns the session registries). The tooltip is informational and
+/// refreshes every 10s, so a transient daemon hiccup (empty result) self-heals
+/// on the next tick.
+async fn count_sessions_by_lineage(client: &ministr_api::client::DaemonClient) -> (usize, usize) {
+    let sessions = client.list_sessions().await.unwrap_or_default();
     let mut parents = 0usize;
     let mut subagents = 0usize;
-    let guard = state.registry.corpora().read().await;
-    for handle in guard.values() {
-        let Ok(reg) = handle.sessions.try_lock() else {
-            continue;
-        };
-        for sid in reg.session_ids() {
-            if let Some(entry) = reg.get_session(&sid) {
-                if entry.parent_session_id.is_some() {
-                    subagents += 1;
-                } else {
-                    parents += 1;
-                }
-            }
+    for s in &sessions {
+        if s.parent_session_id.is_some() {
+            subagents += 1;
+        } else {
+            parents += 1;
         }
     }
     (parents, subagents)

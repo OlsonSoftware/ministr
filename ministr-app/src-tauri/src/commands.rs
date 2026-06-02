@@ -6,10 +6,8 @@ use ministr_api::activity::ActivityEvent;
 use ministr_api::coherence::CoherenceEvent;
 use ministr_api::corpus::{CorpusInfo, RegisterCorpusResponse};
 use ministr_api::status::DaemonStatus;
+use tauri::AppHandle;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Manager, State};
-
-use ministr_daemon::state::AppState;
 
 use crate::error::{CommandError, ErrorKind};
 
@@ -367,10 +365,14 @@ pub struct RepairReport {
 /// replaced. Nested sub-paths of an already-included root are skipped so
 /// config is written once per project, not scattered into subdirectories.
 #[tauri::command]
-pub async fn repair_agent_config(state: State<'_, AppState>) -> Result<RepairReport, CommandError> {
+pub async fn repair_agent_config() -> Result<RepairReport, CommandError> {
     use ministr_core::config::{CorpusSource, classify_corpus_path};
 
-    let corpora = state.registry.list().await;
+    // gd4: the corpus list comes from the daemon over UDS (its registry is the
+    // single source of truth); scaffolding the on-disk agent config stays local.
+    let corpora = ministr_api::client::DaemonClient::new()
+        .list_corpora()
+        .await?;
     let mut roots: Vec<std::path::PathBuf> = Vec::new();
     for c in &corpora {
         for p in &c.paths {
@@ -765,32 +767,18 @@ pub async fn register_projects_batch(paths: Vec<String>) -> Result<Vec<String>, 
 }
 
 /// Remove a project by ID (called from tray menu).
+///
+/// gd4: the daemon owns the registry + the on-disk data dir, so this is a
+/// single unregister-with-purge over UDS (the daemon deletes the index dir —
+/// the GUI never touches `~/.ministr/corpora`).
 #[allow(dead_code)]
-pub async fn remove_project_by_id(handle: &AppHandle, corpus_id: &str) -> Result<(), CommandError> {
-    let state = handle.state::<AppState>();
-
-    // Get data_dir before unregistering.
-    let data_dir = {
-        let guard = state.registry.corpora().read().await;
-        guard.get(corpus_id).map(|h| h.data_dir.clone())
-    };
-
-    state
-        .registry
-        .unregister(corpus_id)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if let Some(dir) = data_dir {
-        ministr_core::fs_util::remove_dir_all_robust(&dir)
-            .await
-            .map_err(|e| {
-                tracing::error!(path = %dir.display(), error = %e, "failed to delete corpus data from tray remove");
-                format!("failed to delete corpus data at {}: {e}", dir.display())
-            })?;
-        tracing::info!(path = %dir.display(), "cleaned up corpus data from tray remove");
-    }
-
+pub async fn remove_project_by_id(
+    _handle: &AppHandle,
+    corpus_id: &str,
+) -> Result<(), CommandError> {
+    ministr_api::client::DaemonClient::new()
+        .unregister_corpus_purge(corpus_id)
+        .await?;
     Ok(())
 }
 
