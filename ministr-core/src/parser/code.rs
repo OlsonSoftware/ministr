@@ -13,7 +13,17 @@ use std::path::Path;
 use crate::code::{AstParser, GrammarRegistry, Symbol, extract_symbols, generic_extract_symbols};
 use crate::error::ParseError;
 use crate::parser::section_id::{generate_code_section_id, generate_section_id};
+use crate::token::count_tokens;
 use crate::types::{ContentId, DocumentTree, Section, SectionId};
+
+/// Token budget for a single code chunk before it is split at inner AST
+/// boundaries (cAST-style). Set to the default embedder's max sequence length
+/// (rq1's model-driven cap): a symbol whose source exceeds this was previously
+/// emitted whole and then silently truncated by the embedder. Counted in
+/// [`count_tokens`] (cl100k BPE) units — the same proxy the rest of the pipeline
+/// budgets against. Per-embedder budgeting (rq2 per-corpus routing) can make
+/// this dynamic later.
+const CODE_CHUNK_BUDGET: usize = 256;
 
 /// A document parser for source code files.
 ///
@@ -135,10 +145,11 @@ impl super::DocumentParser for CodeParser {
         // Build file-level overview section (depth 1)
         let file_overview = build_file_overview(&source_path, &module_path, content, &symbols);
 
-        // Build per-symbol sections (depth 2)
+        // Build per-symbol sections (depth 2). Over-budget symbols are split at
+        // inner AST boundaries into contiguous <=budget sibling sub-sections.
         let symbol_sections: Vec<Section> = symbols
             .iter()
-            .map(|sym| build_symbol_section(&source_path, content, sym))
+            .flat_map(|sym| build_symbol_sections(&source_path, content, sym, &tree))
             .collect();
 
         // File-level section with symbol sections as children
@@ -211,11 +222,21 @@ fn build_file_overview(
     }
 }
 
-/// Build a section for a single symbol.
+/// Build the section(s) for a single symbol.
 ///
-/// The heading path includes both the file name and the symbol's qualified name.
-/// The section text contains the full source code of the symbol.
-fn build_symbol_section(source_path: &str, content: &str, symbol: &Symbol) -> Section {
+/// A symbol whose source fits within [`CODE_CHUNK_BUDGET`] yields exactly one
+/// section — byte-for-byte the same as before this cAST split was added. An
+/// over-budget symbol (a long function, a large struct/enum) is split at inner
+/// AST boundaries into contiguous `<=budget` sibling sub-sections that together
+/// cover the whole symbol with no text loss, so each sub-chunk embeds without
+/// being truncated. Sub-section ids keep the symbol id as a prefix
+/// (`<id>#part0`, `#part1`, …) so id-substring lookups still resolve.
+fn build_symbol_sections(
+    source_path: &str,
+    content: &str,
+    symbol: &Symbol,
+    tree: &tree_sitter::Tree,
+) -> Vec<Section> {
     let module_refs: Vec<&str> = symbol.module_path.iter().map(String::as_str).collect();
     // Include item kind in the section ID to disambiguate (e.g. struct Foo vs impl Foo).
     // For impl blocks, append the byte offset to handle multiple impls for the same type
@@ -225,31 +246,141 @@ fn build_symbol_section(source_path: &str, content: &str, symbol: &Symbol) -> Se
     } else {
         symbol.name.clone()
     };
-    let section_id = generate_code_section_id(source_path, &module_refs, &qualified_name);
-
-    // Full source text of the symbol (including doc comments, attributes, body)
-    let full_source = &content[symbol.byte_range.clone()];
+    let base_id = generate_code_section_id(source_path, &module_refs, &qualified_name);
 
     // Build heading: "kind Name" (e.g. "struct MinistrConfig", "fn hello")
     let kind_label = symbol.kind.as_str();
     let heading = format!("{kind_label} {}", symbol.name);
 
-    // Build text: doc comment + signature as a stub, then full source
-    let mut text_parts = Vec::new();
-    if let Some(doc) = &symbol.doc_comment {
-        text_parts.push(doc.clone());
-    }
-    text_parts.push(full_source.to_string());
+    // Full source text of the symbol (including doc comments, attributes, body).
+    let full_source = &content[symbol.byte_range.clone()];
 
+    // Text exactly as a single section would embed it: doc comment + full source.
+    let single_text = match &symbol.doc_comment {
+        Some(doc) => format!("{doc}\n\n{full_source}"),
+        None => full_source.to_string(),
+    };
+
+    // Fits the budget: emit one section, identical to the pre-split behaviour.
+    if count_tokens(&single_text) <= CODE_CHUNK_BUDGET {
+        return vec![make_symbol_section(
+            base_id,
+            source_path,
+            &heading,
+            single_text,
+        )];
+    }
+
+    // Over budget: split at inner AST boundaries into contiguous byte ranges.
+    let ranges = split_symbol_ranges(symbol, tree, content.as_bytes());
+    if ranges.len() <= 1 {
+        // Could not split further (e.g. a single huge leaf with no inner
+        // structure): emit whole. The embedder still truncates, but that is no
+        // worse than before.
+        return vec![make_symbol_section(
+            base_id,
+            source_path,
+            &heading,
+            single_text,
+        )];
+    }
+
+    let n = ranges.len();
+    ranges
+        .into_iter()
+        .enumerate()
+        .map(|(i, range)| {
+            let chunk_src = &content[range];
+            // Prepend the doc comment to the first part only (mirrors the
+            // single-section convention).
+            let text = match (&symbol.doc_comment, i) {
+                (Some(doc), 0) => format!("{doc}\n\n{chunk_src}"),
+                _ => chunk_src.to_string(),
+            };
+            let part_heading = format!("{heading} (part {}/{n})", i + 1);
+            make_symbol_section(
+                format!("{base_id}#part{i}"),
+                source_path,
+                &part_heading,
+                text,
+            )
+        })
+        .collect()
+}
+
+/// Assemble one depth-2 symbol section from its id, heading and text.
+fn make_symbol_section(id: String, source_path: &str, heading: &str, text: String) -> Section {
     Section {
-        id: SectionId(section_id),
-        heading_path: vec![source_path.to_string(), heading],
+        id: SectionId(id),
+        heading_path: vec![source_path.to_string(), heading.to_string()],
         depth: 2,
-        text: text_parts.join("\n\n"),
+        text,
         structural_nodes: Vec::new(),
         children: Vec::new(),
         claims: Vec::new(),
         summary: None,
+    }
+}
+
+/// Compute contiguous byte sub-ranges of an over-budget symbol, cut at inner
+/// AST boundaries so each range stays within [`CODE_CHUNK_BUDGET`] where the
+/// structure allows. The ranges tile `symbol.byte_range` exactly (no overlap,
+/// no gap), so concatenating their slices reproduces the symbol verbatim.
+fn split_symbol_ranges(
+    symbol: &Symbol,
+    tree: &tree_sitter::Tree,
+    source: &[u8],
+) -> Vec<std::ops::Range<usize>> {
+    let start = symbol.byte_range.start;
+    let end = symbol.byte_range.end;
+    let Some(node) = tree
+        .root_node()
+        .descendant_for_byte_range(start, end.saturating_sub(1))
+    else {
+        return vec![symbol.byte_range.clone()];
+    };
+
+    let mut cuts = Vec::new();
+    collect_cut_points(node, source, CODE_CHUNK_BUDGET, &mut cuts);
+    // Keep only cut points strictly inside this symbol's span (the descendant
+    // node may be a shared parent covering sibling items too).
+    cuts.retain(|&c| c > start && c < end);
+    cuts.sort_unstable();
+    cuts.dedup();
+
+    let mut ranges = Vec::with_capacity(cuts.len() + 1);
+    let mut prev = start;
+    for c in cuts {
+        ranges.push(prev..c);
+        prev = c;
+    }
+    ranges.push(prev..end);
+    ranges
+}
+
+/// Walk a node's named children, recording byte offsets where a new chunk
+/// should begin so that no chunk exceeds `budget` tokens. Oversized children are
+/// recursed into (their inner boundaries become finer cuts); a small leading
+/// sibling such as a doc comment stays attached to the chunk that follows it.
+fn collect_cut_points(node: tree_sitter::Node, source: &[u8], budget: usize, out: &mut Vec<usize>) {
+    let mut acc = 0usize;
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        let text = String::from_utf8_lossy(&source[child.start_byte()..child.end_byte()]);
+        let tokens = count_tokens(&text);
+
+        if tokens > budget {
+            // Recurse: the child's own inner boundaries chunk it. Leave `acc`
+            // alone so a small preceding sibling (doc comment, attribute) merges
+            // into the child's first chunk rather than becoming a stub chunk.
+            collect_cut_points(child, source, budget, out);
+            acc = 0;
+        } else if acc > 0 && acc + tokens > budget {
+            out.push(child.start_byte());
+            acc = tokens;
+        } else {
+            acc += tokens;
+        }
     }
 }
 
@@ -575,12 +706,25 @@ fn internal_helper() {}
         // Section should contain the full struct body
         assert!(ministr_config.text.contains("MinistrConfig"));
 
-        // Verify no symbol section has unbalanced braces (no mid-body splits)
+        // A symbol that fits CODE_CHUNK_BUDGET stays whole (balanced braces). A
+        // symbol that exceeds it is split into `#partN` fragments at inner AST
+        // boundaries — individually unbalanced, but balanced when rejoined.
+        let mut joined_parts = String::new();
         for child in &root.children {
+            if child.id.0.contains("#part") {
+                joined_parts.push_str(&child.text);
+                continue;
+            }
             let open = child.text.chars().filter(|&c| c == '{').count();
             let close = child.text.chars().filter(|&c| c == '}').count();
             assert_eq!(open, close, "unbalanced braces in {:?}", child.heading_path);
         }
+        let open = joined_parts.chars().filter(|&c| c == '{').count();
+        let close = joined_parts.chars().filter(|&c| c == '}').count();
+        assert_eq!(
+            open, close,
+            "rejoined split-symbol fragments should balance"
+        );
 
         // Section IDs follow the code pattern
         for child in &root.children {
@@ -604,6 +748,107 @@ fn internal_helper() {}
         assert!(child.text.contains("Doc comment"));
         // And the function itself
         assert!(child.text.contains("pub fn documented"));
+    }
+
+    // RQ3 — cAST size-aware splitting of over-budget symbols.
+
+    /// A function with enough statements to exceed [`CODE_CHUNK_BUDGET`].
+    /// Intentionally has NO doc comment so the part texts tile the source
+    /// exactly (no prepended doc on part 0).
+    fn big_fn_source() -> String {
+        use std::fmt::Write as _;
+        let mut s = String::from("pub fn huge() {\n");
+        for i in 0..120 {
+            let _ = writeln!(s, "    let value_{i} = combine(value_{i}_a, value_{i}_b);");
+        }
+        s.push_str("}\n");
+        s
+    }
+
+    #[test]
+    fn oversized_symbol_splits_into_parts() {
+        let src = big_fn_source();
+        assert!(
+            count_tokens(&src) > CODE_CHUNK_BUDGET,
+            "fixture must exceed the budget to exercise splitting"
+        );
+        let tree = CodeParser::new()
+            .parse(Path::new("src/huge.rs"), &src)
+            .unwrap();
+        let root = &tree.sections[0];
+
+        assert!(
+            root.children.len() >= 2,
+            "huge fn should split into >=2 parts, got {}",
+            root.children.len()
+        );
+        for child in &root.children {
+            assert!(
+                child.id.0.contains("src/huge.rs#huge::huge"),
+                "part id keeps the symbol id as a prefix: {}",
+                child.id.0
+            );
+            assert!(
+                child.id.0.contains("#part"),
+                "split id marked: {}",
+                child.id.0
+            );
+            assert!(!child.text.trim().is_empty(), "no empty part");
+            assert_eq!(child.depth, 2, "parts stay depth-2 siblings");
+        }
+    }
+
+    #[test]
+    fn split_tiles_the_symbol_losslessly() {
+        let src = big_fn_source();
+        let tree = CodeParser::new()
+            .parse(Path::new("src/huge.rs"), &src)
+            .unwrap();
+        let root = &tree.sections[0];
+
+        // No doc comment => part texts concatenate back to the exact symbol
+        // source: every statement present once, nothing dropped or duplicated.
+        let joined: String = root.children.iter().map(|c| c.text.clone()).collect();
+        assert_eq!(
+            joined.matches("let value_").count(),
+            120,
+            "every statement should survive exactly once"
+        );
+        assert!(joined.contains("pub fn huge()"), "signature retained");
+        assert!(joined.contains("value_0_a") && joined.contains("value_119_b"));
+    }
+
+    #[test]
+    fn each_part_stays_near_budget() {
+        let src = big_fn_source();
+        let tree = CodeParser::new()
+            .parse(Path::new("src/huge.rs"), &src)
+            .unwrap();
+        let root = &tree.sections[0];
+        // Each fragment is far below the whole; allow a little slack over the
+        // budget for the per-part signature/prefix the token-proxy can't see.
+        for child in &root.children {
+            let tokens = count_tokens(&child.text);
+            assert!(
+                tokens <= CODE_CHUNK_BUDGET + 96,
+                "part should stay near budget, got {tokens} tokens"
+            );
+        }
+    }
+
+    #[test]
+    fn small_symbols_are_not_split() {
+        let tree = CodeParser::new()
+            .parse(Path::new("src/config.rs"), SAMPLE_RUST)
+            .unwrap();
+        let root = &tree.sections[0];
+        for child in &root.children {
+            assert!(
+                !child.id.0.contains("#part"),
+                "a budget-fitting symbol must stay whole: {}",
+                child.id.0
+            );
+        }
     }
 
     // C7: Multi-language integration tests
