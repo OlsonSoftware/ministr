@@ -85,6 +85,41 @@ reinstall:
 reinstall:
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\reinstall.ps1
 
+# ── Profiling ────────────────────────────────────────────────────────
+
+# Relaunch the dev app with embed-batch debug timing (profile embed throughput).
+[macos]
+profile-embed:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    APP="${MINISTR_APP:-$HOME/Applications/ministr.app}"
+    [ -d "$APP" ] || APP="/Applications/ministr.app"
+    BIN="$APP/Contents/MacOS/ministr-app"
+    [ -x "$BIN" ] || { echo "ministr app not found at $BIN — run 'just reinstall' first (or set MINISTR_APP)" >&2; exit 1; }
+    echo "==> Stopping running ministr instances..."
+    pkill -TERM -f "ministr-app" 2>/dev/null || true
+    pkill -TERM -f "ministr __daemon" 2>/dev/null || true
+    sleep 1
+    rm -f "$HOME/.ministr/ministrd.sock" "$HOME/.ministr/ministrd.pid"
+    echo "==> Launching $APP with embed-batch timing (debug) -> ~/.ministr/ministr.log"
+    echo "    Re-index a corpus (or add a new folder), then: just profile-embed-report"
+    exec env RUST_LOG='ministr_core=info,ministr_core::embedding::candle_impl=debug' "$BIN"
+
+# Show recent embed-batch timing samples (tokenize vs GPU compute, batch, len).
+[unix]
+profile-embed-report:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    log="$HOME/.ministr/ministr.log"
+    [ -f "$log" ] || { echo "no log at $log" >&2; exit 1; }
+    awk '/candle embed_batch timing/{a[++n]=$0}
+         END{
+           if(n==0){print "no \"candle embed_batch timing\" lines yet — launch via \`just profile-embed\` (debug filter) then re-index"; exit 0}
+           start=(n>20?n-19:1)
+           for(i=start;i<=n;i++) print a[i]
+           print "---- samples=" n " (showing last " (n-start+1) ") ----"
+         }' "$log"
+
 # ── Local data ───────────────────────────────────────────────────────
 
 # Destructive + irreversible. Wipes the daemon data dir (~/.ministr) — every
