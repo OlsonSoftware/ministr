@@ -955,24 +955,22 @@ pub struct SearchResult {
     pub heading_path: Vec<String>,
 }
 
-/// Search a corpus by query (wraps `QueryService::survey`).
+/// Search a corpus by query.
+///
+/// gd2c: routed over UDS to the daemon's survey endpoint (the single source
+/// of truth) rather than the GUI's in-process `QueryService`.
 #[tauri::command]
 pub async fn search_corpus(
-    state: State<'_, AppState>,
     corpus_id: String,
     query: String,
     top_k: Option<usize>,
 ) -> Result<Vec<SearchResult>, CommandError> {
-    let guard = state.registry.corpora().read().await;
-    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
+    let resp = ministr_api::client::DaemonClient::new()
+        .survey(&corpus_id, &query, top_k)
+        .await?;
 
-    let results = handle
-        .service
-        .survey(&query, top_k.unwrap_or(10))
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(results
+    Ok(resp
+        .results
         .into_iter()
         .map(|r| SearchResult {
             content_id: r.content_id,
@@ -1218,22 +1216,19 @@ pub struct SymbolRef {
 }
 
 /// Get references (callers, importers, implementors) for a symbol.
+///
+/// gd2c: routed over UDS to the daemon's references endpoint.
 #[tauri::command]
 pub async fn symbol_references(
-    state: State<'_, AppState>,
     corpus_id: String,
     symbol_id: String,
 ) -> Result<Vec<SymbolRef>, CommandError> {
-    let guard = state.registry.corpora().read().await;
-    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
+    let resp = ministr_api::client::DaemonClient::new()
+        .references(&corpus_id, &symbol_id, None)
+        .await?;
 
-    let refs = handle
-        .service
-        .get_symbol_references(&symbol_id, None)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(refs
+    Ok(resp
+        .references
         .into_iter()
         .map(|r| SymbolRef {
             from_name: r.from_name,
@@ -1327,9 +1322,14 @@ pub struct BridgeLinkOut {
 }
 
 /// Query cross-language bridge links (Tauri commands, `PyO3`, NAPI, FFI, HTTP routes).
+///
+/// gd2c: routed over UDS to the daemon's bridge endpoint. The daemon applies
+/// the limit (default 500, matching the prior client-side cap). The API's
+/// `BridgeLink` carries binding keys as `source`/`target` and languages as
+/// `source_language`/`target_language`, mapped here onto the frontend's
+/// `export_*`/`import_*` DTO fields.
 #[tauri::command]
 pub async fn bridge_query(
-    state: State<'_, AppState>,
     corpus_id: String,
     query: Option<String>,
     kind: Option<String>,
@@ -1337,36 +1337,33 @@ pub async fn bridge_query(
     file_path: Option<String>,
     limit: Option<usize>,
 ) -> Result<Vec<BridgeLinkOut>, CommandError> {
-    let guard = state.registry.corpora().read().await;
-    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
+    let req = ministr_api::query::BridgeRequest {
+        query,
+        kind,
+        source_language,
+        file_path,
+        limit: Some(limit.unwrap_or(500)),
+        session_id: None,
+    };
+    let resp = ministr_api::client::DaemonClient::new()
+        .bridge(&corpus_id, &req)
+        .await?;
 
-    let links = handle
-        .service
-        .query_bridges(
-            query.as_deref(),
-            kind.as_deref(),
-            source_language.as_deref(),
-            file_path.as_deref(),
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let cap = limit.unwrap_or(500);
-    Ok(links
+    Ok(resp
+        .links
         .into_iter()
-        .take(cap)
         .map(|l| BridgeLinkOut {
             kind: l.kind,
             confidence: l.confidence,
             export_file: l.export_file,
-            export_binding_key: l.export_binding_key,
+            export_binding_key: l.source,
             export_symbol: l.export_symbol,
-            export_language: l.export_language,
+            export_language: l.source_language,
             export_line: l.export_line,
             import_file: l.import_file,
-            import_binding_key: l.import_binding_key,
+            import_binding_key: l.target,
             import_symbol: l.import_symbol,
-            import_language: l.import_language,
+            import_language: l.target_language,
             import_line: l.import_line,
         })
         .collect())
@@ -1523,20 +1520,16 @@ pub async fn read_source_excerpt(
 }
 
 /// Get the full definition of a symbol with surrounding source context.
+///
+/// gd2c: routed over UDS to the daemon's definition endpoint.
 #[tauri::command]
 pub async fn symbol_definition(
-    state: State<'_, AppState>,
     corpus_id: String,
     symbol_id: String,
 ) -> Result<SymbolDefinitionOut, CommandError> {
-    let guard = state.registry.corpora().read().await;
-    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
-
-    let def = handle
-        .service
-        .get_symbol_definition(&symbol_id)
-        .await
-        .map_err(|e| e.to_string())?;
+    let def = ministr_api::client::DaemonClient::new()
+        .definition(&corpus_id, &symbol_id, None)
+        .await?;
 
     Ok(SymbolDefinitionOut {
         id: def.id,
@@ -2105,20 +2098,16 @@ pub struct SectionDetailOut {
 }
 
 /// Read the full text of a section by its hierarchical content ID.
+///
+/// gd2c: routed over UDS to the daemon's read-section endpoint.
 #[tauri::command]
 pub async fn read_section(
-    state: State<'_, AppState>,
     corpus_id: String,
     section_id: String,
 ) -> Result<SectionDetailOut, CommandError> {
-    let guard = state.registry.corpora().read().await;
-    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
-
-    let detail = handle
-        .service
-        .read_section(&section_id)
-        .await
-        .map_err(|e| e.to_string())?;
+    let detail = ministr_api::client::DaemonClient::new()
+        .read_section(&corpus_id, &section_id)
+        .await?;
 
     Ok(SectionDetailOut {
         section_id: detail.section_id,
