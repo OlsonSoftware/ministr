@@ -294,7 +294,29 @@ impl CorpusRegistry {
     /// tracks the spawned job in the corpus's `tasks` for `unregister`
     /// teardown. Returns once queued — not when indexing finishes.
     pub(crate) async fn enqueue_index(self: &Arc<Self>, corpus_id: String, paths: Vec<String>) {
-        self.coordinator.enqueue(self, corpus_id, paths).await;
+        // cq-priority: estimate this job's indexing work from the corpus's
+        // last-known indexed file count (cheap, in-memory) so the coordinator
+        // dispatches small user code repos ahead of huge vendored trees
+        // (shortest-job-first). A never-indexed corpus reads 0 → treated as
+        // small → prompt first-time indexing. Clone the `info` Arc and drop the
+        // corpora-map guard before awaiting the per-corpus info lock (the
+        // registry's lock-ordering rule — never hold the map guard across an
+        // `info` await).
+        let priority = {
+            let info = self
+                .corpora
+                .read()
+                .await
+                .get(&corpus_id)
+                .map(|h| Arc::clone(&h.info));
+            match info {
+                Some(info) => info.read().await.files_indexed,
+                None => 0,
+            }
+        };
+        self.coordinator
+            .enqueue(self, corpus_id, paths, priority)
+            .await;
     }
 
     /// Wire a coherence sink so `register` will spawn a per-corpus

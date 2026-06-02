@@ -19,6 +19,13 @@
 //!   concurrently with itself. Crucially, dispatch **skips** busy corpora
 //!   rather than blocking on them, so one slow corpus can't head-of-line-block
 //!   the others.
+//! * **Priority (cq-priority)** — dispatch is shortest-job-first: among
+//!   non-busy queued corpora the one with the smallest estimated work (its
+//!   last-known indexed file count) goes next, ties broken FIFO. Small user
+//!   code repos are indexed ahead of huge vendored trees. A never-indexed
+//!   corpus estimates as 0 (treated as small) so first-time indexing is prompt;
+//!   a cold start where every size is still unknown degrades to FIFO (size is
+//!   unknowable without walking the tree, which the enqueue path must not do).
 //!
 //! Dispatch is **event-driven**, not a polling loop: [`enqueue`](IngestionCoordinator::enqueue)
 //! and every job completion call [`try_dispatch`](IngestionCoordinator::try_dispatch),
@@ -39,7 +46,7 @@
 //! was unregistered no-ops via `run_body`'s registry guard (it opens no files),
 //! so `remove_dir_all` stays safe.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -54,44 +61,78 @@ struct Job {
     paths: Vec<String>,
 }
 
+/// A corpus waiting in the queue.
+struct PendingJob {
+    /// The latest paths to ingest for this corpus.
+    paths: Vec<String>,
+    /// Dispatch priority — **smaller is sooner**. An estimate of indexing work
+    /// (the corpus's last-known indexed file count), so small user code repos
+    /// are dispatched ahead of huge vendored trees (shortest-job-first).
+    priority: usize,
+    /// Monotonic enqueue order, used as a stable FIFO tiebreak among equal
+    /// priorities (and so a never-indexed corpus keeps its arrival order).
+    seq: u64,
+}
+
 /// The mutable queue state, guarded by a brief `std::sync::Mutex` that is
 /// **never** held across an `.await`.
 #[derive(Default)]
 struct QueueState {
-    /// FIFO of corpus ids awaiting dispatch. A corpus appears at most once —
-    /// repeated enqueues for the same corpus collapse onto one slot (with the
-    /// latest paths winning in `paths`), which both keeps the queue bounded and
-    /// avoids redundant same-corpus reindexes.
-    order: VecDeque<String>,
-    /// The latest paths to ingest for each pending corpus.
-    paths: HashMap<String, Vec<String>>,
+    /// Pending corpora keyed by id — at most one entry each, so repeated
+    /// enqueues for the same corpus collapse onto one slot (latest paths win,
+    /// original FIFO position preserved). Selection is shortest-job-first by
+    /// `(priority, seq)`.
+    pending: HashMap<String, PendingJob>,
     /// Corpora with a job currently in flight (holding a permit). Selection
     /// skips these, giving per-corpus exclusion without head-of-line blocking.
     busy: HashSet<String>,
+    /// Monotonic enqueue counter feeding each job's `seq` (FIFO tiebreak).
+    next_seq: u64,
 }
 
 impl QueueState {
-    /// Record (or refresh) a pending job for `corpus_id`. If the corpus is
-    /// already queued, only its paths are updated; it is not enqueued twice.
-    fn upsert(&mut self, corpus_id: String, paths: Vec<String>) {
-        if !self.order.contains(&corpus_id) {
-            self.order.push_back(corpus_id.clone());
+    /// Record (or refresh) a pending job for `corpus_id` at `priority`. If the
+    /// corpus is already queued, its paths + priority are updated in place and
+    /// its original FIFO position (`seq`) is preserved — it is not re-queued.
+    fn upsert(&mut self, corpus_id: String, paths: Vec<String>, priority: usize) {
+        if let Some(job) = self.pending.get_mut(&corpus_id) {
+            job.paths = paths;
+            job.priority = priority;
+        } else {
+            let seq = self.next_seq;
+            self.next_seq += 1;
+            self.pending.insert(
+                corpus_id,
+                PendingJob {
+                    paths,
+                    priority,
+                    seq,
+                },
+            );
         }
-        self.paths.insert(corpus_id, paths);
     }
 
-    /// Remove and return the next queued job whose corpus is **not** busy,
-    /// marking that corpus busy. Returns `None` when nothing is dispatchable
-    /// (queue empty, or every queued corpus is already indexing).
+    /// Remove and return the most-eligible queued job whose corpus is **not**
+    /// busy — lowest `priority` (shortest job first), ties broken by lowest
+    /// `seq` (FIFO). Marks the chosen corpus busy. Returns `None` when nothing
+    /// is dispatchable (queue empty, or every queued corpus is already indexing).
     fn take_next_dispatchable(&mut self) -> Option<Job> {
-        let pos = self.order.iter().position(|c| !self.busy.contains(c))?;
+        let busy = &self.busy;
         let corpus_id = self
-            .order
-            .remove(pos)
-            .expect("position came from this VecDeque");
-        let paths = self.paths.remove(&corpus_id).unwrap_or_default();
+            .pending
+            .iter()
+            .filter(|(cid, _)| !busy.contains(cid.as_str()))
+            .min_by(|(_, a), (_, b)| (a.priority, a.seq).cmp(&(b.priority, b.seq)))
+            .map(|(cid, _)| cid.clone())?;
+        let job = self
+            .pending
+            .remove(&corpus_id)
+            .expect("corpus_id came from this map");
         self.busy.insert(corpus_id.clone());
-        Some(Job { corpus_id, paths })
+        Some(Job {
+            corpus_id,
+            paths: job.paths,
+        })
     }
 }
 
@@ -116,7 +157,8 @@ impl IngestionCoordinator {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Enqueue an indexing job for `corpus_id` over `paths`, mark the corpus
+    /// Enqueue an indexing job for `corpus_id` over `paths` at `priority`
+    /// (smaller = dispatched sooner), mark the corpus
     /// [`Queued`](IndexingStatus::Queued), and attempt immediate dispatch.
     ///
     /// Returns once the job is queued and dispatch has been attempted — **not**
@@ -127,8 +169,9 @@ impl IngestionCoordinator {
         registry: &Arc<CorpusRegistry>,
         corpus_id: String,
         paths: Vec<String>,
+        priority: usize,
     ) {
-        self.lock().upsert(corpus_id.clone(), paths);
+        self.lock().upsert(corpus_id.clone(), paths, priority);
         // Distinct "queued" state while the job waits its turn (cq-status):
         // a not-yet-started corpus must not keep its prior Idle/indexed status.
         registry
@@ -219,11 +262,14 @@ mod tests {
         vec![p.to_string()]
     }
 
+    // Equal priority everywhere → seq drives order (pure FIFO).
+    const EQ: usize = 0;
+
     #[test]
     fn distinct_corpora_dispatch_in_fifo_order() {
         let mut q = QueueState::default();
-        q.upsert("a".into(), paths("a1"));
-        q.upsert("b".into(), paths("b1"));
+        q.upsert("a".into(), paths("a1"), EQ);
+        q.upsert("b".into(), paths("b1"), EQ);
 
         assert_eq!(q.take_next_dispatchable().unwrap().corpus_id, "a");
         assert_eq!(q.take_next_dispatchable().unwrap().corpus_id, "b");
@@ -233,8 +279,8 @@ mod tests {
     #[test]
     fn same_corpus_enqueues_coalesce_to_one_slot_latest_paths_win() {
         let mut q = QueueState::default();
-        q.upsert("a".into(), paths("old"));
-        q.upsert("a".into(), paths("new"));
+        q.upsert("a".into(), paths("old"), EQ);
+        q.upsert("a".into(), paths("new"), EQ);
 
         let job = q.take_next_dispatchable().unwrap();
         assert_eq!(job.corpus_id, "a");
@@ -249,13 +295,13 @@ mod tests {
     fn a_busy_corpus_is_skipped_so_it_never_head_of_line_blocks_others() {
         let mut q = QueueState::default();
         // `a` is already indexing; `b` is freshly queued.
-        q.upsert("a".into(), paths("a1"));
+        q.upsert("a".into(), paths("a1"), EQ);
         let busy_a = q.take_next_dispatchable().unwrap();
         assert_eq!(busy_a.corpus_id, "a"); // now marked busy
 
         // A new request for the busy corpus AND a request for a different one.
-        q.upsert("a".into(), paths("a2"));
-        q.upsert("b".into(), paths("b1"));
+        q.upsert("a".into(), paths("a2"), EQ);
+        q.upsert("b".into(), paths("b1"), EQ);
 
         // Selection skips the busy `a` and dispatches `b` — no head-of-line block.
         assert_eq!(q.take_next_dispatchable().unwrap().corpus_id, "b");
@@ -270,5 +316,46 @@ mod tests {
             paths("a2"),
             "the requeued job carries the latest paths"
         );
+    }
+
+    #[test]
+    fn dispatch_is_shortest_job_first_then_fifo() {
+        let mut q = QueueState::default();
+        // Enqueue out of size order; a "huge vendored tree" enqueued first.
+        q.upsert("huge".into(), paths("h"), 100_000);
+        q.upsert("small".into(), paths("s"), 50);
+        q.upsert("medium".into(), paths("m"), 5_000);
+
+        // Smallest estimated work first, regardless of enqueue order.
+        assert_eq!(q.take_next_dispatchable().unwrap().corpus_id, "small");
+        assert_eq!(q.take_next_dispatchable().unwrap().corpus_id, "medium");
+        assert_eq!(q.take_next_dispatchable().unwrap().corpus_id, "huge");
+        assert!(q.take_next_dispatchable().is_none());
+    }
+
+    #[test]
+    fn equal_priority_breaks_ties_fifo_by_enqueue_order() {
+        let mut q = QueueState::default();
+        q.upsert("first".into(), paths("1"), 500);
+        q.upsert("second".into(), paths("2"), 500);
+        q.upsert("third".into(), paths("3"), 500);
+
+        assert_eq!(q.take_next_dispatchable().unwrap().corpus_id, "first");
+        assert_eq!(q.take_next_dispatchable().unwrap().corpus_id, "second");
+        assert_eq!(q.take_next_dispatchable().unwrap().corpus_id, "third");
+    }
+
+    #[test]
+    fn re_enqueue_updates_priority_but_keeps_fifo_position() {
+        let mut q = QueueState::default();
+        q.upsert("a".into(), paths("a"), 100);
+        q.upsert("b".into(), paths("b"), 100);
+        // `a` grows (re-enqueued at a higher cost) but was queued first; with
+        // equal-or-higher priority it must NOT jump ahead of `b` on a tie, and
+        // its seq is preserved so re-enqueue can't starve later arrivals.
+        q.upsert("a".into(), paths("a2"), 100);
+
+        assert_eq!(q.take_next_dispatchable().unwrap().corpus_id, "a");
+        assert_eq!(q.take_next_dispatchable().unwrap().corpus_id, "b");
     }
 }
