@@ -61,8 +61,14 @@ pub(crate) async fn run_corpus_ingestion(
     let index = &*ctx.index;
 
     let start = std::time::Instant::now();
-    let mut pipeline =
-        ministr_core::ingestion::IngestionPipeline::new().with_progress(Arc::clone(progress));
+    // parity-meta-toml-load: apply this corpus's resolved per-corpus `meta.toml`
+    // knobs (parser + min_section_tokens) — the SAME knobs the daemon's
+    // `indexer::run` applies — so the CLI one-shot and the registry ingest
+    // surfaces honor them identically.
+    let mut pipeline = ministr_core::ingestion::IngestionPipeline::new()
+        .with_progress(Arc::clone(progress))
+        .with_parser_override(ctx.parser)
+        .with_min_section_tokens(ctx.min_section_tokens);
     if let Some(n) = streaming_persist_every {
         pipeline = pipeline
             .with_corpus_dir(ctx.index_dir.clone())

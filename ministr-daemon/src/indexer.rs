@@ -42,7 +42,18 @@ const DEBOUNCE_MAX_WINDOW: Duration = Duration::from_secs(10);
 // helper just to satisfy the lint would obscure the flow.
 #[allow(clippy::too_many_lines)]
 pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
-    let (storage, model, dimension, index, data_dir, index_dir, progress, prefetch) = {
+    let (
+        storage,
+        model,
+        dimension,
+        parser,
+        min_section_tokens,
+        index,
+        data_dir,
+        index_dir,
+        progress,
+        prefetch,
+    ) = {
         let corpora = registry.corpora().read().await;
         let Some(handle) = corpora.get(corpus_id) else {
             return;
@@ -51,6 +62,8 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
             Arc::clone(&handle.storage),
             handle.model.clone(),
             handle.dimension,
+            handle.parser,
+            handle.min_section_tokens,
             Arc::clone(&handle.index),
             handle.data_dir.clone(),
             handle.data_dir.join("index"),
@@ -154,8 +167,15 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
     // through a dedicated EmbeddingService so the synchronous, GPU-bound embed()
     // runs on its own thread and the pipeline's embed consumer never pins a
     // Tokio worker. Corpora sharing a model+dimension share one queue.
+    //
+    // parity-meta-toml-load: apply this corpus's resolved per-corpus `meta.toml`
+    // knobs — `parser` (override auto-detection) + `min_section_tokens` (section
+    // merge threshold) — the SAME knobs the CLI's `run_corpus_ingestion` applies,
+    // so the two ingestion surfaces stay in parity.
     let pipeline = IngestionPipeline::new()
         .with_progress(Arc::clone(&progress))
+        .with_parser_override(parser)
+        .with_min_section_tokens(min_section_tokens)
         .with_embedding_service(service);
 
     match pipeline

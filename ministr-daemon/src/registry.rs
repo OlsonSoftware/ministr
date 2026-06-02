@@ -150,6 +150,14 @@ pub struct CorpusHandle {
     /// `dimension` is `Some`; threaded into the `QueryService` via
     /// `with_matryoshka_rerank` (defaulting to 100, matching the CLI).
     pub rerank_depth: Option<usize>,
+    /// The corpus's effective parser override (parity-meta-toml-load) — its
+    /// per-corpus `meta.toml` `parser`, else `None` (auto-detect by extension).
+    /// `indexer::run` applies this to the `IngestionPipeline`.
+    pub parser: Option<ministr_core::parser::ParserKind>,
+    /// The corpus's effective minimum standalone-section token count
+    /// (parity-meta-toml-load) — its `meta.toml` `min_section_tokens`
+    /// (default 50). `indexer::run` applies this to the `IngestionPipeline`.
+    pub min_section_tokens: usize,
     /// `Arc` so `list()` (and any read-mostly status path) can clone the
     /// handle out and drop the corpora-map guard *before* awaiting the
     /// session lock. Accessors are unchanged — `Arc` derefs to the
@@ -1204,7 +1212,7 @@ impl CorpusRegistry {
         // `init_infrastructure` does. `indexer::run` reads `handle.model` +
         // `handle.dimension` and applies the SAME `apply_dimension`, so ingest
         // and query share one (possibly truncated) vector space.
-        let cfg = resolve_corpus_config(paths, &self.config);
+        let cfg = resolve_corpus_config(paths, &corpus_dir, &self.config);
         let model = cfg.model.clone();
         let pooled = self.embedder_for(&model)?;
         let (embedder, dual) = apply_dimension(&pooled.embedder, cfg.dimension)?;
@@ -1277,6 +1285,8 @@ impl CorpusRegistry {
             model,
             dimension: cfg.dimension,
             rerank_depth: cfg.rerank_depth,
+            parser: cfg.parser,
+            min_section_tokens: cfg.min_section_tokens,
             sessions: Arc::new(tokio::sync::Mutex::new(SessionRegistry::new(
                 UsageConfig::default(),
             ))),
@@ -1304,6 +1314,7 @@ impl CorpusRegistry {
 /// the CLI uses, so the surfaces cannot drift.
 fn resolve_corpus_config(
     paths: &[String],
+    corpus_dir: &std::path::Path,
     config: &MinistrConfig,
 ) -> ministr_core::config::EffectiveCorpusConfig {
     let repo_cfg = paths.first().and_then(|p| {
@@ -1315,9 +1326,15 @@ fn resolve_corpus_config(
         };
         dir.and_then(|d| ministr_core::config::RepoConfig::discover(d).ok().flatten())
     });
+    // parity-meta-toml-load: load this corpus's per-corpus `meta.toml`
+    // (`CorpusConfig`) from its data dir so parser + min_section_tokens are
+    // honored — the SAME `corpus_config` arg the CLI passes to the seam.
+    // Absent/unparseable meta.toml → `None` (defaults), so registration never
+    // fails over a missing override.
+    let meta = ministr_core::config::CorpusConfig::load(&corpus_dir.join("meta.toml")).ok();
     ministr_core::config::resolve_effective_corpus_config(
         repo_cfg.as_ref().map(|(_, rc)| rc),
-        None,
+        meta.as_ref(),
         config,
     )
 }

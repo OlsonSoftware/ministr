@@ -686,6 +686,20 @@ impl IngestionPipeline {
         }
     }
 
+    /// Chaining form of [`Self::with_parser`] for the per-corpus config seam
+    /// (parity-meta-toml-load): sets the parser override in the middle of a
+    /// builder chain. `None` leaves auto-detection (extension-based) on.
+    ///
+    /// [`Self::with_parser`] is a *constructor* (it discards `self`), so it
+    /// can't be used after `with_progress`/`with_embedding_service`; both
+    /// ingestion entry points need this chaining setter to apply a corpus's
+    /// resolved `meta.toml` `parser` without clobbering the rest of the chain.
+    #[must_use]
+    pub fn with_parser_override(mut self, parser: Option<ParserKind>) -> Self {
+        self.parser_override = parser;
+        self
+    }
+
     #[must_use]
     pub fn with_progress(mut self, progress: Arc<IngestionProgress>) -> Self {
         self.progress = Some(progress);

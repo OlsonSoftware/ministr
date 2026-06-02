@@ -26,6 +26,12 @@ pub(crate) struct InfrastructureContext {
     pub(crate) dual_embedder: Option<Arc<dyn ministr_core::embedding::DualEmbedder>>,
     /// Number of coarse candidates to rescore with full-dim vectors.
     pub(crate) rerank_depth: usize,
+    /// Per-corpus parser override resolved from `meta.toml` (parity-meta-toml-load);
+    /// `None` = auto-detect by extension. Applied to the ingestion pipeline.
+    pub(crate) parser: Option<ministr_core::parser::ParserKind>,
+    /// Per-corpus minimum standalone-section token count resolved from `meta.toml`
+    /// (parity-meta-toml-load; default 50). Applied to the ingestion pipeline.
+    pub(crate) min_section_tokens: usize,
 }
 
 /// Initialize shared infrastructure: storage, embedder, and vector index.
@@ -189,6 +195,15 @@ pub(crate) async fn init_infrastructure(
 
     ministr_core::mem_profile::checkpoint("after vector index init");
 
+    // parity-meta-toml-load: resolve this corpus's per-corpus `meta.toml` knobs
+    // (parser + min_section_tokens) through the shared seam so `ministr index`
+    // honors them exactly as the daemon registry does. Absent/unparseable
+    // meta.toml → defaults (None / 50). parser + min_section_tokens live only in
+    // `meta.toml`, so a `None` repo config here is correct.
+    let meta = ministr_core::config::CorpusConfig::load(&corpus_dir.join("meta.toml")).ok();
+    let effective =
+        ministr_core::config::resolve_effective_corpus_config(None, meta.as_ref(), config);
+
     Ok(InfrastructureContext {
         corpus_dir,
         index_dir,
@@ -197,6 +212,8 @@ pub(crate) async fn init_infrastructure(
         index,
         dual_embedder,
         rerank_depth: rerank_depth.unwrap_or(100),
+        parser: effective.parser,
+        min_section_tokens: effective.min_section_tokens,
     })
 }
 

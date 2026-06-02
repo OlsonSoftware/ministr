@@ -313,6 +313,8 @@ fn build_corpus_handle(
         model: "all-MiniLM-L6-v2".into(),
         dimension: None,
         rerank_depth: None,
+        parser: None,
+        min_section_tokens: 50,
         sessions: Arc::new(tokio::sync::Mutex::new(SessionRegistry::new(
             UsageConfig::default(),
         ))),

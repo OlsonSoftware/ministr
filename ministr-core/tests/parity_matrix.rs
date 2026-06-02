@@ -74,24 +74,30 @@ const MATRIX: &[Row] = &[
         cli_one_shot: Honored::Yes,
         daemon_registry: Honored::Yes,
     },
-    // parser / min_section_tokens / claim_extraction — these live only in the
-    // per-corpus `meta.toml`, and NEITHER ingestion entry point passes a
-    // `CorpusConfig` to the seam today (both pass `None`), so the resolved value
-    // is always the default. No surface honors them yet.
+    // parser / min_section_tokens — live only in the per-corpus `meta.toml`.
+    // parity-meta-toml-load loads it in BOTH ingestion entry points (CLI
+    // `init_infrastructure` + daemon `create_handle`) and applies them to the
+    // `IngestionPipeline` (`with_parser_override` / `with_min_section_tokens`),
+    // so both surfaces honor them end-to-end.
     Row {
         knob: "parser",
-        cli_one_shot: Honored::NotYet("parity-meta-toml-load"),
-        daemon_registry: Honored::NotYet("parity-meta-toml-load"),
+        cli_one_shot: Honored::Yes,
+        daemon_registry: Honored::Yes,
     },
     Row {
         knob: "min_section_tokens",
-        cli_one_shot: Honored::NotYet("parity-meta-toml-load"),
-        daemon_registry: Honored::NotYet("parity-meta-toml-load"),
+        cli_one_shot: Honored::Yes,
+        daemon_registry: Honored::Yes,
     },
+    // claim_extraction — also `meta.toml`-only AND now loaded by the seam, but
+    // it can't be HONORED yet: `ClaimExtractionMode::ModelAssisted` has no
+    // implementation (the pipeline holds a concrete `HeuristicClaimExtractor`),
+    // so selecting the extractor by mode is a real ML feature, not plumbing.
+    // Tracked by parity-claim-extraction-mode.
     Row {
         knob: "claim_extraction",
-        cli_one_shot: Honored::NotYet("parity-meta-toml-load"),
-        daemon_registry: Honored::NotYet("parity-meta-toml-load"),
+        cli_one_shot: Honored::NotYet("parity-claim-extraction-mode"),
+        daemon_registry: Honored::NotYet("parity-claim-extraction-mode"),
     },
 ];
 
@@ -185,15 +191,19 @@ fn model_is_honored_end_to_end_via_the_shared_seam() {
 #[test]
 fn known_registry_gaps_are_tracked_never_silent() {
     // The registry now applies the per-corpus MODEL (embedder pool,
-    // parity-seam-registry-routing) AND the Matryoshka DIMENSION + RERANK_DEPTH
-    // (parity-registry-knobs). The only remaining gaps are the `meta.toml`-only
-    // knobs — neither ingestion entry point loads a `CorpusConfig` yet. Every
-    // still-ungated registry cell MUST be `NotYet(non-empty tracking ref)` — a
-    // regression that flips one to `Yes` without the wiring, or drops the
+    // parity-seam-registry-routing), the Matryoshka DIMENSION + RERANK_DEPTH
+    // (parity-registry-knobs), AND the `meta.toml` PARSER + MIN_SECTION_TOKENS
+    // (parity-meta-toml-load). The only remaining gap is `claim_extraction`,
+    // which needs a `ModelAssisted` extractor (parity-claim-extraction-mode).
+    // Every still-ungated registry cell MUST be `NotYet(non-empty tracking ref)`
+    // — a regression that flips one to `Yes` without the wiring, or drops the
     // tracking ref, fails here; and a regression that drops one of the applied
     // knobs back to `NotYet` fails the `Yes` arm.
     for r in MATRIX {
-        if matches!(r.knob, "model" | "dimension" | "rerank_depth") {
+        if matches!(
+            r.knob,
+            "model" | "dimension" | "rerank_depth" | "parser" | "min_section_tokens"
+        ) {
             assert_eq!(
                 r.daemon_registry,
                 Honored::Yes,
