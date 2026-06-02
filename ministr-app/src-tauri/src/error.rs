@@ -141,3 +141,13 @@ impl From<ministr_daemon::registry::RegistryError> for CommandError {
         Self::new(ErrorKind::Registry, e.to_string())
     }
 }
+
+impl From<ministr_api::client::ClientError> for CommandError {
+    /// Daemon round-trips (gd2+): a UDS call failing — daemon unreachable,
+    /// transport fault, decode mismatch, or a daemon-side error — surfaces
+    /// as `Internal`. The `Display` string carries the specific cause
+    /// (including the daemon's `ApiError` message) to the frontend.
+    fn from(e: ministr_api::client::ClientError) -> Self {
+        Self::new(ErrorKind::Internal, e.to_string())
+    }
+}

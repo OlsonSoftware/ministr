@@ -16,9 +16,15 @@ use ministr_daemon::state::AppState;
 use crate::error::{CommandError, ErrorKind};
 
 /// List all registered corpora.
+///
+/// gd2: routed over UDS to the headless daemon — the canonical registry —
+/// rather than the GUI's in-process `AppState`.
 #[tauri::command]
-pub async fn list_corpora(state: State<'_, AppState>) -> Result<Vec<CorpusInfo>, CommandError> {
-    Ok(state.registry.list().await)
+pub async fn list_corpora() -> Result<Vec<CorpusInfo>, CommandError> {
+    ministr_api::client::DaemonClient::new()
+        .list_corpora()
+        .await
+        .map_err(Into::into)
 }
 
 /// Register a new corpus by paths.
@@ -53,34 +59,17 @@ pub async fn unregister_corpus(
 /// directly so the React UI doesn't need a separate `is_autostart_enabled`
 /// round-trip on every Settings mount.
 #[tauri::command]
-pub async fn daemon_status(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<DaemonStatus, CommandError> {
+pub async fn daemon_status(app: AppHandle) -> Result<DaemonStatus, CommandError> {
     use tauri_plugin_autostart::ManagerExt;
 
-    let corpora = state.registry.list().await;
-    tracing::debug!(corpora_count = corpora.len(), "daemon_status polled");
-    let rss = ministr_core::mem_profile::rss_mb().unwrap_or(0.0);
-    let total_sessions: usize = corpora.iter().map(|c| c.active_sessions).sum();
-
-    let log_path = Some(ministr_api::daemon_data_dir().join("ministr.log"))
-        .filter(|p| p.exists())
-        .map(|p| p.display().to_string());
-
-    let autostart_enabled = app.autolaunch().is_enabled().ok();
-
-    Ok(DaemonStatus {
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_secs: state.uptime_secs(),
-        memory_mb: rss,
-        model: state.registry.config().default_model.clone(),
-        model_dimension: state.registry.embedder().dimension(),
-        corpora,
-        log_path,
-        total_sessions,
-        autostart_enabled,
-    })
+    // gd2: status now reflects the headless daemon process (version, uptime,
+    // RSS, model, corpora, sessions, log path) over UDS — not the GUI's
+    // in-process AppState. `autostart_enabled` stays a GUI-local concern: the
+    // autolaunch plugin lives in the tray app, and the headless daemon always
+    // returns `None` for it, so the GUI overrides it here.
+    let mut status = ministr_api::client::DaemonClient::new().status().await?;
+    status.autostart_enabled = app.autolaunch().is_enabled().ok();
+    Ok(status)
 }
 
 /// Open a directory picker dialog and register the selected directory as a corpus.
@@ -1336,17 +1325,16 @@ pub struct IngestionProgressInfo {
 /// ring buffer. Mirrors the daemon's `/coherence-events` route.
 #[tauri::command]
 pub async fn recent_coherence_events(
-    state: State<'_, AppState>,
     limit: Option<usize>,
     since_ms: Option<u64>,
 ) -> Result<Vec<CoherenceEvent>, CommandError> {
-    let limit = limit.unwrap_or(50);
-    let events = if let Some(since) = since_ms {
-        state.coherence_since(since, limit).await
-    } else {
-        state.recent_coherence(limit).await
-    };
-    Ok(events)
+    // gd2: read the daemon's coherence (file-change) ring over UDS rather
+    // than the GUI's in-process buffer. The daemon applies limit/since;
+    // default 50 to match the prior in-process behavior.
+    Ok(ministr_api::client::DaemonClient::new()
+        .recent_coherence_events(Some(limit.unwrap_or(50)), since_ms)
+        .await?
+        .events)
 }
 
 /// Snapshot recent tool-call activity events from the in-process ring buffer.
@@ -1356,17 +1344,19 @@ pub async fn recent_coherence_events(
 /// directly rather than hopping over UDS.
 #[tauri::command]
 pub async fn recent_activity(
-    state: State<'_, AppState>,
     limit: Option<usize>,
     since_ms: Option<u64>,
     session_id: Option<String>,
 ) -> Result<Vec<ActivityEvent>, CommandError> {
     let limit = limit.unwrap_or(50);
-    let events = if let Some(since) = since_ms {
-        state.activity_since(since, limit).await
-    } else {
-        state.recent_activity(limit).await
-    };
+    // gd2: read the daemon's activity ring over UDS. After gd1 the GUI's
+    // in-process ring is empty (MCP traffic hits the sidecar), so this is
+    // where the real timeline lives. The daemon applies the limit/since
+    // filtering server-side and returns newest-first.
+    let events = ministr_api::client::DaemonClient::new()
+        .recent_activity(Some(limit), since_ms)
+        .await?
+        .events;
     // Per-session filter. Every event the MCP proxy generates is now
     // stamped with its originating session via the X-Ministr-Session-Id
     // header (read in the daemon's activity middleware), so a strict
