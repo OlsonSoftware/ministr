@@ -72,19 +72,13 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
         )
     };
 
-    // Mark the corpus as Indexing BEFORE waiting on an indexing slot, so a
-    // corpus sitting in the queue reports "indexing" rather than keeping its
-    // prior (Idle/"indexed") status with 0 files — otherwise a not-yet-started
-    // corpus misleadingly looks finished-but-empty.
-    registry
-        .set_status(
-            corpus_id,
-            IndexingStatus::Indexing {
-                files_done: 0,
-                files_total: 0,
-            },
-        )
-        .await;
+    // cq-status: mark the corpus Queued BEFORE waiting on an indexing slot, so a
+    // corpus sitting in the queue reports a distinct "queued" state rather than
+    // keeping its prior (Idle/"indexed") status with 0 files — otherwise a
+    // not-yet-started corpus misleadingly looks finished-but-empty. This
+    // replaces the earlier band-aid (b44874e) that set `Indexing` before the
+    // wait (which then misreported a queued corpus as actively indexing).
+    registry.set_status(corpus_id, IndexingStatus::Queued).await;
 
     // Acquire an indexing slot (f-ingest-coordinator): the scheduler serializes
     // same-corpus indexing (a corpus never indexes concurrently with itself) and
@@ -94,6 +88,19 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
     // so multiple distinct corpora index concurrently up to the bound without
     // starving the runtime.
     let _slot = registry.scheduler().acquire(corpus_id).await;
+
+    // The permit is granted — transition Queued → Indexing now that work is
+    // actually starting. `merge_live_info` overlays live progress only on the
+    // `Indexing` state, so the file/section counts begin updating from here.
+    registry
+        .set_status(
+            corpus_id,
+            IndexingStatus::Indexing {
+                files_done: 0,
+                files_total: 0,
+            },
+        )
+        .await;
 
     let local_paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
 

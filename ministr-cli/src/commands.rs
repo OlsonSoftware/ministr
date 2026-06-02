@@ -1535,6 +1535,7 @@ pub async fn cmd_daemon_status() -> Result<()> {
                 c.embeddings_count,
                 match &c.status {
                     ministr_api::corpus::IndexingStatus::Idle => "idle".to_string(),
+                    ministr_api::corpus::IndexingStatus::Queued => "queued".to_string(),
                     ministr_api::corpus::IndexingStatus::Indexing {
                         files_done,
                         files_total,

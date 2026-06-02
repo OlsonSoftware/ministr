@@ -25,6 +25,7 @@ export interface DetectedProject {
 
 export type IndexingStatus =
   | { state: "idle" }
+  | { state: "queued" }
   | { state: "indexing"; files_done: number; files_total: number }
   | { state: "error"; message: string };
 

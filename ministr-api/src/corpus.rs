@@ -103,6 +103,12 @@ pub struct CorpusInfo {
 pub enum IndexingStatus {
     /// Corpus is idle (fully indexed or not yet started).
     Idle,
+    /// Corpus is enqueued for indexing but waiting on a scheduler permit —
+    /// distinct from `Indexing` (actively running) and `Idle` (done/not-started).
+    /// Set by the indexer *before* it acquires an indexing slot, so a corpus
+    /// sitting in the queue no longer misreports as `Indexing` with 0 files
+    /// (the misleading "finished-but-empty" display, b44874e).
+    Queued,
     /// Indexing is in progress.
     Indexing {
         /// Number of files processed so far.
@@ -252,4 +258,27 @@ pub struct CloneRepoResponse {
     pub linked_toml_updated: bool,
     /// Whether indexing of the new corpus has started.
     pub indexing_started: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // cq-status: the `Queued` variant must round-trip on the wire as
+    // `{"state":"queued"}`, distinct from `idle`/`indexing`, so the GUI can
+    // render a queued corpus separately from an actively-indexing one.
+    #[test]
+    fn indexing_status_queued_serializes_distinctly() {
+        let json = serde_json::to_string(&IndexingStatus::Queued).unwrap();
+        assert_eq!(json, r#"{"state":"queued"}"#);
+
+        let back: IndexingStatus = serde_json::from_str(&json).unwrap();
+        assert!(matches!(back, IndexingStatus::Queued));
+
+        // And it is NOT confused with idle or indexing.
+        assert_ne!(
+            serde_json::to_string(&IndexingStatus::Queued).unwrap(),
+            serde_json::to_string(&IndexingStatus::Idle).unwrap()
+        );
+    }
 }

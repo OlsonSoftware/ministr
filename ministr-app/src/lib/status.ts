@@ -13,12 +13,16 @@ export type BadgeVariant = "default" | "success" | "warning" | "danger" | "muted
 
 const INDEXING_TONE: Record<IndexingStatus["state"], Tone> = {
   idle: "success",
+  // Queued — waiting on a scheduler permit. Accent (not warning) so it reads as
+  // "pending work" distinct from the actively-spinning `indexing` warning tone.
+  queued: "accent",
   indexing: "warning",
   error: "danger",
 };
 
 const INDEXING_LABEL: Record<IndexingStatus["state"], string> = {
   idle: "Ready",
+  queued: "Queued",
   indexing: "Indexing",
   error: "Error",
 };
