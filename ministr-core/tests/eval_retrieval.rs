@@ -268,9 +268,23 @@ async fn eval_model_bakeoff() {
 /// The doc-heavy [`eval_model_bakeoff`] concluded "no swap" (every candidate
 /// regressed vs all-MiniLM-L6-v2), but flagged that `jina-embeddings-v2-base-code`
 /// was the closest non-baseline and might overtake on a code-representative
-/// corpus — which is what agents actually retrieve. This is the instrument that
-/// decides jina-code vs `MiniLM` on data. Note `bge-m3` still fails to load via
-/// fastembed (a separate Candle-runner chunk); the other candidates run.
+/// corpus — which is what agents actually retrieve.
+///
+/// RESULT (2026-06-02, 26 code queries; `just eval-bakeoff-code`):
+/// ```text
+/// model                         dim    P@5    R@5    MRR  nDCG@5
+/// all-MiniLM-L6-v2              384  0.323  0.635  0.604  0.550
+/// gte-base-en-v1.5             768  0.285  0.558  0.705  0.528
+/// jina-embeddings-v2-base-code 768  0.315  0.673  0.681  0.604   <- wins R@5 + nDCG
+/// bge-m3                      1024  0.277  0.500  0.618  0.503
+/// ```
+/// Hypothesis CONFIRMED: jina-code's edge is CODE-SPECIFIC — it overtakes
+/// `MiniLM` on recall + nDCG on code, yet `MiniLM` still wins every metric on the
+/// doc corpus.
+/// A single global default can't be best at both, so the architecturally-right
+/// answer is per-corpus embedder routing, NOT a global swap (which would also
+/// double the vector dim 384->768 and force a full re-index). bge-m3 now loads
+/// fine via fastembed (the earlier failure was transient) but is not a contender.
 ///
 /// `#[ignore]`: downloads several embedding models (network/compute). Run via:
 ///
