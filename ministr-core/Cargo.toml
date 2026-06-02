@@ -203,6 +203,13 @@ lang-make = ["dep:tree-sitter-make"]
 serde_json.workspace = true
 criterion = { version = "0.5", features = ["html_reports"] }
 rand = "0.8"
+# RQ1 content-loss measurement (tests/eval_retrieval.rs::measure_truncation_…):
+# counts real WordPiece tokens per embedded section to quantify what the 128/256
+# truncation cap drops. Test-only — these are already in the dep tree behind the
+# optional `candle` feature; pulling them in as dev-deps lets the (model-free
+# default build) measurement run under `just eval-truncation` without `candle`.
+tokenizers.workspace = true
+hf-hub.workspace = true
 # F31.2b-ii-O — OpenAI embedder tests (relocated from ministr-cloud)
 # spin up a fake Azure endpoint via axum to round-trip the request +
 # response. Test-only dep; not pulled into the production binary.

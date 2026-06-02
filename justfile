@@ -79,6 +79,14 @@ bench:
 eval-quality:
     cargo test -p ministr-core --test eval_retrieval -- --ignored --nocapture eval_retrieval_real_embedder
 
+# RQ1 content-loss measurement: how many embedded sections exceed the 128/256
+# token cap, and what fraction of content the cap drops. Ingests eval/corpus
+# with a mock embedder (model-free) and tokenizes with the real all-MiniLM
+# WordPiece tokenizer (downloads tokenizer.json on first run). Run after the
+# RQ1 truncation fix to quantify the recovered content; pairs with eval-quality.
+eval-truncation:
+    cargo test -p ministr-core --test eval_retrieval -- --ignored --nocapture measure_truncation_content_loss
+
 bench-all:
     cargo bench -p ministr-core
 

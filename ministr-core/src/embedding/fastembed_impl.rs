@@ -385,9 +385,19 @@ impl FastEmbedder {
         // Rebuilt per try_new attempt — InitOptions is consumed by try_new,
         // and the parsed model handle isn't Clone on all fastembed versions,
         // so we re-parse (cheap — just string matching) for each attempt.
+        // Sequence-length cap as a model-driven property (RQ1). Without an
+        // explicit `with_max_length`, fastembed silently applies its own
+        // default of 512 — which for all-MiniLM-L6-v2 is *above* the model's
+        // documented 256-token context and inconsistent with the Candle path.
+        // Setting it from `model_max_seq_len` keeps both backends (and the
+        // rq0 eval, which runs on FastEmbedder) on the model's real max.
+        let max_len = model_max_seq_len(&parse_model_name(model_name)?);
+
         let make_base_options = || -> Result<InitOptions, IndexError> {
             let model = parse_model_name(model_name)?;
-            let mut options = InitOptions::new(model).with_show_download_progress(true);
+            let mut options = InitOptions::new(model)
+                .with_show_download_progress(true)
+                .with_max_length(max_len);
             if let Some(dir) = cache_dir {
                 options = options.with_cache_dir(PathBuf::from(dir));
             }
@@ -886,6 +896,50 @@ fn model_dimension(model: &EmbeddingModel) -> usize {
     }
 }
 
+/// Return the model's documented maximum input sequence length (`WordPiece`
+/// tokens, including special tokens).
+///
+/// This is the cap above which inputs are truncated at tokenization. We set it
+/// explicitly (`InitOptions::with_max_length`) rather than inheriting
+/// fastembed's blanket 512 default, so that the cap is a property of the model
+/// — e.g. all-MiniLM-L6-v2's documented 256, not 512 (RQ1). Unmatched variants
+/// fall back to 512, fastembed's own default, so behaviour never regresses for
+/// a model we haven't explicitly characterized.
+fn model_max_seq_len(model: &EmbeddingModel) -> usize {
+    match model {
+        // MiniLM family: model card — "longer than 256 word pieces is truncated".
+        EmbeddingModel::AllMiniLML6V2
+        | EmbeddingModel::AllMiniLML6V2Q
+        | EmbeddingModel::AllMiniLML12V2
+        | EmbeddingModel::AllMiniLML12V2Q
+        | EmbeddingModel::ParaphraseMLMiniLML12V2
+        | EmbeddingModel::ParaphraseMLMiniLML12V2Q => 256,
+
+        // MPNet sentence-transformers: max_seq_length = 384.
+        EmbeddingModel::AllMpnetBaseV2 | EmbeddingModel::ParaphraseMLMpnetBaseV2 => 384,
+
+        // Nomic v1/v1.5: 2048-token default context (supports up to 8192).
+        EmbeddingModel::NomicEmbedTextV1
+        | EmbeddingModel::NomicEmbedTextV15
+        | EmbeddingModel::NomicEmbedTextV15Q => 2048,
+
+        // Long-context models: 8192 tokens.
+        EmbeddingModel::JinaEmbeddingsV2BaseEN
+        | EmbeddingModel::JinaEmbeddingsV2BaseCode
+        | EmbeddingModel::GTEBaseENV15
+        | EmbeddingModel::GTEBaseENV15Q
+        | EmbeddingModel::GTELargeENV15
+        | EmbeddingModel::GTELargeENV15Q
+        | EmbeddingModel::BGEM3
+        | EmbeddingModel::ModernBertEmbedLarge
+        | EmbeddingModel::SnowflakeArcticEmbedMLong
+        | EmbeddingModel::SnowflakeArcticEmbedMLongQ => 8192,
+
+        // Everything else: fastembed's documented 512-token default.
+        _ => 512,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -925,6 +979,29 @@ mod tests {
     #[test]
     fn supported_models_not_empty() {
         assert!(SUPPORTED_MODELS.len() >= 10);
+    }
+
+    #[test]
+    fn max_seq_len_is_model_driven() {
+        // The default model's cap must be its documented 256 — NOT fastembed's
+        // blanket 512 default (the RQ1 fix; the eval runs on this model).
+        let minilm = parse_model_name("all-MiniLM-L6-v2").unwrap();
+        assert_eq!(model_max_seq_len(&minilm), 256);
+
+        // A model we haven't explicitly characterized falls back to 512 so we
+        // never silently regress its prior behaviour.
+        let arctic = parse_model_name("snowflake-arctic-embed-m").unwrap();
+        assert_eq!(model_max_seq_len(&arctic), 512);
+
+        // Long-context model keeps its large window.
+        let jina = parse_model_name("jina-embeddings-v2-base-code").unwrap();
+        assert_eq!(model_max_seq_len(&jina), 8192);
+
+        // Every supported model resolves to a positive cap.
+        for info in SUPPORTED_MODELS {
+            let model = parse_model_name(info.name).unwrap();
+            assert!(model_max_seq_len(&model) > 0, "zero cap for {}", info.name);
+        }
     }
 
     #[test]

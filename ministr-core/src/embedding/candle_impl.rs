@@ -20,7 +20,7 @@ use candle_nn::VarBuilder;
 use candle_transformers::models::bert::Config as BertConfig;
 use hf_hub::api::sync::ApiBuilder;
 use parking_lot::Mutex;
-use tokenizers::Tokenizer;
+use tokenizers::{Tokenizer, TruncationParams};
 use tracing::{info, instrument};
 
 use super::Embedder;
@@ -39,30 +39,37 @@ const CANDLE_MODELS: &[CandleModelInfo] = &[
         name: "all-MiniLM-L6-v2",
         repo_id: "sentence-transformers/all-MiniLM-L6-v2",
         dimension: 384,
+        // Model card: "input text longer than 256 word pieces is truncated".
+        // The published tokenizer.json caps at 128 — we override to 256.
+        max_seq_len: 256,
         description: "Fast general-purpose 384d model (Candle Metal)",
     },
     CandleModelInfo {
         name: "bge-small-en-v1.5",
         repo_id: "BAAI/bge-small-en-v1.5",
         dimension: 384,
+        max_seq_len: 512,
         description: "BAAI BGE small English 384d (Candle Metal)",
     },
     CandleModelInfo {
         name: "bge-base-en-v1.5",
         repo_id: "BAAI/bge-base-en-v1.5",
         dimension: 768,
+        max_seq_len: 512,
         description: "BAAI BGE base English 768d (Candle Metal)",
     },
     CandleModelInfo {
         name: "bge-large-en-v1.5",
         repo_id: "BAAI/bge-large-en-v1.5",
         dimension: 1024,
+        max_seq_len: 512,
         description: "BAAI BGE large English 1024d (Candle Metal)",
     },
     CandleModelInfo {
         name: "nomic-embed-text-v1.5",
         repo_id: "nomic-ai/nomic-embed-text-v1.5",
         dimension: 768,
+        max_seq_len: 2048,
         description: "Nomic 768d with Matryoshka support (Candle Metal)",
     },
 ];
@@ -76,6 +83,14 @@ pub struct CandleModelInfo {
     pub repo_id: &'static str,
     /// Output embedding dimension.
     pub dimension: usize,
+    /// Maximum input sequence length (`WordPiece` tokens, incl. special tokens)
+    /// the model is trained/intended to process. Inputs longer than this are
+    /// truncated at tokenization. The published `tokenizer.json` for some
+    /// models (e.g. all-MiniLM-L6-v2) ships a *lower* truncation cap (128)
+    /// than the model actually supports (256), silently dropping content — so
+    /// we override the tokenizer's truncation to this value in [`Self::new`]
+    /// rather than inheriting whatever the tokenizer file happens to set.
+    pub max_seq_len: usize,
     /// Human-readable description.
     pub description: &'static str,
 }
@@ -205,9 +220,24 @@ impl CandleEmbedder {
             })?;
 
         // Load tokenizer.
-        let tokenizer =
+        let mut tokenizer =
             Tokenizer::from_file(&tokenizer_path).map_err(|e| IndexError::EmbeddingFailed {
                 reason: format!("failed to load tokenizer: {e}"),
+            })?;
+
+        // Override the tokenizer's truncation to the model's real max sequence
+        // length. Without this the loaded tokenizer.json silently dictates the
+        // cap — for all-MiniLM-L6-v2 that file ships max_length=128, dropping
+        // every input beyond 128 tokens even though the model supports 256
+        // (RQ1). Setting it explicitly makes the cap a model-driven property
+        // (`CandleModelInfo::max_seq_len`) rather than a silent file default.
+        tokenizer
+            .with_truncation(Some(TruncationParams {
+                max_length: model_info.max_seq_len,
+                ..Default::default()
+            }))
+            .map_err(|e| IndexError::EmbeddingFailed {
+                reason: format!("failed to set tokenizer truncation: {e}"),
             })?;
 
         // Load model weights (safe — reads entire file into memory, no mmap).

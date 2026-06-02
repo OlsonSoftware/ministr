@@ -50,6 +50,29 @@ impl Embedder for HashEmbedder {
     }
 }
 
+/// Wraps an inner embedder and records the exact text of every input it is
+/// asked to embed — i.e. one string per embedded section. Used by the RQ1
+/// truncation content-loss measurement to recover, faithfully, the units that
+/// actually get embedded (rather than re-deriving them from raw files).
+struct CapturingEmbedder {
+    inner: HashEmbedder,
+    seen: std::sync::Mutex<Vec<String>>,
+}
+
+impl Embedder for CapturingEmbedder {
+    fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, IndexError> {
+        self.seen
+            .lock()
+            .expect("seen mutex poisoned")
+            .extend(texts.iter().map(|t| (*t).to_string()));
+        self.inner.embed(texts)
+    }
+
+    fn dimension(&self) -> usize {
+        self.inner.dimension()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -198,6 +221,130 @@ async fn eval_retrieval_real_embedder() {
         results.mrr >= BASELINE_MRR,
         "MRR {:.3} regressed below baseline floor {BASELINE_MRR}",
         results.mrr
+    );
+}
+
+/// RQ1 — quantify how much section content the embedding truncation cap
+/// silently drops.
+///
+/// Ingests the committed eval corpus through the real ingestion pipeline with a
+/// [`CapturingEmbedder`], capturing the exact string of every embedded section,
+/// then tokenizes each with the real `all-MiniLM-L6-v2` `WordPiece` tokenizer
+/// (truncation DISABLED, so true lengths are measured) and reports the
+/// token-length distribution plus the sections / tokens lost at the old 128-token
+/// cap and at the model's real 256-token cap (this chunk's fix).
+///
+/// `#[ignore]`: downloads `tokenizer.json` on first run (network). The ingest
+/// itself uses the hash mock — no embedding model is downloaded. Run via:
+///
+/// ```text
+/// just eval-truncation
+/// ```
+#[tokio::test]
+#[ignore = "downloads a tokenizer (network); run via `just eval-truncation`"]
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+async fn measure_truncation_content_loss() {
+    use ministr_core::index::HnswIndex;
+    use ministr_core::ingestion::IngestionPipeline;
+    use ministr_core::storage::SqliteStorage;
+
+    let Some((corpus_path, _gt)) = load_eval_data() else {
+        eprintln!("Skipping: eval/ data not found");
+        return;
+    };
+
+    // Ingest the corpus, capturing every embedded section's text. The mock
+    // embedder keeps this model-free; only the token COUNT below uses the real
+    // tokenizer.
+    let embedder = CapturingEmbedder {
+        inner: HashEmbedder { dim: 64 },
+        seen: std::sync::Mutex::new(Vec::new()),
+    };
+    let storage = SqliteStorage::open_in_memory().expect("failed to create storage");
+    let index = HnswIndex::new(embedder.dimension(), 10_000).expect("failed to create index");
+    IngestionPipeline::new()
+        .ingest_directory_with_embeddings(&corpus_path, &storage, &embedder, &index)
+        .await
+        .expect("ingestion failed");
+
+    let texts = embedder.seen.into_inner().expect("seen mutex poisoned");
+    assert!(!texts.is_empty(), "no sections were embedded");
+
+    // Real WordPiece tokenizer with truncation disabled, so we see true lengths.
+    let api = hf_hub::api::sync::Api::new().expect("failed to init hf-hub api");
+    let tok_path = api
+        .model("sentence-transformers/all-MiniLM-L6-v2".to_string())
+        .get("tokenizer.json")
+        .expect("failed to download tokenizer.json");
+    let mut tokenizer =
+        tokenizers::Tokenizer::from_file(&tok_path).expect("failed to load tokenizer");
+    tokenizer
+        .with_truncation(None)
+        .expect("failed to disable truncation");
+
+    // Token length per embedded section (with special tokens, as embed() uses).
+    let mut lens: Vec<usize> = texts
+        .iter()
+        .map(|t| {
+            tokenizer
+                .encode(t.as_str(), true)
+                .expect("tokenization failed")
+                .get_ids()
+                .len()
+        })
+        .collect();
+    lens.sort_unstable();
+    let n = lens.len();
+    let total_tokens: usize = lens.iter().sum();
+
+    // Nearest-rank percentile.
+    let pct = |p: f64| -> usize {
+        let idx = ((p / 100.0) * (n as f64)).ceil() as usize;
+        lens[idx.clamp(1, n) - 1]
+    };
+    // (#sections over the cap, #tokens dropped by the cap).
+    let lost_at = |cap: usize| -> (usize, usize) {
+        let sections = lens.iter().filter(|&&l| l > cap).count();
+        let tokens: usize = lens.iter().map(|&l| l.saturating_sub(cap)).sum();
+        (sections, tokens)
+    };
+    let (over128, lost128) = lost_at(128);
+    let (over256, lost256) = lost_at(256);
+    let frac = |x: usize, whole: usize| -> f64 {
+        if whole == 0 {
+            0.0
+        } else {
+            100.0 * x as f64 / whole as f64
+        }
+    };
+
+    eprintln!();
+    eprintln!("=== RQ1 truncation content-loss (all-MiniLM-L6-v2 WordPiece) ===");
+    eprintln!("Embedded sections:          {n}");
+    eprintln!(
+        "Token length p50/p90/p99/max: {} / {} / {} / {}",
+        pct(50.0),
+        pct(90.0),
+        pct(99.0),
+        lens.last().copied().unwrap_or(0)
+    );
+    eprintln!(
+        "Sections > 128 tokens:      {over128} ({:.1}%)   tokens dropped @128: {lost128} ({:.1}% of all tokens)",
+        frac(over128, n),
+        frac(lost128, total_tokens)
+    );
+    eprintln!(
+        "Sections > 256 tokens:      {over256} ({:.1}%)   tokens dropped @256: {lost256} ({:.1}% of all tokens)",
+        frac(over256, n),
+        frac(lost256, total_tokens)
+    );
+    eprintln!(
+        "=> Raising the cap 128 -> 256 (this chunk) recovers content for {over128} section(s); \
+         {over256} still exceed 256 (candidates for AST/late chunking, rq3/rq6)."
     );
 }
 
