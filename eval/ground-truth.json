@@ -444,6 +444,47 @@
         { "section_id": "error-handling.md#error-handling-guide/error-types/infrastructure-errors", "relevance": 3 },
         { "section_id": "error-handling.md#error-handling-guide/error-propagation", "relevance": 2 }
       ]
+    },
+    {
+      "query": "compute cosine similarity between two embedding vectors",
+      "expected": [
+        { "section_id": "vector_store.rs#vector_store::cosine_similarity", "relevance": 3 },
+        { "section_id": "embedding-pipeline.md#embedding-pipeline/batch-embedding-and-normalization", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "brute force exhaustive k nearest neighbor vector search",
+      "expected": [
+        { "section_id": "vector_store.rs#vector_store::knn_search", "relevance": 3 },
+        { "section_id": "vector_store.rs#vector_store::cosine_similarity", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "how does length-sorted batching minimize padding waste during embedding",
+      "expected": [
+        { "section_id": "embedding-pipeline.md#embedding-pipeline/batch-embedding-and-normalization", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "why are embedding vectors L2 normalized to unit length",
+      "expected": [
+        { "section_id": "embedding-pipeline.md#embedding-pipeline/batch-embedding-and-normalization", "relevance": 3 },
+        { "section_id": "vector_store.rs#vector_store::cosine_similarity", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "what happens to input text longer than the model maximum sequence length",
+      "expected": [
+        { "section_id": "embedding-pipeline.md#embedding-pipeline/sequence-length-and-truncation", "relevance": 3 },
+        { "section_id": "embedding-pipeline.md#embedding-pipeline/batch-embedding-and-normalization", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "skip zero or non-finite embedding vectors to avoid poisoning the index",
+      "expected": [
+        { "section_id": "embedding-pipeline.md#embedding-pipeline/batch-embedding-and-normalization", "relevance": 3 },
+        { "section_id": "vector_store.rs#vector_store::cosine_similarity", "relevance": 2 }
+      ]
     }
   ]
 }

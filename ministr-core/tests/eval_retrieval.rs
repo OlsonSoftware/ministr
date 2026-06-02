@@ -174,13 +174,14 @@ async fn eval_retrieval_regression_gate() {
 async fn eval_retrieval_real_embedder() {
     use ministr_core::embedding::FastEmbedder;
 
-    // Seeded 2026-06-02 from a real `just eval-quality` run on all-MiniLM-L6-v2
-    // (66 queries: R@5=0.826, MRR=0.941, nDCG@5=0.872 — the last with the
-    // corrected, [0,1]-bounded ndcg_at_k). Floors sit ~0.05 under each observed
-    // value: tight enough to catch a real regression (rq2 model swap, rq4
-    // hybrid, rq5 rerank), loose enough to absorb minor scoring jitter. The
-    // eval is deterministic (in-memory corpus + fixed weights), so re-seed only
-    // when the model, corpus, or metric definition changes.
+    // Seeded 2026-06-02 from a real `just eval-quality` run on all-MiniLM-L6-v2.
+    // Expanded corpus (now incl. long code + doc sections >256 tokens; 72
+    // queries): R@5=0.819, MRR=0.939, nDCG@5=0.872 (the last with the corrected,
+    // [0,1]-bounded ndcg_at_k). Floors sit ~0.05 under each observed value:
+    // tight enough to catch a real regression (rq2 model swap, rq4 hybrid, rq5
+    // rerank), loose enough to absorb minor scoring jitter. The eval is
+    // deterministic (in-memory corpus + fixed weights), so re-seed only when the
+    // model, corpus, or metric definition changes.
     const BASELINE_RECALL_AT_5: f64 = 0.77;
     const BASELINE_NDCG_AT_5: f64 = 0.82;
     const BASELINE_MRR: f64 = 0.88;
