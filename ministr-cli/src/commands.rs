@@ -1165,49 +1165,74 @@ pub async fn cmd_serve_proxy_stdio(
             .map(|lp| (lp.label.clone(), lp.paths.clone(), lp.session_id.clone()))
             .collect();
         tokio::spawn(async move {
-            match bg_client.register_corpus(&primary_paths).await {
-                Ok(resp) => {
-                    eprintln!(
-                        "ministr: primary corpus {} registered (indexing_started={})",
-                        resp.corpus_id, resp.indexing_started
-                    );
-                    if let Err(e) = bg_client
-                        .create_session_with_id(&resp.corpus_id, None, &primary_sid)
+            // gd7: register the primary + every linked corpus CONCURRENTLY.
+            // Each register triggers the daemon's create_handle, which rebuilds
+            // the corpus's HNSW from the SQLite vector store (~seconds per
+            // sizable corpus). gd5 regressed this to a sequential loop, so
+            // linked projects trickled into the GUI ~10-15s apart; a JoinSet
+            // collapses the wall-clock to the slowest single corpus (matching
+            // the daemon's own concurrent restore()). register is idempotent, so
+            // a corpus restore() already loaded short-circuits.
+            let mut set: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
+
+            // Primary corpus + its session.
+            {
+                let client = std::sync::Arc::clone(&bg_client);
+                set.spawn(async move {
+                    match client.register_corpus(&primary_paths).await {
+                        Ok(resp) => {
+                            eprintln!(
+                                "ministr: primary corpus {} registered (indexing_started={})",
+                                resp.corpus_id, resp.indexing_started
+                            );
+                            if let Err(e) = client
+                                .create_session_with_id(&resp.corpus_id, None, &primary_sid)
+                                .await
+                            {
+                                eprintln!(
+                                    "ministr: warning — primary session creation failed: {e}"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("ministr: warning — primary corpus registration failed: {e}");
+                        }
+                    }
+                });
+            }
+
+            // Each linked corpus + its session, concurrently.
+            for (label, paths, sid) in linked_bg {
+                let client = std::sync::Arc::clone(&bg_client);
+                set.spawn(async move {
+                    match client
+                        .register_corpus_with_display_name(&paths, Some(label.clone()))
                         .await
                     {
-                        eprintln!("ministr: warning — primary session creation failed: {e}");
-                    }
-                }
-                Err(e) => {
-                    eprintln!("ministr: warning — primary corpus registration failed: {e}");
-                }
-            }
-            for (label, paths, sid) in linked_bg {
-                match bg_client
-                    .register_corpus_with_display_name(&paths, Some(label.clone()))
-                    .await
-                {
-                    Ok(resp) => {
-                        eprintln!(
-                            "ministr: linked '{label}' → corpus {} (indexing_started={})",
-                            resp.corpus_id, resp.indexing_started
-                        );
-                        if let Err(e) = bg_client
-                            .create_session_with_id(&resp.corpus_id, None, &sid)
-                            .await
-                        {
+                        Ok(resp) => {
                             eprintln!(
-                                "ministr: warning — linked '{label}' session creation failed: {e}"
+                                "ministr: linked '{label}' → corpus {} (indexing_started={})",
+                                resp.corpus_id, resp.indexing_started
+                            );
+                            if let Err(e) = client
+                                .create_session_with_id(&resp.corpus_id, None, &sid)
+                                .await
+                            {
+                                eprintln!(
+                                    "ministr: warning — linked '{label}' session creation failed: {e}"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "ministr: warning — linked '{label}' corpus registration failed: {e}"
                             );
                         }
                     }
-                    Err(e) => {
-                        eprintln!(
-                            "ministr: warning — linked '{label}' corpus registration failed: {e}"
-                        );
-                    }
-                }
+                });
             }
+
+            while set.join_next().await.is_some() {}
         });
     }
 
