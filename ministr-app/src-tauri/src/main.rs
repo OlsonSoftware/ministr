@@ -111,6 +111,7 @@ fn main() {
             commands::remove_project,
             commands::trigger_reindex,
             commands::set_corpus_config,
+            commands::list_supported_models,
             commands::repair_agent_config,
             commands::set_autostart,
             commands::read_logs,

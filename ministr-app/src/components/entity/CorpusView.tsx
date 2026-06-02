@@ -8,6 +8,7 @@ import {
   EntitySectionEmpty,
   EntitySectionLoading,
 } from "./EntitySection";
+import { CorpusConfigEditor } from "./CorpusConfigEditor";
 import { corpusLabel } from "../../lib/corpus";
 import { toneTextClass } from "../../lib/status";
 import { statusLabel, utilizationTone } from "../../lib/sessions";
@@ -86,6 +87,7 @@ export function CorpusView({ entity }: Props) {
               model <span className="text-text">{corpus.model}</span>
             </p>
           ) : null}
+          <CorpusConfigEditor corpus={corpus} />
         </div>
       </EntitySection>
 

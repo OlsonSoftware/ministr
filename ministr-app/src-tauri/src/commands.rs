@@ -386,6 +386,40 @@ pub async fn set_corpus_config(
     reindex_corpus(state.inner(), &corpus_id).await
 }
 
+/// One supported embedding model, surfaced to the GUI's per-corpus model
+/// picker (parity-gui-corpus-config-ui). Sourced from the single core
+/// [`supported_models`](ministr_core::embedding::supported_models) list so the
+/// dropdown can't drift from what the daemon can actually load.
+#[derive(Serialize)]
+pub struct SupportedModel {
+    /// CLI/config name (the value written to `.ministr.toml` `[corpus] model`).
+    pub name: String,
+    /// Native output vector dimensionality.
+    pub dimension: usize,
+    /// Short human-readable description.
+    pub description: String,
+    /// Whether this model is optimised for source code.
+    pub code_optimized: bool,
+}
+
+/// List the embedding models a corpus can be configured to use.
+///
+/// The GUI's per-corpus model picker reads this so its options stay in lockstep
+/// with [`ministr_core::embedding::supported_models`] — the same list the CLI
+/// and daemon validate against — rather than a hand-maintained TS list.
+#[tauri::command]
+pub fn list_supported_models() -> Vec<SupportedModel> {
+    ministr_core::embedding::supported_models()
+        .iter()
+        .map(|m| SupportedModel {
+            name: m.name.to_string(),
+            dimension: m.dimension,
+            description: m.description.to_string(),
+            code_optimized: m.code_optimized,
+        })
+        .collect()
+}
+
 /// Result of an agent-config repair pass.
 #[derive(Serialize)]
 pub struct RepairReport {
