@@ -381,7 +381,19 @@ function ProjectCard({
     corpusStatusBadge(corpus);
   const filesDone = progress?.files_done ?? 0;
   const filesTotal = progress?.files_total ?? 0;
-  const pct = filesTotal > 0 ? (filesDone / filesTotal) * 100 : 0;
+  // During the GPU-bound embedding phase the parser is backpressured by the
+  // bounded parse→embed channel, so the file counter stalls for seconds while
+  // embeddings keep streaming in. Drive the live readout by whichever metric is
+  // actually moving — files while parsing, vectors while embedding — so the bar
+  // stays granular end-to-end. (The backend emits an event per embedding batch;
+  // see `indexing_progress_events`.)
+  const embDone = progress?.embeddings_done ?? 0;
+  const embTotal = progress?.embeddings_total ?? 0;
+  const embedding = progress?.phase === "embedding" && embTotal > 0;
+  const headDone = embedding ? embDone : filesDone;
+  const headTotal = embedding ? embTotal : filesTotal;
+  const headUnit = embedding ? "vectors" : "files";
+  const pct = headTotal > 0 ? (headDone / headTotal) * 100 : 0;
 
   return (
     <motion.div
@@ -454,7 +466,8 @@ function ProjectCard({
         <div className="mt-3">
           <div className="flex justify-between text-mono-mini font-mono uppercase tracking-[0.08em] text-warning mb-1.5">
             <span>
-              {filesDone.toLocaleString()} / {filesTotal.toLocaleString()} files
+              {headDone.toLocaleString()} / {headTotal.toLocaleString()}{" "}
+              {headUnit}
             </span>
             <span className="tabular-nums">
               {progress?.estimated_remaining_secs != null
@@ -518,7 +531,19 @@ function ProjectDetail({
   const indexing = corpus.status.state === "indexing";
   const filesDone = progress?.files_done ?? 0;
   const filesTotal = progress?.files_total ?? 0;
-  const pct = filesTotal > 0 ? (filesDone / filesTotal) * 100 : 0;
+  // During the GPU-bound embedding phase the parser is backpressured by the
+  // bounded parse→embed channel, so the file counter stalls for seconds while
+  // embeddings keep streaming in. Drive the live readout by whichever metric is
+  // actually moving — files while parsing, vectors while embedding — so the bar
+  // stays granular end-to-end. (The backend emits an event per embedding batch;
+  // see `indexing_progress_events`.)
+  const embDone = progress?.embeddings_done ?? 0;
+  const embTotal = progress?.embeddings_total ?? 0;
+  const embedding = progress?.phase === "embedding" && embTotal > 0;
+  const headDone = embedding ? embDone : filesDone;
+  const headTotal = embedding ? embTotal : filesTotal;
+  const headUnit = embedding ? "vectors" : "files";
+  const pct = headTotal > 0 ? (headDone / headTotal) * 100 : 0;
   const { variant: statusVariant, label: statusLabel } =
     corpusStatusBadge(corpus);
 
@@ -550,7 +575,8 @@ function ProjectDetail({
             <div className="flex justify-between text-mono-mini font-mono uppercase tracking-[0.08em] text-warning">
               <span>
                 {progress?.phase ? `${progress.phase} · ` : ""}
-                {filesDone.toLocaleString()} / {filesTotal.toLocaleString()} files
+                {headDone.toLocaleString()} / {headTotal.toLocaleString()}{" "}
+                {headUnit}
               </span>
               <span className="tabular-nums">
                 {progress?.estimated_remaining_secs != null

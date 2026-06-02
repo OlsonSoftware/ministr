@@ -1683,6 +1683,10 @@ pub struct IndexingProgressEvent {
 /// because the atomics are essentially free to read and the change
 /// signal we need (UI repaint) is naturally rate-limited.
 #[tauri::command]
+// One linear polling loop: read atomics, detect change, compute ETA, send.
+// Splitting it would scatter the change-detection state across helpers for no
+// readability gain.
+#[allow(clippy::too_many_lines)]
 pub async fn indexing_progress_events(
     state: State<'_, AppState>,
     on_event: Channel<IndexingProgressEvent>,
@@ -1699,6 +1703,8 @@ pub async fn indexing_progress_events(
         struct Track {
             last_status: u8,
             last_files_done: usize,
+            last_embeddings_done: usize,
+            last_phase: String,
             last_current_file: String,
             run_started: Option<Instant>,
         }
@@ -1720,19 +1726,33 @@ pub async fn indexing_progress_events(
                 let status = p.status();
                 let files_total = p.files_total();
                 let files_done = p.files_done();
+                let embeddings_total = p.embeddings_total();
+                let embeddings_done = p.embeddings_done();
+                let phase = p.phase().as_str().to_string();
                 let current_file = p.current_file();
 
                 let track = tracks.entry(corpus_id.clone()).or_insert(Track {
                     last_status: u8::MAX,
                     last_files_done: 0,
+                    last_embeddings_done: 0,
+                    last_phase: String::new(),
                     last_current_file: String::new(),
                     run_started: None,
                 });
 
                 let started_running = status == 1 && track.last_status != 1;
                 let stopped_running = status != 1 && track.last_status == 1;
-                let progressed =
-                    files_done != track.last_files_done || current_file != track.last_current_file;
+                // Emit on ANY UI-visible change. Crucially this now includes
+                // `embeddings_done` and `phase`: during the GPU-bound Embedding
+                // phase the parser is backpressured by the bounded parse→embed
+                // channel, so `files_done` / `current_file` stall for seconds at
+                // a time while embeddings keep landing every batch. Watching
+                // only files froze the live card (e.g. "114/237 FILES") until a
+                // file finally ticked — now the bar moves with the GPU.
+                let progressed = files_done != track.last_files_done
+                    || embeddings_done != track.last_embeddings_done
+                    || phase != track.last_phase
+                    || current_file != track.last_current_file;
                 let status_changed = status != track.last_status;
 
                 if started_running {
@@ -1746,41 +1766,53 @@ pub async fn indexing_progress_events(
                     continue;
                 }
 
-                let estimated_remaining_secs = if status == 1 && files_total > files_done {
-                    track.run_started.and_then(|t| {
-                        let elapsed = t.elapsed().as_secs_f64();
-                        if elapsed < 1.0 || files_done == 0 {
+                // Rate-based ETA. While files are still being parsed, estimate
+                // from the file rate; once everything is parsed (files_done ==
+                // files_total) but the GPU embed queue is still draining,
+                // estimate from the embeddings rate so the tail keeps an ETA
+                // instead of going blank (or showing a stale files-rate value
+                // that's meaningless once parsing is backpressured).
+                let estimated_remaining_secs = track.run_started.and_then(|t| {
+                    if status != 1 {
+                        return None;
+                    }
+                    let elapsed = t.elapsed().as_secs_f64();
+                    if elapsed < 1.0 {
+                        return None;
+                    }
+                    // Precision loss is fine — counts top out in the millions
+                    // and ETA renders to the nearest second.
+                    #[allow(
+                        clippy::cast_precision_loss,
+                        clippy::cast_possible_truncation,
+                        clippy::cast_sign_loss
+                    )]
+                    let eta_from = |done: usize, total: usize| -> Option<u64> {
+                        if done == 0 || total <= done {
                             return None;
                         }
-                        // Precision loss is fine — these counts top out in
-                        // the millions for huge corpora and we only render
-                        // ETA to the nearest second.
-                        #[allow(clippy::cast_precision_loss)]
-                        let rate = files_done as f64 / elapsed;
+                        let rate = done as f64 / elapsed;
                         if rate <= 0.0 {
                             return None;
                         }
-                        #[allow(
-                            clippy::cast_precision_loss,
-                            clippy::cast_possible_truncation,
-                            clippy::cast_sign_loss
-                        )]
-                        let remaining = (((files_total - files_done) as f64) / rate).round() as u64;
-                        Some(remaining)
-                    })
-                } else {
-                    None
-                };
+                        Some((((total - done) as f64) / rate).round() as u64)
+                    };
+                    if files_total > files_done {
+                        eta_from(files_done, files_total)
+                    } else {
+                        eta_from(embeddings_done, embeddings_total)
+                    }
+                });
 
                 let ev = IndexingProgressEvent {
                     corpus_id: corpus_id.clone(),
                     status,
-                    phase: p.phase().as_str().to_string(),
+                    phase: phase.clone(),
                     files_total,
                     files_done,
                     sections_done: p.sections_done(),
-                    embeddings_total: p.embeddings_total(),
-                    embeddings_done: p.embeddings_done(),
+                    embeddings_total,
+                    embeddings_done,
                     current_file: current_file.clone(),
                     estimated_remaining_secs,
                     timestamp_ms: now_ms,
@@ -1788,6 +1820,8 @@ pub async fn indexing_progress_events(
 
                 track.last_status = status;
                 track.last_files_done = files_done;
+                track.last_embeddings_done = embeddings_done;
+                track.last_phase = phase;
                 track.last_current_file = current_file;
 
                 if on_event.send(ev).is_err() {
