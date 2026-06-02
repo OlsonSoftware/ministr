@@ -1,0 +1,179 @@
+{
+  "description": "Ground-truth retrieval annotations for the CODE-HEAVY evaluation corpus (eval/corpus-code). Text-to-code queries: a natural-language intent maps to the implementing symbol(s). section_ids are verified substrings of real index content_ids (see the dump_code_corpus_ids calibration test). Relevance grades: 3=the symbol that implements the intent, 2=closely related, 1=marginal. Used by the rq2-followup code bake-off to decide jina-code vs MiniLM on a code-representative corpus.",
+  "queries": [
+    {
+      "query": "throttle outbound requests with a bucket that refills over time",
+      "expected": [
+        { "section_id": "rate_limiter.rs#rate_limiter::TokenBucket", "relevance": 3 },
+        { "section_id": "rate_limiter.rs#rate_limiter::TokenBucket::try_admit", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "check whether a request is allowed or should be rejected right now",
+      "expected": [
+        { "section_id": "rate_limiter.rs#rate_limiter::TokenBucket::try_admit", "relevance": 3 },
+        { "section_id": "rate_limiter.rs#rate_limiter::TokenBucket", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "how long must the caller wait before the next slot frees up",
+      "expected": [
+        { "section_id": "rate_limiter.rs#rate_limiter::TokenBucket::time_until_token", "relevance": 3 },
+        { "section_id": "rate_limiter.rs#rate_limiter::TokenBucket::try_admit", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "lazily replenish capacity from elapsed time instead of a background timer",
+      "expected": [
+        { "section_id": "rate_limiter.rs#rate_limiter::TokenBucket::refill", "relevance": 3 },
+        { "section_id": "rate_limiter.rs#rate_limiter::TokenBucket", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "evict the entry unused the longest when a fixed-size cache is full",
+      "expected": [
+        { "section_id": "lru_cache.py#lru_cache::LRUCache", "relevance": 3 },
+        { "section_id": "lru_cache.py#lru_cache::LRUCache::put", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "fetch a value and mark the key as most recently used",
+      "expected": [
+        { "section_id": "lru_cache.py#lru_cache::LRUCache::get", "relevance": 3 },
+        { "section_id": "lru_cache.py#lru_cache::LRUCache", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "speed up recursive computation by caching overlapping subproblems",
+      "expected": [
+        { "section_id": "lru_cache.py#lru_cache::memoize_fibonacci", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "insert a key and drop the oldest item once over capacity",
+      "expected": [
+        { "section_id": "lru_cache.py#lru_cache::LRUCache::put", "relevance": 3 },
+        { "section_id": "lru_cache.py#lru_cache::LRUCache", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "retry a flaky network call with exponentially growing delays",
+      "expected": [
+        { "section_id": "retry.go#retry::RetryWithBackoff", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "stop calling a failing service after too many consecutive errors",
+      "expected": [
+        { "section_id": "retry.go#retry::CircuitBreaker", "relevance": 3 },
+        { "section_id": "retry.go#retry::Record", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "update failure tracking after each call outcome",
+      "expected": [
+        { "section_id": "retry.go#retry::Record", "relevance": 3 },
+        { "section_id": "retry.go#retry::CircuitBreaker", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "decide whether a downstream call is currently permitted",
+      "expected": [
+        { "section_id": "retry.go#retry::Allow", "relevance": 3 },
+        { "section_id": "retry.go#retry::CircuitBreaker", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "clear the failure count and let calls flow again after recovery",
+      "expected": [
+        { "section_id": "retry.go#retry::Reset", "relevance": 3 },
+        { "section_id": "retry.go#retry::CircuitBreaker", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "defer running a handler until the user stops typing",
+      "expected": [
+        { "section_id": "debounce.ts#debounce::debounce", "relevance": 3 },
+        { "section_id": "debounce.ts#debounce::throttle", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "limit a function to run at most once per interval during rapid events",
+      "expected": [
+        { "section_id": "debounce.ts#debounce::throttle", "relevance": 3 },
+        { "section_id": "debounce.ts#debounce::debounce", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "deduplicate concurrent async requests so they share one in-flight promise",
+      "expected": [
+        { "section_id": "debounce.ts#debounce::coalesce", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "merge two groups in a disjoint-set structure",
+      "expected": [
+        { "section_id": "union_find.java#union_find::UnionFind::union", "relevance": 3 },
+        { "section_id": "union_find.java#union_find::UnionFind", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "check if two elements are in the same connected component",
+      "expected": [
+        { "section_id": "union_find.java#union_find::UnionFind::connected", "relevance": 3 },
+        { "section_id": "union_find.java#union_find::UnionFind::find", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "find the representative root with path compression",
+      "expected": [
+        { "section_id": "union_find.java#union_find::UnionFind::find", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "how many disjoint groups remain after the unions",
+      "expected": [
+        { "section_id": "union_find.java#union_find::UnionFind::components", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "locate an element in a sorted array in logarithmic time",
+      "expected": [
+        { "section_id": "binary_search.cpp#binary_search::search::binary_search", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "leftmost insertion point that keeps an array sorted",
+      "expected": [
+        { "section_id": "binary_search.cpp#binary_search::search::lower_bound", "relevance": 3 },
+        { "section_id": "binary_search.cpp#binary_search::search::upper_bound", "relevance": 1 }
+      ]
+    },
+    {
+      "query": "first element strictly greater than a target in a sorted range",
+      "expected": [
+        { "section_id": "binary_search.cpp#binary_search::search::upper_bound", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "count how many times a value appears in a sorted array",
+      "expected": [
+        { "section_id": "binary_search.cpp#binary_search::search::upper_bound", "relevance": 2 },
+        { "section_id": "binary_search.cpp#binary_search::search::lower_bound", "relevance": 2 }
+      ]
+    },
+    {
+      "query": "attach the shorter tree under the taller one when combining sets",
+      "expected": [
+        { "section_id": "union_find.java#union_find::UnionFind::union", "relevance": 3 }
+      ]
+    },
+    {
+      "query": "guard a dependency from being hammered while it is struggling",
+      "expected": [
+        { "section_id": "retry.go#retry::RetryWithBackoff", "relevance": 2 },
+        { "section_id": "retry.go#retry::CircuitBreaker", "relevance": 2 }
+      ]
+    }
+  ]
+}

@@ -91,8 +91,21 @@ eval-truncation:
 # golden set and print a dim / P@5 / R@5 / MRR / nDCG@5 comparison table.
 # Downloads several models on first run (some large, e.g. bge-m3). Use the
 # spread to pick a default; the production swap is a separate re-index step.
+# `--exact` so it doesn't also match eval_model_bakeoff_code.
 eval-bakeoff:
-    cargo test -p ministr-core --test eval_retrieval -- --ignored --nocapture eval_model_bakeoff
+    cargo test -p ministr-core --test eval_retrieval -- --ignored --nocapture --exact eval_model_bakeoff
+
+# RQ2-followup CODE bake-off: the same comparison over the CODE-HEAVY corpus
+# (eval/corpus-code + eval/ground-truth-code.json, 26 text-to-code queries over
+# 6 languages). Decides jina-code vs MiniLM on a code-representative corpus —
+# what agents actually retrieve. Downloads the same models as eval-bakeoff.
+eval-bakeoff-code:
+    cargo test -p ministr-core --test eval_retrieval -- --ignored --nocapture eval_model_bakeoff_code
+
+# Calibration dump (model-free): print the real content_ids the index emits for
+# eval/corpus-code, used to author/verify eval/ground-truth-code.json section_ids.
+eval-dump-code-ids:
+    cargo test -p ministr-core --test eval_retrieval -- --ignored --nocapture dump_code_corpus_ids
 
 bench-all:
     cargo bench -p ministr-core

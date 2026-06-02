@@ -224,3 +224,52 @@ pub async fn run_eval_with_embedder(
         mean_ndcg: total_ndcg / count_f,
     }
 }
+
+/// Ingest a corpus and, for each probe query, return the top result `content_ids`.
+///
+/// Calibration helper: code symbols are stored under language-dependent
+/// `content_ids` (e.g. `retry.go#resilience::RetryWithBackoff`), so authoring a
+/// ground-truth file by guessing those ids is error-prone. This returns the
+/// real ids the index emits for a set of probe queries, so a ground-truth file
+/// can be written against verified substrings rather than guesses. Uses a wide
+/// `top_k` so a handful of broad probes surface the full id universe of a small
+/// corpus.
+///
+/// Only the `eval_retrieval` test binary uses this; `#[allow(dead_code)]` keeps
+/// the other binaries that share `common` (e.g. `eval_model_comparison`) clean.
+#[allow(dead_code)]
+pub async fn probe_corpus_ids(
+    corpus_path: &Path,
+    embedder: &dyn Embedder,
+    queries: &[&str],
+    top_k: usize,
+) -> Vec<(String, Vec<String>)> {
+    let dim = embedder.dimension();
+    let storage = SqliteStorage::open_in_memory().expect("failed to create storage");
+    let index = HnswIndex::new(dim, 10_000).expect("failed to create index");
+    let pipeline = IngestionPipeline::new();
+    pipeline
+        .ingest_directory_with_embeddings(corpus_path, &storage, embedder, &index)
+        .await
+        .expect("ingestion failed");
+
+    let searcher = MultiResolutionSearch::new(embedder, &index);
+    let config = SearchConfig {
+        raw_k: top_k.max(50),
+        top_k,
+        sparse_weight: 0.0,
+        rerank_top_k: None,
+    };
+
+    queries
+        .iter()
+        .map(|q| {
+            let results = searcher.search(q, config).expect("search failed");
+            let ids = results
+                .iter()
+                .map(|r| r.vector_id.content_id().to_string())
+                .collect();
+            ((*q).to_string(), ids)
+        })
+        .collect()
+}

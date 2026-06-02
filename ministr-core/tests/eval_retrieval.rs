@@ -10,8 +10,8 @@ mod common;
 use std::path::Path;
 
 use common::{
-    ExpectedResult, GroundTruth, ndcg_at_k, precision_at_k, recall_at_k, reciprocal_rank,
-    run_eval_with_embedder,
+    ExpectedResult, GroundTruth, ndcg_at_k, precision_at_k, probe_corpus_ids, recall_at_k,
+    reciprocal_rank, run_eval_with_embedder,
 };
 use ministr_core::embedding::Embedder;
 use ministr_core::error::IndexError;
@@ -249,6 +249,61 @@ async fn eval_retrieval_real_embedder() {
 #[tokio::test]
 #[ignore = "downloads several embedding models; run via `just eval-bakeoff`"]
 async fn eval_model_bakeoff() {
+    let Some((corpus_path, ground_truth)) = load_eval_data() else {
+        eprintln!("Skipping: eval/ data not found");
+        return;
+    };
+    run_model_bakeoff(
+        &corpus_path,
+        &ground_truth,
+        "RQ2 embedder bake-off (doc-heavy corpus)",
+    )
+    .await;
+}
+
+/// RQ2-followup — the SAME bake-off run against the code-heavy corpus
+/// (`eval/corpus-code` + `eval/ground-truth-code.json`: 26 text-to-code queries
+/// over Rust/Python/Go/TypeScript/Java/C++).
+///
+/// The doc-heavy [`eval_model_bakeoff`] concluded "no swap" (every candidate
+/// regressed vs all-MiniLM-L6-v2), but flagged that `jina-embeddings-v2-base-code`
+/// was the closest non-baseline and might overtake on a code-representative
+/// corpus — which is what agents actually retrieve. This is the instrument that
+/// decides jina-code vs `MiniLM` on data. Note `bge-m3` still fails to load via
+/// fastembed (a separate Candle-runner chunk); the other candidates run.
+///
+/// `#[ignore]`: downloads several embedding models (network/compute). Run via:
+///
+/// ```text
+/// just eval-bakeoff-code
+/// ```
+#[tokio::test]
+#[ignore = "downloads several embedding models; run via `just eval-bakeoff-code`"]
+async fn eval_model_bakeoff_code() {
+    let Some((corpus_path, ground_truth)) =
+        load_eval_data_from("eval/corpus-code", "eval/ground-truth-code.json")
+    else {
+        eprintln!("Skipping: eval/corpus-code data not found");
+        return;
+    };
+    run_model_bakeoff(
+        &corpus_path,
+        &ground_truth,
+        "RQ2-followup embedder bake-off (code-heavy corpus)",
+    )
+    .await;
+}
+
+/// Shared bake-off body: load each 2026-candidate model, run the eval against
+/// `(corpus_path, ground_truth)`, and print one comparison row per model
+/// (dim + P@5/R@5/MRR/nDCG@5). Per-model load failures are reported and skipped
+/// rather than aborting the run.
+///
+/// The candidate set is the fastembed-runnable 2026 field. `nomic-embed-code`
+/// (7B) and `voyage-code-3` (API-only) are not locally runnable and excluded;
+/// `bge-m3` is listed (2026 general SOTA) but currently fails to load via
+/// fastembed — tracked by the rq2-bge-m3-candle-runner chunk.
+async fn run_model_bakeoff(corpus_path: &Path, ground_truth: &GroundTruth, title: &str) {
     use ministr_core::embedding::FastEmbedder;
 
     const CANDIDATES: &[&str] = &[
@@ -262,16 +317,8 @@ async fn eval_model_bakeoff() {
         "bge-m3", // 2026 general SOTA (large)
     ];
 
-    let Some((corpus_path, ground_truth)) = load_eval_data() else {
-        eprintln!("Skipping: eval/ data not found");
-        return;
-    };
-
     eprintln!();
-    eprintln!(
-        "=== RQ2 embedder bake-off ({} queries) ===",
-        ground_truth.queries.len()
-    );
+    eprintln!("=== {title} ({} queries) ===", ground_truth.queries.len());
     eprintln!(
         "{:<32} {:>4}  {:>6} {:>6} {:>6} {:>6}",
         "model", "dim", "P@5", "R@5", "MRR", "nDCG@5"
@@ -279,7 +326,7 @@ async fn eval_model_bakeoff() {
     for name in CANDIDATES {
         match FastEmbedder::new(name, None) {
             Ok(embedder) => {
-                let r = run_eval_with_embedder(&corpus_path, &ground_truth, &embedder, false).await;
+                let r = run_eval_with_embedder(corpus_path, ground_truth, &embedder, false).await;
                 eprintln!(
                     "{:<32} {:>4}  {:>6.3} {:>6.3} {:>6.3} {:>6.3}",
                     name,
@@ -427,22 +474,80 @@ async fn measure_truncation_content_loss() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/// Load eval corpus and ground truth, returning `None` (with a skip message)
-/// if the eval directory is missing.
-fn load_eval_data() -> Option<(std::path::PathBuf, GroundTruth)> {
+/// Calibration utility (not a real test): ingest the code-heavy corpus with the
+/// model-free hash embedder and print the real `content_ids` the index emits, so
+/// `eval/ground-truth-code.json` can be authored against verified substrings
+/// rather than guessed language-dependent symbol id formats. Run via:
+///
+/// ```text
+/// just eval-dump-code-ids
+/// ```
+#[tokio::test]
+#[ignore = "calibration dump, not an assertion; run via `just eval-dump-code-ids`"]
+async fn dump_code_corpus_ids() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let workspace_root = Path::new(manifest_dir)
         .parent()
         .expect("failed to find workspace root");
-    let corpus_path = workspace_root.join("eval/corpus");
-    let ground_truth_path = workspace_root.join("eval/ground-truth.json");
+    let corpus_path = workspace_root.join("eval/corpus-code");
+    if !corpus_path.exists() {
+        eprintln!("Skipping: eval/corpus-code not found");
+        return;
+    }
+
+    // Broad single-word probes; a wide top_k surfaces the full id universe of
+    // this small corpus regardless of the (weak) hash-embedder ranking.
+    let probes = [
+        "rate limit token bucket",
+        "least recently used cache eviction",
+        "retry exponential backoff circuit breaker",
+        "debounce throttle coalesce events",
+        "disjoint set union find connected",
+        "binary search lower upper bound sorted array",
+    ];
+    let embedder = HashEmbedder { dim: 64 };
+    let hits = probe_corpus_ids(&corpus_path, &embedder, &probes, 200).await;
+
+    let mut universe: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for (_, ids) in &hits {
+        universe.extend(ids.iter().cloned());
+    }
+
+    eprintln!();
+    eprintln!(
+        "=== code corpus content_ids ({} unique) ===",
+        universe.len()
+    );
+    for id in &universe {
+        eprintln!("{id}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Load the default (doc-heavy) eval corpus and ground truth.
+fn load_eval_data() -> Option<(std::path::PathBuf, GroundTruth)> {
+    load_eval_data_from("eval/corpus", "eval/ground-truth.json")
+}
+
+/// Load an eval corpus + ground-truth pair by workspace-relative paths,
+/// returning `None` (with a skip message) if either is missing. Lets the
+/// doc-heavy and code-heavy bake-offs share one loader.
+fn load_eval_data_from(
+    corpus_rel: &str,
+    ground_truth_rel: &str,
+) -> Option<(std::path::PathBuf, GroundTruth)> {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let workspace_root = Path::new(manifest_dir)
+        .parent()
+        .expect("failed to find workspace root");
+    let corpus_path = workspace_root.join(corpus_rel);
+    let ground_truth_path = workspace_root.join(ground_truth_rel);
 
     if !corpus_path.exists() || !ground_truth_path.exists() {
-        eprintln!("Skipping eval test: eval/ directory not found");
+        eprintln!("Skipping eval test: {corpus_rel} or {ground_truth_rel} not found");
         return None;
     }
 
@@ -487,6 +592,56 @@ fn ground_truth_file_parses() {
         );
         for e in &q.expected {
             assert!(!e.section_id.is_empty(), "empty section_id in ground truth");
+            assert!(
+                (1..=3).contains(&e.relevance),
+                "relevance must be 1-3, got {} for {}",
+                e.relevance,
+                e.section_id
+            );
+        }
+    }
+}
+
+#[test]
+fn ground_truth_code_file_parses() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let workspace_root = Path::new(manifest_dir)
+        .parent()
+        .expect("failed to find workspace root");
+    let gt_path = workspace_root.join("eval/ground-truth-code.json");
+
+    if !gt_path.exists() {
+        eprintln!("Skipping: ground-truth-code.json not found");
+        return;
+    }
+
+    let gt_json = std::fs::read_to_string(&gt_path).unwrap();
+    let gt: GroundTruth = serde_json::from_str(&gt_json).unwrap();
+
+    assert!(
+        gt.queries.len() >= 20,
+        "code ground truth must have at least 20 queries, found {}",
+        gt.queries.len()
+    );
+    for q in &gt.queries {
+        assert!(!q.query.is_empty(), "empty query in code ground truth");
+        assert!(
+            !q.expected.is_empty(),
+            "query '{}' has no expected results",
+            q.query
+        );
+        for e in &q.expected {
+            assert!(
+                !e.section_id.is_empty(),
+                "empty section_id in code ground truth"
+            );
+            // Code section_ids follow the `<file>#<module>::<symbol>` convention
+            // (verified against real index ids by the dump_code_corpus_ids test).
+            assert!(
+                e.section_id.contains('#'),
+                "code section_id '{}' should reference a file section",
+                e.section_id
+            );
             assert!(
                 (1..=3).contains(&e.relevance),
                 "relevance must be 1-3, got {} for {}",
