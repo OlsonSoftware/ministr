@@ -339,19 +339,16 @@ fn candle_err(e: candle_core::Error) -> IndexError {
 impl Embedder for CandleEmbedder {
     #[instrument(skip(self, texts), fields(count = texts.len()))]
     fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, IndexError> {
-        if texts.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut all_embeddings = Vec::with_capacity(texts.len());
-
-        // Process in batches.
-        for chunk in texts.chunks(MAX_BATCH_SIZE) {
-            let batch = self.embed_batch(chunk)?;
-            all_embeddings.extend(batch);
-        }
-
-        Ok(all_embeddings)
+        // Length-sorted batching: group nearby-length texts so each forward pads
+        // to a similar (shorter) max sequence length instead of the global
+        // longest, cutting the padding waste that dominates batched transformer
+        // inference on heterogeneous corpora (short claims + long code sections).
+        // This mirrors what the sentence-transformers reference does internally.
+        // The per-text embedding is independent of its batchmates (masked
+        // mean-pool over a per-sequence BERT forward), so this changes only
+        // padding — never the returned vectors — and output is restored to the
+        // caller's input order.
+        embed_length_sorted(texts, MAX_BATCH_SIZE, |chunk| self.embed_batch(chunk))
     }
 
     fn dimension(&self) -> usize {
@@ -429,6 +426,54 @@ impl CandleEmbedder {
     }
 }
 
+/// Order `texts` into length-sorted batches, embed each batch via `embed_batch`,
+/// and scatter the results back into the caller's original order.
+///
+/// Sorting by length means each batch pads to a similar, shorter max sequence
+/// length — the padding-minimizing batching the sentence-transformers reference
+/// applies. The per-text embedding is independent of its batchmates (masked
+/// mean-pool over a per-sequence BERT forward), so reordering changes only the
+/// padding, not the vectors; results are returned in the input order.
+///
+/// `embed_batch` is injected so the ordering logic is unit-testable without
+/// loading a model.
+fn embed_length_sorted<F>(
+    texts: &[&str],
+    max_batch: usize,
+    mut embed_batch: F,
+) -> Result<Vec<Vec<f32>>, IndexError>
+where
+    F: FnMut(&[&str]) -> Result<Vec<Vec<f32>>, IndexError>,
+{
+    if texts.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Stable sort by length (ascending) so equal-length texts keep input order.
+    let mut order: Vec<usize> = (0..texts.len()).collect();
+    order.sort_by_key(|&i| texts[i].len());
+
+    let mut results: Vec<Vec<f32>> = vec![Vec::new(); texts.len()];
+    for chunk in order.chunks(max_batch.max(1)) {
+        let batch_texts: Vec<&str> = chunk.iter().map(|&i| texts[i]).collect();
+        let vectors = embed_batch(&batch_texts)?;
+        if vectors.len() != chunk.len() {
+            return Err(IndexError::EmbeddingFailed {
+                reason: format!(
+                    "embed batch returned {} vectors for {} inputs",
+                    vectors.len(),
+                    chunk.len()
+                ),
+            });
+        }
+        for (&orig_idx, vector) in chunk.iter().zip(vectors) {
+            results[orig_idx] = vector;
+        }
+    }
+
+    Ok(results)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,5 +506,59 @@ mod tests {
     fn select_device_succeeds() {
         let device = select_device();
         assert!(device.is_ok());
+    }
+
+    #[test]
+    fn embed_length_sorted_preserves_input_order() {
+        // First byte distinguishes each text; lengths are deliberately out of
+        // order so the internal length-sort must be undone before returning.
+        let texts = ["dddd", "a", "ccc", "bb"];
+        let out = embed_length_sorted(&texts, 2, |batch| {
+            Ok(batch
+                .iter()
+                .map(|t| vec![f32::from(t.as_bytes()[0])])
+                .collect())
+        })
+        .expect("embed");
+        // Each result must encode its OWN text's first byte at its INPUT index.
+        for (got, &b) in out.iter().zip([b'd', b'a', b'c', b'b'].iter()) {
+            assert!(
+                (got[0] - f32::from(b)).abs() < f32::EPSILON,
+                "expected first byte {b}, got {}",
+                got[0]
+            );
+        }
+        assert_eq!(out.len(), 4);
+    }
+
+    #[test]
+    fn embed_length_sorted_batches_by_ascending_length() {
+        let texts = ["dddd", "a", "ccc", "bb"];
+        let seen: std::cell::RefCell<Vec<usize>> = std::cell::RefCell::new(Vec::new());
+        embed_length_sorted(&texts, 2, |batch| {
+            seen.borrow_mut().extend(batch.iter().map(|t| t.len()));
+            Ok(batch.iter().map(|_| vec![0.0_f32]).collect())
+        })
+        .expect("embed");
+        // Texts are processed shortest-first, so the lengths the batches saw are
+        // globally non-decreasing (1,2 then 3,4 across two batches of 2).
+        assert_eq!(seen.into_inner(), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn embed_length_sorted_empty_is_empty() {
+        let out = embed_length_sorted(&[], 8, |_| Ok(Vec::new())).expect("embed");
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn embed_length_sorted_propagates_batch_error() {
+        let texts = ["a", "bb"];
+        let err = embed_length_sorted(&texts, 8, |_| {
+            Err(IndexError::EmbeddingFailed {
+                reason: "boom".to_owned(),
+            })
+        });
+        assert!(matches!(err, Err(IndexError::EmbeddingFailed { .. })));
     }
 }
