@@ -29,6 +29,26 @@ const DEBOUNCE_QUIET: Duration = Duration::from_secs(2);
 /// anyway so the observatory stays live.
 const DEBOUNCE_MAX_WINDOW: Duration = Duration::from_secs(10);
 
+/// If a corpus declares a per-corpus embedding model (`.ministr.toml`
+/// `[corpus] model`) that differs from the daemon's active model, return a
+/// warning message — otherwise `None`.
+///
+/// The daemon serves every corpus with one shared embedder (ADR 0001 D1), so a
+/// per-corpus model is silently dropped until the multi-embedder registry lands
+/// (`parity-seam-registry-routing`). This turns that silent gap into a loud,
+/// actionable log line.
+fn per_corpus_model_warning(configured: &str, active: &str) -> Option<String> {
+    (configured != active).then(|| {
+        format!(
+            "corpus configures embedding model `{configured}` but the daemon is serving \
+             `{active}` — the daemon indexes every corpus with its single active model, so this \
+             per-corpus model is NOT applied yet. Set `default_model = \"{configured}\"` in \
+             ~/.ministr/config.toml to use it daemon-wide (per-corpus daemon routing is tracked \
+             by parity-seam-registry-routing)."
+        )
+    })
+}
+
 /// Run the full ingestion pipeline for a corpus.
 ///
 /// Updates the corpus status through `Idle -> Indexing -> Idle/Error`,
@@ -80,6 +100,33 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
     let _slot = registry.scheduler().acquire(corpus_id).await;
 
     let local_paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+
+    // Parity (parity-daemon-model-mismatch-warn): resolve this corpus's
+    // per-corpus model through the shared seam and warn if the daemon's single
+    // active embedder can't honor it — instead of silently ignoring it.
+    // Best-effort: a missing/unparseable `.ministr.toml` (or a URL path) just
+    // yields no override, so there is nothing to warn about and no ingest change.
+    if let Some(dir) = local_paths.first().and_then(|p| {
+        if p.is_dir() {
+            Some(p.as_path())
+        } else {
+            p.parent()
+        }
+    }) {
+        let repo_cfg = ministr_core::config::RepoConfig::discover(dir)
+            .ok()
+            .flatten();
+        let effective = ministr_core::config::resolve_effective_corpus_config(
+            repo_cfg.as_ref().map(|(_, rc)| rc),
+            None,
+            registry.config(),
+        );
+        if let Some(msg) =
+            per_corpus_model_warning(&effective.model, &registry.config().default_model)
+        {
+            warn!(corpus_id, "{msg}");
+        }
+    }
 
     // ADR 0001 D1: route embedding through the daemon's single shared
     // EmbeddingService so the synchronous, GPU-bound embed() runs on its own
@@ -405,4 +452,24 @@ async fn affected_sections_for(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::per_corpus_model_warning;
+
+    #[test]
+    fn no_warning_when_models_match() {
+        assert!(per_corpus_model_warning("all-MiniLM-L6-v2", "all-MiniLM-L6-v2").is_none());
+    }
+
+    #[test]
+    fn warns_when_per_corpus_model_differs_from_active() {
+        let msg = per_corpus_model_warning("jina-embeddings-v2-base-code", "all-MiniLM-L6-v2")
+            .expect("models differ → a warning is expected");
+        // Names both the configured and the active model, and the fix.
+        assert!(msg.contains("jina-embeddings-v2-base-code"));
+        assert!(msg.contains("all-MiniLM-L6-v2"));
+        assert!(msg.contains("default_model"));
+    }
 }
