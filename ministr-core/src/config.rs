@@ -500,12 +500,86 @@ pub struct CloudInclude {
     pub pin_version: Option<String>,
 }
 
+/// The default `min_section_tokens` when no per-corpus `meta.toml` sets it.
+/// Mirrors [`CorpusConfig::default`] (and the ingestion pipeline default).
+const DEFAULT_MIN_SECTION_TOKENS: usize = 50;
+
+/// The fully-resolved per-corpus configuration that ingestion + query need.
+///
+/// One resolved view of every per-corpus knob, merged from the three config
+/// layers with a single consistent precedence: per-repo `.ministr.toml`
+/// `[corpus]` > per-corpus `meta.toml` > global `~/.ministr/config.toml`.
+///
+/// Both the CLI one-shot path and (the parity follow-up) the daemon
+/// `CorpusRegistry` resolve through [`resolve_effective_corpus_config`] so the
+/// surfaces cannot silently drift in what config they honor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EffectiveCorpusConfig {
+    /// Embedding model name. Precedence: repo `[corpus] model` > `meta.toml`
+    /// `model` > global `default_model`.
+    pub model: String,
+    /// Matryoshka truncation dimension (repo `[corpus] dimension`; no
+    /// `meta.toml`/global source today). `None` = full model dimension.
+    pub dimension: Option<usize>,
+    /// Two-stage rerank depth (repo `[corpus] rerank_depth`; only effective
+    /// when `dimension` is set).
+    pub rerank_depth: Option<usize>,
+    /// Parser override (per-corpus `meta.toml` `parser`; `None` = auto-detect
+    /// from the file extension).
+    pub parser: Option<ParserKind>,
+    /// Minimum standalone-section token count (per-corpus `meta.toml`;
+    /// defaults to [`DEFAULT_MIN_SECTION_TOKENS`]).
+    pub min_section_tokens: usize,
+    /// Claim-extraction mode (per-corpus `meta.toml`; defaults to heuristic).
+    pub claim_extraction: ClaimExtractionMode,
+}
+
+/// Resolve every per-corpus knob into one [`EffectiveCorpusConfig`].
+///
+/// Precedence per knob (highest first): per-repo `.ministr.toml` `[corpus]` >
+/// per-corpus `meta.toml` > global `~/.ministr/config.toml`. A knob that lives
+/// in only one layer takes that layer's value (or the documented default).
+///
+/// This is the SINGLE per-corpus config-resolution seam — both ingestion entry
+/// points (the CLI one-shot path and the daemon `CorpusRegistry`) MUST route
+/// through it so config-honoring cannot drift between surfaces (parity-epic).
+/// Do not re-implement this precedence anywhere else.
+///
+/// (The heuristic Contextual Retrieval flag is a builder bool on
+/// `IngestionPipeline` with no config field yet, so it is not resolved here —
+/// add a `contextual` knob to `CorpusSpec`/`CorpusConfig` when it graduates.)
+#[must_use]
+pub fn resolve_effective_corpus_config(
+    repo_config: Option<&RepoConfig>,
+    corpus_config: Option<&CorpusConfig>,
+    global_config: &MinistrConfig,
+) -> EffectiveCorpusConfig {
+    // model: repo `[corpus] model` > `meta.toml` model > global default_model.
+    let model = repo_config
+        .and_then(|r| r.corpus.model.clone())
+        .or_else(|| corpus_config.and_then(|c| c.model.clone()))
+        .unwrap_or_else(|| global_config.default_model.clone());
+
+    EffectiveCorpusConfig {
+        model,
+        // dimension + rerank_depth currently live only in the repo `[corpus]` table.
+        dimension: repo_config.and_then(|r| r.corpus.dimension),
+        rerank_depth: repo_config.and_then(|r| r.corpus.rerank_depth),
+        // parser / min_section_tokens / claim_extraction live only in `meta.toml`.
+        parser: corpus_config.and_then(|c| c.parser),
+        min_section_tokens: corpus_config
+            .map_or(DEFAULT_MIN_SECTION_TOKENS, |c| c.min_section_tokens),
+        claim_extraction: corpus_config
+            .map_or(ClaimExtractionMode::Heuristic, |c| c.claim_extraction),
+    }
+}
+
 /// Resolve the effective embedding model name.
 ///
-/// Priority (highest to lowest):
-/// 1. Per-repo `.ministr.toml` `corpus.model`
-/// 2. Per-corpus `meta.toml` `model`
-/// 3. Global `~/.ministr/config.toml` `default_model`
+/// Thin wrapper over [`resolve_effective_corpus_config`] (same precedence:
+/// per-repo `.ministr.toml` `corpus.model` > per-corpus `meta.toml` `model` >
+/// global `default_model`) — a focused accessor for callers that only need the
+/// model. The precedence lives in one place (the seam), not duplicated here.
 ///
 /// # Examples
 ///
@@ -531,20 +605,7 @@ pub fn resolve_model_name(
     corpus_config: Option<&CorpusConfig>,
     global_config: &MinistrConfig,
 ) -> String {
-    // 1. Per-repo .ministr.toml model
-    if let Some(repo) = repo_config
-        && let Some(ref model) = repo.corpus.model
-    {
-        return model.clone();
-    }
-    // 2. Per-corpus meta.toml model
-    if let Some(corpus) = corpus_config
-        && let Some(ref model) = corpus.model
-    {
-        return model.clone();
-    }
-    // 3. Global default
-    global_config.default_model.clone()
+    resolve_effective_corpus_config(repo_config, corpus_config, global_config).model
 }
 
 /// The name of the per-repo config file.
@@ -890,6 +951,103 @@ fn expand_tilde(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── parity-epic: the per-corpus config-resolution seam contract ──────────
+    // resolve_effective_corpus_config is the single seam both the CLI and the
+    // daemon registry route through; these lock the per-knob precedence so the
+    // surfaces cannot silently drift.
+
+    #[test]
+    fn effective_model_precedence_repo_over_corpus_over_global() {
+        let global = MinistrConfig::default();
+        assert_eq!(
+            resolve_effective_corpus_config(None, None, &global).model,
+            "all-MiniLM-L6-v2"
+        );
+        // per-corpus meta.toml overrides global
+        let corpus = CorpusConfig {
+            model: Some("bge-small-en-v1.5".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_effective_corpus_config(None, Some(&corpus), &global).model,
+            "bge-small-en-v1.5"
+        );
+        // per-repo .ministr.toml overrides both
+        let repo = RepoConfig {
+            corpus: CorpusSpec {
+                model: Some("jina-embeddings-v2-base-code".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_effective_corpus_config(Some(&repo), Some(&corpus), &global).model,
+            "jina-embeddings-v2-base-code"
+        );
+    }
+
+    #[test]
+    fn effective_dimension_and_rerank_depth_from_repo() {
+        let global = MinistrConfig::default();
+        let repo = RepoConfig {
+            corpus: CorpusSpec {
+                dimension: Some(256),
+                rerank_depth: Some(80),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let eff = resolve_effective_corpus_config(Some(&repo), None, &global);
+        assert_eq!(eff.dimension, Some(256));
+        assert_eq!(eff.rerank_depth, Some(80));
+        let bare = resolve_effective_corpus_config(None, None, &global);
+        assert_eq!(bare.dimension, None);
+        assert_eq!(bare.rerank_depth, None);
+    }
+
+    #[test]
+    fn effective_parser_min_section_claim_from_meta() {
+        let global = MinistrConfig::default();
+        let corpus = CorpusConfig {
+            parser: Some(ParserKind::Code),
+            min_section_tokens: 7,
+            claim_extraction: ClaimExtractionMode::ModelAssisted,
+            ..Default::default()
+        };
+        let eff = resolve_effective_corpus_config(None, Some(&corpus), &global);
+        assert_eq!(eff.parser, Some(ParserKind::Code));
+        assert_eq!(eff.min_section_tokens, 7);
+        assert_eq!(eff.claim_extraction, ClaimExtractionMode::ModelAssisted);
+    }
+
+    #[test]
+    fn effective_defaults_when_all_absent() {
+        let global = MinistrConfig::default();
+        let eff = resolve_effective_corpus_config(None, None, &global);
+        assert_eq!(eff.model, global.default_model);
+        assert_eq!(eff.dimension, None);
+        assert_eq!(eff.rerank_depth, None);
+        assert_eq!(eff.parser, None);
+        assert_eq!(eff.min_section_tokens, DEFAULT_MIN_SECTION_TOKENS);
+        assert_eq!(eff.claim_extraction, ClaimExtractionMode::Heuristic);
+    }
+
+    #[test]
+    fn resolve_model_name_delegates_to_seam() {
+        let global = MinistrConfig::default();
+        let repo = RepoConfig {
+            corpus: CorpusSpec {
+                model: Some("jina-embeddings-v2-base-code".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_model_name(Some(&repo), None, &global),
+            resolve_effective_corpus_config(Some(&repo), None, &global).model
+        );
+    }
 
     #[test]
     fn default_config_values() {

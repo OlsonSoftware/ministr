@@ -104,18 +104,18 @@ pub fn resolve_config(cli_corpus: &[String], cli_config: Option<&Path>) -> Resul
         .map(|(_, cc)| cc.corpus.git.clone())
         .unwrap_or_default();
 
-    let resolved_model = ministr_core::config::resolve_model_name(
+    // Resolve every per-corpus knob through the single shared seam so the CLI
+    // and the daemon registry (parity follow-up) cannot drift. `corpus_config`
+    // here is the per-repo `.ministr.toml`; there is no per-corpus `meta.toml`
+    // at this layer, hence `None`.
+    let effective = ministr_core::config::resolve_effective_corpus_config(
         corpus_config.as_ref().map(|(_, cc)| cc),
         None,
         &config,
     );
-
-    let resolved_dimension = corpus_config
-        .as_ref()
-        .and_then(|(_, cc)| cc.corpus.dimension);
-    let rerank_depth = corpus_config
-        .as_ref()
-        .and_then(|(_, cc)| cc.corpus.rerank_depth);
+    let resolved_model = effective.model;
+    let resolved_dimension = effective.dimension;
+    let rerank_depth = effective.rerank_depth;
 
     Ok(ResolvedConfig {
         config_path,
