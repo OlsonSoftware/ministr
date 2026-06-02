@@ -127,6 +127,15 @@ pub struct CorpusRegistry {
     /// downloads. Cleared after a successful restore; future
     /// restore attempts will re-create as needed.
     restore_locks: tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// gd6/gd9 — corpora whose load is in flight: `register` marks a corpus
+    /// here (`corpus_id` → paths) the moment it begins `create_handle` and clears
+    /// it once the handle is in [`corpora`](Self::corpora), so a corpus is never
+    /// in *neither* set. [`warming_placeholders`](Self::warming_placeholders)
+    /// reads this (NOT the on-disk manifest, which `save_manifest` rewrites from
+    /// the *loaded* set mid-restore and so transiently drops the corpus being
+    /// rebuilt) — the GUI can then show "Warming up…" for the whole multi-second
+    /// HNSW rebuild instead of the card vanishing.
+    warming: RwLock<HashMap<String, Vec<String>>>,
 }
 
 /// A single managed corpus with its resources.
@@ -273,6 +282,7 @@ impl CorpusRegistry {
             corpora_repo: std::sync::OnceLock::new(),
             corpus_restorer: std::sync::OnceLock::new(),
             restore_locks: tokio::sync::Mutex::new(HashMap::new()),
+            warming: RwLock::new(HashMap::new()),
         }
     }
 
@@ -844,14 +854,34 @@ impl CorpusRegistry {
             return Ok((corpus_id, false));
         }
 
+        // gd6/gd9: mark this corpus "warming" (registered, loading) for the
+        // duration of create_handle's HNSW rebuild, so `warming_placeholders`
+        // can surface it the whole time. Sourcing warming from the on-disk
+        // manifest was racy — `save_manifest` rewrites the manifest from the
+        // *loaded* set as each corpus finishes, transiently dropping the one
+        // still rebuilding, so its GUI card vanished mid-rebuild.
+        self.warming
+            .write()
+            .await
+            .insert(corpus_id.clone(), canonical.clone());
+
         // Display name is derived from the *original* paths so we
         // preserve the user's casing — `canonical` is lowercased on
         // Windows for identity stability, but humans want to see
         // "Ministr", not "ministr".
         let display_name = display_name_from_paths(paths);
-        let handle = self
+        let handle = match self
             .create_handle(&corpus_id, &canonical, display_name)
-            .await?;
+            .await
+        {
+            Ok(handle) => handle,
+            Err(e) => {
+                // Clear the warming mark so a failed load doesn't show as
+                // "warming" forever.
+                self.warming.write().await.remove(&corpus_id);
+                return Err(e);
+            }
+        };
 
         // Subscribe to coherence broadcasts for answer cache invalidation
         // BEFORE inserting the handle (the tx is on the handle).
@@ -886,12 +916,20 @@ impl CorpusRegistry {
         // no background tasks have been spawned yet, so its `Drop` just
         // closes the (idempotently-opened) SQLite/index and returns the
         // idempotent `(id, false)`.
-        {
+        let inserted = {
             let mut map = self.corpora.write().await;
             if map.contains_key(&corpus_id) {
-                return Ok((corpus_id, false));
+                false
+            } else {
+                map.insert(corpus_id.clone(), Arc::new(handle));
+                true
             }
-            map.insert(corpus_id.clone(), Arc::new(handle));
+        };
+        // Loaded now (by us, or by the concurrent winner) — clear the warming
+        // mark so the corpus shows as a real entry, not a "warming" placeholder.
+        self.warming.write().await.remove(&corpus_id);
+        if !inserted {
+            return Ok((corpus_id, false));
         }
         info!(corpus_id = %corpus_id, "corpus registered");
 
@@ -1236,34 +1274,34 @@ impl CorpusRegistry {
             .unwrap_or_default()
     }
 
-    /// Synthesize "warming" [`CorpusInfo`] placeholders (gd6) for every corpus
-    /// in the on-disk manifest that is registered but **not yet warmed** into
-    /// the in-memory map.
+    /// Synthesize "warming" [`CorpusInfo`] placeholders (gd6/gd9) for every
+    /// corpus whose load is currently **in flight** — registered and rebuilding
+    /// its HNSW index, but not yet in the in-memory [`corpora`](Self::corpora)
+    /// map.
     ///
-    /// After gd5 the daemon loads corpora in the background (`restore()` +
-    /// lazy-load) and the MCP proxy registers in the background, so the GUI's
-    /// project list — built from [`list`](Self::list), which is the *loaded*
-    /// corpora only — would show a project only once its index finishes
-    /// loading, making it pop into the list. Merging these placeholders lets
-    /// the GUI render the project immediately as "Warming up…". Counts are
-    /// zero (loading the index is exactly the work we're avoiding here) and
-    /// the placeholder is replaced by the real entry the moment the corpus is
-    /// warmed.
+    /// After gd5 the daemon loads corpora in the background (`restore()` + the
+    /// proxy's concurrent `register`), each rebuilding its index from `SQLite` —
+    /// seconds for a large corpus. Without these placeholders the GUI project
+    /// list (built from [`list`](Self::list), the *loaded* corpora only) would
+    /// show a project only once its rebuild finished — popping into the list.
+    /// Merging these lets the GUI render it as "Warming up…" the whole time.
     ///
-    /// Self-hosted only: cloud mode owns its own pending/placeholder story via
-    /// the durable corpora repo, so this returns empty when one is wired.
+    /// Sourced from the in-memory [`warming`](Self::warming) set (NOT the
+    /// on-disk manifest): `save_manifest` rewrites `corpora.json` from the
+    /// *loaded* set as each corpus finishes, so a manifest-sourced placeholder
+    /// for the corpus still rebuilding got dropped mid-restore and its card
+    /// vanished. The in-memory mark is set before `create_handle` and cleared
+    /// after the insert, so a corpus is never in *neither* set.
     pub async fn warming_placeholders(&self) -> Vec<CorpusInfo> {
-        if self.corpora_repo.get().is_some() {
-            return Vec::new();
-        }
         let loaded = self.corpora.read().await;
-        self.read_manifest_entries()
-            .into_iter()
-            .filter(|e| !loaded.contains_key(&e.id) && entry_is_live(&e.paths))
-            .map(|e| CorpusInfo {
-                id: e.id,
-                display_name: display_name_from_paths(&e.paths),
-                paths: e.paths,
+        let warming = self.warming.read().await;
+        warming
+            .iter()
+            .filter(|(id, _)| !loaded.contains_key(*id))
+            .map(|(id, paths)| CorpusInfo {
+                id: id.clone(),
+                display_name: display_name_from_paths(paths),
+                paths: paths.clone(),
                 status: IndexingStatus::Idle,
                 files_indexed: 0,
                 sections_count: 0,
@@ -1364,13 +1402,28 @@ impl CorpusRegistry {
 
         let entries: Vec<ManifestEntry> = {
             let corpora = self.corpora.read().await;
-            let mut entries = Vec::with_capacity(corpora.len());
+            let warming = self.warming.read().await;
+            let mut entries = Vec::with_capacity(corpora.len() + warming.len());
             for (id, handle) in corpora.iter() {
                 let info = handle.info.read().await;
                 entries.push(ManifestEntry {
                     id: id.clone(),
                     paths: info.paths.clone(),
                 });
+            }
+            // gd9: ALSO persist in-flight (warming) corpora. `register` saves the
+            // manifest as each corpus finishes, building it from the loaded set —
+            // so a save that ran mid-restore TRUNCATED the manifest to the
+            // loaded-so-far subset, and a restart (or crash) then permanently
+            // orphaned every corpus that hadn't finished loading yet. Including
+            // the warming set keeps the manifest whole throughout restore.
+            for (id, paths) in warming.iter() {
+                if !corpora.contains_key(id) {
+                    entries.push(ManifestEntry {
+                        id: id.clone(),
+                        paths: paths.clone(),
+                    });
+                }
             }
             entries
         };

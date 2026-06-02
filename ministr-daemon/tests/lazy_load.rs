@@ -89,9 +89,14 @@ async fn get_or_lazy_load_warms_a_cold_corpus_from_the_manifest() {
 }
 
 #[tokio::test]
-async fn warming_placeholders_lists_unloaded_manifest_corpora() {
-    // gd6 — a corpus in the manifest but not yet warmed into memory surfaces
-    // as a `warming: true` placeholder, and stops once it's loaded.
+async fn warming_clears_once_a_corpus_is_loaded() {
+    // gd9 — `warming` is an in-flight signal: it's set while a corpus rebuilds
+    // its index and cleared the moment the handle is in the map, so a
+    // fully-registered corpus is never reported as warming and the mark never
+    // leaks. (Sourcing it from the in-memory in-flight set — not the on-disk
+    // manifest, which save_manifest rewrites from the loaded set mid-restore —
+    // is what stops the GUI card from vanishing during the rebuild. The
+    // mid-rebuild visibility itself is timing-dependent, verified empirically.)
     let tmp = tempfile::tempdir().unwrap();
     let data_dir = tmp.path().join("data");
     std::fs::create_dir_all(&data_dir).unwrap();
@@ -102,30 +107,22 @@ async fn warming_placeholders_lists_unloaded_manifest_corpora() {
     let src_str = src.to_string_lossy().to_string();
 
     let config = MinistrConfig {
-        data_dir: data_dir.clone(),
+        data_dir,
         ..MinistrConfig::default()
     };
 
-    let embedder_a: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim: 16 });
-    let reg_a = Arc::new(CorpusRegistry::new(embedder_a, config.clone()));
-    let (corpus_id, _started) = reg_a
-        .register(std::slice::from_ref(&src_str))
-        .await
-        .unwrap();
+    let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim: 16 });
+    let reg = Arc::new(CorpusRegistry::new(embedder, config));
 
-    // Registry B shares the manifest but hasn't loaded the corpus.
-    let embedder_b: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim: 16 });
-    let reg_b = Arc::new(CorpusRegistry::new(embedder_b, config));
+    // Nothing registered yet → nothing warming.
+    assert!(reg.warming_placeholders().await.is_empty());
 
-    let warming = reg_b.warming_placeholders().await;
-    assert_eq!(warming.len(), 1, "the unloaded manifest corpus is warming");
-    assert_eq!(warming[0].id, corpus_id);
-    assert!(warming[0].warming, "placeholder is flagged warming");
+    let (corpus_id, _started) = reg.register(std::slice::from_ref(&src_str)).await.unwrap();
 
-    // Once warmed, it's a real (loaded) entry and no longer a placeholder.
-    reg_b.get_or_lazy_load(&corpus_id).await.unwrap();
+    // Loaded now → not warming (the in-flight mark was cleared, no leak).
+    assert!(reg.get(&corpus_id).await.is_ok());
     assert!(
-        reg_b.warming_placeholders().await.is_empty(),
-        "a loaded corpus is not a warming placeholder"
+        reg.warming_placeholders().await.is_empty(),
+        "a loaded corpus must not be reported as warming"
     );
 }
