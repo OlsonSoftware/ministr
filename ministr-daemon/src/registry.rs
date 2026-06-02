@@ -30,6 +30,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use crate::embedder_pool::{EmbedderPool, PooledEmbedder};
 use crate::indexer;
 use crate::scheduler::IngestionScheduler;
 
@@ -49,6 +50,8 @@ pub enum RegistryError {
     Storage(String),
     #[error("index: {0}")]
     Index(String),
+    #[error("embedder: {0}")]
+    Embedder(String),
     #[error("corpus not found: {id}")]
     NotFound { id: String },
     #[error("identity changed: paths canonicalise to {actual}, expected {expected}")]
@@ -60,10 +63,14 @@ pub enum RegistryError {
 /// Central registry managing all indexed corpora.
 pub struct CorpusRegistry {
     embedder: Arc<dyn Embedder>,
-    /// Single shared embedding service (ADR 0001 D1), built once from
-    /// `embedder`. Every corpus's ingest routes embedding through this one
-    /// GPU-owning queue so the model is never contended across corpora.
-    embedding_service: Arc<EmbeddingService>,
+    /// Resident per-model embedder + embedding-service pool
+    /// (parity-seam-registry-routing). Seeded at construction with the default
+    /// model's boot-built embedder + its dedicated `EmbeddingService` (the
+    /// GPU-owning batch queue, ADR 0001 D1); any per-corpus `[corpus] model` is
+    /// built + cached on first use so the daemon honors it for both ingest and
+    /// query. Refines ADR 0001 D1 from one shared service to one service per
+    /// distinct model actually in use.
+    pool: EmbedderPool,
     /// Daemon-wide indexing concurrency policy: bounded parallelism +
     /// per-corpus exclusion. Replaces the old `INDEXING_SEMAPHORE(1)` band-aid.
     scheduler: IngestionScheduler,
@@ -123,6 +130,11 @@ pub struct CorpusHandle {
     pub storage: Arc<SqliteStorage>,
     pub index: Arc<dyn VectorIndex>,
     pub service: QueryService,
+    /// The effective embedding model this corpus was indexed + is queried with
+    /// (parity-seam-registry-routing) — its `.ministr.toml` `[corpus] model`
+    /// else the daemon default. `indexer::run` resolves the corpus's embedder
+    /// from this so ingest and query share one vector space.
+    pub model: String,
     /// `Arc` so `list()` (and any read-mostly status path) can clone the
     /// handle out and drop the corpora-map guard *before* awaiting the
     /// session lock. Accessors are unchanged — `Arc` derefs to the
@@ -208,9 +220,18 @@ fn merge_live_info(
 
 impl CorpusRegistry {
     pub fn new(embedder: Arc<dyn Embedder>, config: MinistrConfig) -> Self {
+        let embedding_service = Arc::new(EmbeddingService::with_model(Arc::clone(&embedder)));
+        // Seed the per-model pool with the default model's boot-built Arcs so
+        // the common (default-model) path reuses them with no rebuild; any
+        // per-corpus model is built + cached lazily by `embedder_for`.
+        let pool = EmbedderPool::with_data_dir(config.data_dir.clone());
+        pool.seed(
+            &config.default_model,
+            Arc::clone(&embedder),
+            Arc::clone(&embedding_service),
+        );
         Self {
-            // Built before `embedder` is moved into the struct below.
-            embedding_service: Arc::new(EmbeddingService::with_model(Arc::clone(&embedder))),
+            pool,
             scheduler: IngestionScheduler::with_default_concurrency(),
             embedder,
             corpora: RwLock::new(HashMap::new()),
@@ -221,13 +242,6 @@ impl CorpusRegistry {
             corpus_restorer: std::sync::OnceLock::new(),
             restore_locks: tokio::sync::Mutex::new(HashMap::new()),
         }
-    }
-
-    /// The single shared embedding service (ADR 0001 D1). Cloned cheaply (it's
-    /// an `Arc`); every ingest sets it on its pipeline so embedding runs off the
-    /// Tokio runtime through one GPU-owning queue.
-    pub(crate) fn embedding_service(&self) -> Arc<EmbeddingService> {
-        Arc::clone(&self.embedding_service)
     }
 
     /// The ingestion scheduler — bounded concurrency + per-corpus exclusion.
@@ -470,6 +484,18 @@ impl CorpusRegistry {
 
     pub fn embedder(&self) -> &Arc<dyn Embedder> {
         &self.embedder
+    }
+
+    /// The embedder + embedding service for a corpus's effective model
+    /// (parity-seam-registry-routing). The default model returns the seeded
+    /// boot-built Arcs; any other model is built and cached on first use.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError::Embedder`] if the model can't be built (e.g.
+    /// an unknown or uninstalled model name).
+    pub(crate) fn embedder_for(&self, model: &str) -> Result<PooledEmbedder, RegistryError> {
+        self.pool.get(model).map_err(RegistryError::Embedder)
     }
 
     pub fn config(&self) -> &MinistrConfig {
@@ -1151,15 +1177,24 @@ impl CorpusRegistry {
                 .map_err(|e| RegistryError::Storage(format!("open db: {e}")))?,
         );
 
-        let dim = self.embedder.dimension();
-        let index =
-            load_or_create_index(&index_dir, dim, &self.config.default_model, &storage).await?;
+        // parity-seam-registry-routing: resolve THIS corpus's effective
+        // embedding model (its `.ministr.toml` `[corpus] model`, else the
+        // daemon default) via the shared seam, and bind the corpus's index +
+        // QueryService to that model's embedder. The default model returns the
+        // daemon's seeded shared embedder (zero change); a per-corpus model is
+        // built + cached once. `indexer::run` reads `handle.model` and resolves
+        // the same embedder, so ingest and query share one vector space.
+        let model = resolve_corpus_model(paths, &self.config);
+        let pooled = self.embedder_for(&model)?;
+
+        let dim = pooled.embedder.dimension();
+        let index = load_or_create_index(&index_dir, dim, &model, &storage).await?;
 
         let query_storage = SqliteStorage::open(&db_path)
             .map_err(|e| RegistryError::Storage(format!("open query db: {e}")))?;
         let mut service = QueryService::new(
             query_storage,
-            Arc::clone(&self.embedder),
+            Arc::clone(&pooled.embedder),
             Arc::clone(&index),
         );
 
@@ -1205,6 +1240,7 @@ impl CorpusRegistry {
             storage,
             index,
             service,
+            model,
             sessions: Arc::new(tokio::sync::Mutex::new(SessionRegistry::new(
                 UsageConfig::default(),
             ))),
@@ -1218,6 +1254,33 @@ impl CorpusRegistry {
             coherence_tx: tokio::sync::broadcast::channel(16).0,
         })
     }
+}
+
+/// Resolve a corpus's effective embedding model from its first local path's
+/// `.ministr.toml` (`[corpus] model`), falling back to the daemon default.
+///
+/// Best-effort by design (parity-seam-registry-routing): a missing or
+/// unparseable `.ministr.toml`, or a non-local path (e.g. a restored cloud
+/// corpus whose source files aren't on this pod), yields the default model —
+/// so registration never fails just because a per-corpus override can't be
+/// discovered. Routes through the same `resolve_effective_corpus_config` seam
+/// the CLI uses, so the surfaces cannot drift.
+fn resolve_corpus_model(paths: &[String], config: &MinistrConfig) -> String {
+    let repo_cfg = paths.first().and_then(|p| {
+        let path = std::path::Path::new(p);
+        let dir = if path.is_dir() {
+            Some(path)
+        } else {
+            path.parent()
+        };
+        dir.and_then(|d| ministr_core::config::RepoConfig::discover(d).ok().flatten())
+    });
+    ministr_core::config::resolve_effective_corpus_config(
+        repo_cfg.as_ref().map(|(_, rc)| rc),
+        None,
+        config,
+    )
+    .model
 }
 
 /// Bridge a per-corpus coherence broadcast into the app-level ring buffer.

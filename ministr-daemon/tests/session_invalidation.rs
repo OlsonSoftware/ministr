@@ -87,6 +87,7 @@ fn build_handle(
         storage,
         index,
         service,
+        model: "all-MiniLM-L6-v2".into(),
         sessions: Arc::new(tokio::sync::Mutex::new(SessionRegistry::new(
             UsageConfig::default(),
         ))),

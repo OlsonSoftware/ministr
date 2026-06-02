@@ -18,6 +18,7 @@ use ministr_core::types::ContentId;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
+use crate::embedder_pool::PooledEmbedder;
 use crate::registry::CorpusRegistry;
 
 /// How long the watcher waits for a *quiet* gap between events before
@@ -28,26 +29,6 @@ const DEBOUNCE_QUIET: Duration = Duration::from_secs(2);
 /// events keep arriving within the quiet window) this forces a reindex
 /// anyway so the observatory stays live.
 const DEBOUNCE_MAX_WINDOW: Duration = Duration::from_secs(10);
-
-/// If a corpus declares a per-corpus embedding model (`.ministr.toml`
-/// `[corpus] model`) that differs from the daemon's active model, return a
-/// warning message — otherwise `None`.
-///
-/// The daemon serves every corpus with one shared embedder (ADR 0001 D1), so a
-/// per-corpus model is silently dropped until the multi-embedder registry lands
-/// (`parity-seam-registry-routing`). This turns that silent gap into a loud,
-/// actionable log line.
-fn per_corpus_model_warning(configured: &str, active: &str) -> Option<String> {
-    (configured != active).then(|| {
-        format!(
-            "corpus configures embedding model `{configured}` but the daemon is serving \
-             `{active}` — the daemon indexes every corpus with its single active model, so this \
-             per-corpus model is NOT applied yet. Set `default_model = \"{configured}\"` in \
-             ~/.ministr/config.toml to use it daemon-wide (per-corpus daemon routing is tracked \
-             by parity-seam-registry-routing)."
-        )
-    })
-}
 
 /// Run the full ingestion pipeline for a corpus.
 ///
@@ -60,14 +41,14 @@ fn per_corpus_model_warning(configured: &str, active: &str) -> Option<String> {
 // helper just to satisfy the lint would obscure the flow.
 #[allow(clippy::too_many_lines)]
 pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
-    let (storage, embedder, index, data_dir, index_dir, progress, prefetch) = {
+    let (storage, model, index, data_dir, index_dir, progress, prefetch) = {
         let corpora = registry.corpora().read().await;
         let Some(handle) = corpora.get(corpus_id) else {
             return;
         };
         (
             Arc::clone(&handle.storage),
-            Arc::clone(registry.embedder()),
+            handle.model.clone(),
             Arc::clone(&handle.index),
             handle.data_dir.clone(),
             handle.data_dir.join("index"),
@@ -101,40 +82,41 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
 
     let local_paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
 
-    // Parity (parity-daemon-model-mismatch-warn): resolve this corpus's
-    // per-corpus model through the shared seam and warn if the daemon's single
-    // active embedder can't honor it — instead of silently ignoring it.
-    // Best-effort: a missing/unparseable `.ministr.toml` (or a URL path) just
-    // yields no override, so there is nothing to warn about and no ingest change.
-    if let Some(dir) = local_paths.first().and_then(|p| {
-        if p.is_dir() {
-            Some(p.as_path())
-        } else {
-            p.parent()
+    // parity-seam-registry-routing: ingest with the corpus's OWN embedder —
+    // the same one `create_handle` bound this corpus's index + QueryService to
+    // (resolved from its `.ministr.toml` `[corpus] model` via the shared seam,
+    // recorded on `handle.model`). The default model returns the daemon's
+    // seeded shared embedder; a per-corpus model is built + cached once. Ingest
+    // and query therefore share one vector space per corpus — correct by
+    // construction. By the time `run` fires, `create_handle` has already built
+    // (or failed) this model, so the lookup is a cache hit; the error arm is a
+    // defensive guard, not the normal path.
+    let PooledEmbedder { embedder, service } = match registry.embedder_for(&model) {
+        Ok(pooled) => pooled,
+        Err(e) => {
+            error!(corpus_id, model = %model, error = %e, "embedder unavailable for corpus model — cannot index");
+            registry
+                .set_status(
+                    corpus_id,
+                    IndexingStatus::Error {
+                        message: e.to_string(),
+                    },
+                )
+                .await;
+            return;
         }
-    }) {
-        let repo_cfg = ministr_core::config::RepoConfig::discover(dir)
-            .ok()
-            .flatten();
-        let effective = ministr_core::config::resolve_effective_corpus_config(
-            repo_cfg.as_ref().map(|(_, rc)| rc),
-            None,
-            registry.config(),
-        );
-        if let Some(msg) =
-            per_corpus_model_warning(&effective.model, &registry.config().default_model)
-        {
-            warn!(corpus_id, "{msg}");
-        }
+    };
+    if model != registry.config().default_model {
+        info!(corpus_id, model = %model, "indexing with per-corpus embedding model");
     }
 
-    // ADR 0001 D1: route embedding through the daemon's single shared
-    // EmbeddingService so the synchronous, GPU-bound embed() runs on its own
-    // thread and the pipeline's embed consumer never pins a Tokio worker. All
-    // corpora feed this one GPU-owning queue.
+    // ADR 0001 D1 (refined by parity-seam-registry-routing): route embedding
+    // through this model's dedicated EmbeddingService so the synchronous,
+    // GPU-bound embed() runs on its own thread and the pipeline's embed consumer
+    // never pins a Tokio worker. Corpora sharing a model share one queue.
     let pipeline = IngestionPipeline::new()
         .with_progress(Arc::clone(&progress))
-        .with_embedding_service(registry.embedding_service());
+        .with_embedding_service(service);
 
     match pipeline
         .ingest_paths_with_embeddings(&local_paths, &*storage, &*embedder, &*index)
@@ -452,24 +434,4 @@ async fn affected_sections_for(
         }
     }
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::per_corpus_model_warning;
-
-    #[test]
-    fn no_warning_when_models_match() {
-        assert!(per_corpus_model_warning("all-MiniLM-L6-v2", "all-MiniLM-L6-v2").is_none());
-    }
-
-    #[test]
-    fn warns_when_per_corpus_model_differs_from_active() {
-        let msg = per_corpus_model_warning("jina-embeddings-v2-base-code", "all-MiniLM-L6-v2")
-            .expect("models differ → a warning is expected");
-        // Names both the configured and the active model, and the fix.
-        assert!(msg.contains("jina-embeddings-v2-base-code"));
-        assert!(msg.contains("all-MiniLM-L6-v2"));
-        assert!(msg.contains("default_model"));
-    }
 }
