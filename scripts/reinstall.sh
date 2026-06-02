@@ -36,10 +36,22 @@ bootout_ministr_agents() {
     [ -d "$HOME/Library/LaunchAgents" ] || return 0
     local uid plist label
     uid="$(id -u)"
-    for plist in "$HOME"/Library/LaunchAgents/*ministr*.plist; do
+    # Scope to the DESKTOP-app agents only (`*.desktop.plist`). The old glob
+    # `*ministr*.plist` also matched unrelated agents that merely contain
+    # "ministr" in their label — e.g. GitHub Actions self-hosted runner agents
+    # (`actions.runner.*.ministr-native-*`) — and booted those out too. The
+    # `.desktop.plist` filter catches the canonical `ai.ministr.desktop` and
+    # stale legacy bundle ids (`com.ministr.desktop`, …) and nothing else.
+    for plist in "$HOME"/Library/LaunchAgents/*ministr*.desktop.plist; do
         [ -f "$plist" ] || continue
         label="$(basename "$plist" .plist)"
         launchctl bootout "gui/$uid/$label" 2>/dev/null || true
+        # Delete stale legacy desktop agents so they stop auto-launching a
+        # divergent bundle at login. Keep only the canonical agent that
+        # `ministr setup` owns.
+        if [ "$label" != "ai.ministr.desktop" ]; then
+            rm -f "$plist" && echo "   removed stale legacy launch agent: $label"
+        fi
     done
 }
 
@@ -113,6 +125,53 @@ atomic_install() {
     $sudo_cmd mv -f "$staged" "$dst"
 }
 
+# Canonical dev install location for the `ministr` CLI. Every installer path
+# (this recipe + `ministr setup`) targets this one spot; everything else is a
+# shadow to be removed.
+CANONICAL_CLI="$HOME/.ministr/bin/ministr"
+
+# Remove a stale `ministr` binary that would shadow the canonical one,
+# escalating to sudo for root-owned copies (e.g. a /usr/local/bin left by an
+# old installer). Loud on every outcome — the previous
+# `rm -f … 2>/dev/null || true` silently swallowed root-owned failures, so a
+# stale shadow could persist while the recipe claimed to have de-shadowed.
+remove_cli_shadow() {
+    local f="$1"
+    [ -e "$f" ] || [ -L "$f" ] || return 0
+    if rm -f "$f" 2>/dev/null; then
+        echo "   removed stale CLI shadow: $f"
+        return 0
+    fi
+    if command -v sudo >/dev/null 2>&1 && [ -t 1 ]; then
+        echo "   '$f' is root-owned / not user-writable — removing with sudo (you may be prompted)…"
+        if sudo rm -f "$f"; then
+            echo "   removed with sudo: $f"
+            return 0
+        fi
+    fi
+    echo "   WARNING: could not remove CLI shadow: $f" >&2
+    echo "            remove it manually so it can't shadow $CANONICAL_CLI:" >&2
+    echo "              sudo rm -f '$f'" >&2
+}
+
+# After install + PATH wiring, confirm `ministr` actually resolves to the
+# canonical binary and not a leftover shadow earlier on PATH.
+verify_cli_canonical() {
+    local resolved
+    resolved="$(command -v ministr 2>/dev/null || true)"
+    if [ -z "$resolved" ]; then
+        echo "   note: \`ministr\` not on PATH yet — open a new shell or \`source ~/.ministr/env\`"
+        return 0
+    fi
+    if [ "$resolved" = "$CANONICAL_CLI" ]; then
+        echo "   verified: \`ministr\` -> $resolved"
+    else
+        echo "   WARNING: \`ministr\` resolves to a SHADOW: $resolved" >&2
+        echo "            (expected $CANONICAL_CLI) — remove the shadow:" >&2
+        echo "              sudo rm -f '$resolved'   # if root-owned" >&2
+    fi
+}
+
 # ─── build ─────────────────────────────────────────────────────────────────────
 
 echo "==> Clean rebuild (release)..."
@@ -142,14 +201,16 @@ cargo build --release -p ministr-app
 
 # ─── install CLI ──────────────────────────────────────────────────────────────
 
-echo "==> Installing CLI to ~/.ministr/bin/ministr (canonical dev location)..."
+echo "==> Installing CLI to $CANONICAL_CLI (canonical dev location)..."
 # Remove stale copies from other locations to prevent shadow binaries.
-rm -f "$HOME/.cargo/bin/ministr"
-rm -f /usr/local/bin/ministr 2>/dev/null || true
+# Loud + sudo-escalating (see remove_cli_shadow) so a root-owned shadow such
+# as a stale /usr/local/bin/ministr can never be silently left behind.
+remove_cli_shadow "$HOME/.cargo/bin/ministr"
+remove_cli_shadow "/usr/local/bin/ministr"
 mkdir -p "$HOME/.ministr/bin"
 # CLI isn't typically running as a long-lived daemon under this path, but
 # use atomic_install anyway for parity — same cost, removes a foot-gun.
-atomic_install target/release/ministr "$HOME/.ministr/bin/ministr"
+atomic_install target/release/ministr "$CANONICAL_CLI"
 
 # Hand off PATH wiring to `ministr setup` (onpath crate). Detects
 # installed shells and writes the right rc-file edits. Idempotent —
@@ -157,10 +218,13 @@ atomic_install target/release/ministr "$HOME/.ministr/bin/ministr"
 # binary is at ~/.ministr/bin/ministr regardless, so PATH-wiring trouble
 # shouldn't abort the rest of the reinstall.
 echo "==> Adding ministr to PATH via \`ministr setup\`..."
-if ! "$HOME/.ministr/bin/ministr" setup; then
+if ! "$CANONICAL_CLI" setup; then
     echo "   ministr setup failed — add manually with:" >&2
     echo "     export PATH=\"\$HOME/.ministr/bin:\$PATH\"" >&2
 fi
+
+# Confirm the CLI on PATH is the one we just installed, not a surviving shadow.
+verify_cli_canonical
 
 # ─── install Tauri app ────────────────────────────────────────────────────────
 
@@ -286,6 +350,21 @@ elif [ "$OS" = "linux" ]; then
         nohup "$APP_TARGET" >/dev/null 2>&1 < /dev/null &
     fi
     disown 2>/dev/null || true
+fi
+
+# ─── where everything landed ────────────────────────────────────────────────
+echo
+echo "==> Installed:"
+echo "      CLI: $CANONICAL_CLI"
+if [ "$OS" = "macos" ]; then
+    echo "      app: ${APP_BUNDLE:-?}  (dev bundle, user-owned)"
+    echo "      NOTE: login auto-launch (ai.ministr.desktop) still targets the"
+    echo "            RELEASED bundle at /Applications/ministr.app — a dev reinstall"
+    echo "            deliberately doesn't change what starts at login. After a"
+    echo "            reboot, re-run \`just reinstall\`, or run \`just dev-autolaunch\`"
+    echo "            once to point login at this dev bundle."
+elif [ "$OS" = "linux" ]; then
+    echo "      app: ${APP_TARGET:-?}"
 fi
 
 echo "==> Done. Restart your Claude Code session to pick up the new binary."

@@ -120,6 +120,32 @@ profile-embed-report:
            print "---- samples=" n " (showing last " (n-start+1) ") ----"
          }' "$log"
 
+# Point login auto-launch at the dev bundle (~/Applications) — revert: ministr setup.
+[macos]
+dev-autolaunch:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    plist="$HOME/Library/LaunchAgents/ai.ministr.desktop.plist"
+    [ -f "$plist" ] || { echo "no login agent at $plist — run 'ministr setup' first" >&2; exit 1; }
+    dev="${MINISTR_APP:-$HOME/Applications/ministr.app}"
+    [ -d "$dev/Contents/MacOS" ] || { echo "dev bundle not found at $dev — run 'just reinstall' first" >&2; exit 1; }
+    cur="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$plist" 2>/dev/null || true)"
+    [ -n "$cur" ] || { echo "could not read ProgramArguments:0 from $plist" >&2; exit 1; }
+    case "$cur" in
+        *"/ministr.app/"*) rel="${cur#*/ministr.app/}" ;;
+        *) echo "unexpected launcher path in plist: $cur" >&2; exit 1 ;;
+    esac
+    newexec="$dev/$rel"
+    [ -x "$newexec" ] || { echo "dev launcher missing/not executable: $newexec (run 'just reinstall')" >&2; exit 1; }
+    cp "$plist" "$plist.bak"
+    /usr/libexec/PlistBuddy -c "Set :ProgramArguments:0 $newexec" "$plist"
+    uid="$(id -u)"
+    launchctl bootout "gui/$uid/ai.ministr.desktop" 2>/dev/null || true
+    launchctl bootstrap "gui/$uid" "$plist"
+    echo "Login now auto-launches the DEV bundle:"
+    echo "  $newexec"
+    echo "Backup: $plist.bak   Revert with: ministr setup  (re-points at /Applications)"
+
 # ── Local data ───────────────────────────────────────────────────────
 
 # Destructive + irreversible. Wipes the daemon data dir (~/.ministr) — every
