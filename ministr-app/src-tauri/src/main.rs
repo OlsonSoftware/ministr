@@ -1,21 +1,24 @@
 //! ministr desktop app — Tauri v2 entry point.
 //!
-//! Starts the ministr daemon (axum on UDS) alongside the Tauri webview.
-//! The app runs as a system tray icon by default, with the main window
-//! hidden until the user clicks the tray icon.
+//! Ensures the headless `ministr __daemon` sidecar (which owns the UDS
+//! socket) is running, then launches the Tauri webview. The daemon is a
+//! separate process so it survives GUI close/restart; the GUI no longer
+//! binds the socket in-process (see [`daemon_sidecar`]). The app runs as a
+//! system tray icon by default, with the main window hidden until the user
+//! clicks the tray icon.
 
 // Prevents additional console window on Windows in release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
 mod commands_cloud;
+mod daemon_sidecar;
 mod error;
 mod setup;
 mod tray;
 
 use ministr_core::config::MinistrConfig;
 use ministr_core::embedding;
-use ministr_daemon::daemon;
 use ministr_daemon::registry::CorpusRegistry;
 use ministr_daemon::state::AppState;
 use tauri::{AppHandle, Manager};
@@ -78,13 +81,20 @@ fn main() {
                 restore_state.registry.restore().await;
             });
 
-            // --- Start the UDS daemon in the background ---
-            let daemon_state = state.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = daemon::start(daemon_state).await {
-                    tracing::error!(error = %e, "daemon failed");
-                }
-            });
+            // --- Ensure the headless daemon sidecar owns the UDS socket ---
+            // gd1: the GUI no longer binds the socket in-process. It spawns
+            // the detached `ministr __daemon` sidecar if none is alive (which
+            // then survives GUI close), or attaches to the running one. The
+            // in-process AppState above still backs the Tauri commands until
+            // gd2/gd3 route them over UDS and gd4 removes it.
+            if let Some(daemon_bin) = daemon_sidecar::resolve_daemon_binary(app) {
+                tauri::async_runtime::spawn(daemon_sidecar::ensure_daemon_running(daemon_bin));
+            } else {
+                tracing::warn!(
+                    "could not locate the ministr CLI binary to spawn the daemon sidecar — \
+                     the UI will report the daemon as unreachable until one is on PATH"
+                );
+            }
 
             // --- System tray (initial placeholder menu; rebuilt live) ---
             tray::build_tray(app)?;

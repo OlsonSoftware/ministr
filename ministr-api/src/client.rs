@@ -208,6 +208,95 @@ impl DaemonClient {
         &self.addr
     }
 
+    /// Ensure a daemon is running and reachable, spawning a **detached**
+    /// `<daemon_bin> __daemon` sidecar if none is currently healthy.
+    ///
+    /// This is the spawn-if-not-alive handshake the desktop app and the MCP
+    /// proxy share: probe [`is_healthy`](Self::is_healthy); if a daemon
+    /// already owns the socket, attach to it (returns `Ok(false)` — "was
+    /// already running"). Otherwise spawn the sidecar so it **outlives the
+    /// spawning process** — a GUI close or proxy exit must leave the daemon,
+    /// and its warm corpora/indexing, running — then poll until it answers
+    /// `/api/v1/status` or `timeout` elapses.
+    ///
+    /// Detachment uses std only (no `libc`/`unsafe` `pre_exec`): on Unix a
+    /// fresh process group (`process_group(0)`) so a group-wide signal when
+    /// the parent quits never reaches the daemon; on Windows
+    /// `DETACHED_PROCESS | CREATE_NO_WINDOW`. stdio is nulled — the daemon
+    /// writes its own tracing log file, so discarding it loses nothing and
+    /// avoids a child that blocks on an inherited pipe.
+    ///
+    /// `daemon_bin` must be the `ministr` CLI binary that hosts the hidden
+    /// `__daemon` subcommand. The caller resolves it (bundle sidecar /
+    /// staged `~/.ministr/bin` / system install) so this crate stays free of
+    /// any app-bundle layout knowledge.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError::Connect`] if the spawn syscall fails;
+    /// [`ClientError::Timeout`] if the freshly-spawned daemon never becomes
+    /// healthy within `timeout`.
+    pub async fn ensure_daemon_spawned(
+        &self,
+        daemon_bin: &std::path::Path,
+        timeout: std::time::Duration,
+    ) -> Result<bool, ClientError> {
+        // Fast path: a daemon already owns the socket — just attach.
+        if self.is_healthy().await {
+            return Ok(false);
+        }
+
+        let mut cmd = std::process::Command::new(daemon_bin);
+        cmd.arg("__daemon")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt as _;
+            // New process group (pgid = child pid) so the daemon escapes the
+            // spawner's group and survives its exit. Stable std since 1.64.
+            cmd.process_group(0);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt as _;
+            // DETACHED_PROCESS: no inherited console. CREATE_NO_WINDOW:
+            // never flash a console window from a GUI parent.
+            const DETACHED_PROCESS: u32 = 0x0000_0008;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW);
+        }
+
+        // Dropping the returned Child does not wait on or kill the process
+        // (std only closes the handle) — exactly the detached semantics we
+        // want.
+        cmd.spawn().map_err(|e| {
+            ClientError::Connect(format!(
+                "failed to spawn daemon `{} __daemon`: {e}",
+                daemon_bin.display()
+            ))
+        })?;
+
+        // Poll until the daemon binds the socket and answers, or give up.
+        // bootstrap::run binds the listener before restoring corpora, so
+        // health typically arrives well under a second.
+        let start = std::time::Instant::now();
+        loop {
+            if self.is_healthy().await {
+                return Ok(true);
+            }
+            if start.elapsed() >= timeout {
+                return Err(ClientError::Timeout {
+                    operation: format!("daemon spawn via `{}`", daemon_bin.display()),
+                    elapsed_ms: start.elapsed().as_millis(),
+                });
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        }
+    }
+
     // -- Corpus management --
 
     /// Register a corpus with the daemon, optionally overriding the
