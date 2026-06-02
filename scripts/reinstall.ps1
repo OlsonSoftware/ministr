@@ -14,6 +14,17 @@
 #   - Stale socket/pid cleanup: socket doesn't apply (the daemon uses named
 #     pipes on Windows, which vanish with the owning process); pid file is
 #     still swept for parity with the Unix flow.
+#   - No "build a bundle from scratch" fallback is needed. The macOS recipe
+#     must clone the sealed, notarized /Applications .app bundle (you cannot
+#     write inside it) and so depends on one already existing — which is why
+#     scripts/reinstall.sh grew a `tauri build --bundles app` fallback for a
+#     clean machine. Windows has no sealed-bundle concept: this recipe always
+#     `cargo build`s ministr-app.exe and installs it bare into
+#     %USERPROFILE%\.ministr\app\, so it is ALREADY self-sufficient on a clean
+#     machine — no released installer prerequisite. The app embeds its
+#     resources (icon, etc.) into the exe, so the bare install is complete.
+#     (Higher-fidelity dev installs — a real NSIS-installed layout via
+#     `tauri build` — would be a separate enhancement, not a clean-machine fix.)
 
 $ErrorActionPreference = 'Stop'
 
