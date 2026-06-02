@@ -182,6 +182,16 @@ async fn eval_retrieval_real_embedder() {
     // rerank), loose enough to absorb minor scoring jitter. The eval is
     // deterministic (in-memory corpus + fixed weights), so re-seed only when the
     // model, corpus, or metric definition changes.
+    //
+    // rq3-eval-confirm A/B (2026-06-02): the cAST split (rq3a) is NEUTRAL on this
+    // doc-heavy corpus. CODE_CHUNK_BUDGET=256 (split ON): R@5 0.812 / MRR 0.939 /
+    // nDCG 0.870; budget=1_000_000 (split OFF): R@5 0.819 / MRR 0.939 / nDCG 0.872
+    // — within ±0.01 jitter (the OFF arm reproduces the seeded baseline exactly).
+    // The corpus has ~1 code file, so the split barely fires here; it is kept on
+    // CORRECTNESS grounds (lossless, no silent truncation of over-budget symbols),
+    // not a doc-corpus metric gain. A code-heavy corpus with genuinely
+    // over-budget symbols is needed to positively measure cAST (see
+    // rq-eval-corpus-bigcode). Floors NOT raised (split did not improve them).
     const BASELINE_RECALL_AT_5: f64 = 0.77;
     const BASELINE_NDCG_AT_5: f64 = 0.82;
     const BASELINE_MRR: f64 = 0.88;
