@@ -87,3 +87,45 @@ async fn get_or_lazy_load_warms_a_cold_corpus_from_the_manifest() {
         "unknown corpus id resolves to NotFound"
     );
 }
+
+#[tokio::test]
+async fn warming_placeholders_lists_unloaded_manifest_corpora() {
+    // gd6 — a corpus in the manifest but not yet warmed into memory surfaces
+    // as a `warming: true` placeholder, and stops once it's loaded.
+    let tmp = tempfile::tempdir().unwrap();
+    let data_dir = tmp.path().join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+
+    let src = tmp.path().join("project");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("README.md"), "# hi\n").unwrap();
+    let src_str = src.to_string_lossy().to_string();
+
+    let config = MinistrConfig {
+        data_dir: data_dir.clone(),
+        ..MinistrConfig::default()
+    };
+
+    let embedder_a: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim: 16 });
+    let reg_a = Arc::new(CorpusRegistry::new(embedder_a, config.clone()));
+    let (corpus_id, _started) = reg_a
+        .register(std::slice::from_ref(&src_str))
+        .await
+        .unwrap();
+
+    // Registry B shares the manifest but hasn't loaded the corpus.
+    let embedder_b: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim: 16 });
+    let reg_b = Arc::new(CorpusRegistry::new(embedder_b, config));
+
+    let warming = reg_b.warming_placeholders().await;
+    assert_eq!(warming.len(), 1, "the unloaded manifest corpus is warming");
+    assert_eq!(warming[0].id, corpus_id);
+    assert!(warming[0].warming, "placeholder is flagged warming");
+
+    // Once warmed, it's a real (loaded) entry and no longer a placeholder.
+    reg_b.get_or_lazy_load(&corpus_id).await.unwrap();
+    assert!(
+        reg_b.warming_placeholders().await.is_empty(),
+        "a loaded corpus is not a warming placeholder"
+    );
+}

@@ -24,6 +24,7 @@ import { Progress } from "./ui/progress";
 const PHASE_TONE: Record<IndexPhase, Tone> = {
   idle: "muted",
   queued: "muted",
+  warming: "accent",
   discovering: "accent",
   parsing: "accent",
   embedding: "warning",
@@ -35,6 +36,7 @@ const PHASE_TONE: Record<IndexPhase, Tone> = {
 const PHASE_BADGE: Record<IndexPhase, BadgeVariant> = {
   idle: "muted",
   queued: "muted",
+  warming: "default",
   discovering: "default",
   parsing: "default",
   embedding: "warning",

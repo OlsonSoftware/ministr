@@ -146,6 +146,12 @@ export function isCorpusUnindexed(corpus: CorpusInfo): boolean {
 export function corpusStatusBadge(
   corpus: CorpusInfo,
 ): { variant: BadgeVariant; label: string } {
+  // gd6: a registered-but-not-yet-loaded corpus. Shown immediately as
+  // "Warming up…" (accent) so it doesn't pop into the list once its index
+  // finishes loading in the background.
+  if (corpus.warming) {
+    return { variant: "default", label: "Warming up…" };
+  }
   if (isCorpusUnindexed(corpus)) {
     return { variant: "muted", label: "Not indexed" };
   }

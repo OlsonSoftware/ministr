@@ -1221,12 +1221,60 @@ impl CorpusRegistry {
                 .find(|r| r.corpus_id == corpus_id)
                 .map(|r| r.paths);
         }
-        let json = std::fs::read_to_string(self.manifest_path()).ok()?;
-        let entries: Vec<ManifestEntry> = serde_json::from_str(&json).ok()?;
-        entries
+        self.read_manifest_entries()
             .into_iter()
             .find(|e| e.id == corpus_id)
             .map(|e| e.paths)
+    }
+
+    /// Read the on-disk corpus manifest (self-hosted). Returns empty on any
+    /// read/parse error or when the manifest is absent.
+    fn read_manifest_entries(&self) -> Vec<ManifestEntry> {
+        std::fs::read_to_string(self.manifest_path())
+            .ok()
+            .and_then(|json| serde_json::from_str::<Vec<ManifestEntry>>(&json).ok())
+            .unwrap_or_default()
+    }
+
+    /// Synthesize "warming" [`CorpusInfo`] placeholders (gd6) for every corpus
+    /// in the on-disk manifest that is registered but **not yet warmed** into
+    /// the in-memory map.
+    ///
+    /// After gd5 the daemon loads corpora in the background (`restore()` +
+    /// lazy-load) and the MCP proxy registers in the background, so the GUI's
+    /// project list — built from [`list`](Self::list), which is the *loaded*
+    /// corpora only — would show a project only once its index finishes
+    /// loading, making it pop into the list. Merging these placeholders lets
+    /// the GUI render the project immediately as "Warming up…". Counts are
+    /// zero (loading the index is exactly the work we're avoiding here) and
+    /// the placeholder is replaced by the real entry the moment the corpus is
+    /// warmed.
+    ///
+    /// Self-hosted only: cloud mode owns its own pending/placeholder story via
+    /// the durable corpora repo, so this returns empty when one is wired.
+    pub async fn warming_placeholders(&self) -> Vec<CorpusInfo> {
+        if self.corpora_repo.get().is_some() {
+            return Vec::new();
+        }
+        let loaded = self.corpora.read().await;
+        self.read_manifest_entries()
+            .into_iter()
+            .filter(|e| !loaded.contains_key(&e.id) && entry_is_live(&e.paths))
+            .map(|e| CorpusInfo {
+                id: e.id,
+                display_name: display_name_from_paths(&e.paths),
+                paths: e.paths,
+                status: IndexingStatus::Idle,
+                files_indexed: 0,
+                sections_count: 0,
+                embeddings_count: 0,
+                active_sessions: 0,
+                last_indexed: None,
+                symbols_count: 0,
+                model: String::new(),
+                warming: true,
+            })
+            .collect()
     }
 
     /// Extract a corpus's `info` handle without holding the corpora-map
@@ -1455,6 +1503,8 @@ impl CorpusRegistry {
                 last_indexed: None,
                 symbols_count: 0,
                 model: model.clone(),
+                // A handle that exists is, by definition, warmed.
+                warming: false,
             })),
             storage,
             index,
@@ -1814,6 +1864,7 @@ mod tests {
             last_indexed: None,
             symbols_count: 0,
             model: "all-MiniLM-L6-v2".into(),
+            warming: false,
         }
     }
 

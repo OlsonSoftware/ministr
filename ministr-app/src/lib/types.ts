@@ -16,6 +16,12 @@ export interface CorpusInfo {
    *  .ministr.toml [corpus] model, else the daemon default). Older daemons
    *  may omit this. */
   model?: string;
+  /** gd6: true only for a placeholder the daemon synthesizes for a corpus that
+   *  is registered (in the manifest) but not yet *warmed* into memory. After
+   *  gd5 the daemon loads corpora in the background, so the UI shows these as
+   *  "Warming up…" instead of having them pop into the list once loaded.
+   *  Real (loaded) corpora always send `false`/omit it. */
+  warming?: boolean;
 }
 
 export interface DetectedProject {

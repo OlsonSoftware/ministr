@@ -95,6 +95,14 @@ pub struct CorpusInfo {
     /// Empty for a not-yet-registered (pending) corpus. (parity-gui-corpus-model-readout)
     #[serde(default)]
     pub model: String,
+    /// gd6: `true` only for a placeholder synthesized for a corpus that is
+    /// registered (present in the on-disk manifest) but not yet *warmed* into
+    /// memory — the daemon loads corpora in the background after gd5, so the
+    /// GUI shows these as "Warming up…" instead of having them pop into the
+    /// list the moment their index finishes loading. Real (loaded) corpora
+    /// always serialise this as `false` (the serde default).
+    #[serde(default)]
+    pub warming: bool,
 }
 
 /// Current indexing status of a corpus.

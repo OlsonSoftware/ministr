@@ -974,6 +974,11 @@ async fn list_corpora(
         }
     }
 
+    // gd6: append "Warming up…" placeholders for manifest corpora not yet
+    // loaded (self-hosted; empty in cloud mode). Lets the GUI's project list
+    // show pending-warm-up projects rather than having them pop in once warm.
+    filtered.extend(state.registry.warming_placeholders().await);
+
     Json(ListCorporaResponse { corpora: filtered })
 }
 
@@ -1004,6 +1009,9 @@ fn synthesize_pending_corpus_info(
         // Not yet registered on this pod, so the effective model isn't known
         // until create_handle resolves it; the UI treats empty as "default".
         model: String::new(),
+        // Cloud "pending" (no bundle/index yet) is a different state from
+        // gd6 "warming" (indexed on disk, loading into memory).
+        warming: false,
     }
 }
 
@@ -2653,7 +2661,11 @@ async fn drop_content(
 // ---------------------------------------------------------------------------
 
 async fn daemon_status(State(state): State<AppState>) -> impl IntoResponse {
-    let corpora = state.registry.list().await;
+    let mut corpora = state.registry.list().await;
+    // gd6: include not-yet-warmed corpora as "Warming up…" placeholders so the
+    // GUI dashboard shows them immediately instead of having them pop in once
+    // the daemon's background restore/lazy-load finishes loading their index.
+    corpora.extend(state.registry.warming_placeholders().await);
     let total_sessions: usize = corpora.iter().map(|c| c.active_sessions).sum();
     Json(DaemonStatus {
         version: env!("CARGO_PKG_VERSION").to_string(),

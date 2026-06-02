@@ -84,6 +84,7 @@ fn build_handle(
             last_indexed: None,
             symbols_count: 0,
             model: "all-MiniLM-L6-v2".into(),
+            warming: false,
         })),
         storage,
         index,

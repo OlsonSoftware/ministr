@@ -27,6 +27,7 @@ import type { CorpusInfo } from "./types";
 export type IndexPhase =
   | "idle"
   | "queued"
+  | "warming"
   | "discovering"
   | "parsing"
   | "embedding"
@@ -42,8 +43,15 @@ export interface MetricPair {
   pct: number;
 }
 
-/** Lifecycle state, collapsed from `IndexingStatus` + persisted counts. */
-export type CorpusLifecycle = "idle" | "queued" | "indexing" | "ready" | "error";
+/** Lifecycle state, collapsed from `IndexingStatus` + persisted counts.
+ *  `warming` (gd6) = registered but not yet loaded into the daemon's memory. */
+export type CorpusLifecycle =
+  | "idle"
+  | "queued"
+  | "warming"
+  | "indexing"
+  | "ready"
+  | "error";
 
 /**
  * The normalized, render-ready view of a corpus — the single source of truth
@@ -120,6 +128,8 @@ export function phaseLabel(phase: IndexPhase): string {
       return "Finalizing";
     case "queued":
       return "Queued";
+    case "warming":
+      return "Warming up";
     case "ready":
       return "Ready";
     case "error":
@@ -136,11 +146,17 @@ export function toCorpusViewModel(
 ): CorpusViewModel {
   const status = corpus.status;
   const live = progress && progress.status === 1 ? progress : undefined;
+  // gd6: a warming placeholder is registered but not yet loaded into the
+  // daemon's memory — idle status, zero counts, no live progress. Surface it
+  // as its own lifecycle so the project shows immediately as "Warming up…"
+  // instead of popping into the list once its index finishes loading.
+  const isWarming = corpus.warming === true;
   const isIndexing = status.state === "indexing" || live !== undefined;
   const ready = status.state === "idle" && corpus.files_indexed > 0;
 
-  const lifecycle: CorpusLifecycle =
-    status.state === "error"
+  const lifecycle: CorpusLifecycle = isWarming
+    ? "warming"
+    : status.state === "error"
       ? "error"
       : status.state === "queued"
         ? "queued"
@@ -151,8 +167,9 @@ export function toCorpusViewModel(
             : "idle";
 
   const rawPhase = (live?.phase ?? "").toLowerCase();
-  const phase: IndexPhase =
-    status.state === "error"
+  const phase: IndexPhase = isWarming
+    ? "warming"
+    : status.state === "error"
       ? "error"
       : status.state === "queued" && !live
         ? "queued"
