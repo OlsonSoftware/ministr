@@ -59,6 +59,8 @@ pub fn corpora_read_router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/dead", post(dead_code))
         .route("/api/v1/corpora/{id}/solid", post(solid))
         .route("/api/v1/corpora/{id}/files", get(list_files))
+        .route("/api/v1/corpora/{id}/file", post(file_content))
+        .route("/api/v1/corpora/{id}/occurrences", post(occurrences))
         .route("/api/v1/corpora/{id}/read/{section}", get(read_section))
         .route("/api/v1/corpora/{id}/extract", post(extract))
         .route("/api/v1/corpora/{id}/toc", post(toc))
@@ -1409,6 +1411,69 @@ async fn list_files(State(state): State<AppState>, Path(id): Path<String>) -> im
         .collect();
 
     Json(ministr_api::corpus::ListFilesResponse { files }).into_response()
+}
+
+/// `POST /api/v1/corpora/{id}/file` — full contents of an indexed source file
+/// plus the symbol-definition spans the index knows for it (the desktop code
+/// browser's file view). Path is carried in the JSON body to avoid encoding.
+async fn file_content(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<query::FilePathRequest>,
+) -> impl IntoResponse {
+    let handle = get_corpus!(&state, &id);
+
+    let content = match handle.service.read_file_content(&req.path).await {
+        Ok(c) => c,
+        Err(e) => return err(StatusCode::NOT_FOUND, "file_unavailable", e).into_response(),
+    };
+
+    let filter = ministr_core::storage::traits::SymbolFilter {
+        name: None,
+        name_exact: None,
+        kind: None,
+        visibility: None,
+        module: None,
+        file_path: Some(req.path),
+    };
+    let symbols = match handle.storage.list_symbols(&filter).await {
+        Ok(records) => records
+            .into_iter()
+            .map(convert::symbol_from_record)
+            .collect(),
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
+    };
+
+    Json(query::FileContentResponse { content, symbols }).into_response()
+}
+
+/// `POST /api/v1/corpora/{id}/occurrences` — every resolved identifier site in
+/// a file (the click-any-token index). Empty unless occurrence indexing was
+/// enabled at index time.
+async fn occurrences(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<query::FilePathRequest>,
+) -> impl IntoResponse {
+    let handle = get_corpus!(&state, &id);
+
+    match handle.storage.list_occurrences(&req.path).await {
+        Ok(records) => {
+            let occurrences = records
+                .into_iter()
+                .map(|r| query::Occurrence {
+                    symbol_id: r.symbol_id.0,
+                    name: r.name,
+                    byte_start: r.byte_start,
+                    byte_end: r.byte_end,
+                    line: r.line,
+                    col: r.col,
+                })
+                .collect();
+            Json(query::OccurrencesResponse { occurrences }).into_response()
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
+    }
 }
 
 async fn read_section(

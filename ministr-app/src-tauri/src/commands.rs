@@ -7,7 +7,6 @@ use ministr_api::coherence::CoherenceEvent;
 use ministr_api::corpus::{CorpusInfo, RegisterCorpusResponse};
 use ministr_api::status::DaemonStatus;
 use ministr_core::session::UsageLevel;
-use ministr_core::storage::traits::Storage;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
@@ -1098,50 +1097,33 @@ fn lang_from_path(path: &str) -> String {
 /// Read an indexed source file: full contents, a Shiki language id inferred
 /// from the extension, and the definition spans the symbol index knows for the
 /// file (so the UI can render clickable, navigable symbols).
+/// gd2c: routed over UDS — the daemon returns the file content + its symbol
+/// spans (it owns the storage + path resolution); `lang_from_path` stays
+/// app-local (the Shiki language id is a pure function of the extension).
 #[tauri::command]
-pub async fn read_file(
-    state: State<'_, AppState>,
-    corpus_id: String,
-    path: String,
-) -> Result<FileContent, CommandError> {
-    let guard = state.registry.corpora().read().await;
-    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
+pub async fn read_file(corpus_id: String, path: String) -> Result<FileContent, CommandError> {
+    let resp = ministr_api::client::DaemonClient::new()
+        .read_file_content(&corpus_id, path.clone())
+        .await?;
 
-    let content = handle
-        .service
-        .read_file_content(&path)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let filter = ministr_core::storage::traits::SymbolFilter {
-        name: None,
-        name_exact: None,
-        kind: None,
-        visibility: None,
-        module: None,
-        file_path: Some(path.clone()),
-    };
-    let symbol_spans = handle
-        .storage
-        .list_symbols(&filter)
-        .await
-        .map_err(|e| e.to_string())?
+    let symbol_spans = resp
+        .symbols
         .into_iter()
-        .map(|r| SymbolSpan {
-            id: r.id.0,
-            name: r.name,
-            kind: r.kind,
-            signature: r.signature,
-            doc_comment: r.doc_comment,
-            line_start: r.line_start,
-            line_end: r.line_end,
+        .map(|s| SymbolSpan {
+            id: s.id,
+            name: s.name,
+            kind: s.kind,
+            signature: s.signature,
+            doc_comment: s.doc_comment,
+            line_start: s.line_start,
+            line_end: s.line_end,
         })
         .collect();
 
     Ok(FileContent {
         lang: lang_from_path(&path),
         path,
-        content,
+        content: resp.content,
         symbol_spans,
     })
 }
@@ -1162,25 +1144,20 @@ pub struct Occurrence {
 /// Empty unless the corpus was indexed with occurrence indexing enabled
 /// (`MINISTR_INDEX_OCCURRENCES`). When present it lets the Code surface
 /// resolve a click on *any* token, not just known definitions.
+/// gd2c: routed over UDS to the daemon's occurrences endpoint.
 #[tauri::command]
 pub async fn file_occurrences(
-    state: State<'_, AppState>,
     corpus_id: String,
     path: String,
 ) -> Result<Vec<Occurrence>, CommandError> {
-    let guard = state.registry.corpora().read().await;
-    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
-
-    let records = handle
-        .storage
-        .list_occurrences(&path)
-        .await
-        .map_err(|e| e.to_string())?;
+    let records = ministr_api::client::DaemonClient::new()
+        .file_occurrences(&corpus_id, path)
+        .await?;
 
     Ok(records
         .into_iter()
         .map(|r| Occurrence {
-            symbol_id: r.symbol_id.0,
+            symbol_id: r.symbol_id,
             name: r.name,
             byte_start: r.byte_start,
             byte_end: r.byte_end,

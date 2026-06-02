@@ -463,6 +463,55 @@ pub struct ExtractResponse {
 }
 
 // ---------------------------------------------------------------------------
+// File reads (code browser)
+// ---------------------------------------------------------------------------
+
+/// Request body carrying a single corpus-relative file path. Shared by the
+/// file-content and occurrences read endpoints (path goes in the body to avoid
+/// URL-encoding slashes).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FilePathRequest {
+    /// File path relative to the corpus root.
+    pub path: String,
+}
+
+/// Full source-file contents plus the symbol-definition spans the index knows
+/// for it (the desktop code browser's clickable-symbol overlay). `symbols`
+/// reuse [`SymbolDefinition`]; `source_context` is empty for span entries.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FileContentResponse {
+    /// Full UTF-8 file contents.
+    pub content: String,
+    /// Symbol-definition spans declared in this file.
+    pub symbols: Vec<SymbolDefinition>,
+}
+
+/// One resolved identifier occurrence in a file (the click-any-token index).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Occurrence {
+    /// The resolved symbol's id.
+    pub symbol_id: String,
+    /// The identifier text at the site.
+    pub name: String,
+    /// Byte offset of the occurrence start.
+    pub byte_start: u32,
+    /// Byte offset of the occurrence end.
+    pub byte_end: u32,
+    /// 1-based line.
+    pub line: u32,
+    /// 0-based column.
+    pub col: u32,
+}
+
+/// Response listing a file's resolved identifier occurrences.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct OccurrencesResponse {
+    /// All resolved occurrences in the file (empty unless occurrence indexing
+    /// was enabled at index time).
+    pub occurrences: Vec<Occurrence>,
+}
+
+// ---------------------------------------------------------------------------
 // Table of Contents
 // ---------------------------------------------------------------------------
 

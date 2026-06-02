@@ -621,6 +621,39 @@ impl DaemonClient {
         self.post(&path, req).await
     }
 
+    /// Read a source file's full contents + the symbol-definition spans the
+    /// index knows for it (the desktop code browser's file view).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] if the file is unavailable or the request fails.
+    pub async fn read_file_content(
+        &self,
+        corpus_id: &str,
+        path: String,
+    ) -> Result<crate::query::FileContentResponse, ClientError> {
+        let req = crate::query::FilePathRequest { path };
+        self.post(&format!("/api/v1/corpora/{corpus_id}/file"), &req)
+            .await
+    }
+
+    /// List a file's resolved identifier occurrences (click-any-token index).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on request or deserialization failure.
+    pub async fn file_occurrences(
+        &self,
+        corpus_id: &str,
+        path: String,
+    ) -> Result<Vec<crate::query::Occurrence>, ClientError> {
+        let req = crate::query::FilePathRequest { path };
+        let resp: crate::query::OccurrencesResponse = self
+            .post(&format!("/api/v1/corpora/{corpus_id}/occurrences"), &req)
+            .await?;
+        Ok(resp.occurrences)
+    }
+
     /// Read a section by ID.
     ///
     /// # Errors
