@@ -184,6 +184,7 @@ async fn test_concurrent_mixed_symbol_queries() {
                     kind: None,
                     module: None,
                     visibility: None,
+                    file_path: None,
                     limit: None,
                     session_id: None,
                 };

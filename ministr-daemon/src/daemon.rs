@@ -1187,6 +1187,9 @@ async fn symbols(
         if let Some(v) = req.visibility.as_ref() {
             parts.push(format!("visibility={v}"));
         }
+        if let Some(f) = req.file_path.as_ref() {
+            parts.push(format!("file={f}"));
+        }
         parts.join(" · ")
     };
     let filter = SymbolFilter {
@@ -1195,7 +1198,7 @@ async fn symbols(
         kind: req.kind,
         visibility: req.visibility,
         module: req.module,
-        file_path: None,
+        file_path: req.file_path,
     };
     let result = handle.service.search_symbols(&filter).await;
     drop(handle);

@@ -83,6 +83,7 @@ async fn test_symbols() {
         kind: None,
         module: None,
         visibility: None,
+        file_path: None,
         limit: None,
         session_id: None,
     };

@@ -996,43 +996,43 @@ pub struct SymbolInfo {
 }
 
 /// Search symbols in a corpus.
+///
+/// gd2c: routed over UDS to the daemon's symbols endpoint. The daemon encodes
+/// `module_path` into the API `SymbolDefinition.heading_path` (split on `::`),
+/// so it is recovered here by re-joining. `file_path` is honored server-side
+/// (gd2c-2 added the filter to `SymbolsRequest`).
 #[tauri::command]
 pub async fn search_symbols(
-    state: State<'_, AppState>,
     corpus_id: String,
     query: String,
     kind: Option<String>,
     file_path: Option<String>,
 ) -> Result<Vec<SymbolInfo>, CommandError> {
-    let guard = state.registry.corpora().read().await;
-    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
-
-    let filter = ministr_core::storage::traits::SymbolFilter {
-        name: Some(query),
-        name_exact: None,
+    let req = ministr_api::query::SymbolsRequest {
+        query,
         kind,
-        visibility: None,
         module: None,
+        visibility: None,
         file_path,
+        limit: None,
+        session_id: None,
     };
+    let resp = ministr_api::client::DaemonClient::new()
+        .symbols(&corpus_id, &req)
+        .await?;
 
-    let records = handle
-        .storage
-        .list_symbols(&filter)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(records
+    Ok(resp
+        .symbols
         .into_iter()
-        .map(|r| SymbolInfo {
-            id: r.id.0,
-            name: r.name,
-            kind: r.kind,
-            file_path: r.file_path,
-            visibility: r.visibility,
-            signature: r.signature,
-            doc_comment: r.doc_comment,
-            module_path: r.module_path,
+        .map(|s| SymbolInfo {
+            id: s.id,
+            name: s.name,
+            kind: s.kind,
+            file_path: s.file_path,
+            visibility: s.visibility,
+            signature: s.signature,
+            doc_comment: s.doc_comment,
+            module_path: s.heading_path.join("::"),
         })
         .collect())
 }

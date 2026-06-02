@@ -74,6 +74,10 @@ pub struct SymbolsRequest {
     /// Filter by visibility (e.g. `"pub"`, `"pub(crate)"`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub visibility: Option<String>,
+    /// Filter to symbols declared in this source file. `#[serde(default)]`
+    /// keeps the wire format back-compatible with callers that omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
     /// Maximum results (default: 20).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
