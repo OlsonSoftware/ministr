@@ -90,22 +90,24 @@ pub fn reciprocal_rank(result_ids: &[String], expected_ids: &[String]) -> f64 {
 /// nDCG = DCG / ideal DCG (where ideal sorts by relevance descending).
 #[allow(clippy::cast_precision_loss)]
 pub fn ndcg_at_k(result_ids: &[String], expected: &[ExpectedResult], k: usize) -> f64 {
-    let relevance_of = |id: &str| -> f64 {
-        expected
-            .iter()
-            .find(|e| id.contains(&e.section_id))
-            .map_or(0.0, |e| f64::from(e.relevance))
-    };
-
-    let dcg: f64 = result_ids
-        .iter()
-        .take(k)
-        .enumerate()
-        .map(|(i, id)| {
-            let rel = relevance_of(id);
-            (2.0_f64.powf(rel) - 1.0) / ((i + 2) as f64).log2()
-        })
-        .sum();
+    // Credit each expected item at most once, at the rank of the first result
+    // that matches it. Without this dedup, several top-k results matching the
+    // SAME expected id each add its gain to DCG while IDCG counts it once,
+    // which lets nDCG exceed 1.0 (it is normalized to [0, 1]). A result that
+    // only re-matches already-credited expecteds contributes zero gain.
+    let mut credited = vec![false; expected.len()];
+    let mut dcg = 0.0_f64;
+    for (i, id) in result_ids.iter().take(k).enumerate() {
+        let mut rel = 0.0;
+        for (j, e) in expected.iter().enumerate() {
+            if !credited[j] && id.contains(&e.section_id) {
+                credited[j] = true;
+                rel = f64::from(e.relevance);
+                break;
+            }
+        }
+        dcg += (2.0_f64.powf(rel) - 1.0) / ((i + 2) as f64).log2();
+    }
 
     let mut ideal_rels: Vec<f64> = expected.iter().map(|e| f64::from(e.relevance)).collect();
     ideal_rels.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));

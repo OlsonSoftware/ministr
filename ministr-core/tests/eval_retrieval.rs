@@ -174,11 +174,16 @@ async fn eval_retrieval_regression_gate() {
 async fn eval_retrieval_real_embedder() {
     use ministr_core::embedding::FastEmbedder;
 
-    // Conservative floors: a working real model clears these comfortably; a
-    // degenerate/broken index does not. Re-seed from a `just eval-quality` run.
-    const BASELINE_RECALL_AT_5: f64 = 0.10;
-    const BASELINE_NDCG_AT_5: f64 = 0.08;
-    const BASELINE_MRR: f64 = 0.10;
+    // Seeded 2026-06-02 from a real `just eval-quality` run on all-MiniLM-L6-v2
+    // (66 queries: R@5=0.826, MRR=0.941, nDCG@5=0.872 — the last with the
+    // corrected, [0,1]-bounded ndcg_at_k). Floors sit ~0.05 under each observed
+    // value: tight enough to catch a real regression (rq2 model swap, rq4
+    // hybrid, rq5 rerank), loose enough to absorb minor scoring jitter. The
+    // eval is deterministic (in-memory corpus + fixed weights), so re-seed only
+    // when the model, corpus, or metric definition changes.
+    const BASELINE_RECALL_AT_5: f64 = 0.77;
+    const BASELINE_NDCG_AT_5: f64 = 0.82;
+    const BASELINE_MRR: f64 = 0.88;
 
     let Some((corpus_path, ground_truth)) = load_eval_data() else {
         eprintln!("Skipping eval: eval/ data not found");
@@ -282,9 +287,13 @@ async fn measure_truncation_content_loss() {
         .expect("failed to download tokenizer.json");
     let mut tokenizer =
         tokenizers::Tokenizer::from_file(&tok_path).expect("failed to load tokenizer");
+    // Disable BOTH truncation and padding: padding (the loaded tokenizer.json
+    // pads to a fixed length) would otherwise inflate every short input's
+    // get_ids().len() up to the pad length, masking the true content length.
     tokenizer
         .with_truncation(None)
         .expect("failed to disable truncation");
+    tokenizer.with_padding(None);
 
     // Token length per embedded section (with special tokens, as embed() uses).
     let mut lens: Vec<usize> = texts
@@ -486,4 +495,24 @@ fn ndcg_edge_cases() {
     let results = vec!["a".to_string()];
     let empty_expected: Vec<ExpectedResult> = vec![];
     assert!((ndcg_at_k(&results, &empty_expected, 5) - 0.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn ndcg_never_exceeds_one_on_duplicate_matches() {
+    // Two DISTINCT result ids that both contain the same expected section_id
+    // (loose substring matching). Each expected item must be credited at most
+    // once, so nDCG stays within [0, 1] — the regression for the observed
+    // Mean nDCG@5 = 1.612 (rq0-eval-hardening).
+    let results = vec![
+        "src/foo.rs#bar".to_string(),
+        "src/foo.rs#bar-helper".to_string(),
+    ];
+    let expected = vec![ExpectedResult {
+        section_id: "foo.rs#bar".to_string(),
+        relevance: 3,
+    }];
+    let n = ndcg_at_k(&results, &expected, 5);
+    assert!(n <= 1.0 + f64::EPSILON, "nDCG must not exceed 1.0, got {n}");
+    // The first result is a perfect rank-1 hit, so the ideal is achieved.
+    assert!((n - 1.0).abs() < 1e-9, "expected perfect nDCG=1.0, got {n}");
 }
