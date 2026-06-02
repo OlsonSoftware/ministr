@@ -910,37 +910,22 @@ pub struct FileInfo {
 }
 
 /// List all indexed files for a corpus with section counts.
+///
+/// gd2c: routed over UDS to the daemon's files endpoint (the daemon owns the
+/// storage); maps the API `FileInfo` onto the frontend DTO field-for-field.
 #[tauri::command]
-pub async fn list_corpus_files(
-    state: State<'_, AppState>,
-    corpus_id: String,
-) -> Result<Vec<FileInfo>, CommandError> {
-    let guard = state.registry.corpora().read().await;
-    let handle = guard.get(&corpus_id).ok_or("corpus not found")?;
-    let storage = &handle.storage;
+pub async fn list_corpus_files(corpus_id: String) -> Result<Vec<FileInfo>, CommandError> {
+    let files = ministr_api::client::DaemonClient::new()
+        .list_corpus_files(&corpus_id)
+        .await?;
 
-    let hashes = storage
-        .list_file_hashes()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // Count sections per source_path by querying documents then sections.
-    let docs = storage.list_documents().await.map_err(|e| e.to_string())?;
-
-    let mut section_counts: std::collections::HashMap<String, usize> =
-        std::collections::HashMap::new();
-    for doc in &docs {
-        let sections = storage.list_sections(&doc.id).await.unwrap_or_default();
-        *section_counts.entry(doc.source_path.clone()).or_default() += sections.len();
-    }
-
-    Ok(hashes
+    Ok(files
         .into_iter()
-        .map(|h| FileInfo {
-            section_count: section_counts.get(&h.path).copied().unwrap_or(0),
-            path: h.path,
-            content_hash: h.content_hash,
-            mtime_ns: h.mtime_ns,
+        .map(|f| FileInfo {
+            path: f.path,
+            content_hash: f.content_hash,
+            mtime_ns: f.mtime_ns,
+            section_count: f.section_count,
         })
         .collect())
 }

@@ -58,6 +58,7 @@ pub fn corpora_read_router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/impact/{sym}", get(impact))
         .route("/api/v1/corpora/{id}/dead", post(dead_code))
         .route("/api/v1/corpora/{id}/solid", post(solid))
+        .route("/api/v1/corpora/{id}/files", get(list_files))
         .route("/api/v1/corpora/{id}/read/{section}", get(read_section))
         .route("/api/v1/corpora/{id}/extract", post(extract))
         .route("/api/v1/corpora/{id}/toc", post(toc))
@@ -1373,6 +1374,41 @@ async fn solid(
         }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
     }
+}
+
+/// `GET /api/v1/corpora/{id}/files` — list the corpus's indexed files with
+/// their content hashes and per-file indexed-section counts (the desktop code
+/// browser's file tree). Aggregates `list_file_hashes` with a source-path →
+/// section-count map built from `list_documents` + `list_sections`.
+async fn list_files(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    let handle = get_corpus!(&state, &id);
+    let storage = &handle.storage;
+
+    let hashes = match storage.list_file_hashes().await {
+        Ok(h) => h,
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
+    };
+
+    // Count indexed sections per source_path (documents → sections).
+    let docs = storage.list_documents().await.unwrap_or_default();
+    let mut section_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for doc in &docs {
+        let sections = storage.list_sections(&doc.id).await.unwrap_or_default();
+        *section_counts.entry(doc.source_path.clone()).or_default() += sections.len();
+    }
+
+    let files = hashes
+        .into_iter()
+        .map(|h| ministr_api::corpus::FileInfo {
+            section_count: section_counts.get(&h.path).copied().unwrap_or(0),
+            path: h.path,
+            content_hash: h.content_hash,
+            mtime_ns: h.mtime_ns,
+        })
+        .collect();
+
+    Json(ministr_api::corpus::ListFilesResponse { files }).into_response()
 }
 
 async fn read_section(

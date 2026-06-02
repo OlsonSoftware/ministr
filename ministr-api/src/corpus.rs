@@ -130,6 +130,28 @@ pub struct ListCorporaResponse {
     pub corpora: Vec<CorpusInfo>,
 }
 
+/// One indexed source file with its content hash and indexed-section count.
+/// Backs the desktop code browser's file tree / treemap.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FileInfo {
+    /// File path relative to the corpus root.
+    pub path: String,
+    /// Content hash recorded at index time (e.g. SHA-256 hex).
+    pub content_hash: String,
+    /// File modification time in nanoseconds since epoch, if known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mtime_ns: Option<i64>,
+    /// Number of indexed sections whose document maps to this file.
+    pub section_count: usize,
+}
+
+/// Response listing the indexed files of a corpus.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ListFilesResponse {
+    /// All indexed files with their section counts.
+    pub files: Vec<FileInfo>,
+}
+
 /// A single SSE event for ingestion progress.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct IngestionProgressEvent {

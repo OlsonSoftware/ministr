@@ -346,6 +346,21 @@ impl DaemonClient {
         Ok(resp.corpora)
     }
 
+    /// List a corpus's indexed files with content hashes + section counts.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn list_corpus_files(
+        &self,
+        corpus_id: &str,
+    ) -> Result<Vec<crate::corpus::FileInfo>, ClientError> {
+        let resp: crate::corpus::ListFilesResponse = self
+            .get(&format!("/api/v1/corpora/{corpus_id}/files"))
+            .await?;
+        Ok(resp.files)
+    }
+
     /// Get status of a specific corpus.
     ///
     /// # Errors
