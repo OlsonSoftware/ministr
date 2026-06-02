@@ -60,6 +60,80 @@ fn min_max_normalize(scores: &mut [f32]) {
     }
 }
 
+/// Decay applied to a 1-hop ref-graph neighbour's inherited score, so an
+/// expanded neighbour ranks *below* the hit that pulled it in. The reranker
+/// (rq5) can lift a genuinely relevant neighbour back up; on its own,
+/// expansion never displaces a primary hit (RepoGraph / LocAgent pattern).
+const GRAPH_EXPAND_DECAY: f32 = 0.5;
+
+/// Graph-augmented retrieval (RepoGraph / LocAgent, 2026 SWE-bench SOTA):
+/// expand a result set by walking ministr's existing symbol ref-graph.
+///
+/// For each primary hit (in rank order) the `neighbour_lookup` returns its
+/// 1-hop ref-graph neighbours (callers / callees / implementors) as candidate
+/// [`SurveyResult`]s. Any neighbour whose `content_id` is not already present is
+/// added with a decayed score (`source.score * GRAPH_EXPAND_DECAY`); existing
+/// hits keep their higher score, and a neighbour pulled by an earlier (higher)
+/// hit is not lowered by a later one. At most `max_expand` neighbours are added,
+/// then the set is re-sorted descending so neighbours slot below their source.
+///
+/// Pure + storage-agnostic (the lookup is injected) so it is deterministic and
+/// testable without a model or the DB. The storage-backed survey wiring is the
+/// rq-graph-wire follow-up.
+#[allow(dead_code)] // wired into survey() by rq-graph-wire
+pub(super) fn graph_expand_results<F>(
+    hits: &[SurveyResult],
+    max_expand: usize,
+    mut neighbour_lookup: F,
+) -> Vec<SurveyResult>
+where
+    F: FnMut(&str) -> Vec<SurveyResult>,
+{
+    if hits.is_empty() || max_expand == 0 {
+        return hits.to_vec();
+    }
+
+    let mut by_id: HashMap<String, SurveyResult> = HashMap::with_capacity(hits.len() + max_expand);
+    let mut order: Vec<String> = Vec::with_capacity(hits.len() + max_expand);
+    for h in hits {
+        if by_id.insert(h.content_id.clone(), h.clone()).is_none() {
+            order.push(h.content_id.clone());
+        }
+    }
+
+    let mut added = 0usize;
+    'hits: for h in hits {
+        if added >= max_expand {
+            break;
+        }
+        for mut neighbour in neighbour_lookup(&h.content_id) {
+            if added >= max_expand {
+                break 'hits;
+            }
+            // Never overwrite a primary hit or an already-expanded neighbour
+            // (the first, highest-scoring source to reach it wins).
+            if by_id.contains_key(&neighbour.content_id) {
+                continue;
+            }
+            neighbour.score = h.score * GRAPH_EXPAND_DECAY;
+            order.push(neighbour.content_id.clone());
+            by_id.insert(neighbour.content_id.clone(), neighbour);
+            added += 1;
+        }
+    }
+
+    let mut out: Vec<SurveyResult> = order
+        .into_iter()
+        .filter_map(|id| by_id.remove(&id))
+        .collect();
+    out.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    out
+}
+
 impl QueryService {
     /// Search the corpus for content relevant to a natural language query.
     ///
@@ -656,7 +730,9 @@ impl QueryService {
 
 #[cfg(test)]
 mod tests {
-    use super::{QueryService, RERANK_BLEND, SurveyResult};
+    use super::{
+        GRAPH_EXPAND_DECAY, QueryService, RERANK_BLEND, SurveyResult, graph_expand_results,
+    };
     use crate::embedding::{RerankScore, Reranker};
     use crate::error::IndexError;
 
@@ -763,5 +839,84 @@ mod tests {
         assert_eq!(out.len(), 2, "no result should be dropped");
         let ids: Vec<&str> = out.iter().map(|r| r.content_id.as_str()).collect();
         assert!(ids.contains(&"A") && ids.contains(&"B"));
+    }
+
+    // rq-graph-augmented-retrieval — 1-hop ref-graph expansion.
+
+    fn pos(out: &[SurveyResult], id: &str) -> Option<usize> {
+        out.iter().position(|r| r.content_id == id)
+    }
+
+    #[test]
+    fn graph_expand_pulls_in_neighbour_below_its_source() {
+        // A is the top hit; N is a ref-graph neighbour the embedding missed.
+        let hits = vec![sr("A", 0.9), sr("B", 0.8)];
+        let out = graph_expand_results(&hits, 8, |id| {
+            if id == "A" {
+                vec![sr("N", 0.0)]
+            } else {
+                vec![]
+            }
+        });
+
+        assert_eq!(out.len(), 3, "the neighbour should be added");
+        let n = &out[pos(&out, "N").expect("N present")];
+        assert!(
+            (n.score - 0.9 * GRAPH_EXPAND_DECAY).abs() < 1e-6,
+            "neighbour inherits source.score * decay"
+        );
+        // Neighbour ranks below both primary hits.
+        assert!(pos(&out, "N") > pos(&out, "A") && pos(&out, "N") > pos(&out, "B"));
+    }
+
+    #[test]
+    fn graph_expand_never_overwrites_an_existing_hit() {
+        // B is already a primary hit *and* a neighbour of A — it must keep its
+        // own (higher-precision) score, not be re-added with a decayed one.
+        let hits = vec![sr("A", 0.9), sr("B", 0.1)];
+        let out = graph_expand_results(&hits, 8, |id| {
+            if id == "A" {
+                vec![sr("B", 0.0)]
+            } else {
+                vec![]
+            }
+        });
+        assert_eq!(out.len(), 2, "no duplicate B");
+        let b = &out[pos(&out, "B").expect("B present")];
+        assert!((b.score - 0.1).abs() < 1e-6, "B keeps its primary score");
+    }
+
+    #[test]
+    fn graph_expand_first_source_wins_a_shared_neighbour() {
+        // N is a neighbour of both A (0.9) and B (0.5); the higher source wins.
+        let hits = vec![sr("A", 0.9), sr("B", 0.5)];
+        let out = graph_expand_results(&hits, 8, |_| vec![sr("N", 0.0)]);
+        let n = &out[pos(&out, "N").expect("N present")];
+        assert!(
+            (n.score - 0.9 * GRAPH_EXPAND_DECAY).abs() < 1e-6,
+            "shared neighbour takes the highest source's decayed score"
+        );
+        // N added once.
+        assert_eq!(out.iter().filter(|r| r.content_id == "N").count(), 1);
+    }
+
+    #[test]
+    fn graph_expand_respects_the_cap() {
+        let hits = vec![sr("A", 0.9)];
+        let out = graph_expand_results(&hits, 1, |_| vec![sr("N1", 0.0), sr("N2", 0.0)]);
+        assert_eq!(out.len(), 2, "only one neighbour added under the cap");
+    }
+
+    #[test]
+    fn graph_expand_is_identity_when_nothing_to_do() {
+        let hits = vec![sr("A", 0.9), sr("B", 0.8)];
+        // No neighbours.
+        let out = graph_expand_results(&hits, 8, |_| vec![]);
+        assert_eq!(out.len(), 2);
+        // max_expand = 0.
+        let out0 = graph_expand_results(&hits, 0, |_| vec![sr("N", 0.0)]);
+        assert_eq!(out0.len(), 2);
+        // empty input.
+        assert!(graph_expand_results(&[], 8, |_| vec![sr("N", 0.0)]).is_empty());
     }
 }
