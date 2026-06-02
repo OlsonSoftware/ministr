@@ -18,16 +18,34 @@ pub fn run_first_launch_setup(app: &tauri::App) -> Result<(), Box<dyn std::error
     let bin_dir = data_dir.join("bin");
     let current_version = env!("CARGO_PKG_VERSION");
 
-    // Skip if this exact version was already set up.
+    // Decide whether to run setup. Crucially, NEVER let an older app build
+    // re-run setup over a newer install: `install_cli_binary` below would
+    // DOWNGRADE the shared ~/.ministr/bin sidecar out from under a running
+    // daemon/MCP server. That is the app-install-singleton corruption — a
+    // stale duplicate `ministr.app` bundle (same `ai.ministr.desktop` id) gets
+    // launched and clobbers the live 148MB CLI binary the daemon is using.
     let version_path = data_dir.join(SETUP_VERSION_FILE);
-    if let Ok(installed) = fs::read_to_string(&version_path)
-        && installed.trim() == current_version
-    {
-        info!(
-            version = current_version,
-            "setup already completed for this version"
-        );
-        return Ok(());
+    let installed_marker = fs::read_to_string(&version_path).ok();
+    match decide_setup(installed_marker.as_deref(), current_version) {
+        SetupDecision::AlreadyCurrent => {
+            info!(
+                version = current_version,
+                "setup already completed for this version"
+            );
+            return Ok(());
+        }
+        SetupDecision::SkipOlderThanInstalled { installed } => {
+            warn!(
+                installed = %installed,
+                this = current_version,
+                "a newer ministr is already installed but an OLDER app build launched — \
+                 skipping setup so the shared ~/.ministr/bin sidecar is not downgraded out \
+                 from under a running daemon (likely a stale duplicate ministr.app; see \
+                 app-install-singleton-enforce)"
+            );
+            return Ok(());
+        }
+        SetupDecision::Run => {}
     }
 
     info!(version = current_version, "running first-launch setup");
@@ -77,6 +95,62 @@ pub fn run_first_launch_setup(app: &tauri::App) -> Result<(), Box<dyn std::error
 
     info!("first-launch setup complete");
     Ok(())
+}
+
+/// Whether `run_first_launch_setup` should proceed, given the recorded
+/// `setup_version` marker and this build's version.
+#[derive(Debug, PartialEq, Eq)]
+enum SetupDecision {
+    /// This exact version is already set up — nothing to do.
+    AlreadyCurrent,
+    /// Fresh install or genuine upgrade — run setup.
+    Run,
+    /// A strictly NEWER ministr is already installed; this is an older build
+    /// (e.g. a stale duplicate bundle). Skip setup so we don't downgrade the
+    /// shared sidecar.
+    SkipOlderThanInstalled { installed: String },
+}
+
+/// Decide whether first-launch setup should run.
+///
+/// `installed` is the contents of the `setup_version` marker (the version that
+/// last completed setup), or `None`/empty if never set up. `current` is this
+/// build's `CARGO_PKG_VERSION`.
+fn decide_setup(installed: Option<&str>, current: &str) -> SetupDecision {
+    let Some(installed) = installed.map(str::trim).filter(|s| !s.is_empty()) else {
+        return SetupDecision::Run; // never set up
+    };
+    if installed == current {
+        return SetupDecision::AlreadyCurrent;
+    }
+    if is_strictly_newer(installed, current) {
+        return SetupDecision::SkipOlderThanInstalled {
+            installed: installed.to_string(),
+        };
+    }
+    SetupDecision::Run
+}
+
+/// Parse the leading `major.minor.patch` of a version, ignoring any
+/// `-prerelease` / `+build` suffix. Missing minor/patch default to `0`.
+fn version_triple(s: &str) -> Option<(u64, u64, u64)> {
+    let core = s.trim().split(['-', '+']).next().unwrap_or("");
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+    let patch = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+    Some((major, minor, patch))
+}
+
+/// True when version `a` is strictly newer than `b`. Numeric (not
+/// lexicographic) so `0.10.0 > 0.9.0`. Unparseable versions compare as "not
+/// newer", so we conservatively fall back to running setup (the historical
+/// behavior) rather than wrongly skipping it.
+fn is_strictly_newer(a: &str, b: &str) -> bool {
+    match (version_triple(a), version_triple(b)) {
+        (Some(va), Some(vb)) => va > vb,
+        _ => false,
+    }
 }
 
 /// Locate the `ministr-cli` sidecar inside the .app bundle and copy it to
@@ -325,4 +399,78 @@ fn home_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
     std::env::var("HOME")
         .map(PathBuf::from)
         .map_err(std::convert::Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fresh_install_runs() {
+        assert_eq!(decide_setup(None, "0.6.0"), SetupDecision::Run);
+        assert_eq!(decide_setup(Some(""), "0.6.0"), SetupDecision::Run);
+        assert_eq!(decide_setup(Some("   "), "0.6.0"), SetupDecision::Run);
+    }
+
+    #[test]
+    fn same_version_is_already_current() {
+        assert_eq!(
+            decide_setup(Some("0.6.0"), "0.6.0"),
+            SetupDecision::AlreadyCurrent
+        );
+        // The marker is read from a file, so tolerate trailing whitespace.
+        assert_eq!(
+            decide_setup(Some(" 0.6.0\n"), "0.6.0"),
+            SetupDecision::AlreadyCurrent
+        );
+    }
+
+    #[test]
+    fn genuine_upgrade_runs() {
+        assert_eq!(decide_setup(Some("0.6.0"), "0.7.0"), SetupDecision::Run);
+        assert_eq!(decide_setup(Some("0.5.1"), "0.6.0"), SetupDecision::Run);
+    }
+
+    #[test]
+    fn older_build_does_not_downgrade_a_newer_install() {
+        // The app-install-singleton corruption: a stale 0.5.1 bundle launched
+        // after 0.6.0 was installed must NOT re-run setup (which would
+        // downgrade the shared ~/.ministr/bin sidecar under a live daemon).
+        assert_eq!(
+            decide_setup(Some("0.6.0"), "0.5.1"),
+            SetupDecision::SkipOlderThanInstalled {
+                installed: "0.6.0".into()
+            }
+        );
+    }
+
+    #[test]
+    fn version_triple_parses_and_ignores_suffixes() {
+        assert_eq!(version_triple("0.6.0"), Some((0, 6, 0)));
+        assert_eq!(version_triple("1.2"), Some((1, 2, 0)));
+        assert_eq!(version_triple("3"), Some((3, 0, 0)));
+        assert_eq!(version_triple("0.6.0-rc.1"), Some((0, 6, 0)));
+        assert_eq!(version_triple("0.6.0+build5"), Some((0, 6, 0)));
+        assert_eq!(version_triple("not-a-version"), None);
+    }
+
+    #[test]
+    fn ordering_is_numeric_not_lexicographic() {
+        // 0.10.0 > 0.9.0 numerically; a string compare would get this wrong.
+        assert!(is_strictly_newer("0.10.0", "0.9.0"));
+        assert!(!is_strictly_newer("0.9.0", "0.10.0"));
+        assert_eq!(
+            decide_setup(Some("0.10.0"), "0.9.0"),
+            SetupDecision::SkipOlderThanInstalled {
+                installed: "0.10.0".into()
+            }
+        );
+    }
+
+    #[test]
+    fn unparseable_marker_falls_back_to_run() {
+        // Conservative: if we can't compare, behave like before (run setup),
+        // never silently skip.
+        assert_eq!(decide_setup(Some("garbage"), "0.6.0"), SetupDecision::Run);
+    }
 }
