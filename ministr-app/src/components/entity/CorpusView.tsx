@@ -81,6 +81,11 @@ export function CorpusView({ entity }: Props) {
               {p}
             </p>
           ))}
+          {corpus.model ? (
+            <p className="font-mono text-xs text-text-dim pt-1">
+              model <span className="text-text">{corpus.model}</span>
+            </p>
+          ) : null}
         </div>
       </EntitySection>
 

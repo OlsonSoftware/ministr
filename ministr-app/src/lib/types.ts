@@ -12,6 +12,10 @@ export interface CorpusInfo {
   active_sessions: number;
   last_indexed?: number;
   symbols_count: number;
+  /** Effective embedding model this corpus is indexed + queried with (its
+   *  .ministr.toml [corpus] model, else the daemon default). Older daemons
+   *  may omit this. */
+  model?: string;
 }
 
 export interface DetectedProject {

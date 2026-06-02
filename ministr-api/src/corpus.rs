@@ -90,6 +90,11 @@ pub struct CorpusInfo {
     /// Number of code symbols extracted.
     #[serde(default)]
     pub symbols_count: usize,
+    /// The effective embedding model this corpus is indexed + queried with
+    /// (its `.ministr.toml` `[corpus] model`, else the daemon default).
+    /// Empty for a not-yet-registered (pending) corpus. (parity-gui-corpus-model-readout)
+    #[serde(default)]
+    pub model: String,
 }
 
 /// Current indexing status of a corpus.

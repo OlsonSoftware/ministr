@@ -1236,6 +1236,7 @@ impl CorpusRegistry {
                 active_sessions: 0,
                 last_indexed: None,
                 symbols_count: 0,
+                model: model.clone(),
             })),
             storage,
             index,
@@ -1539,6 +1540,7 @@ mod tests {
             active_sessions: 0,
             last_indexed: None,
             symbols_count: 0,
+            model: "all-MiniLM-L6-v2".into(),
         }
     }
 

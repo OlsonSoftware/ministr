@@ -991,6 +991,9 @@ fn synthesize_pending_corpus_info(
         active_sessions: 0,
         last_indexed: None,
         symbols_count: 0,
+        // Not yet registered on this pod, so the effective model isn't known
+        // until create_handle resolves it; the UI treats empty as "default".
+        model: String::new(),
     }
 }
 
