@@ -358,7 +358,22 @@ pub async fn cmd_serve_http(
         }
     }
 
-    corpus_registry.restore().await;
+    // Restore previously-registered corpora in the BACKGROUND so the
+    // HTTP/MCP listener binds without waiting for every corpus's index to
+    // load — the same fast-launch rationale as the headless daemon
+    // (`ministr_daemon::bootstrap::run`). Safe to overlap with live
+    // requests: `register` is idempotent (authoritative check-and-insert
+    // under the map write lock) and the manifest is written atomically.
+    // In cloud mode a query for a not-yet-restored corpus falls through to
+    // the lazy `ensure_present` blob-restore path, so nothing observes a
+    // hard "missing corpus" window.
+    {
+        let restore_registry = Arc::clone(&corpus_registry);
+        tokio::spawn(async move {
+            restore_registry.restore().await;
+            tracing::info!("background corpus restore complete");
+        });
+    }
 
     // F31.2b-ii-I — tenant_filter migrated to ClassicCloudMounter
     // (CloudServerAdapters.tenant_filter). When the mounter populates
