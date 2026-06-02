@@ -362,6 +362,7 @@ impl CandleEmbedder {
         let device = &self.device;
 
         // Tokenize all texts (needs mutable tokenizer for internal state).
+        let t_tokenize = std::time::Instant::now();
         let tokenizer = self.tokenizer.lock();
         let encodings = tokenizer.encode_batch(texts.to_vec(), true).map_err(|e| {
             IndexError::EmbeddingFailed {
@@ -369,6 +370,7 @@ impl CandleEmbedder {
             }
         })?;
         drop(tokenizer);
+        let tokenize_ms = t_tokenize.elapsed().as_secs_f64() * 1000.0;
 
         // Find max sequence length for padding.
         let max_len = encodings
@@ -402,6 +404,14 @@ impl CandleEmbedder {
         let batch_size = texts.len();
         let shape = (batch_size, max_len);
 
+        // Time the GPU section (tensor upload → forward → pool → normalize →
+        // download). `to_vec2` forces a Metal sync, so this captures true GPU
+        // wall time rather than the async-dispatch time `forward` alone would
+        // show. Paired with `tokenize_ms` + `batch`/`max_len` it pinpoints where
+        // an embed batch actually spends its ~ms (embed-throughput profiling —
+        // is the cost tokenization, padding/forward, or fixed per-call overhead?).
+        let t_compute = std::time::Instant::now();
+
         let input_ids = Tensor::from_vec(all_input_ids, shape, device).map_err(candle_err)?;
         let token_type_ids = Tensor::from_vec(all_type_ids, shape, device).map_err(candle_err)?;
         let attention_mask =
@@ -417,12 +427,23 @@ impl CandleEmbedder {
         let pooled = Self::mean_pool(&output, &attention_mask)?;
         let normalized = Self::l2_normalize(&pooled)?;
 
-        // Convert to Vec<Vec<f32>>.
-        normalized
+        // Convert to Vec<Vec<f32>> (downloads from the GPU, forcing a sync).
+        let vectors = normalized
             .to_dtype(DType::F32)
             .map_err(candle_err)?
             .to_vec2()
-            .map_err(candle_err)
+            .map_err(candle_err)?;
+
+        let compute_ms = t_compute.elapsed().as_secs_f64() * 1000.0;
+        tracing::debug!(
+            batch = batch_size,
+            max_len,
+            tokenize_ms,
+            compute_ms,
+            "candle embed_batch timing"
+        );
+
+        Ok(vectors)
     }
 }
 
