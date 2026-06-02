@@ -17,10 +17,6 @@ mod error;
 mod setup;
 mod tray;
 
-use ministr_core::config::MinistrConfig;
-use ministr_core::embedding;
-use ministr_daemon::registry::CorpusRegistry;
-use ministr_daemon::state::AppState;
 use tauri::Manager;
 use tracing::info;
 
@@ -51,42 +47,13 @@ fn main() {
                 tracing::warn!(error = %e, "first-launch setup had errors");
             }
 
-            // --- Initialize the ministr daemon ---
-            let config = MinistrConfig::load(&MinistrConfig::default_path())
-                .unwrap_or_else(|_| MinistrConfig::default());
-
-            // Load embedding model (once for all corpora).
-            // Uses Candle Metal on macOS when supported, falls back to ONNX.
-            let (raw_embedder, backend_info) =
-                embedding::create_embedder(&config.default_model, &config.data_dir)
-                    .expect("failed to initialize embedding model");
-
-            info!(
-                model = %config.default_model,
-                backend = ?backend_info.format,
-                device = %backend_info.device,
-                dim = raw_embedder.dimension(),
-                "embedding model loaded"
-            );
-
-            let registry = CorpusRegistry::new(raw_embedder, config);
-            let state = AppState::new(registry);
-
-            // Share state with Tauri commands.
-            app.manage(state.clone());
-
-            // --- Restore previously registered corpora ---
-            let restore_state = state.clone();
-            tauri::async_runtime::spawn(async move {
-                restore_state.registry.restore().await;
-            });
-
             // --- Ensure the headless daemon sidecar owns the UDS socket ---
-            // gd1: the GUI no longer binds the socket in-process. It spawns
-            // the detached `ministr __daemon` sidecar if none is alive (which
-            // then survives GUI close), or attaches to the running one. The
-            // in-process AppState above still backs the Tauri commands until
-            // gd2/gd3 route them over UDS and gd4 removes it.
+            // gd4: the GUI no longer builds an in-process AppState / embedder /
+            // CorpusRegistry — it is a pure DaemonClient. The single daemon
+            // lifecycle is: spawn the detached `ministr __daemon` sidecar if none
+            // is alive (it survives GUI close and restores its own corpora), else
+            // attach to the running one. Every Tauri command, the tray, and the
+            // first-launch auto-detect talk to that daemon over UDS.
             if let Some(daemon_bin) = daemon_sidecar::resolve_daemon_binary(app) {
                 tauri::async_runtime::spawn(daemon_sidecar::ensure_daemon_running(daemon_bin));
             } else {
