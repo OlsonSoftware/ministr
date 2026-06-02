@@ -1047,6 +1047,7 @@ impl IngestionPipeline {
                     self.embedding_service.as_deref(),
                     index,
                     storage,
+                    self.progress.as_ref(),
                 )
                 .await?;
             }

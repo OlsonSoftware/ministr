@@ -1,5 +1,7 @@
 //! Embedding: dense, sparse, batch insertion, and vector deletion.
 
+use std::sync::Arc;
+
 use tracing::{debug, info, warn};
 
 use crate::embedding::{DualEmbedder, Embedder};
@@ -8,6 +10,8 @@ use crate::index::VectorIndex;
 use crate::mem_profile;
 use crate::storage::{SqliteStorage, Storage};
 use crate::types::{ContentId, DocumentTree, Section, VectorId};
+
+use super::pipeline::IngestionProgress;
 
 /// Maximum texts per embedding inference call.
 pub(super) const EMBED_BATCH_CHUNK: usize = 128;
@@ -119,6 +123,7 @@ pub(super) async fn batch_embed_and_insert<
     service: Option<&crate::embedding::EmbeddingService>,
     index: &I,
     storage: &S,
+    progress: Option<&Arc<IngestionProgress>>,
 ) -> Result<usize, IngestionError> {
     if pairs.is_empty() {
         return Ok(0);
@@ -170,6 +175,13 @@ pub(super) async fn batch_embed_and_insert<
             .map_err(IngestionError::from)?;
 
         total += chunk.len();
+        // Report progress per GPU chunk (EMBED_BATCH_CHUNK), not once per the
+        // 4096-pair flush buffer — otherwise the live `embeddings_done` counter
+        // (and the UI bar) jumps in huge multi-second steps. Granular here keeps
+        // the readout smooth without changing batching/throughput.
+        if let Some(p) = progress {
+            p.add_embeddings_done(chunk.len());
+        }
         mem_profile::checkpoint_every(5, i, "after index.insert() batch");
 
         if num_chunks > 1 {
@@ -196,6 +208,7 @@ pub(super) async fn batch_embed_and_insert_dual<I: VectorIndex + ?Sized>(
     dual_embedder: &dyn DualEmbedder,
     index: &I,
     storage: &SqliteStorage,
+    progress: Option<&Arc<IngestionProgress>>,
 ) -> Result<usize, IngestionError> {
     if pairs.is_empty() {
         return Ok(0);
@@ -249,6 +262,11 @@ pub(super) async fn batch_embed_and_insert_dual<I: VectorIndex + ?Sized>(
             })?;
 
         total += chunk.len();
+        // Per-GPU-chunk progress (see batch_embed_and_insert) so the live
+        // counter advances smoothly instead of once per flush buffer.
+        if let Some(p) = progress {
+            p.add_embeddings_done(chunk.len());
+        }
         mem_profile::checkpoint_every(5, i, "after dual index+storage batch");
 
         if num_chunks > 1 {

@@ -88,20 +88,17 @@ where
         }
         buffer.extend(pairs);
         if buffer.len() >= EMBED_FLUSH_THRESHOLD {
-            let count = batch_embed_and_insert(&buffer, embedder, service, index, storage).await?;
+            let count =
+                batch_embed_and_insert(&buffer, embedder, service, index, storage, progress)
+                    .await?;
             total_embeddings += count;
-            if let Some(p) = progress {
-                p.add_embeddings_done(count);
-            }
             buffer.clear();
         }
     }
     if !buffer.is_empty() {
-        let count = batch_embed_and_insert(&buffer, embedder, service, index, storage).await?;
+        let count =
+            batch_embed_and_insert(&buffer, embedder, service, index, storage, progress).await?;
         total_embeddings += count;
-        if let Some(p) = progress {
-            p.add_embeddings_done(count);
-        }
     }
     Ok(total_embeddings)
 }
@@ -131,23 +128,23 @@ where
         }
         buffer.extend(pairs);
         if buffer.len() >= EMBED_FLUSH_THRESHOLD {
-            let count =
-                batch_embed_and_insert_dual(&buffer, dual_embedder, index, full_dim_storage)
-                    .await?;
+            let count = batch_embed_and_insert_dual(
+                &buffer,
+                dual_embedder,
+                index,
+                full_dim_storage,
+                progress,
+            )
+            .await?;
             total_embeddings += count;
-            if let Some(p) = progress {
-                p.add_embeddings_done(count);
-            }
             buffer.clear();
         }
     }
     if !buffer.is_empty() {
         let count =
-            batch_embed_and_insert_dual(&buffer, dual_embedder, index, full_dim_storage).await?;
+            batch_embed_and_insert_dual(&buffer, dual_embedder, index, full_dim_storage, progress)
+                .await?;
         total_embeddings += count;
-        if let Some(p) = progress {
-            p.add_embeddings_done(count);
-        }
     }
     Ok(total_embeddings)
 }
