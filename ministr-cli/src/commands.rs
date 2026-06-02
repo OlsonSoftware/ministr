@@ -1027,11 +1027,19 @@ pub async fn cmd_serve_proxy_stdio(
     // can target it by label via the `project: "<label>"` argument on any
     // shared MCP tool. Failures are logged but non-fatal — the primary
     // corpus stays usable.
+    //
+    // Register them CONCURRENTLY: each registration triggers a per-corpus
+    // create_handle (open SQLite + load the HNSW index) on the daemon, and
+    // awaiting them in series made the MCP handshake wait for the sum of
+    // every linked project's load time. A JoinSet collapses that to the
+    // slowest single project.
     let mut linked_backends: std::collections::HashMap<
         String,
         std::sync::Arc<ministr_mcp::backend::DaemonBackend>,
     > = std::collections::HashMap::new();
     let mut linked_cleanup: Vec<(String, String)> = Vec::new();
+    let mut linked_set: tokio::task::JoinSet<Option<(String, String, String)>> =
+        tokio::task::JoinSet::new();
     for project in linked {
         let label = project.label.clone();
         let paths: Vec<String> = project.corpus_paths.clone();
@@ -1039,39 +1047,46 @@ pub async fn cmd_serve_proxy_stdio(
             eprintln!("ministr: warning — linked project '{label}' has no corpus paths, skipping");
             continue;
         }
-        // Pass the linked-project label as display_name so the tray UI
-        // shows "BurntSushi-ripgrep" rather than the basename of the
-        // (possibly content-hashed) clone dir.
-        match client
-            .register_corpus_with_display_name(&paths, Some(label.clone()))
-            .await
-        {
-            Ok(resp) => {
-                let linked_corpus_id = resp.corpus_id;
-                match client.create_session(&linked_corpus_id, None).await {
+        let task_client = std::sync::Arc::clone(&client);
+        linked_set.spawn(async move {
+            // Pass the linked-project label as display_name so the tray UI
+            // shows "BurntSushi-ripgrep" rather than the basename of the
+            // (possibly content-hashed) clone dir.
+            match task_client
+                .register_corpus_with_display_name(&paths, Some(label.clone()))
+                .await
+            {
+                Ok(resp) => match task_client.create_session(&resp.corpus_id, None).await {
                     Ok(sresp) => {
                         eprintln!(
-                            "ministr: linked '{label}' → corpus {linked_corpus_id}, session {} (indexing_started={})",
-                            sresp.session_id, resp.indexing_started
+                            "ministr: linked '{label}' → corpus {}, session {} (indexing_started={})",
+                            resp.corpus_id, sresp.session_id, resp.indexing_started
                         );
-                        linked_cleanup.push((linked_corpus_id.clone(), sresp.session_id.clone()));
-                        let backend = ministr_mcp::backend::DaemonBackend::new(
-                            std::sync::Arc::clone(&client),
-                            linked_corpus_id,
-                            Some(sresp.session_id),
-                        );
-                        linked_backends.insert(label, std::sync::Arc::new(backend));
+                        Some((label, resp.corpus_id, sresp.session_id))
                     }
                     Err(e) => {
                         eprintln!(
                             "ministr: warning — linked '{label}' session creation failed: {e}"
                         );
+                        None
                     }
+                },
+                Err(e) => {
+                    eprintln!("ministr: warning — linked '{label}' corpus registration failed: {e}");
+                    None
                 }
             }
-            Err(e) => {
-                eprintln!("ministr: warning — linked '{label}' corpus registration failed: {e}");
-            }
+        });
+    }
+    while let Some(joined) = linked_set.join_next().await {
+        if let Ok(Some((label, linked_corpus_id, linked_session_id))) = joined {
+            linked_cleanup.push((linked_corpus_id.clone(), linked_session_id.clone()));
+            let backend = ministr_mcp::backend::DaemonBackend::new(
+                std::sync::Arc::clone(&client),
+                linked_corpus_id,
+                Some(linked_session_id),
+            );
+            linked_backends.insert(label, std::sync::Arc::new(backend));
         }
     }
 

@@ -35,11 +35,26 @@ pub fn build_state(config: MinistrConfig) -> Result<AppState, Box<dyn std::error
     Ok(AppState::new(registry))
 }
 
-/// Build state, restore previously-registered corpora, then serve the
-/// daemon on the platform-native IPC endpoint until shutdown.
+/// Build state, bind the IPC listener immediately, and restore
+/// previously-registered corpora in the background — then serve until
+/// shutdown.
 ///
 /// This is the headless entrypoint the CLI's hidden `__daemon`
 /// subcommand runs, and the same path a future GUI could call.
+///
+/// Restore runs in a spawned task rather than blocking the listener bind:
+/// the MCP stdio proxy auto-spawns this daemon and then connects to it, so
+/// with restore on the critical path the proxy — and therefore the agent's
+/// `initialize`/`tools/list` handshake — stalled until *every* persisted
+/// corpus's HNSW index had finished loading from disk. Binding first makes
+/// the daemon reachable in milliseconds; corpora then surface as the
+/// background restore registers them (the desktop UI already polls for
+/// this). It is safe to run concurrently with live requests: `register`
+/// is idempotent (already-present corpora short-circuit under the map's
+/// write lock) and the manifest is written atomically, so a client that
+/// registers a corpus mid-restore converges with no torn manifest. The
+/// `__daemon` process is only ever spawned when no live daemon exists (the
+/// proxy probes first), so there is no competing manifest writer.
 ///
 /// # Errors
 ///
@@ -48,6 +63,12 @@ pub fn build_state(config: MinistrConfig) -> Result<AppState, Box<dyn std::error
 /// error, which callers treat as "a daemon already exists, just attach".
 pub async fn run(config: MinistrConfig) -> Result<(), Box<dyn std::error::Error>> {
     let state = build_state(config)?;
-    state.registry.restore().await;
+
+    let registry = std::sync::Arc::clone(&state.registry);
+    tokio::spawn(async move {
+        registry.restore().await;
+        info!("background corpus restore complete");
+    });
+
     daemon::start(state).await
 }

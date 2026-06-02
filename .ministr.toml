@@ -18,7 +18,3 @@ ignore = [
 [[linked]]
 path = "/Users/alrik/Code/semble"
 label = "semble"
-
-[[linked]]
-path = "/Users/alrik/.ministr/remote/cbbbc0ee0e720d13"
-label = "BurntSushi-ripgrep"
