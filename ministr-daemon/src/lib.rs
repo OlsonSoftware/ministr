@@ -10,6 +10,7 @@ pub mod ask;
 pub mod bootstrap;
 pub mod cloud;
 pub mod convert;
+pub mod coordinator;
 pub mod daemon;
 pub mod embedder_pool;
 pub mod indexer;

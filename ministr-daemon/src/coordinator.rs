@@ -1,0 +1,274 @@
+//! Ingestion coordinator — the single owner of the indexing **job queue**.
+//!
+//! Before this module, every ingest entry point (`register`,
+//! `update_corpus_paths`, and the file watcher) independently
+//! `tokio::spawn`ed [`indexer::run`](crate::indexer::run), which then blocked
+//! internally on [`IngestionScheduler::acquire`](crate::scheduler::IngestionScheduler::acquire).
+//! That left the "queue" implicit — a pile of independently-blocked tasks with
+//! no observable depth and nothing to coalesce or prioritize.
+//!
+//! [`IngestionCoordinator`] makes the queue explicit and owns it (SRP): corpora
+//! **enqueue** jobs; a bounded set of jobs drains the queue. It separates the
+//! two concurrency concerns cleanly:
+//!
+//! * **Global bound** — delegated to the existing [`IngestionScheduler`]: each
+//!   dispatched job holds an [`OwnedSemaphorePermit`](tokio::sync::OwnedSemaphorePermit)
+//!   for its whole run, so at most `max_concurrency` corpora index at once.
+//! * **Per-corpus exclusion** — a `busy` set: a corpus already indexing is
+//!   never selected again until its job completes, so a corpus never indexes
+//!   concurrently with itself. Crucially, dispatch **skips** busy corpora
+//!   rather than blocking on them, so one slow corpus can't head-of-line-block
+//!   the others.
+//!
+//! Dispatch is **event-driven**, not a polling loop: [`enqueue`](IngestionCoordinator::enqueue)
+//! and every job completion call [`try_dispatch`](IngestionCoordinator::try_dispatch),
+//! which launches as many ready jobs as free permits allow and then parks. A
+//! freed permit is always followed by a `try_dispatch` from the completing
+//! job, so there is no lost-wakeup.
+//!
+//! Status transitions straddle the wait exactly as cq-status intends: a job is
+//! marked [`Queued`](IndexingStatus::Queued) at enqueue (while it waits its
+//! turn) and [`Indexing`](IndexingStatus::Indexing) at dispatch (when a permit
+//! is in hand and work actually starts). The terminal transitions
+//! (`Idle`/`Error`/stats) stay in [`indexer::run_body`](crate::indexer::run_body).
+//!
+//! Teardown is unchanged: each dispatched job's `JoinHandle` is pushed into its
+//! corpus's [`CorpusHandle::tasks`](crate::registry::CorpusHandle::tasks), so
+//! `unregister` still awaits in-flight indexing (after cancelling) before
+//! deleting the corpus directory. A job that is dispatched *after* its corpus
+//! was unregistered no-ops via `run_body`'s registry guard (it opens no files),
+//! so `remove_dir_all` stays safe.
+
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex, PoisonError};
+
+use ministr_api::corpus::IndexingStatus;
+
+use crate::registry::CorpusRegistry;
+
+/// A single dispatched indexing job: which corpus, and the paths to ingest.
+struct Job {
+    corpus_id: String,
+    paths: Vec<String>,
+}
+
+/// The mutable queue state, guarded by a brief `std::sync::Mutex` that is
+/// **never** held across an `.await`.
+#[derive(Default)]
+struct QueueState {
+    /// FIFO of corpus ids awaiting dispatch. A corpus appears at most once —
+    /// repeated enqueues for the same corpus collapse onto one slot (with the
+    /// latest paths winning in `paths`), which both keeps the queue bounded and
+    /// avoids redundant same-corpus reindexes.
+    order: VecDeque<String>,
+    /// The latest paths to ingest for each pending corpus.
+    paths: HashMap<String, Vec<String>>,
+    /// Corpora with a job currently in flight (holding a permit). Selection
+    /// skips these, giving per-corpus exclusion without head-of-line blocking.
+    busy: HashSet<String>,
+}
+
+impl QueueState {
+    /// Record (or refresh) a pending job for `corpus_id`. If the corpus is
+    /// already queued, only its paths are updated; it is not enqueued twice.
+    fn upsert(&mut self, corpus_id: String, paths: Vec<String>) {
+        if !self.order.contains(&corpus_id) {
+            self.order.push_back(corpus_id.clone());
+        }
+        self.paths.insert(corpus_id, paths);
+    }
+
+    /// Remove and return the next queued job whose corpus is **not** busy,
+    /// marking that corpus busy. Returns `None` when nothing is dispatchable
+    /// (queue empty, or every queued corpus is already indexing).
+    fn take_next_dispatchable(&mut self) -> Option<Job> {
+        let pos = self.order.iter().position(|c| !self.busy.contains(c))?;
+        let corpus_id = self
+            .order
+            .remove(pos)
+            .expect("position came from this VecDeque");
+        let paths = self.paths.remove(&corpus_id).unwrap_or_default();
+        self.busy.insert(corpus_id.clone());
+        Some(Job { corpus_id, paths })
+    }
+}
+
+/// Owns the explicit ingestion job queue and drives bounded, fair dispatch.
+///
+/// Held by [`CorpusRegistry`]; reached from a running job via
+/// [`CorpusRegistry::coordinator`] so completions can re-drive dispatch without
+/// a back-reference cycle.
+#[derive(Default)]
+pub struct IngestionCoordinator {
+    state: Mutex<QueueState>,
+}
+
+impl IngestionCoordinator {
+    /// A fresh, empty coordinator.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, QueueState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Enqueue an indexing job for `corpus_id` over `paths`, mark the corpus
+    /// [`Queued`](IndexingStatus::Queued), and attempt immediate dispatch.
+    ///
+    /// Returns once the job is queued and dispatch has been attempted — **not**
+    /// when indexing finishes. The actual ingest runs in a spawned task tracked
+    /// for teardown.
+    pub async fn enqueue(
+        &self,
+        registry: &Arc<CorpusRegistry>,
+        corpus_id: String,
+        paths: Vec<String>,
+    ) {
+        self.lock().upsert(corpus_id.clone(), paths);
+        // Distinct "queued" state while the job waits its turn (cq-status):
+        // a not-yet-started corpus must not keep its prior Idle/indexed status.
+        registry
+            .set_status(&corpus_id, IndexingStatus::Queued)
+            .await;
+        self.try_dispatch(registry).await;
+    }
+
+    /// Mark a finished corpus as no longer busy so it can be selected again.
+    fn mark_done(&self, corpus_id: &str) {
+        self.lock().busy.remove(corpus_id);
+    }
+
+    /// Launch as many ready jobs as free permits allow, then park.
+    ///
+    /// Each dispatched job holds a global permit for its whole run (the bound)
+    /// and, on completion, releases the permit and re-drives dispatch — so a
+    /// freed slot is always reconsidered.
+    ///
+    /// Returns a boxed future because dispatch is mutually recursive through the
+    /// spawned job's completion (which re-enters `try_dispatch`); the explicit
+    /// `+ Send` bound breaks the otherwise-cyclic auto-`Send` inference so the
+    /// completion task can be `tokio::spawn`ed.
+    pub fn try_dispatch<'a>(
+        &'a self,
+        registry: &'a Arc<CorpusRegistry>,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move {
+            loop {
+                // Claim a global slot without waiting; saturated → nothing to do.
+                let Some(permit) = registry.scheduler().try_acquire_permit() else {
+                    return;
+                };
+
+                let next = {
+                    let mut state = self.lock();
+                    state.take_next_dispatchable()
+                };
+                let Some(Job { corpus_id, paths }) = next else {
+                    // Permit free but no dispatchable corpus (queue empty, or all
+                    // queued corpora busy). Release it; a later completion will
+                    // re-drive dispatch.
+                    drop(permit);
+                    return;
+                };
+
+                // A permit is in hand and work is starting now: Queued -> Indexing.
+                registry
+                    .set_status(
+                        &corpus_id,
+                        IndexingStatus::Indexing {
+                            files_done: 0,
+                            files_total: 0,
+                        },
+                    )
+                    .await;
+
+                let reg = Arc::clone(registry);
+                let lookup_id = corpus_id.clone();
+                let handle = tokio::spawn(async move {
+                    crate::indexer::run_body(&reg, &corpus_id, &paths).await;
+                    // Release the slot, free the corpus, and reconsider the queue.
+                    drop(permit);
+                    let coordinator = reg.coordinator();
+                    coordinator.mark_done(&corpus_id);
+                    coordinator.try_dispatch(&reg).await;
+                });
+
+                // Track the job for teardown: `unregister` awaits these (after
+                // cancelling) before deleting the corpus dir. If the corpus was
+                // already removed, drop the handle — the job no-ops in
+                // `run_body`'s registry guard, opening no files.
+                if let Some(corpus) = registry.corpora().read().await.get(&lookup_id)
+                    && let Ok(mut tasks) = corpus.tasks.lock()
+                {
+                    tasks.push(handle);
+                }
+            }
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn paths(p: &str) -> Vec<String> {
+        vec![p.to_string()]
+    }
+
+    #[test]
+    fn distinct_corpora_dispatch_in_fifo_order() {
+        let mut q = QueueState::default();
+        q.upsert("a".into(), paths("a1"));
+        q.upsert("b".into(), paths("b1"));
+
+        assert_eq!(q.take_next_dispatchable().unwrap().corpus_id, "a");
+        assert_eq!(q.take_next_dispatchable().unwrap().corpus_id, "b");
+        assert!(q.take_next_dispatchable().is_none());
+    }
+
+    #[test]
+    fn same_corpus_enqueues_coalesce_to_one_slot_latest_paths_win() {
+        let mut q = QueueState::default();
+        q.upsert("a".into(), paths("old"));
+        q.upsert("a".into(), paths("new"));
+
+        let job = q.take_next_dispatchable().unwrap();
+        assert_eq!(job.corpus_id, "a");
+        assert_eq!(job.paths, paths("new"), "the latest enqueue's paths win");
+        assert!(
+            q.take_next_dispatchable().is_none(),
+            "the two enqueues collapsed onto a single queued job"
+        );
+    }
+
+    #[test]
+    fn a_busy_corpus_is_skipped_so_it_never_head_of_line_blocks_others() {
+        let mut q = QueueState::default();
+        // `a` is already indexing; `b` is freshly queued.
+        q.upsert("a".into(), paths("a1"));
+        let busy_a = q.take_next_dispatchable().unwrap();
+        assert_eq!(busy_a.corpus_id, "a"); // now marked busy
+
+        // A new request for the busy corpus AND a request for a different one.
+        q.upsert("a".into(), paths("a2"));
+        q.upsert("b".into(), paths("b1"));
+
+        // Selection skips the busy `a` and dispatches `b` — no head-of-line block.
+        assert_eq!(q.take_next_dispatchable().unwrap().corpus_id, "b");
+        // `a` stays queued until it is marked done.
+        assert!(q.take_next_dispatchable().is_none());
+
+        q.busy.remove("a");
+        let redo_a = q.take_next_dispatchable().unwrap();
+        assert_eq!(redo_a.corpus_id, "a");
+        assert_eq!(
+            redo_a.paths,
+            paths("a2"),
+            "the requeued job carries the latest paths"
+        );
+    }
+}

@@ -84,6 +84,21 @@ impl IngestionScheduler {
         self.max_concurrency
     }
 
+    /// Try to claim a global indexing permit **without** waiting. Returns
+    /// `None` immediately when the bound is already saturated.
+    ///
+    /// This is the non-blocking counterpart to [`Self::acquire`]'s global
+    /// half, used by the [`IngestionCoordinator`](crate::coordinator::IngestionCoordinator)
+    /// to drive event-driven dispatch: it owns the per-corpus exclusion itself
+    /// (a busy-set, so it never blocks on a busy corpus) and only needs the
+    /// scheduler to enforce the global bound. The returned permit is held by
+    /// the spawned job and released on drop, exactly as the global half of an
+    /// [`IndexSlot`] is.
+    #[must_use]
+    pub fn try_acquire_permit(&self) -> Option<OwnedSemaphorePermit> {
+        self.permits.clone().try_acquire_owned().ok()
+    }
+
     /// Look up (or create) the per-corpus lock. Brief acquisition of the outer
     /// map mutex to get/insert; returns the inner `Arc<Mutex<()>>` so the caller
     /// holds the per-corpus lock — not the map — across the ingest.

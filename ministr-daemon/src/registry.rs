@@ -32,6 +32,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use crate::coordinator::IngestionCoordinator;
 use crate::embedder_pool::{EmbedderPool, PooledEmbedder};
 use crate::indexer;
 use crate::scheduler::IngestionScheduler;
@@ -76,6 +77,13 @@ pub struct CorpusRegistry {
     /// Daemon-wide indexing concurrency policy: bounded parallelism +
     /// per-corpus exclusion. Replaces the old `INDEXING_SEMAPHORE(1)` band-aid.
     scheduler: IngestionScheduler,
+    /// The explicit ingestion job queue (cq-queue). Every ingest entry point —
+    /// `register`, `update_corpus_paths`, and the file watcher — enqueues here
+    /// instead of spawning `indexer::run` directly, so the queue owns dispatch:
+    /// bounded, fair (no head-of-line blocking), with Queued→Indexing status
+    /// straddling the wait. Drains using the [`scheduler`](Self::scheduler) for
+    /// the global bound.
+    coordinator: IngestionCoordinator,
     /// `Arc<CorpusHandle>` (not bare `CorpusHandle`) so `get()` can hand
     /// a corpus out by cloning the `Arc` and dropping the map guard —
     /// callers no longer hold a `RwLockReadGuard` across their `.await`s,
@@ -256,6 +264,7 @@ impl CorpusRegistry {
         Self {
             pool,
             scheduler: IngestionScheduler::with_default_concurrency(),
+            coordinator: IngestionCoordinator::new(),
             embedder,
             corpora: RwLock::new(HashMap::new()),
             config,
@@ -270,6 +279,22 @@ impl CorpusRegistry {
     /// The ingestion scheduler — bounded concurrency + per-corpus exclusion.
     pub(crate) fn scheduler(&self) -> &IngestionScheduler {
         &self.scheduler
+    }
+
+    /// The ingestion coordinator — the explicit job queue (cq-queue). Reached
+    /// from a running job so its completion can re-drive dispatch.
+    pub(crate) fn coordinator(&self) -> &IngestionCoordinator {
+        &self.coordinator
+    }
+
+    /// Enqueue a background indexing job for `corpus_id` over `paths`.
+    ///
+    /// The single entry point for all ingest requests: the coordinator marks
+    /// the corpus Queued, dispatches it when a slot is free (Indexing), and
+    /// tracks the spawned job in the corpus's `tasks` for `unregister`
+    /// teardown. Returns once queued — not when indexing finishes.
+    pub(crate) async fn enqueue_index(self: &Arc<Self>, corpus_id: String, paths: Vec<String>) {
+        self.coordinator.enqueue(self, corpus_id, paths).await;
     }
 
     /// Wire a coherence sink so `register` will spawn a per-corpus
@@ -854,13 +879,17 @@ impl CorpusRegistry {
             spawned.push(tokio::spawn(spawn_coherence_sink_pusher(sink, sink_rx)));
         }
 
-        // Spawn background indexing (delegated to indexer module).
+        // Enqueue the initial index onto the coordinator's queue (cq-queue),
+        // then start the file watcher (which enqueues reindexes on change). The
+        // coordinator tracks the spawned indexing job in this corpus's `tasks`
+        // for teardown; this outer task only does the enqueue + watcher launch.
         let registry = Arc::clone(self);
         let cid = corpus_id.clone();
         let owned_paths = canonical.clone();
         spawned.push(tokio::spawn(async move {
-            indexer::run(&registry, &cid, &owned_paths).await;
-            // After initial indexing, start watching for file changes.
+            registry
+                .enqueue_index(cid.clone(), owned_paths.clone())
+                .await;
             indexer::spawn_watcher(registry, cid, owned_paths, watcher_cancel);
         }));
 
@@ -910,14 +939,14 @@ impl CorpusRegistry {
         // info write. Holding `corpora.read()` across `info.write().await`
         // would block concurrent register/unregister writers for the
         // duration of the info write.
-        let (info_lock, tasks) = {
+        let info_lock = {
             let corpora = self.corpora.read().await;
             let handle = corpora
                 .get(corpus_id)
                 .ok_or_else(|| RegistryError::NotFound {
                     id: corpus_id.to_string(),
                 })?;
-            (Arc::clone(&handle.info), Arc::clone(&handle.tasks))
+            Arc::clone(&handle.info)
         };
 
         let added: Vec<String> = {
@@ -942,16 +971,11 @@ impl CorpusRegistry {
         }
 
         if !added.is_empty() {
-            let registry = Arc::clone(self);
-            let cid = corpus_id.to_string();
-            let h = tokio::spawn(async move {
-                indexer::run(&registry, &cid, &added).await;
-            });
-            // Track the re-ingest task so a later `unregister` awaits it
-            // before deleting the corpus dir.
-            if let Ok(mut guard) = tasks.lock() {
-                guard.push(h);
-            }
+            // Enqueue the re-ingest of the genuinely-new paths onto the
+            // coordinator's queue (cq-queue); it tracks the spawned job in the
+            // corpus's `tasks` so a later `unregister` awaits it before deleting
+            // the corpus dir.
+            self.enqueue_index(corpus_id.to_string(), added).await;
         }
 
         Ok(())

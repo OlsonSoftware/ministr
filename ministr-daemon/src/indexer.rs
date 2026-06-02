@@ -31,17 +31,54 @@ const DEBOUNCE_QUIET: Duration = Duration::from_secs(2);
 /// anyway so the observatory stays live.
 const DEBOUNCE_MAX_WINDOW: Duration = Duration::from_secs(10);
 
-/// Run the full ingestion pipeline for a corpus.
+/// Standalone ingest entry point: claim a slot and run the pipeline.
 ///
-/// Updates the corpus status through `Idle -> Indexing -> Idle/Error`,
-/// then persists the vector index to disk. After a successful ingest the
-/// per-corpus prefetch cache is flushed so that subsequent reads don't
-/// serve stale warm entries for sections whose text was just rewritten.
+/// Marks the corpus `Queued`, acquires an [`IngestionScheduler`](crate::scheduler::IngestionScheduler)
+/// slot (per-corpus exclusion + global bound), transitions to `Indexing`, then
+/// delegates to [`run_body`]. In production these three steps are owned by the
+/// [`IngestionCoordinator`](crate::coordinator::IngestionCoordinator) instead —
+/// corpora `enqueue` onto its queue, which sets the status and holds the permit
+/// while `run_body` runs. This wrapper preserves the original semantics for any
+/// direct caller (and tests) that bypass the queue.
+pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
+    // cq-status: mark the corpus Queued BEFORE waiting on an indexing slot, so a
+    // corpus sitting in the queue reports a distinct "queued" state rather than
+    // keeping its prior (Idle/"indexed") status with 0 files.
+    registry.set_status(corpus_id, IndexingStatus::Queued).await;
+    // Acquire an indexing slot: the scheduler serializes same-corpus indexing
+    // and bounds total concurrency. Held for the whole ingest + persist + heal.
+    let _slot = registry.scheduler().acquire(corpus_id).await;
+    // The permit is granted — transition Queued → Indexing now that work starts.
+    registry
+        .set_status(
+            corpus_id,
+            IndexingStatus::Indexing {
+                files_done: 0,
+                files_total: 0,
+            },
+        )
+        .await;
+    run_body(registry, corpus_id, paths).await;
+}
+
+/// Run the full ingestion pipeline for a corpus (the job body).
+///
+/// Assumes an indexing slot is already held and the status is already
+/// `Indexing` (the caller — [`run`] or the
+/// [`IngestionCoordinator`](crate::coordinator::IngestionCoordinator) — owns
+/// those). Drives the pipeline, persists the vector index, flushes the
+/// per-corpus prefetch cache, refreshes stats, runs the resolver auto-heal, and
+/// fires the cloud durability hook, transitioning the status through
+/// `Idle/Error` on the terminal paths.
+///
+/// Self-cancels harmlessly if the corpus has been unregistered: the registry
+/// lookup below returns early, opening no files — so a job dispatched after its
+/// corpus was removed cannot race `remove_dir_all`.
 // Sequential ingest pipeline; many distinct steps (status transitions,
 // stats refresh, resolver heal, cloud durability hook). Extracting a
 // helper just to satisfy the lint would obscure the flow.
 #[allow(clippy::too_many_lines)]
-pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
+pub(crate) async fn run_body(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
     let (
         storage,
         model,
@@ -71,36 +108,6 @@ pub async fn run(registry: &CorpusRegistry, corpus_id: &str, paths: &[String]) {
             Arc::clone(&handle.prefetch),
         )
     };
-
-    // cq-status: mark the corpus Queued BEFORE waiting on an indexing slot, so a
-    // corpus sitting in the queue reports a distinct "queued" state rather than
-    // keeping its prior (Idle/"indexed") status with 0 files — otherwise a
-    // not-yet-started corpus misleadingly looks finished-but-empty. This
-    // replaces the earlier band-aid (b44874e) that set `Indexing` before the
-    // wait (which then misreported a queued corpus as actively indexing).
-    registry.set_status(corpus_id, IndexingStatus::Queued).await;
-
-    // Acquire an indexing slot (f-ingest-coordinator): the scheduler serializes
-    // same-corpus indexing (a corpus never indexes concurrently with itself) and
-    // bounds total concurrency across corpora. Held for the whole ingest +
-    // persist + heal. This replaces the old INDEXING_SEMAPHORE(1) band-aid —
-    // embedding now runs off the Tokio runtime via the shared EmbeddingService,
-    // so multiple distinct corpora index concurrently up to the bound without
-    // starving the runtime.
-    let _slot = registry.scheduler().acquire(corpus_id).await;
-
-    // The permit is granted — transition Queued → Indexing now that work is
-    // actually starting. `merge_live_info` overlays live progress only on the
-    // `Indexing` state, so the file/section counts begin updating from here.
-    registry
-        .set_status(
-            corpus_id,
-            IndexingStatus::Indexing {
-                files_done: 0,
-                files_total: 0,
-            },
-        )
-        .await;
 
     let local_paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
 
@@ -388,7 +395,13 @@ pub fn spawn_watcher(
             // ingestion to finish.
             broadcast_events(&registry, &corpus_id, latest.into_values().collect()).await;
 
-            run(&registry, &corpus_id, &paths).await;
+            // Enqueue a reindex onto the coordinator's queue rather than running
+            // it inline: the queue marks the corpus Queued → Indexing, bounds
+            // concurrency, and collapses redundant same-corpus requests. The
+            // spawned job is tracked in the corpus's `tasks` for teardown.
+            registry
+                .enqueue_index(corpus_id.clone(), paths.clone())
+                .await;
         }
     });
 }
