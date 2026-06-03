@@ -5,11 +5,8 @@ import type {
   SessionDetail,
 } from "../../lib/types";
 import type { SessionSample } from "../../lib/sessions";
-import {
-  SessionsSurface,
-  SessionCard,
-  SessionCardSkeleton,
-} from "./SessionsSurface";
+import { SessionsSurface } from "./SessionsSurface";
+import { SessionCard, SessionCardSkeleton } from "../ui/session-card";
 import { surfaceContainer } from "../../lib/ui-tokens";
 import { withTauriMock } from "../../../.storybook/tauri-mock";
 
@@ -274,6 +271,29 @@ export const CardSkeleton: Story = {
   render: () => (
     <Cell>
       <SessionCardSkeleton />
+    </Cell>
+  ),
+};
+
+/** The SAME renderer in `inspect` mode (the Projects/Tend slice): no expand
+ *  chevron, the whole card opens the inspector on click. No samples → the
+ *  trend falls back to a budget bar. (aaa-session-renderer-dedup) */
+export const CardInspect: Story = {
+  render: () => (
+    <Cell>
+      <SessionCard
+        interaction="inspect"
+        session={session({
+          utilization: 0.62,
+          pressure_level: "elevated",
+          current_turn: 14,
+          tokens_used: 124_000,
+          tokens_remaining: 76_000,
+        })}
+        corpora={[corpusInfo]}
+        fresh={false}
+        onOpenInspector={noop}
+      />
     </Cell>
   ),
 };

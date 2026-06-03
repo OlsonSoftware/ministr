@@ -8,44 +8,25 @@
  * derivations — no own fetch.
  */
 import { useMemo, useState } from "react";
-import {
-  ChevronDown,
-  ExternalLink,
-  Flame,
-  Layers,
-  Scissors,
-  Shrink,
-  Users,
-  Zap,
-} from "lucide-react";
+import { Users } from "lucide-react";
 import { motion } from "motion/react";
 
 import type { CorpusInfo, DaemonStatus, SessionDetail } from "../../lib/types";
-import { corpusLabel } from "../../lib/corpus";
 import { formatTokens } from "../../lib/format";
 import { toneTextClass } from "../../lib/status";
 import {
-  burnRate,
   clampPct,
-  deriveVitals,
-  pressureFromUtil,
-  pressureVerdict,
-  projectCritical,
   utilizationTone,
   type SessionSample,
 } from "../../lib/sessions";
 import { buildLineageGroups, type LineageGroup } from "../../lib/session-board";
 import { listContainer, listItem } from "../../lib/motion";
-import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
 import { useSessions } from "../../hooks/useSessions";
 
-import { BudgetRing } from "../ui/budget-ring";
 import { EmptyState } from "../ui/empty-state";
-import { MetricTile } from "../ui/metric-tile";
 import { NumberTicker } from "../ui/number-ticker";
-import { Sparkline } from "../ui/sparkline";
-import { StatusDot } from "../ui/status-dot";
+import { SessionCard, SessionCardSkeleton } from "../ui/session-card";
 import { H1 } from "../ui/heading";
 import { AdaptiveSurface } from "../ui/adaptive-surface";
 
@@ -229,7 +210,7 @@ function LineageGroupCell({
 }) {
   return (
     <motion.div variants={listItem} layout className="flex flex-col gap-2">
-      <SessionCard {...cardProps(group.parent)} />
+      <SessionCard interaction="expand" {...cardProps(group.parent)} />
       {group.children.length > 0 && (
         <div className="ml-3 pl-3 border-l border-border-soft flex flex-col gap-2">
           <span className="pl-0.5 font-mono text-mono-micro uppercase tracking-[0.08em] text-text-dim">
@@ -237,248 +218,15 @@ function LineageGroupCell({
             {group.children.length === 1 ? "" : "s"}
           </span>
           {group.children.map((c) => (
-            <SessionCard key={c.session_id} {...cardProps(c)} child />
+            <SessionCard
+              key={c.session_id}
+              interaction="expand"
+              {...cardProps(c)}
+              child
+            />
           ))}
         </div>
       )}
     </motion.div>
-  );
-}
-
-export function SessionCard({
-  session: s,
-  corpus,
-  samples,
-  fresh,
-  expanded,
-  onToggle,
-  onOpenInspector,
-  child = false,
-}: CardProps & { child?: boolean }) {
-  const tone = utilizationTone(s.utilization);
-  const pct = clampPct(s.utilization * 100);
-  const verdict = pressureVerdict(s.pressure_level);
-  const proj = projectCritical(s, samples);
-  const series = samples.map((x) => x.tokensUsed);
-  const ringSize = child ? 44 : 56;
-
-  return (
-    <motion.div
-      layout
-      className={cn(
-        "group rounded-lg border bg-surface cursor-pointer",
-        "shadow-xs hover:shadow-md transition-[border-color,box-shadow] duration-200",
-        tone === "danger"
-          ? "border-danger/50"
-          : "border-border hover:border-border-hover",
-        expanded && "shadow-md",
-      )}
-      whileHover={expanded ? undefined : { y: -2 }}
-    >
-      <button
-        onClick={onToggle}
-        aria-expanded={expanded}
-        className="w-full text-left p-4 cursor-pointer rounded-lg"
-      >
-        <div className="flex items-start gap-3">
-          <BudgetRing
-            utilization={s.utilization}
-            pressure={pressureFromUtil(s.utilization)}
-            size={ringSize}
-            stroke={6}
-          >
-            <span className="font-mono text-sm font-semibold tabular-nums text-text leading-none">
-              {pct}
-              <span className="text-mono-micro text-text-dim">%</span>
-            </span>
-          </BudgetRing>
-
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <StatusDot tone={tone} pulse="live" />
-              <span className="font-mono text-sm font-semibold text-text truncate">
-                {s.session_id.slice(0, 12)}
-              </span>
-              <span className="flex-1" />
-              <ChevronDown
-                className={cn(
-                  "h-4 w-4 text-text-dim shrink-0 transition-transform duration-200",
-                  expanded && "rotate-180",
-                )}
-                strokeWidth={2}
-              />
-            </div>
-            <p
-              className={cn(
-                "font-mono text-mono-mini uppercase tracking-[0.06em] mt-1",
-                toneTextClass(tone),
-              )}
-            >
-              {verdict.word}
-            </p>
-            <p className="font-mono text-mono-mini text-text-dim mt-0.5 truncate">
-              {corpus ? corpusLabel(corpus) : s.corpus_id}
-              {s.client_name ? ` · ${s.client_name}` : ""}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-3 -mx-1">
-          <Sparkline
-            data={series}
-            smooth
-            tone={tone}
-            height={32}
-            ariaLabel={`Token usage trend for ${s.session_id}`}
-          />
-        </div>
-
-        <div className="mt-2 flex items-center justify-between font-mono text-mono-mini text-text-dim">
-          <span className={cn(fresh && "ministr-pulse rounded px-1 text-text")}>
-            turn {s.current_turn}
-          </span>
-          <span className="tabular-nums">
-            {formatTokens(s.tokens_used)} / {formatTokens(s.tokens_remaining)}{" "}
-            free
-          </span>
-        </div>
-
-        {proj && proj.turns != null && (
-          <p
-            className={cn(
-              "mt-1.5 font-mono text-mono-micro uppercase tracking-[0.06em]",
-              toneTextClass(tone),
-            )}
-          >
-            ≈ {proj.turns} turn{proj.turns === 1 ? "" : "s"} to limit
-          </p>
-        )}
-      </button>
-
-      {expanded && (
-        <SessionExpanded
-          session={s}
-          samples={samples}
-          onOpenInspector={onOpenInspector}
-        />
-      )}
-    </motion.div>
-  );
-}
-
-/** The in-place per-session dashboard revealed when a card is expanded —
- *  economics grid + burn/projection + a larger trend, no panel switch. */
-function SessionExpanded({
-  session,
-  samples,
-  onOpenInspector,
-}: {
-  session: SessionDetail;
-  samples: readonly SessionSample[];
-  onOpenInspector: () => void;
-}) {
-  const v = deriveVitals(session);
-  if (!v) return null;
-  const burn = burnRate(samples);
-  const proj = projectCritical(session, samples);
-  const series = samples.map((s) => s.tokensUsed);
-
-  return (
-    <div className="border-t border-border-soft px-4 py-3 flex flex-col gap-3">
-      <div className="grid grid-cols-2 gap-px rounded-lg overflow-hidden border border-border-soft bg-border-soft">
-        <MetricTile
-          variant="cell"
-          icon={Zap}
-          label="saved"
-          value={formatTokens(v.tokensSaved)}
-          tone="success"
-          className="bg-surface"
-        />
-        <MetricTile
-          variant="cell"
-          icon={Layers}
-          label="dedup hits"
-          value={String(v.dedupHits)}
-          className="bg-surface"
-        />
-        <MetricTile
-          variant="cell"
-          icon={Scissors}
-          label="evictions"
-          value={String(v.evictions)}
-          className="bg-surface"
-        />
-        <MetricTile
-          variant="cell"
-          icon={Shrink}
-          label="compress"
-          value={String(v.compressions)}
-          className="bg-surface"
-        />
-      </div>
-
-      <div className="flex items-center justify-between font-mono text-mono-mini text-text-dim">
-        <span className="inline-flex items-center gap-1">
-          <Flame className="h-3 w-3" strokeWidth={2} aria-hidden />
-          {burn.tokensPerTurn != null
-            ? `${Math.round(burn.tokensPerTurn)} tok/turn`
-            : "stable burn"}
-        </span>
-        <span className={cn(proj?.turns != null && toneTextClass(v.tone))}>
-          {proj?.turns != null
-            ? `≈ ${proj.turns} turn${proj.turns === 1 ? "" : "s"} to limit`
-            : "not trending up"}
-        </span>
-      </div>
-
-      <Sparkline
-        data={series}
-        smooth
-        tone={v.tone}
-        height={44}
-        ariaLabel={`Token usage trend for ${session.session_id}`}
-      />
-
-      <button
-        onClick={onOpenInspector}
-        className="self-start inline-flex items-center gap-1 font-mono text-mono-mini uppercase tracking-[0.08em] text-text-muted hover:text-text cursor-pointer transition-colors duration-150"
-      >
-        Open full inspector
-        <ExternalLink className="h-3 w-3" strokeWidth={2} />
-      </button>
-    </div>
-  );
-}
-
-/**
- * Loading placeholder that mirrors a SessionCard's layout (ring + title +
- * sparkline + footer) so the grid previews its structure while the first
- * poll lands — no blank gap, no layout jump (2026 skeleton-screen norm).
- */
-export function SessionCardSkeleton() {
-  return (
-    <div
-      className="rounded-lg border border-border bg-surface p-4 shadow-xs"
-      aria-hidden
-    >
-      <div className="flex items-start gap-3">
-        {/* Circle to mirror the BudgetRing; inline radius beats the
-            .ministr-skeleton base radius. */}
-        <div
-          className="h-14 w-14 shrink-0 ministr-skeleton"
-          style={{ borderRadius: "9999px" }}
-        />
-        <div className="min-w-0 flex-1 space-y-2 pt-1">
-          <div className="h-3 w-2/3 ministr-skeleton" />
-          <div className="h-2 w-1/3 ministr-skeleton" />
-          <div className="h-2 w-1/2 ministr-skeleton" />
-        </div>
-      </div>
-      <div className="mt-3 h-8 ministr-skeleton" />
-      <div className="mt-2 flex items-center justify-between">
-        <div className="h-2 w-12 ministr-skeleton" />
-        <div className="h-2 w-20 ministr-skeleton" />
-      </div>
-    </div>
   );
 }

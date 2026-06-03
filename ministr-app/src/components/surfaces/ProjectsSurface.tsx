@@ -50,7 +50,6 @@ import { H1 } from "../ui/heading";
 import { MetricTile } from "../ui/metric-tile";
 import { IndexingPanel } from "../IndexingPanel";
 import { AdaptiveSurface } from "../ui/adaptive-surface";
-import { ProjectSessions } from "./ProjectSessions";
 import { LinkedProjectsPanel } from "./LinkedProjectsPanel";
 import { useToast } from "../shell/ToastTray";
 
@@ -597,12 +596,6 @@ function ProjectDetail({
             Remove
           </Button>
         </div>
-
-        {/* No `key` — ProjectSessions reads the shared session store and
-            re-derives its slice on `corpus` change, so switching projects
-            is a filter swap, not a remount (no poll restart / loading
-            flash). */}
-        <ProjectSessions corpus={corpus} />
       </div>
     </div>
   );
