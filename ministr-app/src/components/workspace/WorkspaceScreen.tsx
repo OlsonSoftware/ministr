@@ -230,15 +230,6 @@ export function WorkspaceScreen({
     [openEntity],
   );
 
-  // The spine is the single source of truth for facet scoping.
-  const setActiveProject = useCallback(
-    (id: string | null) => {
-      if (id) selectProject(id);
-      else selectFleet();
-    },
-    [selectProject, selectFleet],
-  );
-
   const renderFacet = useCallback(
     (facet: FacetId) => {
       if (!status) return null;
@@ -247,13 +238,7 @@ export function WorkspaceScreen({
         case "ask":
           return <AskSurface status={status} activeCorpusId={cid} />;
         case "explore":
-          return (
-            <ExploreSurface
-              status={status}
-              activeCorpusId={cid}
-              setActiveCorpusId={setActiveProject}
-            />
-          );
+          return <ExploreSurface status={status} activeCorpusId={cid} />;
         case "activity":
           return <SessionsSurface status={status} activeCorpusId={cid} />;
         case "tend":
@@ -273,7 +258,6 @@ export function WorkspaceScreen({
     [
       status,
       activeProjectId,
-      setActiveProject,
       theme,
       onThemeChange,
       onShowOnboarding,
