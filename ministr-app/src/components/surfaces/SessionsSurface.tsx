@@ -106,9 +106,11 @@ export function SessionsSurface({
 
       <div className="flex-1 min-h-0 overflow-y-auto px-5 pb-5">
         {!loaded ? (
-          <p className="font-sans text-sm text-text-dim py-6">
-            Connecting<span className="ministr-blink">_</span>
-          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <SessionCardSkeleton key={i} />
+            ))}
+          </div>
         ) : sessions.length === 0 ? (
           <div className="grid place-items-center h-full">
             <EmptyState
@@ -179,7 +181,7 @@ function AggStat({
   );
 }
 
-function SessionCard({
+export function SessionCard({
   session: s,
   corpus,
   series,
@@ -208,7 +210,10 @@ function SessionCard({
       whileHover={{ y: -2 }}
       className={cn(
         "group text-left rounded-lg border bg-surface p-4 cursor-pointer",
-        "transition-colors duration-200",
+        // §4 — resting hairline lift; the whileHover y:-2 now reads as real
+        // elevation because the shadow deepens with it.
+        "shadow-xs hover:shadow-md",
+        "transition-[border-color,box-shadow] duration-200",
         tone === "danger"
           ? "border-danger/50"
           : "border-border hover:border-border-hover",
@@ -279,5 +284,38 @@ function SessionCard({
         </p>
       )}
     </motion.button>
+  );
+}
+
+/**
+ * Loading placeholder that mirrors a SessionCard's layout (ring + title +
+ * sparkline + footer) so the grid previews its structure while the first
+ * poll lands — no blank gap, no layout jump (2026 skeleton-screen norm).
+ */
+export function SessionCardSkeleton() {
+  return (
+    <div
+      className="rounded-lg border border-border bg-surface p-4 shadow-xs"
+      aria-hidden
+    >
+      <div className="flex items-start gap-3">
+        {/* Circle to mirror the BudgetRing; inline radius beats the
+            .ministr-skeleton base radius. */}
+        <div
+          className="h-14 w-14 shrink-0 ministr-skeleton"
+          style={{ borderRadius: "9999px" }}
+        />
+        <div className="min-w-0 flex-1 space-y-2 pt-1">
+          <div className="h-3 w-2/3 ministr-skeleton" />
+          <div className="h-2 w-1/3 ministr-skeleton" />
+          <div className="h-2 w-1/2 ministr-skeleton" />
+        </div>
+      </div>
+      <div className="mt-3 h-8 ministr-skeleton" />
+      <div className="mt-2 flex items-center justify-between">
+        <div className="h-2 w-12 ministr-skeleton" />
+        <div className="h-2 w-20 ministr-skeleton" />
+      </div>
+    </div>
   );
 }
