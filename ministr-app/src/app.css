@@ -302,6 +302,32 @@ body {
 /* Glow utility — opt-in halo for live/active elements. */
 .glow-accent { box-shadow: var(--glow-soft); }
 
+/* ------------------------------------------------------------------
+   Glass tier (DESIGN.md §4) — translucent layered material for FLOATING
+   chrome only (command palette, dialogs, drawers, dropdowns, toasts).
+   Never for in-flow content. Composed via the `glassPanel` role token.
+   ------------------------------------------------------------------ */
+.glass-panel {
+  background: color-mix(in oklab, var(--color-surface) 82%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  backdrop-filter: blur(20px) saturate(1.4);
+  border: var(--border-width-default) solid var(--color-border);
+  border-radius: var(--radius-xl);
+  /* lift + a hairline inset top highlight for the specular cue */
+  box-shadow: var(--shadow-lg),
+    inset 0 1px 0 0 color-mix(in oklab, var(--color-text) 7%, transparent);
+}
+
+/* Mandatory a11y fallback: under Reduce Transparency / increased contrast,
+   glass collapses to a solid surface so text never relies on translucency. */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .glass-panel {
+    background: var(--color-surface);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
 /* Strong-border utility (compat with workspace dividers). */
 .border-strong { border-width: var(--border-width-strong); }
 

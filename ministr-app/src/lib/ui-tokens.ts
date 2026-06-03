@@ -145,3 +145,10 @@ export const contentAdaptive =
  *  backdrop (the `backdrop-blur-[2px]` value lives here so call sites never
  *  hand-roll it). Compose with `cn(overlayScrim, "z-[…] …")` for layering. */
 export const overlayScrim = "fixed inset-0 bg-black/50 backdrop-blur-[2px]";
+
+/** Glass panel — the translucent layered material for FLOATING chrome only
+ *  (command palette, dialogs, drawers, dropdowns, toasts), per DESIGN.md §4.
+ *  Backed by the `.glass-panel` CSS utility (app.css), which carries the
+ *  blur + specular highlight AND the mandatory reduced-transparency solid
+ *  fallback. Never use on in-flow content. Compose with `cn(glassPanel, …)`. */
+export const glassPanel = "glass-panel";
