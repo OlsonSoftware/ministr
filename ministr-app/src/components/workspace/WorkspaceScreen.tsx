@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { DaemonStatus } from "../../lib/types";
+import type { DaemonStatus, SessionDetail } from "../../lib/types";
 import {
   matchShortcut,
   firesWhileTyping,
   type ShortcutAction,
 } from "../../lib/shortcuts";
 import { useSessions } from "../../hooks/useSessions";
+import { useEntityPanel } from "../../hooks/useEntityPanel";
 import { useToast } from "../shell/ToastTray";
 import { ShortcutSheet } from "../ShortcutSheet";
 import { CommandPalette } from "../chrome/CommandPalette";
@@ -52,9 +53,10 @@ export function WorkspaceScreen({
   onShowOnboarding,
   onRefresh,
 }: Props) {
-  const { activeProjectId, selectProject, selectFleet, setFacet } =
+  const { activeProjectId, isFleet, selectProject, selectFleet, setFacet } =
     useWorkspace();
   const { sessions } = useSessions();
+  const { openEntity } = useEntityPanel();
   const { toast } = useToast();
 
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -211,6 +213,23 @@ export function WorkspaceScreen({
     onThemeChange(order[(order.indexOf(theme) + 1) % order.length]);
   }, [theme, onThemeChange]);
 
+  // The live ⚡ layer is scoped to the spine: a project's agents on a project,
+  // the whole fleet when zoomed out.
+  const scopedSessions = isFleet
+    ? sessions
+    : sessions.filter((s) => s.corpus_id === activeProjectId);
+
+  const onOpenSession = useCallback(
+    (s: SessionDetail) =>
+      openEntity({
+        kind: "session",
+        corpusId: s.corpus_id,
+        sessionId: s.session_id,
+        seed: s,
+      }),
+    [openEntity],
+  );
+
   // The spine is the single source of truth for facet scoping.
   const setActiveProject = useCallback(
     (id: string | null) => {
@@ -280,7 +299,8 @@ export function WorkspaceScreen({
       <WorkspaceShell
         status={status}
         error={error}
-        sessionCount={sessions.length}
+        sessions={scopedSessions}
+        onOpenSession={onOpenSession}
         onAddProject={onAddProject}
         onOpenLogs={onOpenLogs}
         onOpenPalette={() => setPaletteOpen(true)}

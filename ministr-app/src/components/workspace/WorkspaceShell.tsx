@@ -1,12 +1,13 @@
 import { AnimatePresence, motion } from "motion/react";
 import { Search } from "lucide-react";
-import type { DaemonStatus } from "../../lib/types";
+import type { DaemonStatus, SessionDetail } from "../../lib/types";
 import { fade } from "../../lib/motion";
 import { cn } from "../../lib/utils";
 import { DaemonDot } from "../shell/DaemonDot";
 import { NumberTicker } from "../ui/number-ticker";
 import { SpinePicker } from "./SpinePicker";
 import { FacetBar } from "./FacetBar";
+import { SessionLayer } from "./SessionLayer";
 import { ScopeHeader } from "./ScopeHeader";
 import { FACET_BY_ID } from "./facets";
 import { useWorkspace, type FacetId } from "./WorkspaceContext";
@@ -14,9 +15,10 @@ import { useWorkspace, type FacetId } from "./WorkspaceContext";
 interface Props {
   status: DaemonStatus | null;
   error?: string | null;
-  /** Lifted so the shell stays pure in Storybook — live App passes
-   *  `useSessions().sessions.length`. */
-  sessionCount?: number;
+  /** Live sessions, scoped to the spine by the parent. Passed as a prop so the
+   *  ⚡ layer renders populated in Storybook (useSessions is Tauri-gated). */
+  sessions?: readonly SessionDetail[];
+  onOpenSession?: (session: SessionDetail) => void;
   onOpenLogs?: () => void;
   onOpenPalette?: () => void;
   onAddProject?: () => void;
@@ -43,14 +45,15 @@ interface Props {
 export function WorkspaceShell({
   status,
   error = null,
-  sessionCount = 0,
+  sessions,
+  onOpenSession,
   onOpenLogs,
   onOpenPalette,
   onAddProject,
   renderFacet,
   renderFleet,
 }: Props) {
-  const { facet, isFleet } = useWorkspace();
+  const { facet, isFleet, corpora } = useWorkspace();
 
   return (
     <div className="flex flex-col h-full min-h-0 bg-bg">
@@ -66,9 +69,6 @@ export function WorkspaceShell({
 
         {status && (
           <div className="hidden md:flex items-center gap-4 font-mono text-mono-mini text-text-dim">
-            <Vital label="sessions">
-              <NumberTicker value={sessionCount} flashOnChange className="text-text" />
-            </Vital>
             <Vital label="mem">
               <NumberTicker
                 value={status.memory_mb}
@@ -78,6 +78,12 @@ export function WorkspaceShell({
             </Vital>
           </div>
         )}
+
+        <SessionLayer
+          sessions={sessions ?? []}
+          corpora={corpora}
+          onOpenSession={onOpenSession}
+        />
 
         {onOpenPalette && (
           <button

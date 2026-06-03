@@ -101,7 +101,6 @@ function Shell({
         <WorkspaceShell
           status={status}
           error={error}
-          sessionCount={3}
           onOpenLogs={() => {}}
           onOpenPalette={() => {}}
           onAddProject={() => {}}
