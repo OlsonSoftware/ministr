@@ -32,7 +32,7 @@ import { spring } from "../../lib/motion";
 import { cn } from "../../lib/utils";
 import { FileTree } from "./FileTree";
 import { CodeViewer } from "./CodeViewer";
-import { CodeLanding } from "./CodeLanding";
+import { CodeOverviewConnector } from "./CodeOverview";
 import { BridgeMapConnector } from "./BridgeMap";
 import { DeadCodeMapConnector } from "./DeadCodeMap";
 import { SolidMapConnector } from "./SolidMap";
@@ -358,10 +358,11 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
 
         <div className="min-h-0 min-w-0 border-r border-border-soft">
           {!path ? (
-            <CodeLanding
+            <CodeOverviewConnector
               corpusId={corpusId}
               corpus={corpus}
               onOpen={(p) => nav.push({ path: p })}
+              onOpenLens={setLens}
             />
           ) : fileLoading && !file ? (
             <div className="grid h-full place-items-center">
