@@ -456,10 +456,18 @@ function ProjectCard({
           <IndexingPanel vm={vm} compact />
         </div>
       ) : (
-        <div className="flex items-center justify-between mt-2 text-mono-mini font-mono uppercase tracking-[0.08em] text-text-dim">
-          <span>{corpus.files_indexed.toLocaleString()} files</span>
+        <div className="flex items-center justify-between gap-2 mt-2 text-mono-mini font-mono uppercase tracking-[0.08em] text-text-dim">
+          <span className="truncate min-w-0">
+            {vm.filesIndexed.toLocaleString()} files
+            {" · "}
+            {vm.sectionsIndexed.toLocaleString()} sections
+            {vm.symbols > 0 && ` · ${vm.symbols.toLocaleString()} symbols`}
+          </span>
           {corpus.last_indexed && (
-            <span title={new Date(corpus.last_indexed * 1000).toLocaleString()}>
+            <span
+              className="shrink-0"
+              title={new Date(corpus.last_indexed * 1000).toLocaleString()}
+            >
               {formatRelativeTime(corpus.last_indexed)}
             </span>
           )}
