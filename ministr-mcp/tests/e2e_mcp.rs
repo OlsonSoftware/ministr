@@ -3351,6 +3351,31 @@ async fn impact_incoming_is_default_and_returns_callers() {
     );
 }
 
+/// FL5 — `ministr_diagnostics` is wired end-to-end: the tool is registered, its
+/// params parse, the backend dispatches to the core diagnostics op, and a
+/// structured `DiagnosticsResponse` comes back. The set is empty here because
+/// the fixture corpus has no on-disk toolchain (no registered local root /
+/// manifest), which proves the route → parse → dispatch path without spawning
+/// a real compiler. The per-format parsing + range→symbol mapping are covered
+/// by the core unit tests in `code::diagnostics`.
+#[tokio::test]
+async fn diagnostics_tool_is_wired_and_returns_structured_result() {
+    let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
+    let result = call_tool(&client, "ministr_diagnostics", json!({})).await;
+
+    assert_eq!(result.is_error, Some(false));
+    let response: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
+    let tr = tool_result(&response);
+    assert!(
+        tr["diagnostics"].is_array(),
+        "diagnostics must be a (possibly empty) array: {tr:?}"
+    );
+    assert_eq!(
+        tr["total"], 0,
+        "fixture corpus has no on-disk toolchain, so zero diagnostics: {tr:?}"
+    );
+}
+
 /// `direction: outgoing` walks the other way: `ministr_impact` on the caller
 /// surfaces its transitive callees over the same Calls edges.
 #[tokio::test]

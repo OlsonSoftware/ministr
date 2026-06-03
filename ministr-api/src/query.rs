@@ -232,6 +232,70 @@ pub struct DeadCodeRequest {
 }
 
 // ---------------------------------------------------------------------------
+// Diagnostics (FL5 — the agentic "verify" stage)
+// ---------------------------------------------------------------------------
+
+/// Severity of a [`Diagnostic`], normalised across toolchains (the LSP
+/// `DiagnosticSeverity` ladder).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticSeverity {
+    /// A hard error — the build/typecheck failed here.
+    Error,
+    /// A warning — compiles, but flagged.
+    Warning,
+    /// Informational note.
+    Info,
+    /// A hint / suggestion.
+    Hint,
+}
+
+/// One structured compiler/linter diagnostic returned by `ministr_diagnostics`
+/// — the `textDocument/publishDiagnostics` analog. 1-based lines/columns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Diagnostic {
+    /// Absolute path to the file the diagnostic is anchored in.
+    pub file: String,
+    /// 1-based start line.
+    pub line_start: u32,
+    /// 1-based start column.
+    pub col_start: u32,
+    /// 1-based end line.
+    pub line_end: u32,
+    /// 1-based end column.
+    pub col_end: u32,
+    /// Normalised severity.
+    pub severity: DiagnosticSeverity,
+    /// Machine-readable rule/error code (e.g. `E0599`, `TS2345`, `F401`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    /// Human-readable message (never the raw build log).
+    pub message: String,
+    /// The toolchain / tool that produced this diagnostic.
+    pub source: String,
+    /// FL1 cross-link: id of the indexed symbol enclosing the primary line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_id: Option<String>,
+}
+
+/// Diagnostics response.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DiagnosticsResponse {
+    pub diagnostics: Vec<Diagnostic>,
+    pub total: usize,
+}
+
+/// Parameters for the `/diagnostics` daemon endpoint (POST body).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema, Default)]
+pub struct DiagnosticsRequest {
+    /// Restrict to these toolchain languages (e.g. `rust`, `typescript`).
+    /// `None` = every detected toolchain.
+    pub languages: Option<Vec<String>>,
+    /// Maximum diagnostics to return.
+    pub limit: Option<usize>,
+}
+
+// ---------------------------------------------------------------------------
 // SOLID
 // ---------------------------------------------------------------------------
 

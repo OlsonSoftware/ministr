@@ -71,13 +71,14 @@ use progress::{run_ingestion_progress_notifier, run_subscription_notifier};
 use types::{
     AlreadyDeliveredResponse, BridgeEndpointSummary, BridgeLinkSummary, BridgeParams,
     BridgeResponse, CloneOutputData, CloneParams, CompressParams, CompressResponse,
-    CorpusStatsHeader, DeadCodeParams, DeadCodeResponse, DefinitionParams, DroppedParams,
-    DroppedResponse, ExtractParams, ExtractResponse, FetchOutputData, FetchParams, FetchResponse,
-    ImpactParams, ImpactResponse, NextAction, ProjectEntry, ProjectsResponse, ReadOutputData,
-    ReadParams, ReferencesParams, ReferencesResponse, RefreshParams, RefreshResponse,
-    RelatedParams, RelatedResponse, SessionMetricsResponse, SolidParams, SolidResponse,
-    SurveyParams, SurveyResponse, SymbolSummary, SymbolsParams, SymbolsResponse, TaskParams,
-    TaskStatusResponse, TocParams, TocResponse, ToolResponse, UsageResponse, tool_output_schema,
+    CorpusStatsHeader, DeadCodeParams, DeadCodeResponse, DefinitionParams, DiagnosticsParams,
+    DiagnosticsResponse, DroppedParams, DroppedResponse, ExtractParams, ExtractResponse,
+    FetchOutputData, FetchParams, FetchResponse, ImpactParams, ImpactResponse, NextAction,
+    ProjectEntry, ProjectsResponse, ReadOutputData, ReadParams, ReferencesParams,
+    ReferencesResponse, RefreshParams, RefreshResponse, RelatedParams, RelatedResponse,
+    SessionMetricsResponse, SolidParams, SolidResponse, SurveyParams, SurveyResponse,
+    SymbolSummary, SymbolsParams, SymbolsResponse, TaskParams, TaskStatusResponse, TocParams,
+    TocResponse, ToolResponse, UsageResponse, tool_output_schema,
 };
 
 use crate::task::{McpTaskManager, task_to_cancel_result, task_to_get_result};
@@ -2695,6 +2696,63 @@ impl MinistrServer {
                 }
                 Err(e) => {
                     warn!(error = %e, "ministr_dead failed");
+                    Ok(soft_backend_error(&e))
+                }
+            }
+        }
+        .instrument(span)
+        .await
+    }
+
+    /// Run the project's own compiler/linter toolchain(s) and return
+    /// structured diagnostics — the agentic "verify" stage (FL5).
+    ///
+    /// Detects each indexed project's toolchain (cargo, tsc, eslint, ruff,
+    /// go vet, …; any SARIF-emitting tool plugs in), runs it, and returns
+    /// bounded structured diagnostics (file/range/severity/code/message),
+    /// errors first, each cross-linked to the enclosing symbol — never raw
+    /// build logs. Language-agnostic: one normalised shape across every
+    /// toolchain in the repo.
+    #[tool(
+        name = "ministr_diagnostics",
+        description = "Run the project's own toolchain(s) (cargo/tsc/eslint/ruff/go vet/…, plus any SARIF-emitting tool) and return bounded STRUCTURED diagnostics (file, range, severity, code, message), errors first, each cross-linked to the enclosing symbol. The agentic verify step — structured compiler/lint feedback as data, never raw build logs. Language-agnostic.",
+        output_schema = tool_output_schema::<ToolResponse<DiagnosticsResponse>>(),
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn diagnostics(
+        &self,
+        Parameters(params): Parameters<DiagnosticsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let tenant_subject = self.current_tenant_subject();
+        let limit = params.limit.unwrap_or(100).clamp(1, 500);
+        let span = info_span!("ministr_diagnostics", languages = ?params.languages, limit);
+
+        async {
+            match self
+                .backend
+                .diagnostics(
+                    tenant_subject.as_deref(),
+                    params.project.as_deref(),
+                    params.languages.as_deref(),
+                    limit,
+                )
+                .await
+            {
+                Ok(diagnostics) => {
+                    let total = diagnostics.len();
+                    debug!(total, "ministr_diagnostics success");
+
+                    let mut reg = self.registry.lock().await;
+                    let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
+                    drop(reg);
+
+                    let response = self
+                        .build_response(DiagnosticsResponse { diagnostics, total }, usage_status)
+                        .await;
+                    structured_result(&response)
+                }
+                Err(e) => {
+                    warn!(error = %e, "ministr_diagnostics failed");
                     Ok(soft_backend_error(&e))
                 }
             }

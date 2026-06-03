@@ -7,6 +7,7 @@
 
 mod code;
 mod compress;
+mod diagnostics;
 mod query;
 mod solid;
 
@@ -21,6 +22,11 @@ use crate::index::{SparseIndex, VectorIndex};
 use crate::storage::{SqliteStorage, Storage};
 use crate::token::count_tokens;
 use crate::types::{ContentId, CorpusRoot, TocEntry};
+
+// Re-export the language-agnostic diagnostics types (defined alongside the
+// toolchain registry in `crate::code::diagnostics`) so transport crates import
+// them from `ministr_core::service`, like the other analysis-family types.
+pub use crate::code::diagnostics::{Diagnostic, DiagnosticSeverity};
 
 /// A ranked result from a corpus survey search.
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]

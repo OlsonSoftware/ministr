@@ -9,8 +9,9 @@ use std::sync::Arc;
 
 use ministr_api::client::DaemonClient;
 use ministr_core::service::{
-    CallDirection, ClaimResult, CompressedItem, DeadSymbol, ImpactResult, RelatedClaimResult,
-    SectionDetail, SolidFinding, SolidParams, SurveyResult, SymbolDefinition, SymbolRefResult,
+    CallDirection, ClaimResult, CompressedItem, DeadSymbol, Diagnostic, ImpactResult,
+    RelatedClaimResult, SectionDetail, SolidFinding, SolidParams, SurveyResult, SymbolDefinition,
+    SymbolRefResult,
 };
 use ministr_core::storage::traits::{OccurrenceRecord, occurrence_at};
 use ministr_core::storage::{BridgeLinkDetail, SymbolFilter, SymbolRecord};
@@ -18,10 +19,10 @@ use ministr_core::types::{RefKind, RelationType, SymbolId, TocEntry};
 
 use super::convert::{
     api_bridge_to_storage, api_claim_to_service, api_compressed_to_service,
-    api_dead_symbol_to_service, api_impact_to_service, api_related_to_service,
-    api_section_to_service, api_solid_finding_to_service, api_survey_to_service,
-    api_symbol_def_to_record, api_symbol_def_to_service, api_symbol_reference_to_service,
-    api_toc_to_service, service_solid_params_to_api,
+    api_dead_symbol_to_service, api_diagnostic_to_service, api_impact_to_service,
+    api_related_to_service, api_section_to_service, api_solid_finding_to_service,
+    api_survey_to_service, api_symbol_def_to_record, api_symbol_def_to_service,
+    api_symbol_reference_to_service, api_toc_to_service, service_solid_params_to_api,
 };
 use super::{BackendError, QueryBackend};
 
@@ -262,6 +263,30 @@ impl QueryBackend for DaemonBackend {
                 .symbols
                 .into_iter()
                 .map(api_dead_symbol_to_service)
+                .collect())
+        }
+    }
+
+    fn diagnostics(
+        &self,
+        languages: Option<&[String]>,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<Diagnostic>, BackendError>> + Send {
+        let client = self.client.clone();
+        let corpus_id = self.corpus_id.clone();
+        let session_id = self.session_id.clone();
+        let req = ministr_api::query::DiagnosticsRequest {
+            languages: languages.map(<[String]>::to_vec),
+            limit: Some(limit),
+        };
+        async move {
+            let resp = client
+                .diagnostics(&corpus_id, &req, session_id.as_deref())
+                .await?;
+            Ok(resp
+                .diagnostics
+                .into_iter()
+                .map(api_diagnostic_to_service)
                 .collect())
         }
     }

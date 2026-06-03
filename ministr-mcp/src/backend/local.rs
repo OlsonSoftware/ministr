@@ -7,7 +7,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use ministr_core::service::{
-    CallDirection, ClaimResult, CompressedItem, DeadSymbol, ImpactResult, QueryService,
+    CallDirection, ClaimResult, CompressedItem, DeadSymbol, Diagnostic, ImpactResult, QueryService,
     RelatedClaimResult, SectionDetail, SolidFinding, SolidParams, SurveyResult, SymbolDefinition,
     SymbolRefResult,
 };
@@ -142,6 +142,16 @@ impl QueryBackend for LocalBackend {
                 .find_dead_code(kind.as_deref(), module.as_deref(), min_lines, limit)
                 .await?)
         }
+    }
+
+    fn diagnostics(
+        &self,
+        languages: Option<&[String]>,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<Diagnostic>, BackendError>> + Send {
+        let service = self.service.clone();
+        let languages = languages.map(<[String]>::to_vec);
+        async move { Ok(service.diagnostics(languages.as_deref(), limit).await?) }
     }
 
     fn solid(

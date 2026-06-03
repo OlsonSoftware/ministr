@@ -37,9 +37,9 @@ use std::sync::Arc;
 use ministr_api::TenantCorpusFilter;
 use ministr_api::client::{ClientError, DaemonClient};
 use ministr_core::service::{
-    CallDirection, ClaimResult, CompressedItem, DeadSymbol, ImpactResult, QueryError, QueryService,
-    RelatedClaimResult, SectionDetail, SolidFinding, SolidParams, SurveyResult, SymbolDefinition,
-    SymbolRefResult,
+    CallDirection, ClaimResult, CompressedItem, DeadSymbol, Diagnostic, ImpactResult, QueryError,
+    QueryService, RelatedClaimResult, SectionDetail, SolidFinding, SolidParams, SurveyResult,
+    SymbolDefinition, SymbolRefResult,
 };
 use ministr_core::storage::{BridgeLinkDetail, SymbolFilter, SymbolRecord};
 use ministr_core::types::{RefKind, RelationType, TocEntry};
@@ -143,6 +143,15 @@ pub trait QueryBackend: Send + Sync {
         min_lines: u32,
         limit: usize,
     ) -> impl Future<Output = Result<Vec<DeadSymbol>, BackendError>> + Send;
+
+    /// Structured compiler/linter diagnostics from the project's own
+    /// toolchain(s) (FL5 — the "verify" stage). `languages` optionally
+    /// restricts which toolchains run; `None` = every detected toolchain.
+    fn diagnostics(
+        &self,
+        languages: Option<&[String]>,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<Diagnostic>, BackendError>> + Send;
 
     /// Deterministic SOLID-violation candidates.
     fn solid(
@@ -756,6 +765,36 @@ impl Backend {
                 Err(default) => Ok(default
                     .find_dead_code(kind, module, min_lines, limit)
                     .await?),
+            },
+        }
+    }
+
+    pub async fn diagnostics(
+        &self,
+        tenant_subject: Option<&str>,
+        project: Option<&str>,
+        languages: Option<&[String]>,
+        limit: usize,
+    ) -> Result<Vec<Diagnostic>, BackendError> {
+        match self {
+            Self::Local(b) => b.diagnostics(languages, limit).await,
+            Self::Daemon(b) => b.diagnostics(languages, limit).await,
+            Self::DaemonMulti(m) => m.for_project(project).diagnostics(languages, limit).await,
+            Self::Registry {
+                default_service,
+                registry,
+                tenant_filter,
+            } => match Self::resolve_registry_handle(
+                default_service,
+                registry,
+                tenant_filter.as_ref(),
+                tenant_subject,
+                project,
+            )
+            .await
+            {
+                Ok(handle) => Ok(handle.service.diagnostics(languages, limit).await?),
+                Err(default) => Ok(default.diagnostics(languages, limit).await?),
             },
         }
     }

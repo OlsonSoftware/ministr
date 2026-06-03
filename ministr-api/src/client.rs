@@ -60,9 +60,10 @@ use crate::corpus::{
     RegisterCorpusResponse, UpdateCorpusPathsRequest,
 };
 use crate::query::{
-    DeadCodeRequest, DeadCodeResponse, ExtractRequest, ExtractResponse, ImpactResponse,
-    ReferencesResponse, SectionDetail, SolidRequest, SolidResponse, SurveyRequest, SurveyResponse,
-    SymbolDefinition, SymbolsRequest, SymbolsResponse,
+    DeadCodeRequest, DeadCodeResponse, DiagnosticsRequest, DiagnosticsResponse, ExtractRequest,
+    ExtractResponse, ImpactResponse, ReferencesResponse, SectionDetail, SolidRequest,
+    SolidResponse, SurveyRequest, SurveyResponse, SymbolDefinition, SymbolsRequest,
+    SymbolsResponse,
 };
 use crate::status::DaemonStatus;
 use crate::transport;
@@ -635,6 +636,28 @@ impl DaemonClient {
                 encode_path_component(sid)
             ),
             None => format!("/api/v1/corpora/{corpus_id}/dead"),
+        };
+        self.post(&path, req).await
+    }
+
+    /// Run the project's own toolchain(s) and return structured diagnostics
+    /// (FL5 — the "verify" stage).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn diagnostics(
+        &self,
+        corpus_id: &str,
+        req: &DiagnosticsRequest,
+        session_id: Option<&str>,
+    ) -> Result<DiagnosticsResponse, ClientError> {
+        let path = match session_id {
+            Some(sid) => format!(
+                "/api/v1/corpora/{corpus_id}/diagnostics?session_id={}",
+                encode_path_component(sid)
+            ),
+            None => format!("/api/v1/corpora/{corpus_id}/diagnostics"),
         };
         self.post(&path, req).await
     }

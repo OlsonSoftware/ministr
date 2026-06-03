@@ -154,6 +154,36 @@ pub(super) fn api_dead_symbol_to_service(
     }
 }
 
+fn api_diagnostic_severity_to_service(
+    s: ministr_api::query::DiagnosticSeverity,
+) -> ministr_core::service::DiagnosticSeverity {
+    use ministr_api::query::DiagnosticSeverity as Api;
+    use ministr_core::service::DiagnosticSeverity as Core;
+    match s {
+        Api::Error => Core::Error,
+        Api::Warning => Core::Warning,
+        Api::Info => Core::Info,
+        Api::Hint => Core::Hint,
+    }
+}
+
+pub(super) fn api_diagnostic_to_service(
+    d: ministr_api::query::Diagnostic,
+) -> ministr_core::service::Diagnostic {
+    ministr_core::service::Diagnostic {
+        file: d.file,
+        line_start: d.line_start,
+        col_start: d.col_start,
+        line_end: d.line_end,
+        col_end: d.col_end,
+        severity: api_diagnostic_severity_to_service(d.severity),
+        code: d.code,
+        message: d.message,
+        source: d.source,
+        symbol_id: d.symbol_id,
+    }
+}
+
 fn api_solid_principle_to_service(p: ministr_api::query::SolidPrinciple) -> SolidPrinciple {
     match p {
         ministr_api::query::SolidPrinciple::DryOcp => SolidPrinciple::DryOcp,

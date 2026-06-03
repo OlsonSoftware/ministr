@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use super::coerce;
 
 use ministr_core::service::{
-    CompressedItem, DeadSymbol, ImpactResult, RelatedClaimResult, SolidFinding, SurveyResult,
-    SymbolRefResult,
+    CompressedItem, DeadSymbol, Diagnostic, ImpactResult, RelatedClaimResult, SolidFinding,
+    SurveyResult, SymbolRefResult,
 };
 use ministr_core::session::drops::DropCandidate;
 use ministr_core::session::{CoherenceAlert, UsageStatus};
@@ -813,6 +813,36 @@ pub(crate) struct DeadCodeResponse {
     /// Dead-code candidates.
     pub(crate) symbols: Vec<DeadSymbol>,
     /// Total number of candidates that matched (before the limit cap).
+    pub(crate) total: usize,
+}
+
+/// Parameters for the `ministr_diagnostics` tool.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct DiagnosticsParams {
+    /// Optional toolchain-language filter.
+    #[serde(default)]
+    #[schemars(
+        description = "Restrict to these toolchain languages (e.g. 'rust','typescript','python','go'). Omit to run every detected toolchain."
+    )]
+    pub languages: Option<Vec<String>>,
+
+    /// Maximum diagnostics to return (default 100, capped at 500).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Maximum diagnostics to return. Default 100, capped at 500.")]
+    pub limit: Option<usize>,
+
+    /// Optional linked-project label.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    pub project: Option<String>,
+}
+
+/// Response from the `ministr_diagnostics` tool.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct DiagnosticsResponse {
+    /// Structured diagnostics, errors first.
+    pub(crate) diagnostics: Vec<Diagnostic>,
+    /// Total diagnostics returned (after the limit cap).
     pub(crate) total: usize,
 }
 

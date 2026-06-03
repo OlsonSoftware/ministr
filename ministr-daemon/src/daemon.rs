@@ -58,6 +58,7 @@ pub fn corpora_read_router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/impact/{sym}", get(impact))
         .route("/api/v1/corpora/{id}/dead", post(dead_code))
         .route("/api/v1/corpora/{id}/solid", post(solid))
+        .route("/api/v1/corpora/{id}/diagnostics", post(diagnostics))
         .route("/api/v1/corpora/{id}/files", get(list_files))
         .route("/api/v1/corpora/{id}/file", post(file_content))
         .route("/api/v1/corpora/{id}/occurrences", post(occurrences))
@@ -1376,6 +1377,35 @@ async fn dead_code(
             let summary = format!("{total} dead-code candidates");
             if let Some(sid) = q.session_id {
                 tick_session_turn(&state, &id, &sid, "dead", response_tokens(&body)).await;
+            }
+            with_summary(Json(body), summary)
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
+    }
+}
+
+async fn diagnostics(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<SessionQuery>,
+    Json(req): Json<query::DiagnosticsRequest>,
+) -> impl IntoResponse {
+    let handle = get_corpus!(&state, &id);
+    let limit = req.limit.unwrap_or(100);
+    let result = handle
+        .service
+        .diagnostics(req.languages.as_deref(), limit)
+        .await;
+    drop(handle);
+    match result {
+        Ok(diags) => {
+            let diagnostics: Vec<query::Diagnostic> =
+                diags.into_iter().map(convert::diagnostic).collect();
+            let total = diagnostics.len();
+            let body = query::DiagnosticsResponse { diagnostics, total };
+            let summary = format!("{total} diagnostics");
+            if let Some(sid) = q.session_id {
+                tick_session_turn(&state, &id, &sid, "diagnostics", response_tokens(&body)).await;
             }
             with_summary(Json(body), summary)
         }

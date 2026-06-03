@@ -22,6 +22,7 @@ pub(crate) mod ast_parser;
 pub mod bridge;
 mod complexity;
 pub mod cpp_fallback;
+pub mod diagnostics;
 pub mod generic_extractor;
 pub mod grammar;
 pub mod hlsl;
@@ -34,6 +35,10 @@ mod symbol_table;
 
 pub use ast_parser::{AstItem, AstParser, ItemKind, walk_top_level_items};
 pub use complexity::cyclomatic_complexity;
+pub use diagnostics::{
+    Diagnostic, DiagnosticFormat, DiagnosticSeverity, Toolchain, detect_toolchains,
+    parse_diagnostics,
+};
 pub use generic_extractor::{generic_extract_symbols, generic_extract_symbols_for};
 pub use grammar::{ALL_CODE_EXTENSIONS, GrammarRegistry, LanguageGrammar};
 pub use occurrence::{Occurrence, extract_occurrences};

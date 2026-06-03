@@ -142,6 +142,35 @@ pub fn dead_symbol(s: ministr_core::service::DeadSymbol) -> query::DeadSymbol {
 }
 
 #[must_use]
+pub fn diagnostic_severity(
+    s: ministr_core::service::DiagnosticSeverity,
+) -> query::DiagnosticSeverity {
+    use ministr_core::service::DiagnosticSeverity as Core;
+    match s {
+        Core::Error => query::DiagnosticSeverity::Error,
+        Core::Warning => query::DiagnosticSeverity::Warning,
+        Core::Info => query::DiagnosticSeverity::Info,
+        Core::Hint => query::DiagnosticSeverity::Hint,
+    }
+}
+
+#[must_use]
+pub fn diagnostic(d: ministr_core::service::Diagnostic) -> query::Diagnostic {
+    query::Diagnostic {
+        file: d.file,
+        line_start: d.line_start,
+        col_start: d.col_start,
+        line_end: d.line_end,
+        col_end: d.col_end,
+        severity: diagnostic_severity(d.severity),
+        code: d.code,
+        message: d.message,
+        source: d.source,
+        symbol_id: d.symbol_id,
+    }
+}
+
+#[must_use]
 pub fn solid_principle(p: ministr_core::service::SolidPrinciple) -> query::SolidPrinciple {
     match p {
         ministr_core::service::SolidPrinciple::DryOcp => query::SolidPrinciple::DryOcp,
