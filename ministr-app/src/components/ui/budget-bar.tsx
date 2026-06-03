@@ -40,6 +40,11 @@ export function BudgetBar({
   return (
     <div className={cn("flex items-center gap-2", className)}>
       <div
+        role="progressbar"
+        aria-valuenow={pct}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label="Budget utilization"
         className={cn(
           "relative flex-1 overflow-hidden rounded-full bg-surface-overlay",
           size === "hero"

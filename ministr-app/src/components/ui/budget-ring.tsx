@@ -48,6 +48,11 @@ export function BudgetRing({
 
   return (
     <div
+      role="progressbar"
+      aria-valuenow={Math.round(u * 100)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-label="Budget utilization"
       className={cn(
         "relative inline-flex items-center justify-center",
         className,
@@ -95,7 +100,8 @@ export function BudgetRing({
           strokeDasharray={c}
           strokeDashoffset={c - c * u}
           style={{
-            transition: "stroke-dashoffset 0.45s cubic-bezier(0.22,1,0.36,1)",
+            // §8 — the `flow` easing token (reduced-motion clamps duration globally)
+            transition: "stroke-dashoffset 0.45s var(--ease-flow)",
           }}
         />
       </svg>
