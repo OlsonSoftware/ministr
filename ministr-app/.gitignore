@@ -1,5 +1,6 @@
 node_modules/
 dist/
+storybook-static/
 src-tauri/binaries/
 
 # Use pnpm (pnpm-lock.yaml) — npm lockfile is a footgun in a pnpm project.
