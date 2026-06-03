@@ -23,7 +23,7 @@ import { popIn, scrim } from "../../lib/motion";
 import { cloudClient } from "../../lib/cloudClient";
 import { cn } from "../../lib/utils";
 import { CloudControlRoomConnector } from "./CloudControlRoom";
-import { SettingsSurface } from "./SettingsSurface";
+import { SystemSurfaceConnector } from "./SystemSurface";
 
 type AccountArea = "cloud" | "system";
 
@@ -124,7 +124,7 @@ export function AccountSettings({
                   }}
                 />
               ) : (
-                <SettingsSurface
+                <SystemSurfaceConnector
                   status={status}
                   activeCorpusId={activeCorpusId}
                   theme={theme}
