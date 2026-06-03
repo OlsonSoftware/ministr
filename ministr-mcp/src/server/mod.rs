@@ -1261,6 +1261,7 @@ impl MinistrServer {
                             if let Some(ref service) = self.service {
                                 let storage = service.storage();
                                 let mut sections = Vec::new();
+                                let mut claims_counts = std::collections::HashMap::new();
                                 for sid in &survey_section_ids {
                                     if prefetch.cache().peek(sid).is_some() {
                                         continue;
@@ -1268,11 +1269,17 @@ impl MinistrServer {
                                     let section_id = SectionId(sid.clone());
                                     if let Ok(Some(record)) = storage.get_section(&section_id).await
                                     {
+                                        // Stamp the true claim count so a warm
+                                        // ministr_read hit reports the right
+                                        // number of extractable claims (not 0).
+                                        if let Ok(claims) = storage.list_claims(&section_id).await {
+                                            claims_counts.insert(sid.clone(), claims.len());
+                                        }
                                         sections.push(record);
                                     }
                                 }
                                 if !sections.is_empty() {
-                                    prefetch.prefetch_from_intent(sections);
+                                    prefetch.prefetch_from_intent(sections, &claims_counts);
                                 }
                             }
                         }

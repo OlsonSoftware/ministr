@@ -565,7 +565,17 @@ impl PrefetchEngine {
     ///
     /// Inserts predicted section records into the cache with `AgentPlan` strategy.
     /// Respects a cap of `MAX_INTENT_PREFETCH` entries to avoid cache thrashing.
-    pub fn prefetch_from_intent(&mut self, sections: Vec<crate::storage::SectionRecord>) {
+    ///
+    /// `claims_counts` carries the true number of extractable claims per
+    /// section id; an entry served from this warm cache reports it verbatim,
+    /// so a section missing from the map (count 0) must genuinely have no
+    /// claims — otherwise a later `ministr_read` warm hit would wrongly tell
+    /// the agent there is nothing to `ministr_extract`.
+    pub fn prefetch_from_intent(
+        &mut self,
+        sections: Vec<crate::storage::SectionRecord>,
+        claims_counts: &HashMap<String, usize>,
+    ) {
         let mut inserted = 0;
         for section in sections {
             if inserted >= MAX_INTENT_PREFETCH {
@@ -575,6 +585,7 @@ impl PrefetchEngine {
                 continue;
             }
             let token_count = crate::token::count_tokens(&section.text);
+            let claims = claims_counts.get(&section.id.0).copied().unwrap_or(0);
             let key = section.id.0.clone();
             self.cache.insert_default(
                 key,
@@ -585,7 +596,7 @@ impl PrefetchEngine {
                     heading_path: Some(section.heading_path),
                     summary: section.summary,
                     resolution: Resolution::Section,
-                    claims_available: 0,
+                    claims_available: claims,
                     strategy: PrefetchStrategy::AgentPlan,
                 },
             );
@@ -1736,7 +1747,7 @@ mod tests {
             })
             .collect();
 
-        engine.prefetch_from_intent(sections);
+        engine.prefetch_from_intent(sections, &HashMap::new());
 
         // Should cap at MAX_INTENT_PREFETCH (5)
         let mut hits = 0;
@@ -1784,11 +1795,37 @@ mod tests {
             position: 0,
         }];
 
-        engine.prefetch_from_intent(sections);
+        engine.prefetch_from_intent(sections, &HashMap::new());
 
         // Should not overwrite existing entry
         let entry = engine.try_serve("s0").unwrap();
         assert_eq!(entry.text, "existing");
         assert_eq!(entry.strategy, PrefetchStrategy::Sequential);
+    }
+
+    #[test]
+    fn prefetch_from_intent_carries_claim_counts() {
+        use crate::storage::SectionRecord;
+        use crate::types::{ContentId, SectionId};
+
+        let mut engine = PrefetchEngine::with_default_capacity();
+        let sections = vec![SectionRecord {
+            id: SectionId("doc#s1".into()),
+            document_id: ContentId("doc".into()),
+            heading_path: vec!["S1".into()],
+            depth: 1,
+            text: "JWT tokens use RS256.".into(),
+            summary: None,
+            position: 0,
+        }];
+        let mut counts = HashMap::new();
+        counts.insert("doc#s1".to_string(), 2);
+
+        engine.prefetch_from_intent(sections, &counts);
+
+        // A later ministr_read warm hit must report the true claim count so
+        // the agent isn't wrongly told there are no claims to extract.
+        let entry = engine.try_serve("doc#s1").unwrap();
+        assert_eq!(entry.claims_available, 2);
     }
 }
