@@ -17,6 +17,7 @@ import {
   Code2,
   Command,
   PanelRight,
+  ShieldCheck,
   Trash2,
   X,
 } from "lucide-react";
@@ -34,6 +35,7 @@ import { CodeViewer } from "./CodeViewer";
 import { CodeLanding } from "./CodeLanding";
 import { BridgeMapConnector } from "./BridgeMap";
 import { DeadCodeMapConnector } from "./DeadCodeMap";
+import { SolidMapConnector } from "./SolidMap";
 import { SymbolNeighborhoodConnector } from "./SymbolNeighborhood";
 import { RelatedFilesPanel } from "./RelatedFilesPanel";
 import { SymbolPalette } from "./SymbolPalette";
@@ -279,7 +281,11 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
           </>
         ) : (
           <span className="truncate font-mono text-xs text-text-muted">
-            {lens === "bridges" ? "Cross-language seams" : "Unused candidates"}
+            {lens === "bridges"
+              ? "Cross-language seams"
+              : lens === "unused"
+                ? "Unused candidates"
+                : "Architecture findings"}
           </span>
         )}
         <div className="ml-auto flex items-center gap-2">
@@ -333,6 +339,10 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
               nav.push({ path: p, line });
             }}
           />
+        </div>
+      ) : lens === "solid" ? (
+        <div className="min-h-0 flex-1">
+          <SolidMapConnector corpusId={corpusId} />
         </div>
       ) : (
       <div
@@ -431,7 +441,7 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
   );
 }
 
-type Lens = "code" | "bridges" | "unused";
+type Lens = "code" | "bridges" | "unused" | "solid";
 
 /** Code | Bridges | Unused lens switch — the three ways to read the index:
  *  file-by-file, by its cross-language seams, or by what nothing references
@@ -447,6 +457,7 @@ function LensToggle({
     { id: "code", label: "Code", icon: Code2 },
     { id: "bridges", label: "Bridges", icon: Cable },
     { id: "unused", label: "Unused", icon: Trash2 },
+    { id: "solid", label: "Quality", icon: ShieldCheck },
   ];
   return (
     <div

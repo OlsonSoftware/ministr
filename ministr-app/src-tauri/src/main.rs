@@ -104,6 +104,7 @@ fn main() {
             commands::file_occurrences,
             commands::bridge_query,
             commands::dead_code,
+            commands::solid_findings,
             commands::read_source_excerpt,
             commands::open_path,
             commands::ingestion_progress,

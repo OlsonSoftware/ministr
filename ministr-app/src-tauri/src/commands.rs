@@ -1223,6 +1223,30 @@ pub async fn dead_code(
         .collect())
 }
 
+/// Detect SOLID / architecture-smell findings for a corpus — DRY/OCP
+/// near-duplicates, SRP low-cohesion, ISP fat-interface, DIP concrete
+/// dependencies, Shotgun-Surgery, and cyclic package dependencies. Backs the
+/// Explore "Quality" lens (mirrors the daemon's `/solid` endpoint +
+/// `ministr_solid`). Returns the api `SolidFinding` enum directly — the tagged
+/// JSON union is the wire format the frontend models, so no DTO mirror.
+#[tauri::command]
+pub async fn solid_findings(
+    corpus_id: String,
+    limit: Option<usize>,
+) -> Result<Vec<ministr_api::query::SolidFinding>, CommandError> {
+    Ok(ministr_api::client::DaemonClient::new()
+        .solid(
+            &corpus_id,
+            &ministr_api::query::SolidRequest {
+                limit,
+                ..Default::default()
+            },
+            None,
+        )
+        .await?
+        .findings)
+}
+
 /// Ingestion progress snapshot for a corpus.
 #[derive(Serialize)]
 pub struct IngestionProgressInfo {

@@ -181,6 +181,89 @@ export interface DeadSymbol {
   lines: number;
 }
 
+// ── SOLID / architecture findings (the Explore "Quality" lens) ──
+
+/** Minimal symbol summary embedded inside a `SolidFinding`. */
+export interface SolidSymbolRef {
+  symbol_id: string;
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+}
+
+/** One cohesion component inside an SRP (low-cohesion) finding. */
+export interface SolidComponent {
+  size: number;
+  members: SolidSymbolRef[];
+  members_omitted?: number;
+}
+
+/** One package→package edge inside a cyclic-dependency finding. */
+export interface SolidEdge {
+  from: string;
+  to: string;
+  example_from: SolidSymbolRef;
+  example_to: SolidSymbolRef;
+}
+
+/** A single SOLID-violation finding (tagged union on `type`), returned by
+ *  the `solid_findings` command. `principle` is a snake_case SolidPrinciple. */
+export type SolidFinding =
+  | {
+      type: "redundancy";
+      principle: string;
+      members: SolidSymbolRef[];
+      members_omitted?: number;
+      members_total: number;
+      canonical: SolidSymbolRef;
+      avg_cosine: number;
+      avg_jaccard: number;
+      cross_module: boolean;
+    }
+  | {
+      type: "low_cohesion";
+      principle: string;
+      container: SolidSymbolRef;
+      components: SolidComponent[];
+      method_count: number;
+    }
+  | {
+      type: "fat_interface";
+      principle: string;
+      interface: SolidSymbolRef;
+      method_count: number;
+      unused_methods: string[];
+      unused_methods_omitted?: number;
+      under_using_implementors: SolidSymbolRef[];
+      under_using_implementors_omitted?: number;
+    }
+  | {
+      type: "concrete_dependency";
+      principle: string;
+      consumer: SolidSymbolRef;
+      concrete_target: SolidSymbolRef;
+      suggested_abstraction: SolidSymbolRef | null;
+    }
+  | {
+      type: "shotgun_surgery";
+      principle: string;
+      name: string;
+      kind: string;
+      sites: SolidSymbolRef[];
+      sites_omitted?: number;
+      sites_total: number;
+      avg_jaccard: number;
+    }
+  | {
+      type: "cyclic_dependency";
+      principle: string;
+      packages: string[];
+      edge_count: number;
+      example_edges: SolidEdge[];
+      example_edges_omitted?: number;
+    };
+
 /** Full symbol definition returned by `symbol_definition`. */
 export interface SymbolDefinitionDetail {
   id: string;

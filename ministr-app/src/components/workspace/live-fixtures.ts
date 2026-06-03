@@ -26,6 +26,8 @@ import type {
   FileInfo,
   Occurrence,
   SessionDetail,
+  SolidFinding,
+  SolidSymbolRef,
   SymbolDefinitionDetail,
   SymbolInfo,
   SymbolRef,
@@ -462,6 +464,54 @@ function deadCode(args: Record<string, unknown>): DeadSymbol[] {
   return kind ? LIVE_DEAD.filter((d) => d.kind === kind) : LIVE_DEAD;
 }
 
+// ── SOLID / architecture findings (the Quality lens). ─────────────────────
+
+function sref(name: string, kind: string, file: string, line: number): SolidSymbolRef {
+  return { symbol_id: `sym-${file}::${name}`, name, kind, file, line };
+}
+
+const LIVE_SOLID: SolidFinding[] = [
+  {
+    type: "redundancy",
+    principle: "dry_ocp",
+    canonical: sref("handle_get", "function", "ministr-daemon/src/daemon.rs", 410),
+    members: [
+      sref("handle_get", "function", "ministr-daemon/src/daemon.rs", 410),
+      sref("handle_head", "function", "ministr-daemon/src/daemon.rs", 455),
+    ],
+    members_total: 2,
+    avg_cosine: 0.93,
+    avg_jaccard: 0.68,
+    cross_module: false,
+  },
+  {
+    type: "fat_interface",
+    principle: "isp",
+    interface: sref("Storage", "trait", "ministr-core/src/storage/traits.rs", 20),
+    method_count: 22,
+    unused_methods: ["compress", "vacuum", "checkpoint"],
+    under_using_implementors: [
+      sref("MemoryStorage", "struct", "ministr-core/src/storage/memory.rs", 14),
+    ],
+  },
+  {
+    type: "concrete_dependency",
+    principle: "dip",
+    consumer: sref("QueryService", "struct", "ministr-core/src/service/query.rs", 7),
+    concrete_target: sref("SqliteStorage", "struct", "ministr-core/src/storage/sqlite.rs", 40),
+    suggested_abstraction: sref("Storage", "trait", "ministr-core/src/storage/traits.rs", 20),
+  },
+  {
+    type: "cyclic_dependency",
+    principle: "cyclic_dependency",
+    packages: ["ministr-core::service", "ministr-core::index"],
+    edge_count: 4,
+    example_edges: [
+      { from: "service", to: "index", example_from: sref("survey", "function", "ministr-core/src/service/query.rs", 412), example_to: sref("search", "function", "ministr-core/src/index/hnsw.rs", 88) },
+    ],
+  },
+];
+
 const SUPPORTED_MODELS = [
   { name: "jina-code-v2", dimension: 768, description: "Code-optimised, Matryoshka", code_optimized: true },
   { name: "bge-m3", dimension: 1024, description: "Multilingual dense+sparse", code_optimized: false },
@@ -483,6 +533,7 @@ export const LIVE_FIXTURES: TauriFixtures = {
   symbol_references: REFERENCES,
   bridge_query: bridgeQuery,
   dead_code: deadCode,
+  solid_findings: LIVE_SOLID,
   // Tend
   list_supported_models: SUPPORTED_MODELS,
   // Ask
