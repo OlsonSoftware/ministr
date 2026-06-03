@@ -105,6 +105,7 @@ fn main() {
             commands::bridge_query,
             commands::dead_code,
             commands::solid_findings,
+            commands::diagnostics,
             commands::read_source_excerpt,
             commands::open_path,
             commands::ingestion_progress,

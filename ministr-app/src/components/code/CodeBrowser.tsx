@@ -18,6 +18,7 @@ import {
   Command,
   PanelRight,
   ShieldCheck,
+  Stethoscope,
   Trash2,
   X,
 } from "lucide-react";
@@ -36,6 +37,7 @@ import { CodeOverviewConnector } from "./CodeOverview";
 import { BridgeMapConnector } from "./BridgeMap";
 import { DeadCodeMapConnector } from "./DeadCodeMap";
 import { SolidMapConnector } from "./SolidMap";
+import { DiagnosticsMapConnector } from "./DiagnosticsMap";
 import { SymbolNeighborhoodConnector } from "./SymbolNeighborhood";
 import { RelatedFilesPanel } from "./RelatedFilesPanel";
 import { SymbolPalette } from "./SymbolPalette";
@@ -344,6 +346,16 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
         <div className="min-h-0 flex-1">
           <SolidMapConnector corpusId={corpusId} />
         </div>
+      ) : lens === "diagnostics" ? (
+        <div className="min-h-0 flex-1">
+          <DiagnosticsMapConnector
+            corpusId={corpusId}
+            onOpenFile={(p, line) => {
+              setLens("code");
+              nav.push({ path: p, line });
+            }}
+          />
+        </div>
       ) : (
       <div
         ref={gridRef}
@@ -442,11 +454,13 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
   );
 }
 
-type Lens = "code" | "bridges" | "unused" | "solid";
+type Lens = "code" | "bridges" | "unused" | "solid" | "diagnostics";
 
-/** Code | Bridges | Unused lens switch — the three ways to read the index:
- *  file-by-file, by its cross-language seams, or by what nothing references
- *  (dead-code candidates). A segmented control in the Explore header. */
+/** Code | Bridges | Unused | Quality | Diagnostics lens switch — the five ways
+ *  to read the index: file-by-file, by its cross-language seams, by what nothing
+ *  references (dead code), by SOLID/architecture smells, or by the project's own
+ *  toolchain findings (the verify stage). A segmented control in the Explore
+ *  header. */
 function LensToggle({
   lens,
   onChange,
@@ -459,6 +473,7 @@ function LensToggle({
     { id: "bridges", label: "Bridges", icon: Cable },
     { id: "unused", label: "Unused", icon: Trash2 },
     { id: "solid", label: "Quality", icon: ShieldCheck },
+    { id: "diagnostics", label: "Diagnostics", icon: Stethoscope },
   ];
   return (
     <div

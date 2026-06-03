@@ -181,6 +181,31 @@ export interface DeadSymbol {
   lines: number;
 }
 
+// ── Diagnostics (the Explore "Diagnostics" lens — FL5's verify stage) ──
+
+/** Severity of a {@link Diagnostic}, normalised across toolchains (the LSP
+ *  DiagnosticSeverity ladder). */
+export type DiagnosticSeverity = "error" | "warning" | "info" | "hint";
+
+/** A structured compiler/linter diagnostic returned by the `diagnostics`
+ *  command — the agentic VERIFY stage. The project's own toolchain
+ *  (cargo / tsc / eslint / ruff / go vet / …, plus any SARIF-emitting tool)
+ *  normalised to one shape, never raw build logs. 1-based line/col; `symbol_id`
+ *  is the enclosing symbol (the FL1 cross-link) when one exists. */
+export interface Diagnostic {
+  file: string;
+  line_start: number;
+  col_start: number;
+  line_end: number;
+  col_end: number;
+  severity: DiagnosticSeverity;
+  code: string | null;
+  message: string;
+  /** The toolchain / tool that produced this diagnostic (e.g. `cargo`, `tsc`). */
+  source: string;
+  symbol_id: string | null;
+}
+
 // ── SOLID / architecture findings (the Explore "Quality" lens) ──
 
 /** Minimal symbol summary embedded inside a `SolidFinding`. */

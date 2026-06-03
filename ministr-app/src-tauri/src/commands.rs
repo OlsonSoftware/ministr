@@ -1154,7 +1154,7 @@ pub async fn symbol_references(
     symbol_id: String,
 ) -> Result<Vec<SymbolRef>, CommandError> {
     let resp = ministr_api::client::DaemonClient::new()
-        .references(&corpus_id, &symbol_id, None)
+        .references(&corpus_id, &symbol_id, None, false)
         .await?;
 
     Ok(resp
@@ -1245,6 +1245,69 @@ pub async fn solid_findings(
         )
         .await?
         .findings)
+}
+
+/// A structured compiler/linter diagnostic returned to the frontend — the
+/// Explore "Diagnostics" lens (mirrors the daemon's `/diagnostics` endpoint +
+/// `ministr_diagnostics`). `severity` is flattened to a lowercase string
+/// ("error" / "warning" / "info" / "hint") for the view; `symbol_id` is the
+/// enclosing symbol (FL1) when one exists.
+#[derive(Serialize)]
+pub struct DiagnosticOut {
+    pub file: String,
+    pub line_start: u32,
+    pub col_start: u32,
+    pub line_end: u32,
+    pub col_end: u32,
+    pub severity: String,
+    pub code: Option<String>,
+    pub message: String,
+    pub source: String,
+    pub symbol_id: Option<String>,
+}
+
+/// Run the project's own toolchain(s) and return structured diagnostics — the
+/// agentic "verify" stage. Backs the Explore "Diagnostics" lens (mirrors the
+/// daemon's `/diagnostics` endpoint + `ministr_diagnostics`). Language-agnostic:
+/// cargo / tsc / eslint / ruff / go vet / … (and any SARIF-emitting tool),
+/// normalised to one shape — structured findings, never raw build logs.
+#[tauri::command]
+pub async fn diagnostics(
+    corpus_id: String,
+    languages: Option<Vec<String>>,
+    limit: Option<usize>,
+) -> Result<Vec<DiagnosticOut>, CommandError> {
+    use ministr_api::query::DiagnosticSeverity as Sev;
+    let resp = ministr_api::client::DaemonClient::new()
+        .diagnostics(
+            &corpus_id,
+            &ministr_api::query::DiagnosticsRequest { languages, limit },
+            None,
+        )
+        .await?;
+
+    Ok(resp
+        .diagnostics
+        .into_iter()
+        .map(|d| DiagnosticOut {
+            file: d.file,
+            line_start: d.line_start,
+            col_start: d.col_start,
+            line_end: d.line_end,
+            col_end: d.col_end,
+            severity: match d.severity {
+                Sev::Error => "error",
+                Sev::Warning => "warning",
+                Sev::Info => "info",
+                Sev::Hint => "hint",
+            }
+            .to_string(),
+            code: d.code,
+            message: d.message,
+            source: d.source,
+            symbol_id: d.symbol_id,
+        })
+        .collect())
 }
 
 /// Ingestion progress snapshot for a corpus.
