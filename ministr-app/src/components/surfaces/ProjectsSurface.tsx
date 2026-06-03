@@ -524,7 +524,9 @@ function ProjectDetail({
       <div className="space-y-5">
         <div>
           <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="font-mono text-lg font-bold tracking-[0.08em] text-text">
+            {/* §6: title weight/tracking — semibold + tight, not the wide
+                label idiom (0.08em is for tiny caps, not a large title). */}
+            <h2 className="font-mono text-lg font-semibold tracking-[-0.01em] text-text">
               {corpusLabel(corpus)}
             </h2>
             <Badge variant={statusVariant} dot>
