@@ -6,7 +6,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useDaemonStatus } from "./hooks/useDaemonStatus";
 import { useTheme } from "./hooks/useTheme";
 import { useDensity } from "./hooks/usePreferences";
-import { Onboarding } from "./components/Onboarding";
+import { FirstRunOverlay } from "./components/onboarding/FirstRunGuide";
 import { ToastProvider, useToast } from "./components/shell/ToastTray";
 import { EntityPanelProvider } from "./hooks/useEntityPanel";
 import { WorkspaceProvider } from "./components/workspace/WorkspaceContext";
@@ -97,10 +97,6 @@ function AppInner() {
     }
   }, [status, toast]);
 
-  if (showOnboarding) {
-    return <Onboarding onDismiss={() => setShowOnboarding(false)} />;
-  }
-
   return (
     <WorkspaceProvider corpora={status?.corpora ?? []}>
       <div className="flex flex-col h-screen min-h-0 bg-bg">
@@ -139,6 +135,18 @@ function AppInner() {
             />
           )}
         </div>
+
+        {/* First-run guide overlays the workspace (chrome visible behind) so
+            the aha moment happens IN the workspace, not in a wizard you exit. */}
+        <AnimatePresence>
+          {showOnboarding && status && (
+            <FirstRunOverlay
+              status={status}
+              onRefresh={refresh}
+              onDone={() => setShowOnboarding(false)}
+            />
+          )}
+        </AnimatePresence>
       </div>
     </WorkspaceProvider>
   );
