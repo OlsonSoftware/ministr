@@ -32,6 +32,7 @@ import {
   loadThreads,
   newId,
   saveThreads,
+  sourceTurn,
   THREADS_LIMIT,
   type Thread,
   type Turn,
@@ -230,6 +231,22 @@ export function AskSurface({ status, activeCorpusId }: Props) {
     submit(s);
   }
 
+  // ── Citation drop-in — open a citation INTO the thread as a kept source
+  //    block (aaa-ask-citation-dropin). Persists with the thread (the turns
+  //    effect), so it survives resume. Deduped: re-opening an already-kept
+  //    source is a no-op rather than stacking duplicates. ──────────────────
+  const dropSource = useCallback((contentId: string, n: number) => {
+    setTurns((prev) =>
+      prev.some((t) => t.kind === "source" && t.source?.contentId === contentId)
+        ? prev
+        : [...prev, sourceTurn(contentId, n)],
+    );
+  }, []);
+
+  const removeTurn = useCallback((id: string) => {
+    setTurns((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
   // ── Thread lifecycle. ──────────────────────────────────────────────────
   const newThread = useCallback(() => {
     setTurns([]);
@@ -349,6 +366,8 @@ export function AskSurface({ status, activeCorpusId }: Props) {
                 onPin={() => t.entry && pinEntry(t.entry)}
                 onUnpin={() => t.entry && unpin(t.entry)}
                 onRetry={() => submit(t.query)}
+                onDropSource={dropSource}
+                onRemoveSource={() => removeTurn(t.id)}
               />
             ))}
 

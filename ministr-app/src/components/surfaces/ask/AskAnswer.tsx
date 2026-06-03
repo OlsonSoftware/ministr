@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   AlertTriangle,
+  BookmarkPlus,
   Check,
   Copy,
   Cpu,
@@ -43,6 +44,8 @@ interface Props {
   pinned: boolean;
   onPin: () => void;
   onUnpin: () => void;
+  /** Drop a cited source INTO the thread as a kept block. */
+  onDropSource: (contentId: string, n: number) => void;
 }
 
 /**
@@ -66,6 +69,7 @@ export function AskAnswer({
   pinned,
   onPin,
   onUnpin,
+  onDropSource,
 }: Props) {
   const [copied, setCopied] = useState(false);
 
@@ -154,6 +158,7 @@ export function AskAnswer({
           corpusId={corpusId}
           pinned={pinned}
           onPinAnswer={pinned ? undefined : onPin}
+          onDropSource={onDropSource}
         />
       </Card>
 
@@ -163,6 +168,7 @@ export function AskAnswer({
           cited={cited}
           corpusId={corpusId}
           corpus={corpus}
+          onDropSource={onDropSource}
         />
       )}
     </motion.div>
@@ -198,12 +204,14 @@ function Answer({
   corpusId,
   pinned,
   onPinAnswer,
+  onDropSource,
 }: {
   answer: string;
   sourceIds: string[];
   corpusId: string;
   pinned: boolean;
   onPinAnswer?: () => void;
+  onDropSource: (contentId: string, n: number) => void;
 }) {
   const { openEntity } = useEntityPanel();
 
@@ -213,6 +221,11 @@ function Answer({
     const id = sourceIds[n - 1];
     if (!id) return;
     void resolveAndOpen(corpusId, id, openEntity);
+  }
+
+  function dropCitation(n: number) {
+    const id = sourceIds[n - 1];
+    if (id) onDropSource(id, n);
   }
 
   return (
@@ -290,6 +303,7 @@ function Answer({
                 {renderWithCitations(
                   children,
                   openCitation,
+                  dropCitation,
                   sourceIds,
                   corpusId,
                   pinned,
@@ -304,6 +318,7 @@ function Answer({
                 {renderWithCitations(
                   children,
                   openCitation,
+                  dropCitation,
                   sourceIds,
                   corpusId,
                   pinned,
@@ -332,6 +347,7 @@ function injectCitationMarkers(text: string): string {
 function renderWithCitations(
   children: ReactNode,
   open: (n: number) => void,
+  drop: (n: number) => void,
   sourceIds: string[],
   corpusId: string,
   pinned: boolean,
@@ -341,6 +357,7 @@ function renderWithCitations(
     return splitOnSentinel(
       children,
       open,
+      drop,
       sourceIds,
       corpusId,
       pinned,
@@ -350,7 +367,15 @@ function renderWithCitations(
   if (Array.isArray(children)) {
     return children.map((c, i) => (
       <span key={i}>
-        {renderWithCitations(c, open, sourceIds, corpusId, pinned, onPinAnswer)}
+        {renderWithCitations(
+          c,
+          open,
+          drop,
+          sourceIds,
+          corpusId,
+          pinned,
+          onPinAnswer,
+        )}
       </span>
     ));
   }
@@ -360,6 +385,7 @@ function renderWithCitations(
 function splitOnSentinel(
   text: string,
   open: (n: number) => void,
+  drop: (n: number) => void,
   sourceIds: string[],
   corpusId: string,
   pinned: boolean,
@@ -386,6 +412,7 @@ function splitOnSentinel(
               pinned={pinned}
               onPinAnswer={onPinAnswer}
               onOpen={(num) => open(num)}
+              onDrop={(num) => drop(num)}
             />
           );
         })}
@@ -402,11 +429,13 @@ function SourcesPanel({
   cited,
   corpusId,
   corpus,
+  onDropSource,
 }: {
   sourceIds: string[];
   cited: Set<number>;
   corpusId: string;
   corpus: CorpusInfo | null;
+  onDropSource: (contentId: string, n: number) => void;
 }) {
   return (
     <div className="flex flex-col gap-2">
@@ -438,6 +467,7 @@ function SourcesPanel({
               corpusId={corpusId}
               corpus={corpus}
               cited={cited.size === 0 || cited.has(i + 1)}
+              onDrop={() => onDropSource(id, i + 1)}
             />
           </motion.div>
         ))}
@@ -452,12 +482,14 @@ function SourceRow({
   corpusId,
   corpus,
   cited,
+  onDrop,
 }: {
   index: number;
   contentId: string;
   corpusId: string;
   corpus: CorpusInfo | null;
   cited: boolean;
+  onDrop: () => void;
 }) {
   const { openEntity } = useEntityPanel();
   const [excerpt, setExcerpt] = useState<string | null>(null);
@@ -537,10 +569,27 @@ function SourceRow({
           />
         )}
       </div>
-      <ExternalLink
-        className="h-3.5 w-3.5 text-text-dim group-hover:text-accent shrink-0 mt-1"
-        strokeWidth={2}
-      />
+      <div className="flex items-center gap-0.5 shrink-0 mt-0.5">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDrop();
+          }}
+          title="Keep in thread"
+          aria-label={`Keep source ${index} in thread`}
+          className={cn(
+            "grid place-items-center h-6 w-6 rounded-md cursor-pointer",
+            "text-text-dim opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+            "hover:bg-surface-overlay hover:text-info transition-[color,opacity] duration-150",
+          )}
+        >
+          <BookmarkPlus className="h-3.5 w-3.5" strokeWidth={2} />
+        </button>
+        <ExternalLink
+          className="h-3.5 w-3.5 text-text-dim group-hover:text-accent mt-0.5"
+          strokeWidth={2}
+        />
+      </div>
     </div>
   );
 }
@@ -562,8 +611,9 @@ function sourceLabel(id: string, headingPath?: string[]): string {
 }
 
 /** Resolve a content_id to a full SearchResult/SymbolInfo and open the
- *  global EntityPanel. Used by both citation chip clicks and SourceRow. */
-async function resolveAndOpen(
+ *  global EntityPanel. Used by citation chip clicks, SourceRow, and the
+ *  in-thread SourceDropBlock. */
+export async function resolveAndOpen(
   corpusId: string,
   contentId: string,
   openEntity: ReturnType<typeof useEntityPanel>["openEntity"],

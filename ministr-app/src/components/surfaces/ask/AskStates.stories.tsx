@@ -118,6 +118,7 @@ export const Answer: Story = {
         pinned={false}
         onPin={() => {}}
         onUnpin={() => {}}
+        onDropSource={() => {}}
       />
     </Pad>
   ),
@@ -134,6 +135,7 @@ export const AnswerPinned: Story = {
         pinned
         onPin={() => {}}
         onUnpin={() => {}}
+        onDropSource={() => {}}
       />
     </Pad>
   ),
@@ -150,6 +152,7 @@ export const AnswerWithUnsupportedClaims: Story = {
         pinned={false}
         onPin={() => {}}
         onUnpin={() => {}}
+        onDropSource={() => {}}
       />
     </Pad>
   ),

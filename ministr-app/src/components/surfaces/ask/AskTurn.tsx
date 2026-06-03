@@ -9,6 +9,7 @@ import type { CorpusInfo } from "../../../lib/types";
 import { AskAnswer } from "./AskAnswer";
 import { AskStatus } from "./AskStatus";
 import { ErrorCard } from "./ErrorCard";
+import { SourceDropBlock } from "./SourceDropBlock";
 import type { InferenceHealth } from "./internals";
 import type { AskPhaseName } from "./internals";
 import type { Turn } from "./thread";
@@ -38,6 +39,10 @@ interface Props {
   onPin: () => void;
   onUnpin: () => void;
   onRetry: () => void;
+  /** Drop a cited source INTO the thread as a kept block. */
+  onDropSource: (contentId: string, n: number) => void;
+  /** Remove THIS turn (used by source blocks' remove action). */
+  onRemoveSource: () => void;
 }
 
 export function AskTurn({
@@ -49,7 +54,21 @@ export function AskTurn({
   onPin,
   onUnpin,
   onRetry,
+  onDropSource,
+  onRemoveSource,
 }: Props) {
+  // A dropped-in source is its own first-class thread entry (no question line).
+  if (turn.kind === "source" && turn.source) {
+    return (
+      <SourceDropBlock
+        source={turn.source}
+        corpusId={corpusId}
+        corpus={corpus}
+        onRemove={onRemoveSource}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col gap-3">
       <AskQuestion text={turn.query} />
@@ -62,6 +81,7 @@ export function AskTurn({
           pinned={pinned}
           onPin={onPin}
           onUnpin={onUnpin}
+          onDropSource={onDropSource}
         />
       )}
       {turn.status === "error" && (

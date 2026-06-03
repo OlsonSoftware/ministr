@@ -16,6 +16,8 @@ interface Props {
   corpusId: string;
   /** Open in the EntityPanel drawer. */
   onOpen: (n: number) => void;
+  /** Drop this source INTO the thread as a kept block. */
+  onDrop?: (n: number) => void;
   /** Pin this answer (the surface uses one Pin per answer, not per source).
    *  When omitted the pin button is hidden. */
   onPinAnswer?: () => void;
@@ -42,6 +44,7 @@ export function AskCitation({
   sourceId,
   corpusId,
   onOpen,
+  onDrop,
   onPinAnswer,
   pinned = false,
 }: Props) {
@@ -172,6 +175,23 @@ export function AskCitation({
               >
                 <BrutalPin className="h-3 w-3" />
                 {pinned ? "Pinned" : "Pin answer"}
+              </button>
+            )}
+            {onDrop && (
+              <button
+                onClick={() => {
+                  onDrop(n);
+                  setOpen(false);
+                }}
+                title="Keep this source in the thread"
+                className={cn(
+                  "inline-flex items-center gap-1 px-2 py-0.5 cursor-pointer transition-colors duration-150 ease-out rounded-md",
+                  "font-mono text-mono-mini font-semibold uppercase tracking-[0.08em]",
+                  "border border-info bg-surface text-info",
+                  "hover:bg-info hover:text-[var(--color-accent-fg-on)]",
+                )}
+              >
+                + Thread
               </button>
             )}
             <button

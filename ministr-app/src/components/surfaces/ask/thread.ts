@@ -11,16 +11,42 @@ import type { RecentEntry } from "./internals";
 
 export type TurnStatus = "done" | "error";
 
+/** A source dropped INTO the thread from a citation — a first-class, kept
+ *  reference block (aaa-ask-citation-dropin). Persists with the thread so it
+ *  survives resume, unlike the transient EntityPanel drawer. */
+export interface DroppedSource {
+  /** The source's content_id (section id or `sym-…`). */
+  contentId: string;
+  /** 1-based citation index it was opened from (for the [n] badge). */
+  n: number;
+}
+
 export interface Turn {
   id: string;
   query: string;
   status: TurnStatus;
+  /** Turn kind. Absent on threads persisted before the source-drop feature —
+   *  treat `undefined` as `"qa"` for back-compat. */
+  kind?: "qa" | "source";
   /** Present when status === "done". */
   entry?: RecentEntry;
   /** Present when status === "error". */
   error?: string;
   /** Citation-checking flagged claims, if the verify phase reported any. */
   unsupported?: string[] | null;
+  /** Present when kind === "source". */
+  source?: DroppedSource;
+}
+
+/** Build a source-drop turn (a kept citation block in the thread). */
+export function sourceTurn(contentId: string, n: number): Turn {
+  return {
+    id: newId(),
+    query: "",
+    status: "done",
+    kind: "source",
+    source: { contentId, n },
+  };
 }
 
 export interface Thread {

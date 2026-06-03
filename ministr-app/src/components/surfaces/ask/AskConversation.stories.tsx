@@ -3,7 +3,7 @@ import type { CorpusInfo } from "../../../lib/types";
 import { AskTurn, AskPendingTurn } from "./AskTurn";
 import { ConversationHistory } from "./ConversationHistory";
 import type { RecentEntry } from "./internals";
-import type { Thread, Turn } from "./thread";
+import { sourceTurn, type Thread, type Turn } from "./thread";
 import { withTauriMock } from "../../../../.storybook/tauri-mock";
 
 /**
@@ -111,10 +111,40 @@ export const MultiTurn: Story = {
           onPin={() => {}}
           onUnpin={() => {}}
           onRetry={() => {}}
+          onDropSource={() => {}}
+          onRemoveSource={() => {}}
         />
       ))}
     </Frame>
   ),
+};
+
+/** A citation dropped INTO the thread as a kept source block, sitting between
+ *  answered turns (aaa-ask-citation-dropin). */
+export const WithDroppedSource: Story = {
+  render: () => {
+    const dropped = sourceTurn("ministr-core/src/lib.rs#root:c0", 1);
+    const turns: Turn[] = [THREAD_TURNS[0], dropped, THREAD_TURNS[1]];
+    return (
+      <Frame>
+        {turns.map((t) => (
+          <AskTurn
+            key={t.id}
+            turn={t}
+            corpusId="ministr"
+            corpus={corpusInfo}
+            health={null}
+            pinned={false}
+            onPin={() => {}}
+            onUnpin={() => {}}
+            onRetry={() => {}}
+            onDropSource={() => {}}
+            onRemoveSource={() => {}}
+          />
+        ))}
+      </Frame>
+    );
+  },
 };
 
 /** A follow-up in flight below a completed turn. */
@@ -130,6 +160,8 @@ export const FollowUpInFlight: Story = {
         onPin={() => {}}
         onUnpin={() => {}}
         onRetry={() => {}}
+        onDropSource={() => {}}
+        onRemoveSource={() => {}}
       />
       <AskPendingTurn
         query="And which model does the synthesis?"
@@ -157,6 +189,8 @@ export const TurnError: Story = {
         onPin={() => {}}
         onUnpin={() => {}}
         onRetry={() => {}}
+        onDropSource={() => {}}
+        onRemoveSource={() => {}}
       />
     </Frame>
   ),
