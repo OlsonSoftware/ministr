@@ -34,6 +34,7 @@ const CONNECT_CMD = "npx @modelcontextprotocol/inspector ministr stdio";
 
 export function SessionsSurface({
   status,
+  activeCorpusId,
 }: {
   status: DaemonStatus;
   activeCorpusId: string | null;
@@ -42,6 +43,17 @@ export function SessionsSurface({
   const { openEntity } = useEntityPanel();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
+  // Activity is a FACET of the spine: when a project is selected it shows only
+  // that project's agents; on the Fleet (activeCorpusId === null) it shows the
+  // whole fleet. (OOUX: one context — the facet never re-picks a corpus.)
+  const scoped = useMemo(
+    () =>
+      activeCorpusId
+        ? sessions.filter((s) => s.corpus_id === activeCorpusId)
+        : sessions,
+    [sessions, activeCorpusId],
+  );
+
   const corpora = status.corpora;
   const corpusById = useMemo(
     () => new Map(corpora.map((c) => [c.id, c])),
@@ -49,21 +61,21 @@ export function SessionsSurface({
   );
 
   const agg = useMemo(() => {
-    const used = sessions.reduce((a, s) => a + s.tokens_used, 0);
-    const cap = sessions.reduce(
+    const used = scoped.reduce((a, s) => a + s.tokens_used, 0);
+    const cap = scoped.reduce(
       (a, s) => a + s.tokens_used + s.tokens_remaining,
       0,
     );
     return {
-      count: sessions.length,
+      count: scoped.length,
       util: cap > 0 ? used / cap : 0,
-      saved: sessions.reduce((a, s) => a + s.total_tokens_saved, 0),
-      dedup: sessions.reduce((a, s) => a + s.dedup_hits, 0),
+      saved: scoped.reduce((a, s) => a + s.total_tokens_saved, 0),
+      dedup: scoped.reduce((a, s) => a + s.dedup_hits, 0),
     };
-  }, [sessions]);
+  }, [scoped]);
 
   // Pressure-sorted lineage groups (subagents nested under their parent).
-  const groups = useMemo(() => buildLineageGroups(sessions), [sessions]);
+  const groups = useMemo(() => buildLineageGroups(scoped), [scoped]);
 
   const toggle = (id: string) =>
     setExpanded((prev) => {
@@ -127,7 +139,7 @@ export function SessionsSurface({
                 <SessionCardSkeleton key={i} />
               ))}
             </div>
-          ) : sessions.length === 0 ? (
+          ) : scoped.length === 0 ? (
             <div className="grid place-items-center h-full">
               <EmptyState
                 icon={Users}

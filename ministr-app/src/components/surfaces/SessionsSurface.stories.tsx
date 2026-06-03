@@ -130,6 +130,21 @@ export const Populated: Story = {
   ),
 };
 
+/** Fleet view (no spine project) — the facet shows the WHOLE fleet, including
+ *  the critical ministr-private session that the project-scoped Populated story
+ *  filters out. Guards the activeCorpusId scoping both ways. */
+export const Fleet: Story = {
+  decorators: [withTauriMock({ list_sessions: SESSIONS })],
+  render: () => (
+    <Frame>
+      <SessionsSurface
+        status={status([corpusInfo])}
+        activeCorpusId={null}
+      />
+    </Frame>
+  ),
+};
+
 export const Empty: Story = {
   decorators: [withTauriMock({ list_sessions: [] })],
   render: () => (
