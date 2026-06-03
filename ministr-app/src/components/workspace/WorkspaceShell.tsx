@@ -9,7 +9,7 @@ import { SpinePicker } from "./SpinePicker";
 import { FacetBar } from "./FacetBar";
 import { ScopeHeader } from "./ScopeHeader";
 import { FACET_BY_ID } from "./facets";
-import { useWorkspace } from "./WorkspaceContext";
+import { useWorkspace, type FacetId } from "./WorkspaceContext";
 
 interface Props {
   status: DaemonStatus | null;
@@ -20,6 +20,12 @@ interface Props {
   onOpenLogs?: () => void;
   onOpenPalette?: () => void;
   onAddProject?: () => void;
+  /** Render the body for a facet (Project spine). Falls back to a scoped
+   *  placeholder when omitted (shell-only stories). */
+  renderFacet?: (facet: FacetId) => React.ReactNode;
+  /** Render the body for the Fleet spine (the collection). Falls back to a
+   *  placeholder when omitted. */
+  renderFleet?: () => React.ReactNode;
 }
 
 /**
@@ -41,8 +47,10 @@ export function WorkspaceShell({
   onOpenLogs,
   onOpenPalette,
   onAddProject,
+  renderFacet,
+  renderFleet,
 }: Props) {
-  const { facet } = useWorkspace();
+  const { facet, isFleet } = useWorkspace();
 
   return (
     <div className="flex flex-col h-full min-h-0 bg-bg">
@@ -94,32 +102,42 @@ export function WorkspaceShell({
         <DaemonDot status={status} error={error} onOpenLogs={onOpenLogs} />
       </header>
 
-      {/* Row 2 — the facet switcher. */}
-      <FacetBar />
+      {isFleet ? (
+        /* Fleet spine — the collection view owns the whole body. Picking a
+           project there zooms in and reveals the facet bar. */
+        <main className="flex-1 min-h-0 overflow-hidden bg-bg" role="main">
+          {renderFleet ? renderFleet() : <FleetPlaceholder />}
+        </main>
+      ) : (
+        <>
+          {/* Row 2 — the facet switcher (only meaningful on a project). */}
+          <FacetBar />
 
-      {/* Facet outlet — always scoped to the spine. ScopeHeader is OUTSIDE the
-          cross-fade so the object visibly persists while only the facet
-          (the verb) changes. */}
-      <main className="flex-1 min-h-0 overflow-hidden bg-bg" role="main">
-        <div className="flex flex-col h-full min-h-0">
-          <ScopeHeader />
-          <div className="flex-1 min-h-0 overflow-auto">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={facet}
-                variants={fade}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                className="h-full"
-                role="tabpanel"
-              >
-                <FacetOutletPlaceholder />
-              </motion.div>
-            </AnimatePresence>
-          </div>
-        </div>
-      </main>
+          {/* Facet outlet — always scoped to the spine. ScopeHeader is OUTSIDE
+              the cross-fade so the object visibly persists while only the facet
+              (the verb) changes. */}
+          <main className="flex-1 min-h-0 overflow-hidden bg-bg" role="main">
+            <div className="flex flex-col h-full min-h-0">
+              <ScopeHeader />
+              <div className="flex-1 min-h-0 overflow-auto">
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={facet}
+                    variants={fade}
+                    initial="initial"
+                    animate="animate"
+                    exit="exit"
+                    className="h-full"
+                    role="tabpanel"
+                  >
+                    {renderFacet ? renderFacet(facet) : <FacetOutletPlaceholder />}
+                  </motion.div>
+                </AnimatePresence>
+              </div>
+            </div>
+          </main>
+        </>
+      )}
     </div>
   );
 }
@@ -153,6 +171,21 @@ function FacetOutletPlaceholder() {
         The {meta.label} facet mounts here — scoped to{" "}
         <span className="text-text-muted">{scope}</span>.
       </p>
+    </div>
+  );
+}
+
+/** Fallback fleet body when no renderFleet is supplied (shell-only stories). */
+function FleetPlaceholder() {
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <ScopeHeader />
+      <div className="flex flex-1 min-h-[280px] items-center justify-center px-6 py-12 text-center">
+        <p className="max-w-sm font-mono text-mono-mini text-text-dim">
+          The Projects collection mounts here — pick a project to zoom into its
+          facets.
+        </p>
+      </div>
     </div>
   );
 }

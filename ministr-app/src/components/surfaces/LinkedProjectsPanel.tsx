@@ -53,7 +53,7 @@ export function LinkedProjectsPanel({ corpora, activeCorpusId }: Props) {
       const result = await invoke<LinkedProjectOut[]>("linked_projects_list", {
         projectRoot,
       });
-      setLinks(result);
+      setLinks(result ?? []);
     } catch (e) {
       setError(typeof e === "string" ? e : String(e));
     } finally {
