@@ -54,9 +54,22 @@ let snapshot: ProgressMap = EMPTY;
 const listeners = new Set<() => void>();
 let started = false;
 
+/** Tauri injects `__TAURI_INTERNALS__` at page load; it is absent in Storybook
+ *  and unit tests, where constructing a `Channel` would throw. */
+function hasTauriRuntime(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    (window as unknown as { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__ != null
+  );
+}
+
 /** Open the single backend Channel + task, once. */
 function ensureStarted(): void {
   if (started) return;
+  // No Tauri runtime (Storybook / tests) ⇒ no Channel to open. Stay on the
+  // EMPTY snapshot rather than throwing inside `new Channel()`.
+  if (!hasTauriRuntime()) return;
   started = true;
 
   const channel = new Channel<IndexingProgressEvent>();
