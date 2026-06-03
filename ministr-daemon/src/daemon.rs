@@ -1301,6 +1301,10 @@ async fn references(
 struct ImpactQuery {
     #[serde(default)]
     max_depth: Option<u32>,
+    /// `incoming` (callers, default) or `outgoing` (callees). Unrecognized
+    /// values fall back to incoming.
+    #[serde(default)]
+    direction: Option<String>,
     #[serde(default)]
     session_id: Option<String>,
 }
@@ -1312,13 +1316,26 @@ async fn impact(
 ) -> impl IntoResponse {
     let handle = get_corpus!(&state, &id);
     let max_depth = q.max_depth.unwrap_or(3);
-    let result = handle.service.compute_impact(&sym, max_depth).await;
+    let direction = q
+        .direction
+        .as_deref()
+        .and_then(ministr_core::service::CallDirection::parse)
+        .unwrap_or_default();
+    let result = handle
+        .service
+        .compute_impact(&sym, max_depth, direction)
+        .await;
     drop(handle);
     match result {
         Ok(r) => {
             let body = convert::impact_response(r);
+            let noun = if body.direction == "outgoing" {
+                "callees"
+            } else {
+                "callers"
+            };
             let summary = format!(
-                "{name} — {symbols} callers, {files} files, {risk:?} risk",
+                "{name} — {symbols} {noun}, {files} files, {risk:?} risk",
                 name = symbol_short_name(&sym),
                 symbols = body.symbols,
                 files = body.files,

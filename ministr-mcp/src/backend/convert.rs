@@ -107,6 +107,7 @@ pub(super) fn api_symbol_reference_to_service(
 pub(super) fn api_impact_to_service(r: ministr_api::query::ImpactResponse) -> ImpactResult {
     ImpactResult {
         target_symbol_id: r.target_symbol_id,
+        direction: ministr_core::service::CallDirection::parse(&r.direction).unwrap_or_default(),
         depth: r.depth,
         symbols: r.symbols,
         files: r.files,
@@ -479,6 +480,7 @@ mod tests {
     fn impact_round_trips_every_field() {
         let api = ministr_api::query::ImpactResponse {
             target_symbol_id: "sym-x".into(),
+            direction: "outgoing".into(),
             depth: 3,
             symbols: 7,
             files: 4,
@@ -495,6 +497,11 @@ mod tests {
         };
         let svc = api_impact_to_service(api.clone());
         assert_eq!(svc.target_symbol_id, api.target_symbol_id);
+        assert_eq!(
+            svc.direction,
+            ministr_core::service::CallDirection::Outgoing,
+            "direction must round-trip api→service"
+        );
         assert_eq!(svc.symbols, api.symbols);
         assert_eq!(svc.files, api.files);
         assert_eq!(svc.tests, api.tests);

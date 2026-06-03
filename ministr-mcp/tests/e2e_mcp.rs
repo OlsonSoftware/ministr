@@ -3321,6 +3321,76 @@ async fn ministr_symbols_finds_struct_by_name() {
     assert!(symbols.iter().any(|s| s["name"] == "MinistrConfig"));
 }
 
+// ---------------------------------------------------------------------------
+// FL3 — call-direction on ministr_impact (incoming callers / outgoing callees)
+// Fixture edge: sym-service::survey --Calls--> sym-storage::Storage
+// ---------------------------------------------------------------------------
+
+/// Default direction is `incoming`: `ministr_impact` on the callee surfaces
+/// its transitive callers (the historical blast-radius behavior, unchanged).
+#[tokio::test]
+async fn impact_incoming_is_default_and_returns_callers() {
+    let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
+    let result = call_tool(
+        &client,
+        "ministr_impact",
+        json!({"symbol_id": "sym-storage::Storage"}),
+    )
+    .await;
+
+    assert_eq!(result.is_error, Some(false));
+    let response: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
+    let impact = &tool_result(&response)["impact"];
+    assert_eq!(impact["direction"], "incoming", "default must be incoming");
+    let callers = impact["callers"].as_array().unwrap();
+    assert!(
+        callers
+            .iter()
+            .any(|c| c["symbol_id"] == "sym-service::survey"),
+        "survey calls Storage, so it is an incoming caller: {callers:?}"
+    );
+}
+
+/// `direction: outgoing` walks the other way: `ministr_impact` on the caller
+/// surfaces its transitive callees over the same Calls edges.
+#[tokio::test]
+async fn impact_outgoing_returns_callees() {
+    let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
+    let result = call_tool(
+        &client,
+        "ministr_impact",
+        json!({"symbol_id": "sym-service::survey", "direction": "outgoing"}),
+    )
+    .await;
+
+    assert_eq!(result.is_error, Some(false));
+    let response: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
+    let impact = &tool_result(&response)["impact"];
+    assert_eq!(impact["direction"], "outgoing");
+    let callees = impact["callers"].as_array().unwrap();
+    assert!(
+        callees
+            .iter()
+            .any(|c| c["symbol_id"] == "sym-storage::Storage"),
+        "survey calls Storage, so Storage is an outgoing callee: {callees:?}"
+    );
+    // The reverse direction (incoming on survey) finds nothing — nothing calls it.
+    let rev = call_tool(
+        &client,
+        "ministr_impact",
+        json!({"symbol_id": "sym-service::survey", "direction": "incoming"}),
+    )
+    .await;
+    let rev_resp: serde_json::Value = serde_json::from_str(extract_text(&rev.content)).unwrap();
+    assert!(
+        tool_result(&rev_resp)["impact"]["callers"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "nothing calls survey, so incoming is empty"
+    );
+}
+
 #[tokio::test]
 async fn ministr_symbols_filters_by_kind() {
     let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;

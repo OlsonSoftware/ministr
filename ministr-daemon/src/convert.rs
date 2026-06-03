@@ -118,6 +118,7 @@ pub fn impact_caller(c: ministr_core::service::ImpactCaller) -> query::ImpactCal
 pub fn impact_response(r: ministr_core::service::ImpactResult) -> query::ImpactResponse {
     query::ImpactResponse {
         target_symbol_id: r.target_symbol_id,
+        direction: r.direction.as_str().to_string(),
         depth: r.depth,
         symbols: r.symbols,
         files: r.files,

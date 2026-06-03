@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use ministr_api::client::DaemonClient;
 use ministr_core::service::{
-    ClaimResult, CompressedItem, DeadSymbol, ImpactResult, RelatedClaimResult, SectionDetail,
-    SolidFinding, SolidParams, SurveyResult, SymbolDefinition, SymbolRefResult,
+    CallDirection, ClaimResult, CompressedItem, DeadSymbol, ImpactResult, RelatedClaimResult,
+    SectionDetail, SolidFinding, SolidParams, SurveyResult, SymbolDefinition, SymbolRefResult,
 };
 use ministr_core::storage::traits::{OccurrenceRecord, occurrence_at};
 use ministr_core::storage::{BridgeLinkDetail, SymbolFilter, SymbolRecord};
@@ -216,6 +216,7 @@ impl QueryBackend for DaemonBackend {
         &self,
         symbol_id: &str,
         max_depth: u32,
+        direction: CallDirection,
     ) -> impl Future<Output = Result<ImpactResult, BackendError>> + Send {
         let client = self.client.clone();
         let corpus_id = self.corpus_id.clone();
@@ -227,6 +228,7 @@ impl QueryBackend for DaemonBackend {
                     &corpus_id,
                     &symbol_id,
                     Some(max_depth),
+                    Some(direction.as_str()),
                     session_id.as_deref(),
                 )
                 .await?;

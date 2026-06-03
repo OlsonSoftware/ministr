@@ -7,8 +7,9 @@ use std::future::Future;
 use std::sync::Arc;
 
 use ministr_core::service::{
-    ClaimResult, CompressedItem, DeadSymbol, ImpactResult, QueryService, RelatedClaimResult,
-    SectionDetail, SolidFinding, SolidParams, SurveyResult, SymbolDefinition, SymbolRefResult,
+    CallDirection, ClaimResult, CompressedItem, DeadSymbol, ImpactResult, QueryService,
+    RelatedClaimResult, SectionDetail, SolidFinding, SolidParams, SurveyResult, SymbolDefinition,
+    SymbolRefResult,
 };
 use ministr_core::storage::{BridgeLinkDetail, SymbolFilter, SymbolRecord};
 use ministr_core::types::{RefKind, RelationType, TocEntry};
@@ -114,10 +115,15 @@ impl QueryBackend for LocalBackend {
         &self,
         symbol_id: &str,
         max_depth: u32,
+        direction: CallDirection,
     ) -> impl Future<Output = Result<ImpactResult, BackendError>> + Send {
         let service = self.service.clone();
         let symbol_id = symbol_id.to_string();
-        async move { Ok(service.compute_impact(&symbol_id, max_depth).await?) }
+        async move {
+            Ok(service
+                .compute_impact(&symbol_id, max_depth, direction)
+                .await?)
+        }
     }
 
     fn dead_code(

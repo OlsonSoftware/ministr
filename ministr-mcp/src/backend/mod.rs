@@ -37,7 +37,7 @@ use std::sync::Arc;
 use ministr_api::TenantCorpusFilter;
 use ministr_api::client::{ClientError, DaemonClient};
 use ministr_core::service::{
-    ClaimResult, CompressedItem, DeadSymbol, ImpactResult, QueryError, QueryService,
+    CallDirection, ClaimResult, CompressedItem, DeadSymbol, ImpactResult, QueryError, QueryService,
     RelatedClaimResult, SectionDetail, SolidFinding, SolidParams, SurveyResult, SymbolDefinition,
     SymbolRefResult,
 };
@@ -124,11 +124,13 @@ pub trait QueryBackend: Send + Sync {
         ref_kind: Option<RefKind>,
     ) -> impl Future<Output = Result<Vec<SymbolRefResult>, BackendError>> + Send;
 
-    /// Transitive blast radius of changing a symbol.
+    /// Transitive call hierarchy of a symbol in one direction (incoming =
+    /// callers / blast radius, outgoing = callees).
     fn impact(
         &self,
         symbol_id: &str,
         max_depth: u32,
+        direction: CallDirection,
     ) -> impl Future<Output = Result<ImpactResult, BackendError>> + Send;
 
     /// Zero-reference symbol candidates.
@@ -680,11 +682,16 @@ impl Backend {
         project: Option<&str>,
         symbol_id: &str,
         max_depth: u32,
+        direction: CallDirection,
     ) -> Result<ImpactResult, BackendError> {
         match self {
-            Self::Local(b) => b.impact(symbol_id, max_depth).await,
-            Self::Daemon(b) => b.impact(symbol_id, max_depth).await,
-            Self::DaemonMulti(m) => m.for_project(project).impact(symbol_id, max_depth).await,
+            Self::Local(b) => b.impact(symbol_id, max_depth, direction).await,
+            Self::Daemon(b) => b.impact(symbol_id, max_depth, direction).await,
+            Self::DaemonMulti(m) => {
+                m.for_project(project)
+                    .impact(symbol_id, max_depth, direction)
+                    .await
+            }
             Self::Registry {
                 default_service,
                 registry,
@@ -698,8 +705,13 @@ impl Backend {
             )
             .await
             {
-                Ok(handle) => Ok(handle.service.compute_impact(symbol_id, max_depth).await?),
-                Err(default) => Ok(default.compute_impact(symbol_id, max_depth).await?),
+                Ok(handle) => Ok(handle
+                    .service
+                    .compute_impact(symbol_id, max_depth, direction)
+                    .await?),
+                Err(default) => Ok(default
+                    .compute_impact(symbol_id, max_depth, direction)
+                    .await?),
             },
         }
     }

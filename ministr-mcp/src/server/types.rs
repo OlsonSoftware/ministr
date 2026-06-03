@@ -698,10 +698,15 @@ pub struct ImpactParams {
 
     /// Maximum BFS depth to walk (default 3, capped at 10).
     #[serde(default, deserialize_with = "coerce::lenient_opt_u32")]
-    #[schemars(
-        description = "Maximum BFS depth to walk up the call graph. Default 3, capped at 10."
-    )]
+    #[schemars(description = "Maximum BFS depth to walk the call graph. Default 3, capped at 10.")]
     pub max_depth: Option<u32>,
+
+    /// Call-graph direction: `incoming` (callers, default) or `outgoing` (callees).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(
+        description = "Call-graph direction: 'incoming' = transitive callers / blast radius (default), 'outgoing' = transitive callees (what this symbol calls)."
+    )]
+    pub direction: Option<String>,
 
     /// Optional linked-project label.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]

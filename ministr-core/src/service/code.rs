@@ -9,8 +9,8 @@ use crate::storage::{BridgeLinkDetail, Storage, SymbolFilter, SymbolRecord};
 use crate::types::{RefKind, SymbolId};
 
 use super::{
-    DeadSymbol, ImpactCaller, ImpactResult, ImpactRisk, QueryError, QueryService, SymbolDefinition,
-    SymbolRefResult,
+    CallDirection, DeadSymbol, ImpactCaller, ImpactResult, ImpactRisk, QueryError, QueryService,
+    SymbolDefinition, SymbolRefResult,
 };
 
 impl QueryService {
@@ -202,11 +202,17 @@ impl QueryService {
         Ok(self.storage.transitive_caller_counts(symbol_ids).await?)
     }
 
-    /// Compute the transitive impact of changing a symbol.
+    /// Compute the transitive call hierarchy of a symbol in one direction.
     ///
-    /// Walks the call graph upward from the target up to `max_depth` levels,
-    /// collecting distinct transitive callers, the files they live in, and a
-    /// heuristic risk score derived from caller / file / test counts.
+    /// Walks the `Calls` edge graph from the target up to `max_depth` levels,
+    /// depth-bounded and cycle-safe (a `visited` set), collecting distinct
+    /// reached nodes, the files they live in, and a heuristic risk score.
+    ///
+    /// `direction` selects which edge endpoint to follow:
+    /// - [`CallDirection::Incoming`] — transitive *callers* (the blast radius:
+    ///   who reaches this symbol). This is the historical behavior.
+    /// - [`CallDirection::Outgoing`] — transitive *callees* (what this symbol
+    ///   reaches). `query_refs` is bidirectional, so only the endpoint differs.
     ///
     /// # Errors
     ///
@@ -217,6 +223,7 @@ impl QueryService {
         &self,
         symbol_id: &str,
         max_depth: u32,
+        direction: CallDirection,
     ) -> Result<ImpactResult, QueryError> {
         let sid = SymbolId(symbol_id.to_string());
 
@@ -241,8 +248,19 @@ impl QueryService {
                     .query_refs(target, Some(RefKind::Calls))
                     .await?;
                 for r in refs {
-                    if visited.insert(r.from_symbol_id.clone())
-                        && let Some(sym) = self.storage.get_symbol(&r.from_symbol_id).await?
+                    // `query_refs` returns edges touching `target` on EITHER
+                    // side, so pick the neighbor by orientation: incoming
+                    // follows edges that point INTO target (collect the
+                    // caller); outgoing follows edges that leave target
+                    // (collect the callee). Edges on the wrong side are
+                    // skipped, not mis-attributed.
+                    let neighbor = match direction {
+                        CallDirection::Incoming if r.to_symbol_id == *target => r.from_symbol_id,
+                        CallDirection::Outgoing if r.from_symbol_id == *target => r.to_symbol_id,
+                        _ => continue,
+                    };
+                    if visited.insert(neighbor.clone())
+                        && let Some(sym) = self.storage.get_symbol(&neighbor).await?
                     {
                         callers.push(ImpactCaller {
                             symbol_id: sym.id.0.clone(),
@@ -252,7 +270,7 @@ impl QueryService {
                             line: sym.line_start,
                             depth,
                         });
-                        next.push(r.from_symbol_id);
+                        next.push(neighbor);
                     }
                 }
             }
@@ -283,6 +301,7 @@ impl QueryService {
 
         Ok(ImpactResult {
             target_symbol_id: symbol_id.to_string(),
+            direction,
             depth: depth_cap,
             symbols: callers.len(),
             files: distinct_files.len(),

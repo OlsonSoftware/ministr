@@ -591,12 +591,16 @@ impl DaemonClient {
         corpus_id: &str,
         symbol_id: &str,
         max_depth: Option<u32>,
+        direction: Option<&str>,
         session_id: Option<&str>,
     ) -> Result<ImpactResponse, ClientError> {
         let encoded = encode_path_component(symbol_id);
         let mut qs: Vec<String> = Vec::new();
         if let Some(d) = max_depth {
             qs.push(format!("max_depth={d}"));
+        }
+        if let Some(dir) = direction {
+            qs.push(format!("direction={}", encode_path_component(dir)));
         }
         if let Some(sid) = session_id {
             qs.push(format!("session_id={}", encode_path_component(sid)));

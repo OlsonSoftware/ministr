@@ -53,7 +53,7 @@ use ministr_core::embedding::Embedder;
 use ministr_core::git::GitFetcher;
 use ministr_core::index::VectorIndex;
 use ministr_core::ingestion::{IngestionPipeline, IngestionProgress};
-use ministr_core::service::QueryService;
+use ministr_core::service::{CallDirection, QueryService};
 use ministr_core::session::prefetch::PrefetchEngine;
 use ministr_core::session::{SessionRegistry, UsageLevel};
 use ministr_core::storage::{SqliteStorage, Storage, SymbolFilter};
@@ -2585,10 +2585,15 @@ impl MinistrServer {
     ) -> Result<CallToolResult, McpError> {
         let tenant_subject = self.current_tenant_subject();
         let max_depth = params.max_depth.unwrap_or(3).clamp(1, 10);
-        let span = info_span!("ministr_impact", symbol_id = %params.symbol_id, max_depth);
+        let direction = params
+            .direction
+            .as_deref()
+            .and_then(CallDirection::parse)
+            .unwrap_or_default();
+        let span = info_span!("ministr_impact", symbol_id = %params.symbol_id, max_depth, direction = direction.as_str());
 
         async {
-            debug!(symbol_id = %params.symbol_id, max_depth, "ministr_impact request");
+            debug!(symbol_id = %params.symbol_id, max_depth, direction = direction.as_str(), "ministr_impact request");
 
             // Goes through the QueryBackend abstraction so the same handler
             // works whether ministr is running embedded or proxying to a
@@ -2600,6 +2605,7 @@ impl MinistrServer {
                     params.project.as_deref(),
                     &params.symbol_id,
                     max_depth,
+                    direction,
                 )
                 .await
             {

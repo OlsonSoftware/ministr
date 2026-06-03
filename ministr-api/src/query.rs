@@ -184,12 +184,23 @@ pub struct ImpactCaller {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ImpactResponse {
     pub target_symbol_id: String,
+    /// Direction walked: `"incoming"` (transitive callers) or `"outgoing"`
+    /// (transitive callees). Defaults to `"incoming"` when absent (older
+    /// daemons), so `callers` keeps its historical meaning.
+    #[serde(default = "default_impact_direction")]
+    pub direction: String,
     pub depth: u32,
     pub symbols: usize,
     pub files: usize,
     pub tests: usize,
     pub risk: ImpactRisk,
     pub callers: Vec<ImpactCaller>,
+}
+
+/// Back-compat default for [`ImpactResponse::direction`] (older daemons that
+/// don't emit the field were incoming-only).
+fn default_impact_direction() -> String {
+    "incoming".to_string()
 }
 
 /// A dead-code candidate returned by `ministr_dead`.

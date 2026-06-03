@@ -184,22 +184,64 @@ pub struct ImpactCaller {
     pub depth: u32,
 }
 
+/// Direction to walk the call graph for [`QueryService::compute_impact`].
+///
+/// Both directions reuse the same depth-bounded, cycle-safe BFS over `Calls`
+/// edges; only which endpoint of each edge is followed differs. This is the
+/// LSP call-hierarchy distinction (incoming = "who calls this", outgoing =
+/// "what does this call").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum CallDirection {
+    /// Transitive callers — who reaches this symbol (the blast radius). Default.
+    #[default]
+    Incoming,
+    /// Transitive callees — what this symbol reaches (its fan-out).
+    Outgoing,
+}
+
+impl CallDirection {
+    /// Lowercase wire string (`"incoming"` / `"outgoing"`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Incoming => "incoming",
+            Self::Outgoing => "outgoing",
+        }
+    }
+
+    /// Parse a wire string; unrecognized / absent input is `None` so callers
+    /// can fall back to the default (incoming).
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "incoming" | "callers" | "in" => Some(Self::Incoming),
+            "outgoing" | "callees" | "out" => Some(Self::Outgoing),
+            _ => None,
+        }
+    }
+}
+
 /// Result of computing the transitive impact of changing a symbol.
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ImpactResult {
     /// The target symbol ID that was analyzed.
     pub target_symbol_id: String,
+    /// Direction walked: `incoming` (transitive callers) or `outgoing`
+    /// (transitive callees). Tells the caller what `callers` actually holds.
+    pub direction: CallDirection,
     /// Maximum BFS depth that was walked.
     pub depth: u32,
-    /// Distinct transitive caller count.
+    /// Distinct transitive node count (callers for incoming, callees for outgoing).
     pub symbols: usize,
-    /// Distinct files touched by the callers.
+    /// Distinct files touched by the reached nodes.
     pub files: usize,
     /// Distinct test files among the touched files.
     pub tests: usize,
-    /// Risk level (low / medium / high).
+    /// Risk level (low / medium / high). Most meaningful for `incoming`.
     pub risk: ImpactRisk,
-    /// Transitive callers, ordered by depth then file then name.
+    /// Reached nodes (callers for incoming, callees for outgoing), ordered by
+    /// depth then file then name.
     pub callers: Vec<ImpactCaller>,
 }
 
