@@ -319,6 +319,79 @@ pub struct OccurrenceRecord {
     pub col: u32,
 }
 
+/// Find the identifier occurrence covering a position (1-based `line`, 0-based
+/// byte `col`) — the position→symbol primitive for LSP-equivalent nav (FL2).
+///
+/// An identifier occupies a single line: it starts at `col` and spans
+/// `byte_end - byte_start` bytes, so a position hits it iff it falls in the
+/// half-open byte range `[col, col + len)` on the same line. Returns the first
+/// covering occurrence (occurrences on a line never overlap), or `None` when
+/// the cursor is on whitespace/punctuation or the file has no occurrence index.
+#[must_use]
+pub fn occurrence_at(
+    occurrences: &[OccurrenceRecord],
+    line: u32,
+    col: u32,
+) -> Option<&OccurrenceRecord> {
+    occurrences
+        .iter()
+        .find(|o| o.line == line && o.col <= col && col < o.col + (o.byte_end - o.byte_start))
+}
+
+#[cfg(test)]
+mod occurrence_at_tests {
+    use super::{OccurrenceRecord, occurrence_at};
+    use crate::types::SymbolId;
+
+    /// Build an occurrence for `name` at `line`:`col` spanning `len` bytes.
+    fn occ(name: &str, line: u32, col: u32, len: u32) -> OccurrenceRecord {
+        OccurrenceRecord {
+            file_path: "f.rs".into(),
+            name: name.into(),
+            symbol_id: SymbolId(format!("sym-{name}")),
+            byte_start: col,
+            byte_end: col + len,
+            line,
+            col,
+        }
+    }
+
+    #[test]
+    fn covers_position_within_the_token() {
+        let occs = vec![occ("foo", 2, 4, 3)]; // foo occupies cols 4,5,6 on line 2
+        // exact start
+        assert_eq!(occurrence_at(&occs, 2, 4).unwrap().name, "foo");
+        // mid-token
+        assert_eq!(occurrence_at(&occs, 2, 6).unwrap().name, "foo");
+    }
+
+    #[test]
+    fn misses_past_the_token_end_and_wrong_line() {
+        let occs = vec![occ("foo", 2, 4, 3)]; // [4, 7)
+        assert!(occurrence_at(&occs, 2, 7).is_none()); // exclusive end
+        assert!(occurrence_at(&occs, 2, 3).is_none()); // before start
+        assert!(occurrence_at(&occs, 3, 5).is_none()); // wrong line
+    }
+
+    #[test]
+    fn picks_the_covering_occurrence_among_several_on_a_line() {
+        // line 5: `a` at col 0 (len 1), `bar` at col 4 (len 3)
+        let occs = vec![occ("a", 5, 0, 1), occ("bar", 5, 4, 3)];
+        assert_eq!(occurrence_at(&occs, 5, 0).unwrap().name, "a");
+        assert_eq!(occurrence_at(&occs, 5, 5).unwrap().name, "bar");
+        assert!(occurrence_at(&occs, 5, 2).is_none()); // whitespace gap
+        assert_eq!(
+            occurrence_at(&occs, 5, 4).unwrap().symbol_id,
+            SymbolId("sym-bar".into()),
+        );
+    }
+
+    #[test]
+    fn empty_index_yields_none() {
+        assert!(occurrence_at(&[], 1, 0).is_none());
+    }
+}
+
 /// A stored bridge endpoint record.
 /// A reference that could not be resolved during ingestion, persisted for
 /// deferred resolution on subsequent warm restarts.

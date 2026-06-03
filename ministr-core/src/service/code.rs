@@ -30,6 +30,32 @@ impl QueryService {
         Ok(self.storage.list_symbols(filter).await?)
     }
 
+    /// Resolve a file position to the symbol id of the identifier under it.
+    ///
+    /// Maps a 1-based `line` / 0-based byte `col` through the occurrence index
+    /// (FL1) to the resolved `symbol_id` — the position→symbol bridge that lets
+    /// `ministr_definition`/`ministr_references` be position-addressable
+    /// (FL2-equivalent of LSP `textDocument/definition`). Returns `None` when
+    /// no occurrence covers the position (cursor on whitespace/punctuation, or
+    /// the corpus was indexed without the occurrence index).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::Storage`] if a database operation fails.
+    #[instrument(skip(self))]
+    pub async fn symbol_at_position(
+        &self,
+        file_path: &str,
+        line: u32,
+        col: u32,
+    ) -> Result<Option<String>, QueryError> {
+        let occurrences = self.storage.list_occurrences(file_path).await?;
+        Ok(
+            crate::storage::traits::occurrence_at(&occurrences, line, col)
+                .map(|o| o.symbol_id.0.clone()),
+        )
+    }
+
     /// Get the full definition of a symbol with surrounding source context.
     ///
     /// Returns the symbol metadata plus the source code lines covering
