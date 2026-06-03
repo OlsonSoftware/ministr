@@ -4,6 +4,7 @@ import type {
   DaemonStatus,
   SessionDetail,
 } from "../../lib/types";
+import type { SessionSample } from "../../lib/sessions";
 import {
   SessionsSurface,
   SessionCard,
@@ -13,10 +14,10 @@ import { surfaceContainer } from "../../lib/ui-tokens";
 import { withTauriMock } from "../../../.storybook/tauri-mock";
 
 /**
- * SessionsSurface — the live board of every agent session consuming the
- * cache. The full surface renders here via the tauri-mock `list_sessions`
- * fixture (the `useSessions` store polls invoke); per-card and skeleton
- * states are rendered directly so every state is scrutinizable.
+ * SessionsSurface — mission control. Cards expand in place; subagents nest
+ * under their parent; the board auto-sorts by pressure. The full surface
+ * renders via the tauri-mock `list_sessions` fixture; per-card states are
+ * rendered directly.
  */
 
 const corpusInfo: CorpusInfo = {
@@ -53,6 +54,14 @@ const session = (over: Partial<SessionDetail>): SessionDetail => ({
   ...over,
 });
 
+// A rising token-usage sample ring so the sparkline + burn/projection render.
+const SAMPLES: SessionSample[] = Array.from({ length: 12 }, (_, i) => ({
+  t: Date.now() - (12 - i) * 1500,
+  tokensUsed: 20_000 + i * 2_000,
+  utilization: 0.15 + i * 0.02,
+  turn: 3 + i,
+}));
+
 const SESSIONS: SessionDetail[] = [
   session({}),
   session({
@@ -74,6 +83,17 @@ const SESSIONS: SessionDetail[] = [
     pressure_level: "critical",
     client_name: "claude-code",
   }),
+  // Subagent of the first (normal) session — nests under it as lineage.
+  session({
+    session_id: "sess_subagent01",
+    parent_session_id: "sess_a1b2c3d4e5f6",
+    current_turn: 4,
+    tokens_used: 30_000,
+    tokens_remaining: 170_000,
+    utilization: 0.15,
+    pressure_level: "normal",
+    client_name: "claude-code (Task)",
+  }),
 ];
 
 const status = (corpora: CorpusInfo[]): DaemonStatus => ({
@@ -83,7 +103,7 @@ const status = (corpora: CorpusInfo[]): DaemonStatus => ({
   model: "jina-code-v2",
   model_dimension: 768,
   corpora,
-  total_sessions: 3,
+  total_sessions: 4,
 });
 
 function Frame({ children }: { children: React.ReactNode }) {
@@ -102,7 +122,8 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** Live board with three sessions across the pressure range. */
+/** Live board: pressure-sorted (critical floats up) with a subagent nested
+ *  under its parent. */
 export const Populated: Story = {
   decorators: [withTauriMock({ list_sessions: SESSIONS })],
   render: () => (
@@ -112,7 +133,6 @@ export const Populated: Story = {
   ),
 };
 
-/** No agents connected — the surface's own empty state + connect command. */
 export const Empty: Story = {
   decorators: [withTauriMock({ list_sessions: [] })],
   render: () => (
@@ -122,7 +142,6 @@ export const Empty: Story = {
   ),
 };
 
-/** First-poll loading — the skeleton card grid (mirrors the real layout). */
 export const Loading: Story = {
   render: () => (
     <Frame>
@@ -137,43 +156,56 @@ export const Loading: Story = {
 
 // ── Per-card states ────────────────────────────────────────────────────────
 
-const SERIES = [12, 14, 13, 18, 22, 21, 27, 31, 30, 38, 42];
-
-function Cell({ children }: { children: React.ReactNode }) {
+function Cell({
+  children,
+  width = 360,
+}: {
+  children: React.ReactNode;
+  width?: number;
+}) {
   return (
-    <div className="bg-bg p-6" style={{ width: 360 }}>
+    <div className="bg-bg p-6" style={{ width }}>
       {children}
     </div>
   );
 }
 
-export const CardNormal: Story = {
+const noop = () => {};
+
+export const CardCollapsed: Story = {
   render: () => (
     <Cell>
       <SessionCard
         session={session({})}
         corpus={corpusInfo}
-        series={SERIES}
+        samples={SAMPLES}
         fresh={false}
-        onOpen={() => {}}
+        expanded={false}
+        onToggle={noop}
+        onOpenInspector={noop}
       />
     </Cell>
   ),
 };
 
-export const CardElevated: Story = {
+/** The transformation: a card expanded in place to its economics dashboard. */
+export const CardExpanded: Story = {
   render: () => (
     <Cell>
       <SessionCard
         session={session({
           utilization: 0.75,
           pressure_level: "elevated",
-          client_name: "cursor",
+          current_turn: 14,
+          tokens_used: 150_000,
+          tokens_remaining: 50_000,
         })}
         corpus={corpusInfo}
-        series={SERIES}
+        samples={SAMPLES}
         fresh
-        onOpen={() => {}}
+        expanded
+        onToggle={noop}
+        onOpenInspector={noop}
       />
     </Cell>
   ),
@@ -190,10 +222,50 @@ export const CardCritical: Story = {
           tokens_remaining: 8_000,
         })}
         corpus={corpusInfo}
-        series={SERIES}
+        samples={SAMPLES}
         fresh={false}
-        onOpen={() => {}}
+        expanded={false}
+        onToggle={noop}
+        onOpenInspector={noop}
       />
+    </Cell>
+  ),
+};
+
+/** A parent card with a nested subagent, mirroring the board's lineage. */
+export const Lineage: Story = {
+  render: () => (
+    <Cell width={380}>
+      <div className="flex flex-col gap-2">
+        <SessionCard
+          session={session({})}
+          corpus={corpusInfo}
+          samples={SAMPLES}
+          fresh={false}
+          expanded={false}
+          onToggle={noop}
+          onOpenInspector={noop}
+        />
+        <div className="ml-3 pl-3 border-l border-border-soft flex flex-col gap-2">
+          <span className="pl-0.5 font-mono text-mono-micro uppercase tracking-[0.08em] text-text-dim">
+            1 subagent
+          </span>
+          <SessionCard
+            session={session({
+              session_id: "sess_subagent01",
+              client_name: "claude-code (Task)",
+              utilization: 0.15,
+            })}
+            corpus={corpusInfo}
+            samples={SAMPLES}
+            fresh={false}
+            expanded={false}
+            onToggle={noop}
+            onOpenInspector={noop}
+            child
+          />
+        </div>
+      </div>
     </Cell>
   ),
 };
