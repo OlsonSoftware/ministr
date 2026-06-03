@@ -18,7 +18,8 @@ import { AskSurface } from "../surfaces/ask/AskSurface";
 import { SessionsSurface } from "../surfaces/SessionsSurface";
 import { ProjectsSurface } from "../surfaces/ProjectsSurface";
 import { ExploreSurface } from "../surfaces/ExploreSurface";
-import { SettingsSurface } from "../surfaces/SettingsSurface";
+import { TendSurface } from "../surfaces/TendSurface";
+import { AccountSettings } from "../surfaces/AccountSettings";
 import { WorkspaceShell } from "./WorkspaceShell";
 import { useWorkspace, type FacetId } from "./WorkspaceContext";
 
@@ -61,6 +62,7 @@ export function WorkspaceScreen({
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const gPending = useRef(false);
   const gTimer = useRef<number | null>(null);
 
@@ -84,7 +86,9 @@ export function WorkspaceScreen({
           selectFleet();
           return;
         case "cloud":
-          // Cloud is becoming a thin Account area, not a facet — no-op for now.
+          // Cloud folds into the thin global Account area (cloud connection +
+          // sharing live there, not in a parallel destination).
+          setAccountOpen(true);
           return;
       }
     },
@@ -173,6 +177,7 @@ export function WorkspaceScreen({
             setFacet("activity");
             return;
           case "nav:cloud":
+            setAccountOpen(true);
             return;
           case "nav:explore":
             setFacet("explore");
@@ -242,28 +247,10 @@ export function WorkspaceScreen({
         case "activity":
           return <SessionsSurface status={status} activeCorpusId={cid} />;
         case "tend":
-          return (
-            <SettingsSurface
-              status={status}
-              activeCorpusId={cid}
-              theme={theme}
-              onThemeChange={onThemeChange}
-              onShowOnboarding={onShowOnboarding}
-              onRefresh={onRefresh}
-              onOpenLogs={onOpenLogs}
-            />
-          );
+          return <TendSurface onRefresh={onRefresh} />;
       }
     },
-    [
-      status,
-      activeProjectId,
-      theme,
-      onThemeChange,
-      onShowOnboarding,
-      onRefresh,
-      onOpenLogs,
-    ],
+    [status, activeProjectId, onRefresh],
   );
 
   const renderFleet = useCallback(() => {
@@ -288,6 +275,7 @@ export function WorkspaceScreen({
         onAddProject={onAddProject}
         onOpenLogs={onOpenLogs}
         onOpenPalette={() => setPaletteOpen(true)}
+        onOpenAccount={() => setAccountOpen(true)}
         renderFacet={renderFacet}
         renderFleet={renderFleet}
       />
@@ -306,6 +294,20 @@ export function WorkspaceScreen({
         onReindexActive={onReindexActive}
         onCycleTheme={onCycleTheme}
       />
+
+      {status && (
+        <AccountSettings
+          open={accountOpen}
+          onClose={() => setAccountOpen(false)}
+          status={status}
+          activeCorpusId={activeProjectId}
+          theme={theme}
+          onThemeChange={onThemeChange}
+          onShowOnboarding={onShowOnboarding}
+          onRefresh={onRefresh}
+          onOpenLogs={onOpenLogs}
+        />
+      )}
 
       <EntityPanel />
     </>

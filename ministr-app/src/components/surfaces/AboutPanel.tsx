@@ -173,8 +173,8 @@ export function AboutPanel({
         body={
           <>
             <p>
-              Clears local-storage preferences (theme, default tab, density,
-              drawer state, active project).
+              Clears local-storage preferences (theme, density, drawer state,
+              active project).
             </p>
             <p className="font-sans text-xs tracking-[0.08em] text-text-dim mt-2">
               Your project list is not touched.

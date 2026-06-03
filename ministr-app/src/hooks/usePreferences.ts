@@ -1,61 +1,8 @@
 import { useEffect, useState } from "react";
 
-const DEFAULT_TAB_KEY = "ministr-default-tab";
 const DENSITY_KEY = "ministr-density";
 
-// The IA collapse left exactly three top-level surfaces. The old
-// "explore" / "sessions" options pointed at routes that no longer
-// exist — they're dropped here so the dropdown can't set a launch
-// target the shell can't honor.
-export type DefaultTab = "ask" | "projects" | "sessions" | "cloud" | "explore" | "settings";
-
 export type Density = "comfortable" | "compact";
-
-const VALID_DEFAULT_TABS: DefaultTab[] = [
-  "ask",
-  "projects",
-  "sessions",
-  "cloud",
-  "explore",
-  "settings",
-];
-
-/**
- * Display options for the Settings → Default tab dropdown.
- * Keep in sync with [`DefaultTab`] / [`VALID_DEFAULT_TABS`] — this is the
- * single source of truth so adding a surface elsewhere doesn't silently
- * leave the dropdown stale.
- */
-export const DEFAULT_TAB_OPTIONS: { value: DefaultTab; label: string }[] = [
-  { value: "ask", label: "Ask" },
-  { value: "projects", label: "Projects" },
-  { value: "sessions", label: "Sessions" },
-  { value: "cloud", label: "Cloud" },
-  { value: "explore", label: "Explore" },
-  { value: "settings", label: "Settings" },
-];
-
-/** Default-tab-on-launch preference, persisted to localStorage. */
-export function useDefaultTab() {
-  const [defaultTab, setDefaultTabRaw] = useState<DefaultTab>(() => {
-    try {
-      const v = localStorage.getItem(DEFAULT_TAB_KEY);
-      if (v && VALID_DEFAULT_TABS.includes(v as DefaultTab)) return v as DefaultTab;
-    } catch {
-      /* ignore */
-    }
-    return "ask";
-  });
-  function setDefaultTab(t: DefaultTab) {
-    setDefaultTabRaw(t);
-    try {
-      localStorage.setItem(DEFAULT_TAB_KEY, t);
-    } catch {
-      /* ignore */
-    }
-  }
-  return { defaultTab, setDefaultTab };
-}
 
 /** Density preference (affects card padding globally). */
 export function useDensity() {
@@ -89,7 +36,6 @@ export function useDensity() {
 /** Reset all preferences. */
 export function resetPreferences() {
   try {
-    localStorage.removeItem(DEFAULT_TAB_KEY);
     localStorage.removeItem(DENSITY_KEY);
     localStorage.removeItem("ministr-theme");
     localStorage.removeItem("ministr-active-corpus");

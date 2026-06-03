@@ -11,13 +11,7 @@ import { MonitorSmartphone, Moon, Power, Sun } from "lucide-react";
 import type { DaemonStatus } from "../../lib/types";
 import { ContentTray } from "../ui/content-tray";
 import { cn } from "../../lib/utils";
-import {
-  DEFAULT_TAB_OPTIONS,
-  type DefaultTab,
-  type Density,
-  useDefaultTab,
-  useDensity,
-} from "../../hooks/usePreferences";
+import { type Density, useDensity } from "../../hooks/usePreferences";
 import { Toggle } from "../ui/toggle";
 import { useToast } from "../shell/ToastTray";
 import { PrefRow } from "./settings-primitives";
@@ -36,7 +30,6 @@ export function GeneralSettings({
   onRefresh,
 }: Props) {
   const autostart = status.autostart_enabled ?? null;
-  const { defaultTab, setDefaultTab } = useDefaultTab();
   const { density, setDensity } = useDensity();
   const { toast } = useToast();
 
@@ -77,23 +70,6 @@ export function GeneralSettings({
               );
             })}
           </div>
-        </PrefRow>
-
-        <PrefRow
-          label="DEFAULT TAB"
-          description="Which surface opens on launch."
-        >
-          <select
-            value={defaultTab}
-            onChange={(e) => setDefaultTab(e.target.value as DefaultTab)}
-            className="h-9 border border-border-soft bg-surface px-2 text-sm font-sans font-medium text-text cursor-pointer focus:outline-none focus:border-accent focus:shadow-[var(--glow-soft)] transition-[border-color,box-shadow] duration-150 ease-out rounded-md"
-          >
-            {DEFAULT_TAB_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
         </PrefRow>
 
         <PrefRow

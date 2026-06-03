@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "motion/react";
-import { Search } from "lucide-react";
+import { CircleUser, Search } from "lucide-react";
 import type { DaemonStatus, SessionDetail } from "../../lib/types";
 import { fade } from "../../lib/motion";
 import { cn } from "../../lib/utils";
@@ -21,6 +21,8 @@ interface Props {
   onOpenSession?: (session: SessionDetail) => void;
   onOpenLogs?: () => void;
   onOpenPalette?: () => void;
+  /** Open the thin global Account area (settings + system). */
+  onOpenAccount?: () => void;
   onAddProject?: () => void;
   /** Render the body for a facet (Project spine). Falls back to a scoped
    *  placeholder when omitted (shell-only stories). */
@@ -49,6 +51,7 @@ export function WorkspaceShell({
   onOpenSession,
   onOpenLogs,
   onOpenPalette,
+  onOpenAccount,
   onAddProject,
   renderFacet,
   renderFleet,
@@ -106,6 +109,22 @@ export function WorkspaceShell({
 
         <div className="h-5 w-px bg-border shrink-0" aria-hidden />
         <DaemonDot status={status} error={error} onOpenLogs={onOpenLogs} />
+
+        {onOpenAccount && (
+          <button
+            type="button"
+            onClick={onOpenAccount}
+            title="Account · settings & system"
+            aria-label="Account"
+            className={cn(
+              "grid place-items-center h-8 w-8 rounded-md shrink-0 cursor-pointer",
+              "text-text-dim hover:bg-surface-overlay hover:text-text",
+              "transition-colors duration-150",
+            )}
+          >
+            <CircleUser className="h-4 w-4" strokeWidth={2} />
+          </button>
+        )}
       </header>
 
       {isFleet ? (
