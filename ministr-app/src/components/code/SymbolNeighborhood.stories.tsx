@@ -100,6 +100,7 @@ const meta = {
     onJumpRef: noop,
     onOpenSymbol: noop,
     onOpenSection: noop,
+    onAsk: noop,
   },
   decorators: [
     (Story, ctx) => {

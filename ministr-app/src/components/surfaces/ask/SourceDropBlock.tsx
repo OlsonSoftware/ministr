@@ -72,15 +72,17 @@ export function SourceDropBlock({ source, corpusId, corpus, onRemove }: Props) {
           <span className="font-mono text-mono-micro uppercase tracking-[0.08em] text-info">
             Source
           </span>
-          <span
-            className={cn(
-              "inline-flex items-center justify-center shrink-0",
-              "border border-info/60 h-[1.125rem] min-w-[1.25rem] px-1 rounded-md",
-              "font-mono text-mono-mini font-bold tabular-nums leading-none text-info",
-            )}
-          >
-            {source.n}
-          </span>
+          {typeof source.n === "number" && (
+            <span
+              className={cn(
+                "inline-flex items-center justify-center shrink-0",
+                "border border-info/60 h-[1.125rem] min-w-[1.25rem] px-1 rounded-md",
+                "font-mono text-mono-mini font-bold tabular-nums leading-none text-info",
+              )}
+            >
+              {source.n}
+            </span>
+          )}
           <span className="font-sans text-sm font-medium text-text truncate">
             {label}
           </span>

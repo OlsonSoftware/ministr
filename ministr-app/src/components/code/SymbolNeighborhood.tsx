@@ -37,6 +37,7 @@ import {
   PackageOpen,
   PanelRight,
   Quote,
+  Sparkles,
   X,
 } from "lucide-react";
 
@@ -48,6 +49,7 @@ import type {
 } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
+import { useWorkspaceOptional } from "../workspace/WorkspaceContext";
 import { Badge } from "../ui/badge";
 
 export interface SymbolNeighborhoodProps {
@@ -73,6 +75,9 @@ export interface SymbolNeighborhoodProps {
   onOpenSection?: (result: SearchResult) => void;
   /** Escalate this symbol into the shared EntityPanel (the Explore peek). */
   onInspect?: () => void;
+  /** Drop this symbol into the Ask thread + jump to the Ask facet
+   *  (cross-facet OOUX — aaa-explore-integrated). */
+  onAsk?: () => void;
 }
 
 // ── Edge-kind → group meta (ordered: the strongest relationships first) ──────
@@ -111,6 +116,7 @@ export function SymbolNeighborhood({
   onOpenSymbol,
   onOpenSection,
   onInspect,
+  onAsk,
 }: SymbolNeighborhoodProps) {
   const [showSource, setShowSource] = useState(false);
 
@@ -210,6 +216,17 @@ export function SymbolNeighborhood({
                     <ArrowUpRight className="h-3 w-3" strokeWidth={2.5} />
                     Go to definition
                   </button>
+                  {onAsk && (
+                    <button
+                      type="button"
+                      onClick={onAsk}
+                      title="Drop this symbol into Ask and start a conversation"
+                      className="inline-flex items-center gap-1 rounded-md border border-accent/50 bg-accent/10 px-2 py-1 font-mono text-mono-mini font-bold uppercase tracking-[0.08em] text-accent hover:bg-accent/20 cursor-pointer transition-colors duration-150 ease-out"
+                    >
+                      <Sparkles className="h-3 w-3" strokeWidth={2.5} />
+                      Ask about this
+                    </button>
+                  )}
                   {onInspect && (
                     <button
                       type="button"
@@ -474,6 +491,7 @@ export function SymbolNeighborhoodConnector({
   const [references, setReferences] = useState<SymbolRef[]>([]);
   const [loading, setLoading] = useState(true);
   const { openEntity } = useEntityPanel();
+  const workspace = useWorkspaceOptional();
 
   useEffect(() => {
     let cancelled = false;
@@ -526,6 +544,11 @@ export function SymbolNeighborhoodConnector({
                   module_path: definition.heading_path?.join("::") ?? "",
                 },
               })
+          : undefined
+      }
+      onAsk={
+        definition && workspace
+          ? () => workspace.askAbout(definition.id)
           : undefined
       }
     />

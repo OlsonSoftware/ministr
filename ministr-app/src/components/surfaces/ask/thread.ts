@@ -17,8 +17,10 @@ export type TurnStatus = "done" | "error";
 export interface DroppedSource {
   /** The source's content_id (section id or `sym-…`). */
   contentId: string;
-  /** 1-based citation index it was opened from (for the [n] badge). */
-  n: number;
+  /** 1-based citation index it was opened from (for the [n] badge). Absent
+   *  when the source was dropped from outside a numbered citation — e.g.
+   *  Explore's "Ask about this symbol" (aaa-explore-integrated). */
+  n?: number;
 }
 
 export interface Turn {
@@ -38,14 +40,16 @@ export interface Turn {
   source?: DroppedSource;
 }
 
-/** Build a source-drop turn (a kept citation block in the thread). */
-export function sourceTurn(contentId: string, n: number): Turn {
+/** Build a source-drop turn (a kept citation block in the thread). `n` is the
+ *  citation index when dropped from a numbered citation; omit it for an
+ *  out-of-band drop (e.g. Explore's "Ask about this symbol"). */
+export function sourceTurn(contentId: string, n?: number): Turn {
   return {
     id: newId(),
     query: "",
     status: "done",
     kind: "source",
-    source: { contentId, n },
+    source: n === undefined ? { contentId } : { contentId, n },
   };
 }
 

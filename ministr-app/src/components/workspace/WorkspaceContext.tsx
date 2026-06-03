@@ -4,10 +4,29 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import type { CorpusInfo } from "../../lib/types";
+
+/**
+ * A cross-facet request to ask about a specific source (a symbol or section).
+ *
+ * Explore's "Ask about this" drops a content_id here and switches the facet to
+ * Ask; the Ask surface consumes the intent (keyed on `nonce`, so re-asking the
+ * SAME content fires again) and drops it into the thread as a kept source-Turn.
+ * Carried on the shared context — not a CustomEvent — so it survives the facet
+ * swap and renders in Storybook.
+ */
+export interface AskIntent {
+  /** The source's content_id — a `sym-…` symbol id or a section id. */
+  contentId: string;
+  /** Optional citation index when the ask originated from a numbered citation. */
+  n?: number;
+  /** Monotonic id so consuming the same content twice still triggers. */
+  nonce: number;
+}
 
 /**
  * The spine — the ONE selected object the whole workspace operates on.
@@ -53,6 +72,14 @@ export interface WorkspaceContextValue {
   /** The active facet (stable across spine changes — the noun moves, not the verb). */
   facet: FacetId;
   setFacet: (facet: FacetId) => void;
+
+  /** A pending cross-facet "ask about this source" request, or null. */
+  askIntent: AskIntent | null;
+  /** Request the Ask facet to ingest a source (and switch to it). Cross-facet
+   *  OOUX glue: from Explore (or any inspector) straight into the conversation. */
+  askAbout: (contentId: string, n?: number) => void;
+  /** Clear a consumed ask-intent (called by the Ask surface once ingested). */
+  clearAskIntent: () => void;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
@@ -155,6 +182,9 @@ export function WorkspaceProvider({
     }
   }, [spine]);
 
+  const [askIntent, setAskIntent] = useState<AskIntent | null>(null);
+  const nonceRef = useRef(0);
+
   const selectProject = useCallback(
     (id: string) => setSpine({ kind: "project", id }),
     [],
@@ -168,6 +198,18 @@ export function WorkspaceProvider({
       /* ignore */
     }
   }, []);
+
+  const askAbout = useCallback((contentId: string, n?: number) => {
+    nonceRef.current += 1;
+    setAskIntent({ contentId, n, nonce: nonceRef.current });
+    setFacetState("ask");
+    try {
+      localStorage.setItem(FACET_STORAGE_KEY, "ask");
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const clearAskIntent = useCallback(() => setAskIntent(null), []);
 
   const value = useMemo<WorkspaceContextValue>(() => {
     const isFleet = spine.kind === "fleet";
@@ -186,8 +228,21 @@ export function WorkspaceProvider({
       selectFleet,
       facet,
       setFacet,
+      askIntent,
+      askAbout,
+      clearAskIntent,
     };
-  }, [spine, corpora, facet, selectProject, selectFleet, setFacet]);
+  }, [
+    spine,
+    corpora,
+    facet,
+    selectProject,
+    selectFleet,
+    setFacet,
+    askIntent,
+    askAbout,
+    clearAskIntent,
+  ]);
 
   return (
     <WorkspaceContext.Provider value={value}>
@@ -203,4 +258,14 @@ export function useWorkspace(): WorkspaceContextValue {
     throw new Error("useWorkspace must be used within a WorkspaceProvider");
   }
   return ctx;
+}
+
+/**
+ * Read the workspace context if present, else `null` — for components that
+ * normally live in the workspace but are also storied/tested in isolation
+ * (e.g. AskSurface, the SymbolNeighborhood connector). Lets them offer the
+ * cross-facet "Ask about this" affordance only when the provider exists.
+ */
+export function useWorkspaceOptional(): WorkspaceContextValue | null {
+  return useContext(WorkspaceContext);
 }

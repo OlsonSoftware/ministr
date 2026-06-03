@@ -255,10 +255,12 @@ impl QueryService {
 }
 `;
 
+const QUERY_RS_PATH = "ministr-core/src/service/query.rs";
+
 const SPANS_FOR_QUERY_RS = [
-  { id: "sym::QueryService", name: "QueryService", kind: "struct", signature: "pub struct QueryService", doc_comment: null, line_start: 7, line_end: 11 },
-  { id: "sym::QueryService::survey", name: "survey", kind: "function", signature: "pub async fn survey(&self, req: &SurveyRequest) -> Result<SurveyResponse, QueryError>", doc_comment: "Run a survey: embed → retrieve → rerank.", line_start: 15, line_end: 25 },
-  { id: "sym::QueryService::rerank", name: "rerank", kind: "function", signature: "async fn rerank(&self, hits: Vec<Hit>, req: &SurveyRequest) -> Result<Vec<Section>, QueryError>", doc_comment: null, line_start: 27, line_end: 33 },
+  { id: `sym-${QUERY_RS_PATH}::QueryService`, name: "QueryService", kind: "struct", signature: "pub struct QueryService", doc_comment: null, line_start: 7, line_end: 11 },
+  { id: `sym-${QUERY_RS_PATH}::QueryService::survey`, name: "survey", kind: "function", signature: "pub async fn survey(&self, req: &SurveyRequest) -> Result<SurveyResponse, QueryError>", doc_comment: "Run a survey: embed → retrieve → rerank.", line_start: 15, line_end: 25 },
+  { id: `sym-${QUERY_RS_PATH}::QueryService::rerank`, name: "rerank", kind: "function", signature: "async fn rerank(&self, hits: Vec<Hit>, req: &SurveyRequest) -> Result<Vec<Section>, QueryError>", doc_comment: null, line_start: 27, line_end: 33 },
 ];
 
 /** read_file echoes the requested path so the viewer header matches; the body
@@ -276,7 +278,7 @@ function readFile(args: Record<string, unknown>): FileContent {
 }
 
 const DEFINITION: SymbolDefinitionDetail = {
-  id: "sym::QueryService::survey",
+  id: `sym-${QUERY_RS_PATH}::QueryService::survey`,
   name: "survey",
   kind: "function",
   visibility: "pub",
@@ -319,7 +321,7 @@ const REFERENCES: SymbolRef[] = [
 
 function sym(name: string, kind: string, file_path: string): SymbolInfo {
   return {
-    id: `sym::${name}`,
+    id: `sym-${file_path}::${name}`,
     name,
     kind,
     file_path,

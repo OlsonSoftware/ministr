@@ -13,6 +13,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useEntityPanel, type Entity } from "../../hooks/useEntityPanel";
+import { useWorkspaceOptional } from "../workspace/WorkspaceContext";
 import type {
   SearchResult,
   SymbolDefinitionDetail,
@@ -27,7 +28,8 @@ interface Props {
 
 export function SymbolView({ entity }: Props) {
   const { corpusId, symbol } = entity;
-  const { openEntity } = useEntityPanel();
+  const { openEntity, close } = useEntityPanel();
+  const workspace = useWorkspaceOptional();
 
   const [definition, setDefinition] = useState<SymbolDefinitionDetail | null>(null);
   const [refs, setRefs] = useState<SymbolRef[]>([]);
@@ -104,6 +106,14 @@ export function SymbolView({ entity }: Props) {
       onJumpRef={jumpToRef}
       onOpenSymbol={(s) => openEntity({ kind: "symbol", corpusId, symbol: s })}
       onOpenSection={(r) => openEntity({ kind: "section", corpusId, result: r })}
+      onAsk={
+        workspace
+          ? () => {
+              workspace.askAbout(symbol.id);
+              close();
+            }
+          : undefined
+      }
     />
   );
 }

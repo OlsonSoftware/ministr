@@ -21,6 +21,7 @@ import type { CorpusInfo, DaemonStatus } from "../../../lib/types";
 import { AdaptiveSurface } from "../../ui/adaptive-surface";
 import { corpusLabel } from "../../../lib/corpus";
 import { cn } from "../../../lib/utils";
+import { useWorkspaceOptional } from "../../workspace/WorkspaceContext";
 
 import { AskEmpty } from "./AskEmpty";
 import { AskInput } from "./AskInput";
@@ -58,6 +59,9 @@ export function AskSurface({ status, activeCorpusId }: Props) {
     () => status.corpora.find((c) => c.id === corpusId) ?? null,
     [status.corpora, corpusId],
   );
+  // Cross-facet "Ask about this" intent (Explore → Ask). Optional: AskSurface
+  // is also storied in isolation, outside the workspace provider.
+  const workspace = useWorkspaceOptional();
 
   const [query, setQuery] = useState("");
   const [phase, setPhase] = useState<AskPhaseName>("idle");
@@ -235,13 +239,26 @@ export function AskSurface({ status, activeCorpusId }: Props) {
   //    block (aaa-ask-citation-dropin). Persists with the thread (the turns
   //    effect), so it survives resume. Deduped: re-opening an already-kept
   //    source is a no-op rather than stacking duplicates. ──────────────────
-  const dropSource = useCallback((contentId: string, n: number) => {
+  const dropSource = useCallback((contentId: string, n?: number) => {
     setTurns((prev) =>
       prev.some((t) => t.kind === "source" && t.source?.contentId === contentId)
         ? prev
         : [...prev, sourceTurn(contentId, n)],
     );
   }, []);
+
+  // ── Cross-facet "Ask about this" — consume the workspace ask-intent. Keyed
+  //    on the intent nonce so re-asking the SAME source fires again; runs after
+  //    the per-corpus reset above so the dropped source survives a facet swap
+  //    that remounts this surface (aaa-explore-integrated). ──────────────────
+  const askIntent = workspace?.askIntent;
+  const clearAskIntent = workspace?.clearAskIntent;
+  useEffect(() => {
+    if (!askIntent || !corpusId) return;
+    dropSource(askIntent.contentId, askIntent.n);
+    clearAskIntent?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [askIntent?.nonce, corpusId]);
 
   const removeTurn = useCallback((id: string) => {
     setTurns((prev) => prev.filter((t) => t.id !== id));
