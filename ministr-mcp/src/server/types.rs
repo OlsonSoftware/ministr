@@ -670,6 +670,14 @@ pub struct ReferencesParams {
     )]
     pub ref_kind: Option<String>,
 
+    /// Type-hierarchy expansion (FL3b): also include callers of the same-named
+    /// method on co-implementor types.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_bool")]
+    #[schemars(
+        description = "When true, also include callers of the same-named method on co-implementor types (LSP references-including-overrides / type hierarchy). Bounded; combine with ref_kind 'calls' or omit ref_kind."
+    )]
+    pub through_implementors: Option<bool>,
+
     /// Number of entries to skip (default: 0). Use with `limit` for pagination.
     #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
     #[schemars(description = "Number of entries to skip (default: 0)")]

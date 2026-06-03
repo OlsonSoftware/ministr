@@ -570,15 +570,22 @@ impl DaemonClient {
         corpus_id: &str,
         symbol_id: &str,
         session_id: Option<&str>,
+        through_implementors: bool,
     ) -> Result<ReferencesResponse, ClientError> {
         let encoded = encode_path_component(symbol_id);
-        let path = match session_id {
-            Some(sid) => {
-                let sid_enc = encode_path_component(sid);
-                format!("/api/v1/corpora/{corpus_id}/references/{encoded}?session_id={sid_enc}")
-            }
-            None => format!("/api/v1/corpora/{corpus_id}/references/{encoded}"),
+        let mut qs: Vec<String> = Vec::new();
+        if let Some(sid) = session_id {
+            qs.push(format!("session_id={}", encode_path_component(sid)));
+        }
+        if through_implementors {
+            qs.push("through_implementors=true".to_string());
+        }
+        let suffix = if qs.is_empty() {
+            String::new()
+        } else {
+            format!("?{}", qs.join("&"))
         };
+        let path = format!("/api/v1/corpora/{corpus_id}/references/{encoded}{suffix}");
         self.get(&path).await
     }
 

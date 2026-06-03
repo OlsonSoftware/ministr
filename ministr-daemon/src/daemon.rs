@@ -1271,13 +1271,29 @@ async fn definition(
     }
 }
 
+/// Query params for the references route: session attribution plus the
+/// type-hierarchy expansion flag (run server-side, since the hop needs the
+/// reference graph).
+#[derive(serde::Deserialize)]
+struct ReferencesQuery {
+    session_id: Option<String>,
+    through_implementors: Option<bool>,
+}
+
 async fn references(
     State(state): State<AppState>,
     Path((id, sym)): Path<(String, String)>,
-    Query(q): Query<SessionQuery>,
+    Query(q): Query<ReferencesQuery>,
 ) -> impl IntoResponse {
     let handle = get_corpus!(&state, &id);
-    let result = handle.service.get_symbol_references(&sym, None).await;
+    let result = if q.through_implementors.unwrap_or(false) {
+        handle
+            .service
+            .get_symbol_references_through_implementors(&sym, None, 50)
+            .await
+    } else {
+        handle.service.get_symbol_references(&sym, None).await
+    };
     drop(handle);
     match result {
         Ok(refs) => {

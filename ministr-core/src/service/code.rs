@@ -219,6 +219,13 @@ impl QueryService {
     ) -> Result<Vec<SymbolRefResult>, QueryError> {
         let mut results = self.get_symbol_references(symbol_id, ref_kind).await?;
 
+        // The peer hop surfaces *callers* (Calls edges), so it is meaningful
+        // only when callers are in scope; for a non-call `ref_kind` filter this
+        // is a no-op (keeps the Local + daemon code paths consistent).
+        if !matches!(ref_kind, None | Some(RefKind::Calls)) {
+            return Ok(results);
+        }
+
         // `…::Container::method` → (container_id, method_name). A free function
         // or top-level symbol has no usable container hop.
         let Some((container_id, method_name)) = symbol_id.rsplit_once("::") else {

@@ -143,7 +143,7 @@ async fn test_references() {
     let client = daemon.client();
 
     let resp = client
-        .references(&daemon.corpus_id, "sym-config::MinistrConfig", None)
+        .references(&daemon.corpus_id, "sym-config::MinistrConfig", None, false)
         .await
         .unwrap();
     assert!(

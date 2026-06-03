@@ -200,7 +200,7 @@ async fn test_concurrent_mixed_symbol_queries() {
 
                 // References.
                 let refs = client
-                    .references(&corpus_id, "sym-config::MinistrConfig", None)
+                    .references(&corpus_id, "sym-config::MinistrConfig", None, false)
                     .await
                     .unwrap();
                 assert!(!refs.references.is_empty());

@@ -105,10 +105,19 @@ impl QueryBackend for LocalBackend {
         &self,
         symbol_id: &str,
         ref_kind: Option<RefKind>,
+        through_implementors: bool,
     ) -> impl Future<Output = Result<Vec<SymbolRefResult>, BackendError>> + Send {
         let service = self.service.clone();
         let symbol_id = symbol_id.to_string();
-        async move { Ok(service.get_symbol_references(&symbol_id, ref_kind).await?) }
+        async move {
+            if through_implementors {
+                Ok(service
+                    .get_symbol_references_through_implementors(&symbol_id, ref_kind, 50)
+                    .await?)
+            } else {
+                Ok(service.get_symbol_references(&symbol_id, ref_kind).await?)
+            }
+        }
     }
 
     fn impact(

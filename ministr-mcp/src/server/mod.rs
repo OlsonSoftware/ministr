@@ -2529,6 +2529,7 @@ impl MinistrServer {
                     params.project.as_deref(),
                     &symbol_id,
                     ref_kind,
+                    params.through_implementors.unwrap_or(false),
                 )
                 .await
             {
@@ -6048,6 +6049,7 @@ mod tests {
                 line: None,
                 col: None,
                 ref_kind: None,
+                through_implementors: None,
                 offset: None,
                 limit: None,
                 project: None,

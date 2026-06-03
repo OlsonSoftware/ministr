@@ -189,19 +189,25 @@ impl QueryBackend for DaemonBackend {
         &self,
         symbol_id: &str,
         ref_kind: Option<RefKind>,
+        through_implementors: bool,
     ) -> impl Future<Output = Result<Vec<SymbolRefResult>, BackendError>> + Send {
         // The daemon HTTP route doesn't accept a ref_kind filter, so apply it
-        // client-side here for parity with `LocalBackend` (which filters in
-        // the query service). Without this the `ref_kind` argument was
-        // silently dropped on the daemon path — the mode the stdio MCP proxy
-        // actually runs in.
+        // client-side here for parity with `LocalBackend`. `through_implementors`
+        // DOES go server-side (a query param): the type-hierarchy hop needs the
+        // daemon's graph, and its peer-caller (Calls) refs survive the
+        // client-side `ref_kind` retain below.
         let client = self.client.clone();
         let corpus_id = self.corpus_id.clone();
         let symbol_id = symbol_id.to_string();
         let session_id = self.session_id.clone();
         async move {
             let resp = client
-                .references(&corpus_id, &symbol_id, session_id.as_deref())
+                .references(
+                    &corpus_id,
+                    &symbol_id,
+                    session_id.as_deref(),
+                    through_implementors,
+                )
                 .await?;
             let mut refs: Vec<SymbolRefResult> = resp
                 .references

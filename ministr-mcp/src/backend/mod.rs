@@ -122,6 +122,7 @@ pub trait QueryBackend: Send + Sync {
         &self,
         symbol_id: &str,
         ref_kind: Option<RefKind>,
+        through_implementors: bool,
     ) -> impl Future<Output = Result<Vec<SymbolRefResult>, BackendError>> + Send;
 
     /// Transitive call hierarchy of a symbol in one direction (incoming =
@@ -660,11 +661,22 @@ impl Backend {
         project: Option<&str>,
         symbol_id: &str,
         ref_kind: Option<RefKind>,
+        through_implementors: bool,
     ) -> Result<Vec<SymbolRefResult>, BackendError> {
         match self {
-            Self::Local(b) => b.references(symbol_id, ref_kind).await,
-            Self::Daemon(b) => b.references(symbol_id, ref_kind).await,
-            Self::DaemonMulti(m) => m.for_project(project).references(symbol_id, ref_kind).await,
+            Self::Local(b) => {
+                b.references(symbol_id, ref_kind, through_implementors)
+                    .await
+            }
+            Self::Daemon(b) => {
+                b.references(symbol_id, ref_kind, through_implementors)
+                    .await
+            }
+            Self::DaemonMulti(m) => {
+                m.for_project(project)
+                    .references(symbol_id, ref_kind, through_implementors)
+                    .await
+            }
             Self::Registry {
                 default_service,
                 registry,
@@ -678,9 +690,16 @@ impl Backend {
             )
             .await
             {
+                Ok(handle) if through_implementors => Ok(handle
+                    .service
+                    .get_symbol_references_through_implementors(symbol_id, ref_kind, 50)
+                    .await?),
                 Ok(handle) => Ok(handle
                     .service
                     .get_symbol_references(symbol_id, ref_kind)
+                    .await?),
+                Err(default) if through_implementors => Ok(default
+                    .get_symbol_references_through_implementors(symbol_id, ref_kind, 50)
                     .await?),
                 Err(default) => Ok(default.get_symbol_references(symbol_id, ref_kind).await?),
             },
