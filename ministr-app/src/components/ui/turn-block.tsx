@@ -5,6 +5,7 @@ import { corpusLabelById } from "../../lib/corpus";
 import { toneBgClass, toneTextClass } from "../../lib/status";
 import { clampPct, statusLabel, utilizationTone } from "../../lib/sessions";
 import { cn } from "../../lib/utils";
+import { focusRing } from "../../lib/ui-tokens";
 import { formatTokens } from "../../lib/format";
 import { MetricTile } from "./metric-tile";
 import { BudgetBar } from "./budget-bar";
@@ -44,11 +45,28 @@ function TurnBlockImpl({
   return (
     <div
       onClick={onClick}
+      // §9 WCAG 2.1.1/4.1.2 — a clickable card must be keyboard-operable.
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
       className={cn(
-        "group relative rounded-lg border border-border bg-surface p-3 pl-3.5",
+        // overflow-hidden so the absolute status edge clips to the radius
+        "group relative overflow-hidden rounded-lg border border-border bg-surface p-3 pl-3.5",
         "transition-[border-color,box-shadow,transform] duration-150 ease-out",
         onClick &&
-          "cursor-pointer hover:-translate-y-0.5 hover:border-border-hover hover:shadow-md",
+          cn(
+            "cursor-pointer hover:-translate-y-0.5 hover:border-border-hover hover:shadow-md",
+            focusRing,
+          ),
         fresh && "ministr-pulse",
         className,
       )}
@@ -65,11 +83,12 @@ function TurnBlockImpl({
       {/* Header row: session glyph + id + turn + status */}
       <div className="flex items-center gap-2 mb-2">
         <StatusDot tone={tone} pulse={fresh ? "live" : "off"} size="md" />
-        <span className="font-mono text-mono-mini text-text-muted truncate">
+        <span className="font-mono text-mono-mini text-text-muted truncate min-w-0">
           {sessionShort}
         </span>
-        <span className="font-mono text-mono-mini text-text-dim">·</span>
-        <span className="font-mono text-mono-mini text-text truncate">
+        <span className="font-mono text-mono-mini text-text-dim shrink-0">·</span>
+        {/* Turn count is core info — never truncate it. */}
+        <span className="font-mono text-mono-mini text-text shrink-0">
           turn {session.current_turn}
         </span>
         {session.parent_session_id && (

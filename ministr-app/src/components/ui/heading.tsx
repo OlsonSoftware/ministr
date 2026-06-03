@@ -7,9 +7,10 @@ import {
 } from "../../lib/ui-tokens";
 
 /**
- * Page title (Plex Serif 2xl, normal weight). Use as the topmost h1 of
- * a tab/screen body. The screen description below should be a `<p>`
- * with `marginalia` or `bodyMuted` styling — defined per callsite.
+ * Page title — the `headingDisplay` token (Geist sans, ~2xl, semibold,
+ * tight per DESIGN.md §6). Use as the topmost h1 of a tab/screen body.
+ * The screen description below should be a `<p>` with `marginalia` or
+ * `bodyMuted` styling — defined per callsite.
  */
 interface HeadingProps {
   className?: string;
@@ -21,10 +22,10 @@ export function H1({ className, children }: HeadingProps) {
 }
 
 /**
- * Section / chapter heading (Plex Serif lg bold). Used inside
- * EntityPanel sections, Settings groups, Onboarding step pages,
- * Empty-state titles. Pairs naturally with a `chapterIndex` `§N`
- * marker rendered alongside.
+ * Section / chapter heading — the `headingChapter` token (Geist sans,
+ * base, semibold, snug per §6). Used inside EntityPanel sections, Settings
+ * groups, Onboarding step pages, Empty-state titles. Pairs naturally with
+ * a `chapterIndex` `§N` marker rendered alongside.
  */
 export function H2({ className, children }: HeadingProps) {
   return <h2 className={cn(headingChapter, className)}>{children}</h2>;

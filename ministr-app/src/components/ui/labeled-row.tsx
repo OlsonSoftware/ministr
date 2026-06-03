@@ -10,7 +10,8 @@ interface LabeledRowProps {
 }
 
 /**
- * Brutalist label/value row. Thicker bottom border (2px) when `bordered`.
+ * Label/value row — mono tracked label + value. Hairline bottom divider
+ * (§4) when `bordered` (Settings-style lists).
  */
 export function LabeledRow({
   label,
