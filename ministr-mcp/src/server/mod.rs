@@ -71,14 +71,14 @@ use progress::{run_ingestion_progress_notifier, run_subscription_notifier};
 use types::{
     AlreadyDeliveredResponse, BridgeEndpointSummary, BridgeLinkSummary, BridgeParams,
     BridgeResponse, ChangedSymbol, CloneOutputData, CloneParams, CompressParams, CompressResponse,
-    CorpusStatsHeader, DeadCodeParams, DeadCodeResponse, DefinitionParams, DiagnosticsParams,
-    DiagnosticsResponse, DiffSeed, DroppedParams, DroppedResponse, ExtractParams, ExtractResponse,
-    FetchOutputData, FetchParams, FetchResponse, ImpactParams, ImpactResponse, NextAction,
-    ProjectEntry, ProjectsResponse, ReadOutputData, ReadParams, ReferencesParams,
-    ReferencesResponse, RefreshParams, RefreshResponse, RelatedParams, RelatedResponse,
-    SessionMetricsResponse, SolidParams, SolidResponse, SurveyParams, SurveyResponse,
-    SymbolSummary, SymbolsParams, SymbolsResponse, TaskParams, TaskStatusResponse, TocParams,
-    TocResponse, ToolResponse, UsageResponse, tool_output_schema,
+    CorpusStatsHeader, DeadCodeParams, DeadCodeResponse, DefinitionParams, DefinitionResponse,
+    DiagnosticsParams, DiagnosticsResponse, DiffSeed, DroppedParams, DroppedResponse,
+    ExtractParams, ExtractResponse, FetchOutputData, FetchParams, FetchResponse, ImpactParams,
+    ImpactResponse, NextAction, ProjectEntry, ProjectsResponse, ReadOutputData, ReadParams,
+    ReferencesParams, ReferencesResponse, RefreshParams, RefreshResponse, RelatedParams,
+    RelatedResponse, SessionMetricsResponse, SolidParams, SolidResponse, SurveyParams,
+    SurveyResponse, SymbolSummary, SymbolsParams, SymbolsResponse, TaskParams, TaskStatusResponse,
+    TocParams, TocResponse, ToolResponse, UsageResponse, tool_output_schema,
 };
 
 use crate::task::{McpTaskManager, task_to_cancel_result, task_to_get_result};
@@ -2609,8 +2609,8 @@ impl MinistrServer {
     /// module hierarchy, and all metadata.
     #[tool(
         name = "ministr_definition",
-        description = "Full source of a code symbol by ID. Call ministr_references first if you intend to modify or delete the symbol.",
-        output_schema = tool_output_schema::<ToolResponse<ministr_core::service::SymbolDefinition>>(),
+        description = "Full source of a code symbol by ID. Call ministr_references first if you intend to modify or delete the symbol. Pass blame=true for git authorship of the symbol's lines.",
+        output_schema = tool_output_schema::<ToolResponse<DefinitionResponse>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
     async fn definition(
@@ -2655,9 +2655,32 @@ impl MinistrServer {
                     let usage_status = entry.budget.usage_status();
                     drop(reg);
 
-                    debug!(symbol_id = %symbol_id, token_count, "ministr_definition success");
+                    // FL7 — optional git blame for the symbol's line range. The
+                    // git subprocess is blocking; failures (untracked / not a
+                    // repo) degrade to no blame rather than failing the call.
+                    let blame = if params.blame.unwrap_or(false) {
+                        let file = def.file_path.clone();
+                        let (start, end) = (def.line_start, def.line_end);
+                        tokio::task::spawn_blocking(move || {
+                            ministr_core::git::blame::blame_range(
+                                std::path::Path::new(&file),
+                                start,
+                                end,
+                            )
+                        })
+                        .await
+                        .ok()
+                        .and_then(Result::ok)
+                        .flatten()
+                    } else {
+                        None
+                    };
 
-                    let response = self.build_response(def, usage_status).await;
+                    debug!(symbol_id = %symbol_id, token_count, blame = blame.is_some(), "ministr_definition success");
+
+                    let response = self
+                        .build_response(DefinitionResponse { definition: def, blame }, usage_status)
+                        .await;
                     structured_result(&response)
                 }
                 Err(e) => {

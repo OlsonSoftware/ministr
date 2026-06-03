@@ -8,9 +8,11 @@
 use std::path::Path;
 use std::process::Command;
 
+pub mod blame;
 pub mod diff;
 pub mod fetcher;
 
+pub use blame::{BlameAuthor, BlameError, BlameSummary};
 pub use diff::{ChangedFile, ChangedRange, DiffError};
 pub use fetcher::{CloneMetadata, CloneResult, GitFetcher, GitFetcherConfig, GitStalenessResult};
 

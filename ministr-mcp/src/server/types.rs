@@ -628,10 +628,31 @@ pub struct DefinitionParams {
     )]
     pub col: Option<u32>,
 
+    /// FL7 — attach git blame/authorship metadata for the symbol's line range.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_bool")]
+    #[schemars(
+        description = "When true, attach git blame metadata (per-author line counts + last commit) for the symbol's line range. Omitted when not a git repo."
+    )]
+    pub blame: Option<bool>,
+
     /// Optional linked-project label.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
     pub project: Option<String>,
+}
+
+/// FL7 — `ministr_definition` payload: the symbol definition with optional
+/// blame metadata flattened alongside it (the bare definition fields stay at
+/// the top level for backward compatibility).
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct DefinitionResponse {
+    /// The symbol definition (fields flattened to the top level).
+    #[serde(flatten)]
+    pub(crate) definition: ministr_core::service::SymbolDefinition,
+    /// Authorship for the symbol's line range, when `blame` was requested and
+    /// the file is tracked in a git repo.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) blame: Option<ministr_core::git::BlameSummary>,
 }
 
 /// Parameters for the `ministr_references` tool.
