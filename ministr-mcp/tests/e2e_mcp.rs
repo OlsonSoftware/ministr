@@ -3391,6 +3391,32 @@ async fn impact_outgoing_returns_callees() {
     );
 }
 
+/// FL6 — `tests_only=true` restricts incoming callers to test files. The
+/// fixture's only caller of Storage (`sym-service::survey`) lives in
+/// `src/service.rs`, so the test-filtered set is empty — proving the param is
+/// parsed, routed, and applied. (The positive case — a test-file caller
+/// surviving — is covered by the core unit test.)
+#[tokio::test]
+async fn impact_tests_only_filters_non_test_callers() {
+    let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
+    let result = call_tool(
+        &client,
+        "ministr_impact",
+        json!({"symbol_id": "sym-storage::Storage", "tests_only": true}),
+    )
+    .await;
+
+    assert_eq!(result.is_error, Some(false));
+    let response: serde_json::Value = serde_json::from_str(extract_text(&result.content)).unwrap();
+    let callers = tool_result(&response)["impact"]["callers"]
+        .as_array()
+        .unwrap();
+    assert!(
+        callers.is_empty(),
+        "survey lives in src/, not a test file, so tests_only filters it out: {callers:?}"
+    );
+}
+
 #[tokio::test]
 async fn ministr_symbols_filters_by_kind() {
     let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;

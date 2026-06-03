@@ -125,12 +125,14 @@ pub trait QueryBackend: Send + Sync {
     ) -> impl Future<Output = Result<Vec<SymbolRefResult>, BackendError>> + Send;
 
     /// Transitive call hierarchy of a symbol in one direction (incoming =
-    /// callers / blast radius, outgoing = callees).
+    /// callers / blast radius, outgoing = callees). `tests_only` restricts the
+    /// result to nodes in test files (FL6 test↔code mapping).
     fn impact(
         &self,
         symbol_id: &str,
         max_depth: u32,
         direction: CallDirection,
+        tests_only: bool,
     ) -> impl Future<Output = Result<ImpactResult, BackendError>> + Send;
 
     /// Zero-reference symbol candidates.
@@ -683,13 +685,14 @@ impl Backend {
         symbol_id: &str,
         max_depth: u32,
         direction: CallDirection,
+        tests_only: bool,
     ) -> Result<ImpactResult, BackendError> {
         match self {
-            Self::Local(b) => b.impact(symbol_id, max_depth, direction).await,
-            Self::Daemon(b) => b.impact(symbol_id, max_depth, direction).await,
+            Self::Local(b) => b.impact(symbol_id, max_depth, direction, tests_only).await,
+            Self::Daemon(b) => b.impact(symbol_id, max_depth, direction, tests_only).await,
             Self::DaemonMulti(m) => {
                 m.for_project(project)
-                    .impact(symbol_id, max_depth, direction)
+                    .impact(symbol_id, max_depth, direction, tests_only)
                     .await
             }
             Self::Registry {
@@ -707,10 +710,10 @@ impl Backend {
             {
                 Ok(handle) => Ok(handle
                     .service
-                    .compute_impact(symbol_id, max_depth, direction)
+                    .compute_impact(symbol_id, max_depth, direction, tests_only)
                     .await?),
                 Err(default) => Ok(default
-                    .compute_impact(symbol_id, max_depth, direction)
+                    .compute_impact(symbol_id, max_depth, direction, tests_only)
                     .await?),
             },
         }

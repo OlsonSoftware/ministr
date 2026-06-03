@@ -708,6 +708,13 @@ pub struct ImpactParams {
     )]
     pub direction: Option<String>,
 
+    /// Restrict results to nodes in test files (test↔code mapping).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_bool")]
+    #[schemars(
+        description = "When true, keep only nodes in test files. With direction 'incoming' this answers 'which tests transitively exercise this symbol' (the minimal test set for a change)."
+    )]
+    pub tests_only: Option<bool>,
+
     /// Optional linked-project label.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]

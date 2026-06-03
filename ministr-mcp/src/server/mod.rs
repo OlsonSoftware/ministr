@@ -2590,10 +2590,11 @@ impl MinistrServer {
             .as_deref()
             .and_then(CallDirection::parse)
             .unwrap_or_default();
-        let span = info_span!("ministr_impact", symbol_id = %params.symbol_id, max_depth, direction = direction.as_str());
+        let tests_only = params.tests_only.unwrap_or(false);
+        let span = info_span!("ministr_impact", symbol_id = %params.symbol_id, max_depth, direction = direction.as_str(), tests_only);
 
         async {
-            debug!(symbol_id = %params.symbol_id, max_depth, direction = direction.as_str(), "ministr_impact request");
+            debug!(symbol_id = %params.symbol_id, max_depth, direction = direction.as_str(), tests_only, "ministr_impact request");
 
             // Goes through the QueryBackend abstraction so the same handler
             // works whether ministr is running embedded or proxying to a
@@ -2606,6 +2607,7 @@ impl MinistrServer {
                     &params.symbol_id,
                     max_depth,
                     direction,
+                    tests_only,
                 )
                 .await
             {

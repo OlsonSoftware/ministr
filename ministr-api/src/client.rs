@@ -592,6 +592,7 @@ impl DaemonClient {
         symbol_id: &str,
         max_depth: Option<u32>,
         direction: Option<&str>,
+        tests_only: bool,
         session_id: Option<&str>,
     ) -> Result<ImpactResponse, ClientError> {
         let encoded = encode_path_component(symbol_id);
@@ -601,6 +602,9 @@ impl DaemonClient {
         }
         if let Some(dir) = direction {
             qs.push(format!("direction={}", encode_path_component(dir)));
+        }
+        if tests_only {
+            qs.push("tests_only=true".to_string());
         }
         if let Some(sid) = session_id {
             qs.push(format!("session_id={}", encode_path_component(sid)));

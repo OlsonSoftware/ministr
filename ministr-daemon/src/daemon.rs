@@ -1305,6 +1305,9 @@ struct ImpactQuery {
     /// values fall back to incoming.
     #[serde(default)]
     direction: Option<String>,
+    /// FL6 — restrict the result to nodes in test files (test↔code mapping).
+    #[serde(default)]
+    tests_only: bool,
     #[serde(default)]
     session_id: Option<String>,
 }
@@ -1323,7 +1326,7 @@ async fn impact(
         .unwrap_or_default();
     let result = handle
         .service
-        .compute_impact(&sym, max_depth, direction)
+        .compute_impact(&sym, max_depth, direction, q.tests_only)
         .await;
     drop(handle);
     match result {

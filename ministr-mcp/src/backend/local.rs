@@ -116,12 +116,13 @@ impl QueryBackend for LocalBackend {
         symbol_id: &str,
         max_depth: u32,
         direction: CallDirection,
+        tests_only: bool,
     ) -> impl Future<Output = Result<ImpactResult, BackendError>> + Send {
         let service = self.service.clone();
         let symbol_id = symbol_id.to_string();
         async move {
             Ok(service
-                .compute_impact(&symbol_id, max_depth, direction)
+                .compute_impact(&symbol_id, max_depth, direction, tests_only)
                 .await?)
         }
     }

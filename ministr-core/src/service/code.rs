@@ -214,6 +214,14 @@ impl QueryService {
     /// - [`CallDirection::Outgoing`] — transitive *callees* (what this symbol
     ///   reaches). `query_refs` is bidirectional, so only the endpoint differs.
     ///
+    /// `tests_only` restricts the returned nodes to those living in test files
+    /// (per [`is_test_path`]). Combined with [`CallDirection::Incoming`] this is
+    /// the FL6 test↔code mapping — "which tests transitively exercise this
+    /// symbol" — powering the minimal-test-set step of the verify loop. (The
+    /// inverse, "what a test covers", is [`CallDirection::Outgoing`] on the test
+    /// symbol with `tests_only = false`.) Intermediate non-test hops are still
+    /// traversed; only the final node set is filtered.
+    ///
     /// # Errors
     ///
     /// Returns [`QueryError::SymbolNotFound`] if the target does not exist,
@@ -224,6 +232,7 @@ impl QueryService {
         symbol_id: &str,
         max_depth: u32,
         direction: CallDirection,
+        tests_only: bool,
     ) -> Result<ImpactResult, QueryError> {
         let sid = SymbolId(symbol_id.to_string());
 
@@ -278,6 +287,13 @@ impl QueryService {
                 break;
             }
             frontier = next;
+        }
+
+        // FL6 — test↔code mapping: keep only nodes in test files. The walk
+        // still traverses non-test intermediaries above; only the answer set
+        // (the tests that transitively reach the target) is filtered.
+        if tests_only {
+            callers.retain(|c| is_test_path(&c.file));
         }
 
         callers.sort_by(|a, b| {
@@ -554,5 +570,89 @@ mod tests {
         assert!(is_entry_point("_start"));
         assert!(!is_entry_point("run"));
         assert!(!is_entry_point("helper"));
+    }
+
+    /// FL6 — `compute_impact(incoming, tests_only=true)` returns only the
+    /// transitive callers living in test files (test↔code mapping), while
+    /// the unfiltered walk returns every caller.
+    #[tokio::test]
+    async fn impact_tests_only_keeps_only_test_callers() {
+        use crate::embedding::Embedder;
+        use crate::error::IndexError;
+        use crate::index::{HnswIndex, VectorIndex};
+        use crate::service::{CallDirection, QueryService};
+        use crate::storage::{SqliteStorage, Storage, SymbolRecord, SymbolRefRecord};
+        use crate::types::{RefKind, SymbolId};
+        use std::sync::Arc;
+
+        struct ZeroEmbedder;
+        impl Embedder for ZeroEmbedder {
+            fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, IndexError> {
+                Ok(vec![vec![0.0; 4]; texts.len()])
+            }
+            fn dimension(&self) -> usize {
+                4
+            }
+        }
+
+        let sym = |id: &str, file: &str| SymbolRecord {
+            id: SymbolId(id.into()),
+            file_path: file.into(),
+            name: id.rsplit("::").next().unwrap().into(),
+            kind: "function".into(),
+            visibility: "pub".into(),
+            signature: String::new(),
+            doc_comment: None,
+            module_path: String::new(),
+            line_start: 1,
+            line_end: 2,
+            cyclomatic_complexity: None,
+        };
+        let calls = |from: &str, to: &str| SymbolRefRecord {
+            from_symbol_id: SymbolId(from.into()),
+            to_symbol_id: SymbolId(to.into()),
+            ref_kind: RefKind::Calls,
+        };
+
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        storage
+            .insert_symbols(&[
+                sym("sym-svc::run", "src/svc.rs"),
+                sym("sym-svc::helper", "src/helper.rs"),
+                sym("sym-tests::it_runs", "tests/svc_test.rs"),
+            ])
+            .await
+            .unwrap();
+        // Both a production helper and a test transitively call `run`.
+        storage
+            .insert_symbol_refs(&[
+                calls("sym-svc::helper", "sym-svc::run"),
+                calls("sym-tests::it_runs", "sym-svc::run"),
+            ])
+            .await
+            .unwrap();
+
+        let embedder: Arc<dyn Embedder> = Arc::new(ZeroEmbedder);
+        let index: Arc<dyn VectorIndex> = Arc::new(HnswIndex::new(4, 16).unwrap());
+        let svc = QueryService::new(storage, embedder, index);
+
+        // Unfiltered incoming: both callers.
+        let all = svc
+            .compute_impact("sym-svc::run", 3, CallDirection::Incoming, false)
+            .await
+            .unwrap();
+        assert_eq!(all.callers.len(), 2, "helper + the test both call run");
+
+        // tests_only: just the test.
+        let tests = svc
+            .compute_impact("sym-svc::run", 3, CallDirection::Incoming, true)
+            .await
+            .unwrap();
+        assert_eq!(tests.callers.len(), 1, "only the test-file caller survives");
+        assert_eq!(tests.callers[0].symbol_id, "sym-tests::it_runs");
+        assert_eq!(
+            tests.tests, 1,
+            "the test-file count reflects the filtered set"
+        );
     }
 }

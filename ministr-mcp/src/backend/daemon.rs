@@ -217,6 +217,7 @@ impl QueryBackend for DaemonBackend {
         symbol_id: &str,
         max_depth: u32,
         direction: CallDirection,
+        tests_only: bool,
     ) -> impl Future<Output = Result<ImpactResult, BackendError>> + Send {
         let client = self.client.clone();
         let corpus_id = self.corpus_id.clone();
@@ -229,6 +230,7 @@ impl QueryBackend for DaemonBackend {
                     &symbol_id,
                     Some(max_depth),
                     Some(direction.as_str()),
+                    tests_only,
                     session_id.as_deref(),
                 )
                 .await?;
