@@ -1,50 +1,45 @@
 /**
- * AskSurface — the codebase Q&A destination, top-level surface.
+ * AskSurface — a conversation with your codebase.
  *
- * Replaces `components/AskView.tsx`. Same Tauri command (`ask_corpus`)
- * and same Channel-based phase stream — but the visible UI is rebuilt
- * around three principles from the IA reset:
+ * Each question + answer is a Turn in a scrollable thread (AskTurn); the
+ * composer is docked at the bottom; follow-ups carry prior turns as context
+ * (buildContextualQuery — a stateless re-ask; true cross-turn retrieval is
+ * the daemon follow-on aaa-ask-multiturn-context). The right rail is
+ * resumable conversation History (ConversationHistory) over the per-corpus
+ * thread store, with the Pinned answers below it. ⌘K starts a fresh thread.
  *
- *   1. Plain-English status. The 5+ pipeline phases (analyzing, retrieving,
- *      reranking, synthesizing, verifying) collapse into three perceptible
- *      states ("Thinking…" / "Writing answer…" / "Checking sources…").
- *      Internal jargon — HyDE, sub_questions, symbol_hints, by_strategy,
- *      bridge_relevant — is dropped from this surface entirely. Anyone
- *      who needs it can open Settings → Developer Tools.
- *
- *   2. Pinned answers, not investigation tabs. Pinning is one-click on
- *      an answer card; the saved set lives on a side panel. The old
- *      multi-tab Investigation system is no longer wired up here — the
- *      hook still exists and remains used by other surfaces, but the
- *      Ask UX is simpler.
- *
- *   3. One detail surface. Citation chips and source rows resolve into
- *      the global EntityPanel; the surface owns no inline detail panes.
+ * Same Tauri command (`ask_corpus`) + Channel phase stream as before; the
+ * phase machine now drives the LAST (in-flight) turn rather than a single
+ * replace-on-submit answer.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
-import { AlertTriangle, RefreshCw, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 
 import type { CorpusInfo, DaemonStatus } from "../../../lib/types";
-import { Button } from "../../ui/button";
 import { AdaptiveSurface } from "../../ui/adaptive-surface";
 import { corpusLabel } from "../../../lib/corpus";
 import { cn } from "../../../lib/utils";
 
-import { AskAnswer } from "./AskAnswer";
 import { AskEmpty } from "./AskEmpty";
 import { AskInput } from "./AskInput";
-import { AskStatus } from "./AskStatus";
+import { AskTurn, AskPendingTurn } from "./AskTurn";
+import { ConversationHistory } from "./ConversationHistory";
 import { PinnedAnswers } from "./PinnedAnswers";
 import {
-  isLoadingPhase,
+  buildContextualQuery,
+  loadThreads,
+  newId,
+  saveThreads,
+  THREADS_LIMIT,
+  type Thread,
+  type Turn,
+} from "./thread";
+import {
   loadPinned,
-  loadRecent,
-  PINNED_LIMIT,
-  RECENT_LIMIT,
   savePinned,
-  saveRecent,
+  PINNED_LIMIT,
   type AskPhase,
   type AskPhaseName,
   type InferenceHealth,
@@ -65,27 +60,38 @@ export function AskSurface({ status, activeCorpusId }: Props) {
 
   const [query, setQuery] = useState("");
   const [phase, setPhase] = useState<AskPhaseName>("idle");
-  const [error, setError] = useState<string | null>(null);
-  const [verifiedUnsupported, setVerifiedUnsupported] = useState<
-    string[] | null
-  >(null);
-  const [done, setDone] = useState<RecentEntry | null>(null);
-  const [recent, setRecent] = useState<RecentEntry[]>([]);
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [pendingQuery, setPendingQuery] = useState<string | null>(null);
   const [pinned, setPinned] = useState<RecentEntry[]>([]);
+  const [threads, setThreads] = useState<Thread[]>([]);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [health, setHealth] = useState<InferenceHealth | null>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Reset per-corpus state on switch.
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const turnsRef = useRef<Turn[]>([]);
+  const activeIdRef = useRef<string | null>(null);
+  const busyRef = useRef(false);
+
+  useEffect(() => {
+    turnsRef.current = turns;
+  }, [turns]);
+
+  // ── Per-corpus reset + load. ───────────────────────────────────────────
   useEffect(() => {
     if (!corpusId) {
-      setRecent([]);
+      setThreads([]);
       setPinned([]);
     } else {
-      setRecent(loadRecent(corpusId));
+      setThreads(loadThreads(corpusId));
       setPinned(loadPinned(corpusId));
     }
+    setTurns([]);
+    setPendingQuery(null);
+    setPhase("idle");
+    setActiveThreadId(null);
+    activeIdRef.current = null;
     setQuery("");
-    resetTransient();
   }, [corpusId]);
 
   // Probe inference health once on mount.
@@ -99,20 +105,53 @@ export function AskSurface({ status, activeCorpusId }: Props) {
     };
   }, []);
 
-  function resetTransient() {
-    setPhase("idle");
-    setError(null);
-    setVerifiedUnsupported(null);
-    setDone(null);
-  }
+  // ── Persist the current thread whenever a turn lands. ──────────────────
+  useEffect(() => {
+    if (!corpusId || turns.length === 0) return;
+    let id = activeIdRef.current;
+    if (!id) {
+      id = newId();
+      activeIdRef.current = id;
+      setActiveThreadId(id);
+    }
+    const fid = id;
+    setThreads((prev) => {
+      const existing = prev.find((t) => t.id === fid);
+      const thread: Thread = {
+        id: fid,
+        corpusId,
+        turns,
+        createdAt: existing?.createdAt ?? Date.now(),
+        updatedAt: Date.now(),
+      };
+      const next = [thread, ...prev.filter((t) => t.id !== fid)].slice(
+        0,
+        THREADS_LIMIT,
+      );
+      saveThreads(corpusId, next);
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turns]);
+
+  // ── Auto-scroll the thread to the newest turn / status. ────────────────
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [turns.length, pendingQuery, phase]);
 
   const submit = useCallback(
     async (raw: string) => {
       const q = raw.trim();
-      if (!q || !corpusId) return;
-      resetTransient();
-      setQuery(q);
+      if (!q || !corpusId || busyRef.current) return;
+      busyRef.current = true;
+
+      const contextual = buildContextualQuery(turnsRef.current, q);
+      setQuery("");
+      setPendingQuery(q);
       setPhase("analyzing");
+
+      let settled = false;
+      let unsupported: string[] | null = null;
 
       const channel = new Channel<AskPhase>();
       channel.onmessage = (event: AskPhase) => {
@@ -131,10 +170,11 @@ export function AskSurface({ status, activeCorpusId }: Props) {
             setPhase("synthesizing");
             return;
           case "verified":
-            setVerifiedUnsupported(event.unsupported_claims);
+            unsupported = event.unsupported_claims;
             setPhase("verifying");
             return;
           case "done": {
+            settled = true;
             const entry: RecentEntry = {
               query: q,
               answer: event.answer,
@@ -144,22 +184,21 @@ export function AskSurface({ status, activeCorpusId }: Props) {
               elapsed_ms: event.elapsed_ms,
               ts: Date.now(),
             };
-            setDone(entry);
+            setTurns((prev) => [
+              ...prev,
+              { id: newId(), query: q, status: "done", entry, unsupported },
+            ]);
+            setPendingQuery(null);
             setPhase("done");
-            setRecent((prev) => {
-              const next = [
-                entry,
-                ...prev.filter(
-                  (e) => e.query.toLowerCase() !== q.toLowerCase(),
-                ),
-              ].slice(0, RECENT_LIMIT);
-              saveRecent(corpusId, next);
-              return next;
-            });
             return;
           }
           case "error":
-            setError(event.message);
+            settled = true;
+            setTurns((prev) => [
+              ...prev,
+              { id: newId(), query: q, status: "error", error: event.message },
+            ]);
+            setPendingQuery(null);
             setPhase("error");
             return;
         }
@@ -168,42 +207,65 @@ export function AskSurface({ status, activeCorpusId }: Props) {
       try {
         await invoke("ask_corpus", {
           corpusId,
-          query: q,
+          query: contextual,
           progress: channel,
         });
       } catch (e) {
-        // The Channel error event already sets phase=error in most cases;
-        // this catch covers transport/permission failures before any phase
-        // event arrives.
-        setError((prev) => prev ?? String(e));
-        setPhase((prev) => (prev === "error" ? prev : "error"));
+        if (!settled) {
+          setTurns((prev) => [
+            ...prev,
+            { id: newId(), query: q, status: "error", error: String(e) },
+          ]);
+          setPendingQuery(null);
+          setPhase("error");
+        }
+      } finally {
+        busyRef.current = false;
       }
     },
     [corpusId],
   );
 
   function applyStarter(s: string) {
-    setQuery(s);
     submit(s);
   }
 
-  function restoreRecent(e: RecentEntry) {
-    setQuery(e.query);
-    submit(e.query);
+  // ── Thread lifecycle. ──────────────────────────────────────────────────
+  const newThread = useCallback(() => {
+    setTurns([]);
+    setPendingQuery(null);
+    setPhase("idle");
+    setActiveThreadId(null);
+    activeIdRef.current = null;
+    setQuery("");
+    inputRef.current?.focus();
+  }, []);
+
+  function resumeThread(t: Thread) {
+    setTurns(t.turns);
+    setActiveThreadId(t.id);
+    activeIdRef.current = t.id;
+    setPendingQuery(null);
+    setPhase("idle");
+    setQuery("");
   }
 
-  function clearRecent() {
-    setRecent([]);
-    saveRecent(corpusId, []);
+  function deleteThread(id: string) {
+    setThreads((prev) => {
+      const next = prev.filter((t) => t.id !== id);
+      if (corpusId) saveThreads(corpusId, next);
+      return next;
+    });
+    if (id === activeIdRef.current) newThread();
   }
 
-  function pinCurrent() {
-    if (!done || !corpusId) return;
+  // ── Pinning (per answer). ──────────────────────────────────────────────
+  function pinEntry(entry: RecentEntry) {
+    if (!corpusId) return;
     setPinned((prev) => {
-      if (prev.some((e) => e.query.toLowerCase() === done.query.toLowerCase())) {
+      if (prev.some((e) => e.query.toLowerCase() === entry.query.toLowerCase()))
         return prev;
-      }
-      const next = [done, ...prev].slice(0, PINNED_LIMIT);
+      const next = [entry, ...prev].slice(0, PINNED_LIMIT);
       savePinned(corpusId, next);
       return next;
     });
@@ -214,71 +276,56 @@ export function AskSurface({ status, activeCorpusId }: Props) {
       const next = prev.filter(
         (e) => e.query.toLowerCase() !== entry.query.toLowerCase(),
       );
-      savePinned(corpusId, next);
+      if (corpusId) savePinned(corpusId, next);
       return next;
     });
   }
 
-  const isPinned = useMemo(() => {
-    if (!done) return false;
-    return pinned.some(
-      (e) => e.query.toLowerCase() === done.query.toLowerCase(),
-    );
-  }, [pinned, done]);
+  const isPinned = (entry: RecentEntry) =>
+    pinned.some((e) => e.query.toLowerCase() === entry.query.toLowerCase());
+
+  // ── ⌘K / Ctrl+K starts a fresh thread. ────────────────────────────────
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        newThread();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [newThread]);
 
   // ── No project state — surface owns its own empty handling. ────────────
   if (!corpus) {
     return (
       <AdaptiveSurface>
-      <div className="h-full p-5">
-      <AskEmpty
-        variant="no-project"
-        onAddProject={() => {
-          window.dispatchEvent(
-            new CustomEvent("ministr-navigate", { detail: "projects" }),
-          );
-        }}
-      />
-      </div>
+        <div className="h-full p-5">
+          <AskEmpty
+            variant="no-project"
+            onAddProject={() => {
+              window.dispatchEvent(
+                new CustomEvent("ministr-navigate", { detail: "projects" }),
+              );
+            }}
+          />
+        </div>
       </AdaptiveSurface>
     );
   }
 
   const inferenceDown = health !== null && !health.available;
+  const empty = turns.length === 0 && !pendingQuery;
 
   return (
     <AdaptiveSurface>
-    <div className="@container/page flex h-full gap-4 min-h-0 p-5">
-      <div className="flex-1 min-w-0 flex flex-col gap-3 min-h-0">
-        <Header corpus={corpus} />
+      <div className="@container/page flex h-full gap-4 min-h-0 p-5">
+        <div className="flex-1 min-w-0 flex flex-col gap-3 min-h-0">
+          <Header corpus={corpus} />
 
-        <AskInput
-          inputRef={inputRef}
-          query={query}
-          onChange={setQuery}
-          onSubmit={() => submit(query)}
-          loading={isLoadingPhase(phase)}
-          disabled={inferenceDown}
-          disabledReason={
-            inferenceDown
-              ? "Install the Claude CLI to enable Ask…"
-              : undefined
-          }
-          recent={recent}
-          onPickRecent={restoreRecent}
-          onClearRecent={clearRecent}
-        />
-
-        {phase !== "idle" && phase !== "error" && phase !== "done" && (
-          <AskStatus phase={phase} />
-        )}
-
-        {phase === "done" && done?.cached && <AskStatus phase="done" cached />}
-
-        <div className="flex-1 min-h-0 overflow-y-auto pr-1">
-          {phase === "idle" && !done && (
-            <>
-              {inferenceDown ? (
+          <div className="flex-1 min-h-0 overflow-y-auto pr-1 flex flex-col gap-6">
+            {empty &&
+              (inferenceDown ? (
                 <AskEmpty
                   variant="inference-unavailable"
                   reason={health?.reason ?? ""}
@@ -289,46 +336,68 @@ export function AskSurface({ status, activeCorpusId }: Props) {
                   onApply={applyStarter}
                   disabled={inferenceDown}
                 />
-              )}
-            </>
-          )}
+              ))}
 
-          {phase === "error" && error && (
-            <ErrorCard
-              message={error}
-              onRetry={() => submit(query)}
-              health={health}
-            />
-          )}
+            {turns.map((t) => (
+              <AskTurn
+                key={t.id}
+                turn={t}
+                corpusId={corpusId}
+                corpus={corpus}
+                health={health}
+                pinned={t.entry ? isPinned(t.entry) : false}
+                onPin={() => t.entry && pinEntry(t.entry)}
+                onUnpin={() => t.entry && unpin(t.entry)}
+                onRetry={() => submit(t.query)}
+              />
+            ))}
 
-          {phase === "done" && done && (
-            <AskAnswer
-              entry={done}
-              corpusId={corpusId}
-              corpus={corpus}
-              verifiedUnsupported={verifiedUnsupported}
-              pinned={isPinned}
-              onPin={pinCurrent}
-              onUnpin={() => unpin(done)}
-            />
-          )}
+            {pendingQuery && <AskPendingTurn query={pendingQuery} phase={phase} />}
+
+            <div ref={bottomRef} />
+          </div>
+
+          <AskInput
+            inputRef={inputRef}
+            query={query}
+            onChange={setQuery}
+            onSubmit={() => submit(query)}
+            loading={pendingQuery != null}
+            disabled={inferenceDown}
+            disabledReason={
+              inferenceDown ? "Install the Claude CLI to enable Ask…" : undefined
+            }
+            recent={[]}
+            onPickRecent={() => {}}
+            onClearRecent={() => {}}
+          />
         </div>
-      </div>
 
-      <aside
-        className={cn(
-          "hidden @min-[1180px]/page:flex w-[260px] shrink-0",
-          "flex-col gap-3 min-h-0 border-l border-border-soft pl-4",
-        )}
-      >
-        <PinnedAnswers
-          entries={pinned}
-          activeQuery={done?.query ?? query}
-          onPick={restoreRecent}
-          onUnpin={unpin}
-        />
-      </aside>
-    </div>
+        <aside
+          className={cn(
+            "hidden @min-[1180px]/page:flex w-[260px] shrink-0",
+            "flex-col gap-4 min-h-0 border-l border-border-soft pl-4",
+          )}
+        >
+          <div className="flex-1 min-h-0">
+            <ConversationHistory
+              threads={threads}
+              activeId={activeThreadId}
+              onNew={newThread}
+              onResume={resumeThread}
+              onDelete={deleteThread}
+            />
+          </div>
+          <div className="flex-1 min-h-0">
+            <PinnedAnswers
+              entries={pinned}
+              activeQuery={pendingQuery ?? ""}
+              onPick={(e) => submit(e.query)}
+              onUnpin={unpin}
+            />
+          </div>
+        </aside>
+      </div>
     </AdaptiveSurface>
   );
 }
@@ -348,47 +417,6 @@ function Header({ corpus }: { corpus: CorpusInfo }) {
           {corpusLabel(corpus)}
         </span>
       </div>
-    </div>
-  );
-}
-
-function ErrorCard({
-  message,
-  onRetry,
-  health,
-}: {
-  message: string;
-  onRetry: () => void;
-  health: InferenceHealth | null;
-}) {
-  const isInferenceFailure =
-    !health?.available || /inference|claude|spawn|ENOENT/i.test(message);
-
-  return (
-    <div role="alert" className="rounded-lg border border-danger/40 bg-danger/5 p-4 flex items-start gap-3">
-      <AlertTriangle
-        className="h-4 w-4 text-danger shrink-0 mt-0.5"
-        strokeWidth={2}
-      />
-      <div className="flex-1 min-w-0">
-        <p className="font-sans text-base font-bold text-danger">
-          {isInferenceFailure ? "Inference failed" : "Ask failed"}
-        </p>
-        <p className="font-sans text-sm text-text-muted mt-1 break-words">
-          {health && !health.available ? health.reason : message}
-        </p>
-        {isInferenceFailure && (
-          <p className="font-mono text-xs text-text-dim mt-2">
-            Ask uses the Claude CLI for synthesis. Install it from{" "}
-            <span className="text-text-muted">claude.com/code</span> and make
-            sure <code className="text-text">claude</code> is on your PATH.
-          </p>
-        )}
-      </div>
-      <Button variant="outline" size="sm" onClick={onRetry}>
-        <RefreshCw className="h-3 w-3" strokeWidth={2} />
-        Retry
-      </Button>
     </div>
   );
 }
