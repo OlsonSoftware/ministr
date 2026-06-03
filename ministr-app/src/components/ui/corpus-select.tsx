@@ -13,8 +13,8 @@ interface CorpusSelectProps {
   ariaLabel?: string;
 }
 
-/** Native `<select>` of the daemon's corpora. Brutalist: 2px border, sharp
- *  corners, mono. */
+/** Native `<select>` of the daemon's corpora — hairline border, soft corners,
+ *  mono caps (§4/§6). Native dropdown (OS-rendered), so no glass tier applies. */
 export function CorpusSelect({
   value,
   onChange,
@@ -32,7 +32,9 @@ export function CorpusSelect({
       className={cn(
         "h-9 rounded-md border border-border bg-surface px-2.5 text-xs font-mono font-medium uppercase tracking-[0.08em] text-text cursor-pointer",
         "transition-colors duration-150 ease-out",
-        "focus:outline-none focus:border-accent focus:bg-surface-overlay",
+        // §9 WCAG 2.4.13 — keep the global focus-visible ring; add an
+        // accent border/surface on keyboard focus (not mouse).
+        "focus-visible:border-accent focus-visible:bg-surface-overlay",
         "disabled:cursor-not-allowed disabled:opacity-60",
         className,
       )}
