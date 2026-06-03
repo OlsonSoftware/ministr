@@ -40,7 +40,7 @@ export interface DeadCodeMapProps {
 }
 
 export function DeadCodeMap({
-  symbols,
+  symbols = [],
   loading = false,
   onInspect,
   onOpenFile,

@@ -11,7 +11,9 @@ function ref(name: string, kind: string, file: string, line = 42): SolidSymbolRe
   return { symbol_id: `sym-${file}::${name}`, name, kind, file, line };
 }
 
-export const ALL_FINDINGS: SolidFinding[] = [
+// NOT exported: in CSF every named export is treated as a story, and a bare
+// array isn't a valid story (it would render with no `findings` arg → crash).
+const ALL_FINDINGS: SolidFinding[] = [
   {
     type: "redundancy",
     principle: "dry_ocp",

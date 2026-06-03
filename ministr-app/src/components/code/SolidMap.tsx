@@ -152,7 +152,11 @@ export interface SolidMapProps {
   onInspect: (ref: SolidSymbolRef) => void;
 }
 
-export function SolidMap({ findings, loading = false, onInspect }: SolidMapProps) {
+export function SolidMap({
+  findings = [],
+  loading = false,
+  onInspect,
+}: SolidMapProps) {
   const [principleFilter, setPrincipleFilter] = useState<string | null>(null);
 
   const normalized = useMemo(() => findings.map(summarise), [findings]);

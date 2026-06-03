@@ -67,7 +67,7 @@ export interface BridgeMapProps {
 }
 
 export function BridgeMap({
-  links,
+  links = [],
   loading = false,
   onInspect,
   onOpenFile,
