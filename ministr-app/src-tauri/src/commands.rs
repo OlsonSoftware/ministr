@@ -1170,6 +1170,59 @@ pub async fn symbol_references(
         .collect())
 }
 
+/// A dead-code candidate returned to the frontend (a symbol with zero
+/// references that doesn't look like an entry point) — the Explore "Unused"
+/// lens.
+#[derive(Serialize)]
+pub struct DeadSymbolOut {
+    pub symbol_id: String,
+    pub name: String,
+    pub kind: String,
+    pub visibility: String,
+    pub file: String,
+    pub line: u32,
+    pub lines: u32,
+}
+
+/// Find dead-code candidates for a corpus — symbols with no references in the
+/// reference graph that don't look like entry points. Backs the Explore
+/// "Unused" lens (mirrors the daemon's `/dead` endpoint + `ministr_dead`).
+#[tauri::command]
+pub async fn dead_code(
+    corpus_id: String,
+    kind: Option<String>,
+    module: Option<String>,
+    min_lines: Option<u32>,
+    limit: Option<usize>,
+) -> Result<Vec<DeadSymbolOut>, CommandError> {
+    let resp = ministr_api::client::DaemonClient::new()
+        .dead_code(
+            &corpus_id,
+            &ministr_api::query::DeadCodeRequest {
+                kind,
+                module,
+                min_lines,
+                limit,
+            },
+            None,
+        )
+        .await?;
+
+    Ok(resp
+        .symbols
+        .into_iter()
+        .map(|d| DeadSymbolOut {
+            symbol_id: d.symbol_id,
+            name: d.name,
+            kind: d.kind,
+            visibility: d.visibility,
+            file: d.file,
+            line: d.line,
+            lines: d.lines,
+        })
+        .collect())
+}
+
 /// Ingestion progress snapshot for a corpus.
 #[derive(Serialize)]
 pub struct IngestionProgressInfo {

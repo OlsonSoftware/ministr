@@ -103,6 +103,7 @@ fn main() {
             commands::read_file,
             commands::file_occurrences,
             commands::bridge_query,
+            commands::dead_code,
             commands::read_source_excerpt,
             commands::open_path,
             commands::ingestion_progress,

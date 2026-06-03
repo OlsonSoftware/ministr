@@ -21,6 +21,7 @@ import type {
   BridgeLink,
   CorpusInfo,
   DaemonStatus,
+  DeadSymbol,
   FileContent,
   FileInfo,
   Occurrence,
@@ -433,6 +434,34 @@ function bridgeQuery(args: Record<string, unknown>): BridgeLink[] {
   );
 }
 
+// ── Dead-code candidates — a few plausible zero-reference symbols. ─────────
+
+function dead(
+  over: Partial<DeadSymbol> & { name: string; file: string },
+): DeadSymbol {
+  return {
+    symbol_id: `sym-${over.file}::${over.name}`,
+    kind: "function",
+    visibility: "pub",
+    line: 42,
+    lines: 14,
+    ...over,
+  };
+}
+
+const LIVE_DEAD: DeadSymbol[] = [
+  dead({ name: "legacy_migrate_v1", file: "ministr-core/src/storage/migrate.rs", kind: "function", line: 88, lines: 64 }),
+  dead({ name: "OldSessionShape", file: "ministr-core/src/storage/migrate.rs", kind: "struct", line: 12, lines: 22, visibility: "pub(crate)" }),
+  dead({ name: "ExperimentalReranker", file: "ministr-core/src/rerank/experimental.rs", kind: "struct", line: 30, lines: 120 }),
+  dead({ name: "score_v2", file: "ministr-core/src/rerank/experimental.rs", kind: "function", line: 158, lines: 41, visibility: "fn" }),
+  dead({ name: "DeprecatedFlag", file: "ministr-api/src/config.rs", kind: "enum", line: 210, lines: 8 }),
+];
+
+function deadCode(args: Record<string, unknown>): DeadSymbol[] {
+  const kind = args.kind ? String(args.kind) : null;
+  return kind ? LIVE_DEAD.filter((d) => d.kind === kind) : LIVE_DEAD;
+}
+
 const SUPPORTED_MODELS = [
   { name: "jina-code-v2", dimension: 768, description: "Code-optimised, Matryoshka", code_optimized: true },
   { name: "bge-m3", dimension: 1024, description: "Multilingual dense+sparse", code_optimized: false },
@@ -453,6 +482,7 @@ export const LIVE_FIXTURES: TauriFixtures = {
   symbol_definition: symbolDefinition,
   symbol_references: REFERENCES,
   bridge_query: bridgeQuery,
+  dead_code: deadCode,
   // Tend
   list_supported_models: SUPPORTED_MODELS,
   // Ask

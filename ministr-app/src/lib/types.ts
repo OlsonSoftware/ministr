@@ -168,6 +168,19 @@ export interface Occurrence {
   col: number;
 }
 
+/** A dead-code candidate returned by `dead_code` — a symbol with zero
+ *  references that doesn't look like an entry point (the Explore "Unused"
+ *  lens). `lines` is the symbol's source span length. */
+export interface DeadSymbol {
+  symbol_id: string;
+  name: string;
+  kind: string;
+  visibility: string;
+  file: string;
+  line: number;
+  lines: number;
+}
+
 /** Full symbol definition returned by `symbol_definition`. */
 export interface SymbolDefinitionDetail {
   id: string;

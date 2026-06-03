@@ -11,7 +11,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, Cable, Code2, Command, PanelRight, X } from "lucide-react";
+import {
+  ArrowLeft,
+  Cable,
+  Code2,
+  Command,
+  PanelRight,
+  Trash2,
+  X,
+} from "lucide-react";
 import type {
   DaemonStatus,
   FileContent,
@@ -25,6 +33,7 @@ import { FileTree } from "./FileTree";
 import { CodeViewer } from "./CodeViewer";
 import { CodeLanding } from "./CodeLanding";
 import { BridgeMapConnector } from "./BridgeMap";
+import { DeadCodeMapConnector } from "./DeadCodeMap";
 import { SymbolNeighborhoodConnector } from "./SymbolNeighborhood";
 import { RelatedFilesPanel } from "./RelatedFilesPanel";
 import { SymbolPalette } from "./SymbolPalette";
@@ -64,8 +73,9 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
   // Narrow-width drawer: when the right panel can't be an inline column, it
   // slides over instead. `rightOpen` gates that drawer (no effect when wide).
   const [rightOpen, setRightOpen] = useState(false);
-  // The Explore lens: the code browser, or the cross-language bridge map.
-  const [lens, setLens] = useState<"code" | "bridges">("code");
+  // The Explore lens: the code browser, the cross-language bridge map, or the
+  // unused-symbol (dead-code) map.
+  const [lens, setLens] = useState<Lens>("code");
 
   const gridRef = useRef<HTMLDivElement>(null);
   const surfaceWidth = useContainerWidth(gridRef);
@@ -269,7 +279,7 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
           </>
         ) : (
           <span className="truncate font-mono text-xs text-text-muted">
-            Cross-language seams
+            {lens === "bridges" ? "Cross-language seams" : "Unused candidates"}
           </span>
         )}
         <div className="ml-auto flex items-center gap-2">
@@ -311,6 +321,16 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
             onOpenFile={(p) => {
               setLens("code");
               nav.push({ path: p });
+            }}
+          />
+        </div>
+      ) : lens === "unused" ? (
+        <div className="min-h-0 flex-1">
+          <DeadCodeMapConnector
+            corpusId={corpusId}
+            onOpenFile={(p, line) => {
+              setLens("code");
+              nav.push({ path: p, line });
             }}
           />
         </div>
@@ -411,18 +431,22 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
   );
 }
 
-/** Code | Bridges lens switch — the two ways to read the index: file-by-file,
- *  or by its cross-language seams. A segmented control in the Explore header. */
+type Lens = "code" | "bridges" | "unused";
+
+/** Code | Bridges | Unused lens switch — the three ways to read the index:
+ *  file-by-file, by its cross-language seams, or by what nothing references
+ *  (dead-code candidates). A segmented control in the Explore header. */
 function LensToggle({
   lens,
   onChange,
 }: {
-  lens: "code" | "bridges";
-  onChange: (l: "code" | "bridges") => void;
+  lens: Lens;
+  onChange: (l: Lens) => void;
 }) {
-  const items: Array<{ id: "code" | "bridges"; label: string; icon: typeof Code2 }> = [
+  const items: Array<{ id: Lens; label: string; icon: typeof Code2 }> = [
     { id: "code", label: "Code", icon: Code2 },
     { id: "bridges", label: "Bridges", icon: Cable },
+    { id: "unused", label: "Unused", icon: Trash2 },
   ];
   return (
     <div
