@@ -8,6 +8,7 @@ import {
   type Entity,
 } from "../hooks/useEntityPanel";
 import { scrim, slideOver, spring } from "../lib/motion";
+import { overlayScrim } from "../lib/ui-tokens";
 import { useDialog } from "../hooks/useDialog";
 import { cn } from "../lib/utils";
 import { SymbolView } from "./entity/SymbolView";
@@ -72,7 +73,7 @@ export function EntityPanel() {
             initial="initial"
             animate="animate"
             exit="exit"
-            className="fixed inset-0 z-[1200] bg-black/50 backdrop-blur-[2px]"
+            className={cn(overlayScrim, "z-[1200]")}
             onClick={close}
             aria-hidden="true"
           />

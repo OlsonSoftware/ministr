@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /**
- * design-lint — the Cockpit consistency guardrail (see ../DESIGN.md).
+ * design-lint — the AAA consistency guardrail (rules re-derived from
+ * ../DESIGN.md v4 §11.A — the mechanized half of the Definition of Done).
  *
- * Fails (exit 1) if any banned pre-Cockpit literal reappears in a
- * className. Comments and the tokens/contract files are excluded so the
- * canonical definitions and prose can name the banned strings.
+ * Fails (exit 1) if a banned literal reappears in a className. Comments and
+ * the tokens/contract files are excluded so the canonical definitions and
+ * prose can name the banned strings. Each rule below cites its DESIGN.md §.
  *
- * Run: `pnpm design:lint` (also wired into `just validate`).
+ * Run: `npm run design:lint` (also wired into `just validate`).
  */
 const fs = require("fs");
 const path = require("path");
@@ -18,19 +19,27 @@ const ALLOW = new Set(["lib/ui-tokens.ts", "lib/motion.ts", "main.tsx"]);
 
 // [label, regex] — regex runs against comment-stripped source.
 const BANNED = [
-  ["tracking-[0.05em]", /tracking-\[0\.05em\]/],
-  ["tracking-[0.1em]", /tracking-\[0\.1em\]/],
-  ["transition-none", /\btransition-none\b/],
-  ["rounded-none", /\brounded-none\b/],
-  ["border-2", /\bborder-2\b/],
-  ["font-serif", /\bfont-serif\b/],
-  ["italic (use text-text-dim, not italic)", /(?<!not-)(?<!\w)italic(?!\w)/],
-  ["ministr-flash", /\bministr-flash\b/],
+  // --- Consistency floor (DESIGN.md §1/§6/§7/§8): inherited denylist ---
+  ["tracking-[0.05em] (§6 — use [0.06em]/[0.08em])", /tracking-\[0\.05em\]/],
+  ["tracking-[0.1em] (§6 — use [0.06em]/[0.08em])", /tracking-\[0\.1em\]/],
+  ["transition-none (§8 — clickable things must animate)", /\btransition-none\b/],
+  ["rounded-none (§7 — even data surfaces are rounded)", /\brounded-none\b/],
+  ["border-2 (§4 — hairline borders only)", /\bborder-2\b/],
+  ["font-serif (§6 — Geist sans / JetBrains mono only)", /\bfont-serif\b/],
+  ["italic (§6 — use text-text-dim, not italic)", /(?<!not-)(?<!\w)italic(?!\w)/],
+  ["ministr-flash (dead class)", /\bministr-flash\b/],
   ["motion-data (dead class)", /["'\s]motion-data["'\s]/],
   ["ministr-pin-in (dead class)", /\bministr-pin-in\b/],
   ["ministr-drawer-in (dead class)", /\bministr-drawer-in\b/],
-  // arbitrary shadow except the sanctioned glow
-  ["arbitrary shadow", /shadow-\[(?!var\(--glow-soft\)\])/],
+  // --- §4 Elevation: shadows go through the scale; only the glow is arbitrary
+  ["arbitrary shadow (§4 — use shadow-xs…lg)", /shadow-\[(?!var\(--glow-soft\)\])/],
+  // --- §3 Color: token-only color — no raw hex / rgb / hsl in a className
+  ["raw hex color (§3 — token-only color)", /-\[#[0-9a-fA-F]{3,8}\b/],
+  ["raw rgb/hsl color (§3 — token-only color)", /-\[(?:rgb|hsl)a?\(/],
+  // --- §4 Glass: backdrop-blur belongs to the glass role token, not ad-hoc
+  ["arbitrary backdrop-blur (§4 — use the glass token)", /\bbackdrop-blur-\[/],
+  // --- §8 Motion: durations go through swift/flow/spring tokens
+  ["arbitrary duration (§8 — use a motion token)", /\bduration-\[/],
 ];
 
 /** Strip // line and /* *\/ block comments (keeps string contents). */

@@ -32,6 +32,7 @@ import type { CorpusInfo } from "../../lib/types";
 import { corpusLabel, corpusRoot } from "../../lib/corpus";
 import { popIn, scrim } from "../../lib/motion";
 import { clampPct } from "../../lib/sessions";
+import { overlayScrim } from "../../lib/ui-tokens";
 import { cn } from "../../lib/utils";
 import { useSessions } from "../../hooks/useSessions";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
@@ -313,7 +314,7 @@ export function CommandPalette({
           initial="initial"
           animate="animate"
           exit="exit"
-          className="fixed inset-0 z-[1300] flex items-start justify-center bg-black/50 backdrop-blur-[2px] px-6"
+          className={cn(overlayScrim, "z-[1300] flex items-start justify-center px-6")}
           style={{ paddingTop: "14vh" }}
           role="dialog"
           aria-modal="true"

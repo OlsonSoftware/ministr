@@ -8,7 +8,7 @@ import { AlertTriangle, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "./button";
 import { popIn, scrim } from "../../lib/motion";
-import { transitionInteractive } from "../../lib/ui-tokens";
+import { overlayScrim, transitionInteractive } from "../../lib/ui-tokens";
 import { useDialog } from "../../hooks/useDialog";
 import { cn } from "../../lib/utils";
 
@@ -59,7 +59,7 @@ export function ConfirmDialog({
           initial="initial"
           animate="animate"
           exit="exit"
-          className="fixed inset-0 z-[1100] flex items-start justify-center bg-black/50 backdrop-blur-[2px] px-6"
+          className={cn(overlayScrim, "z-[1100] flex items-start justify-center px-6")}
           style={{ paddingTop: "20vh" }}
           role="dialog"
           aria-modal="true"

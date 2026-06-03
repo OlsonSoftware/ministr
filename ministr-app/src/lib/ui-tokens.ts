@@ -137,3 +137,11 @@ export const contentWide = "w-full";
  *  responsive grid/flex classes using container-query prefixes. */
 export const contentAdaptive =
   "w-full max-w-3xl @min-[900px]/surface:max-w-none mx-auto @min-[900px]/surface:mx-0";
+
+/* ---- Overlay tier (DESIGN.md §4 — floating chrome) ---- */
+
+/** Modal/overlay scrim — the dimmed, lightly-blurred backdrop behind a
+ *  dialog, drawer, or the command palette. The single sanctioned overlay
+ *  backdrop (the `backdrop-blur-[2px]` value lives here so call sites never
+ *  hand-roll it). Compose with `cn(overlayScrim, "z-[…] …")` for layering. */
+export const overlayScrim = "fixed inset-0 bg-black/50 backdrop-blur-[2px]";
