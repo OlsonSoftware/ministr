@@ -53,7 +53,7 @@ use ministr_core::embedding::Embedder;
 use ministr_core::git::GitFetcher;
 use ministr_core::index::VectorIndex;
 use ministr_core::ingestion::{IngestionPipeline, IngestionProgress};
-use ministr_core::service::{CallDirection, QueryService};
+use ministr_core::service::{CallDirection, ImpactCaller, ImpactResult, ImpactRisk, QueryService};
 use ministr_core::session::prefetch::PrefetchEngine;
 use ministr_core::session::{SessionRegistry, UsageLevel};
 use ministr_core::storage::{SqliteStorage, Storage, SymbolFilter};
@@ -70,9 +70,9 @@ use helpers::{
 use progress::{run_ingestion_progress_notifier, run_subscription_notifier};
 use types::{
     AlreadyDeliveredResponse, BridgeEndpointSummary, BridgeLinkSummary, BridgeParams,
-    BridgeResponse, CloneOutputData, CloneParams, CompressParams, CompressResponse,
+    BridgeResponse, ChangedSymbol, CloneOutputData, CloneParams, CompressParams, CompressResponse,
     CorpusStatsHeader, DeadCodeParams, DeadCodeResponse, DefinitionParams, DiagnosticsParams,
-    DiagnosticsResponse, DroppedParams, DroppedResponse, ExtractParams, ExtractResponse,
+    DiagnosticsResponse, DiffSeed, DroppedParams, DroppedResponse, ExtractParams, ExtractResponse,
     FetchOutputData, FetchParams, FetchResponse, ImpactParams, ImpactResponse, NextAction,
     ProjectEntry, ProjectsResponse, ReadOutputData, ReadParams, ReferencesParams,
     ReferencesResponse, RefreshParams, RefreshResponse, RelatedParams, RelatedResponse,
@@ -82,6 +82,194 @@ use types::{
 };
 
 use crate::task::{McpTaskManager, task_to_cancel_result, task_to_get_result};
+
+/// Whether a path looks like a test file. Mirrors `ministr_core`'s
+/// `service::code::is_test_path` (kept `pub(super)` there); used by the FL7
+/// diff-impact union to count distinct test files among impacted nodes.
+fn is_test_file(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower.contains("/tests/")
+        || lower.contains("\\tests\\")
+        || lower.contains("/test/")
+        || lower.contains("\\test\\")
+        || lower.ends_with("_test.rs")
+        || lower.ends_with("_test.go")
+        || lower.ends_with("_test.py")
+        || lower.ends_with(".test.ts")
+        || lower.ends_with(".test.tsx")
+        || lower.ends_with(".test.js")
+        || lower.ends_with(".test.jsx")
+        || lower.ends_with(".spec.ts")
+        || lower.ends_with(".spec.tsx")
+        || lower.ends_with(".spec.js")
+        || lower.ends_with(".spec.jsx")
+        || lower.ends_with("_spec.rb")
+}
+
+/// Heuristic risk for a unioned blast radius. Mirrors `ministr_core`'s
+/// `service::code::compute_risk` so a diff-range impact scores like a
+/// single-symbol impact.
+fn union_risk(symbols: usize, files: usize, tests: usize) -> ImpactRisk {
+    let score = symbols
+        .saturating_add(files.saturating_mul(2))
+        .saturating_add(tests.saturating_mul(3));
+    if score > 50 || files > 10 {
+        ImpactRisk::High
+    } else if score > 15 || files > 3 {
+        ImpactRisk::Medium
+    } else {
+        ImpactRisk::Low
+    }
+}
+
+/// FL7 — map each changed file's head-side line ranges to the enclosing indexed
+/// symbols (the diff seed set). Exact `file_path` equality matches the absolute
+/// paths the diff parser resolved against the work tree. Returns the bounded,
+/// stably-ordered seed set plus the count of files that yielded a symbol.
+async fn resolve_changed_seeds(
+    backend: &crate::backend::Backend,
+    tenant_subject: Option<&str>,
+    project: Option<&str>,
+    changed: &[ministr_core::git::ChangedFile],
+) -> Result<(Vec<ChangedSymbol>, usize), crate::backend::BackendError> {
+    /// Cap on the diff seed set surfaced (token safety).
+    const MAX_CHANGED_SYMBOLS: usize = 200;
+
+    let mut seeds: Vec<ChangedSymbol> = Vec::new();
+    let mut seed_ids: HashSet<String> = HashSet::new();
+    let mut changed_files = 0usize;
+    for file in changed {
+        let filter = SymbolFilter {
+            file_path: Some(file.path.clone()),
+            ..SymbolFilter::default()
+        };
+        let syms = backend
+            .search_symbols(tenant_subject, project, filter)
+            .await?;
+        let mut file_hit = false;
+        for s in syms {
+            let touched = file
+                .ranges
+                .iter()
+                .any(|r| r.overlaps(s.line_start, s.line_end));
+            if touched && seed_ids.insert(s.id.0.clone()) {
+                file_hit = true;
+                seeds.push(ChangedSymbol {
+                    symbol_id: s.id.0,
+                    name: s.name,
+                    kind: s.kind,
+                    file: s.file_path,
+                    line: s.line_start,
+                });
+            }
+        }
+        if file_hit {
+            changed_files += 1;
+        }
+    }
+    // Stable order: file then line. Bound the seed set.
+    seeds.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
+    seeds.truncate(MAX_CHANGED_SYMBOLS);
+    Ok((seeds, changed_files))
+}
+
+/// FL7 — resolve a parsed diff to its changed-symbol seed set and union the
+/// blast radius across them.
+///
+/// Pure composition over `Backend` ops (`search_symbols` + `impact`), factored
+/// out of the tool handler so it is testable against `Backend::local`. The
+/// returned [`ImpactResult`] is the union (its `target_symbol_id` carries the
+/// range spec); [`DiffSeed`] is the changed-symbol seed set. Results are
+/// bounded for token safety.
+#[allow(clippy::too_many_arguments)]
+async fn diff_impact(
+    backend: &crate::backend::Backend,
+    tenant_subject: Option<&str>,
+    project: Option<&str>,
+    changed: &[ministr_core::git::ChangedFile],
+    range: &str,
+    max_depth: u32,
+    direction: CallDirection,
+    tests_only: bool,
+) -> Result<(ImpactResult, DiffSeed), crate::backend::BackendError> {
+    /// Cap on unioned impacted nodes returned (token safety).
+    const MAX_IMPACTED: usize = 500;
+
+    let (seeds, changed_files) =
+        resolve_changed_seeds(backend, tenant_subject, project, changed).await?;
+
+    // Union the blast radius across every changed symbol, deduping impacted
+    // nodes by id (keeping the shallowest depth). A per-seed failure is skipped,
+    // not fatal — the union over the remaining seeds is still useful.
+    let mut impacted: std::collections::HashMap<String, ImpactCaller> =
+        std::collections::HashMap::new();
+    for seed in &seeds {
+        match backend
+            .impact(
+                tenant_subject,
+                project,
+                &seed.symbol_id,
+                max_depth,
+                direction,
+                tests_only,
+            )
+            .await
+        {
+            Ok(ir) => {
+                for c in ir.callers {
+                    impacted
+                        .entry(c.symbol_id.clone())
+                        .and_modify(|e| {
+                            if c.depth < e.depth {
+                                e.depth = c.depth;
+                            }
+                        })
+                        .or_insert(c);
+                }
+            }
+            Err(e) => {
+                warn!(error = %e, symbol_id = %seed.symbol_id, "ministr_impact diff: per-seed impact failed");
+            }
+        }
+    }
+
+    let mut callers: Vec<ImpactCaller> = impacted.into_values().collect();
+    callers.sort_by(|a, b| {
+        a.depth
+            .cmp(&b.depth)
+            .then_with(|| a.file.cmp(&b.file))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    callers.truncate(MAX_IMPACTED);
+
+    let mut files: HashSet<&str> = HashSet::new();
+    let mut test_files: HashSet<&str> = HashSet::new();
+    for c in &callers {
+        files.insert(c.file.as_str());
+        if is_test_file(&c.file) {
+            test_files.insert(c.file.as_str());
+        }
+    }
+    let (n_symbols, n_files, n_tests) = (callers.len(), files.len(), test_files.len());
+    let risk = union_risk(n_symbols, n_files, n_tests);
+
+    let impact = ImpactResult {
+        target_symbol_id: format!("range:{range}"),
+        direction,
+        depth: max_depth,
+        symbols: n_symbols,
+        files: n_files,
+        tests: n_tests,
+        risk,
+        callers,
+    };
+    let seed = DiffSeed {
+        range: range.to_string(),
+        changed_files,
+        changed_symbols: seeds,
+    };
+    Ok((impact, seed))
+}
 
 /// Server-level instructions surfaced to MCP clients during initialization.
 ///
@@ -2593,6 +2781,28 @@ impl MinistrServer {
             .and_then(CallDirection::parse)
             .unwrap_or_default();
         let tests_only = params.tests_only.unwrap_or(false);
+
+        // FL7 — diff-aware blast radius. A `range` resolves the diff's changed
+        // symbols and unions their impact; it overrides `symbol_id`.
+        if let Some(range) = params
+            .range
+            .as_deref()
+            .map(str::trim)
+            .filter(|r| !r.is_empty())
+        {
+            return self
+                .impact_over_range(
+                    tenant_subject.as_deref(),
+                    params.project.as_deref(),
+                    range,
+                    params.repo_path.as_deref(),
+                    max_depth,
+                    direction,
+                    tests_only,
+                )
+                .await;
+        }
+
         let span = info_span!("ministr_impact", symbol_id = %params.symbol_id, max_depth, direction = direction.as_str(), tests_only);
 
         async {
@@ -2621,7 +2831,13 @@ impl MinistrServer {
                     drop(reg);
 
                     let response = self
-                        .build_response(ImpactResponse { impact }, usage_status)
+                        .build_response(
+                            ImpactResponse {
+                                impact,
+                                changed: None,
+                            },
+                            usage_status,
+                        )
                         .await;
                     structured_result(&response)
                 }
@@ -2630,6 +2846,92 @@ impl MinistrServer {
                     Ok(soft_backend_error(&e))
                 }
             }
+        }
+        .instrument(span)
+        .await
+    }
+
+    /// FL7 — diff-aware blast radius. Resolve a git revision `range` to the
+    /// indexed symbols it touched (the seed set), then union their impact.
+    ///
+    /// Composed over the existing backend ops (`search_symbols` + `impact`) plus
+    /// the language-agnostic `ministr_core::git::diff` parser — no new backend
+    /// method or daemon route. Results are bounded for token safety.
+    #[allow(clippy::too_many_arguments)]
+    async fn impact_over_range(
+        &self,
+        tenant_subject: Option<&str>,
+        project: Option<&str>,
+        range: &str,
+        repo_path: Option<&str>,
+        max_depth: u32,
+        direction: CallDirection,
+        tests_only: bool,
+    ) -> Result<CallToolResult, McpError> {
+        let span =
+            info_span!("ministr_impact", range = %range, max_depth, direction = direction.as_str());
+        async {
+            debug!(range = %range, max_depth, direction = direction.as_str(), tests_only, "ministr_impact (diff range) request");
+
+            // Resolve the diff's changed files + head-side line ranges. The git
+            // subprocess is blocking, so run it off the async executor.
+            let dir = repo_path.unwrap_or(".").to_string();
+            let range_owned = range.to_string();
+            let changed = match tokio::task::spawn_blocking(move || {
+                ministr_core::git::diff::changed_lines(std::path::Path::new(&dir), &range_owned)
+            })
+            .await
+            {
+                Ok(Ok(files)) => files,
+                Ok(Err(e)) => {
+                    warn!(error = %e, range = %range, "ministr_impact diff range failed");
+                    return Ok(soft_error(
+                        "git_range",
+                        format!("could not resolve git range '{range}': {e}"),
+                    ));
+                }
+                Err(e) => {
+                    warn!(error = %e, "ministr_impact diff range join failed");
+                    return Ok(soft_error("internal", "internal error resolving git range"));
+                }
+            };
+
+            // Resolve the changed lines to indexed symbols and union their blast
+            // radius (composition over existing backend ops; testable in isolation).
+            let (impact, seed) = match diff_impact(
+                &self.backend,
+                tenant_subject,
+                project,
+                &changed,
+                range,
+                max_depth,
+                direction,
+                tests_only,
+            )
+            .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(error = %e, range = %range, "ministr_impact diff: backend op failed");
+                    return Ok(soft_backend_error(&e));
+                }
+            };
+            debug!(range = %range, changed_symbols = seed.changed_symbols.len(), impacted = impact.symbols, "ministr_impact (diff range) success");
+
+            let mut reg = self.registry.lock().await;
+            let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
+            drop(reg);
+
+            let response = self
+                .build_response(
+                    ImpactResponse {
+                        impact,
+                        changed: Some(seed),
+                    },
+                    usage_status,
+                )
+                .await;
+            structured_result(&response)
         }
         .instrument(span)
         .await
@@ -3678,6 +3980,113 @@ mod tests {
         fn dimension(&self) -> usize {
             self.dim
         }
+    }
+
+    /// FL7 — diff-aware blast radius end-to-end over a real git repo: a base
+    /// commit plus a head commit that edits a callee, ingested, then resolved
+    /// via the git-diff parser + `diff_impact`. The edited callee is the seed;
+    /// its caller surfaces in the union blast radius. Language-agnostic by
+    /// construction (line spans + the ref graph), exercised here on Rust.
+    #[tokio::test]
+    async fn fl7_diff_impact_over_real_repo() {
+        use std::process::Command;
+        use std::sync::Arc;
+
+        fn git(dir: &std::path::Path, args: &[&str]) {
+            let ok = Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .status()
+                .expect("run git")
+                .success();
+            assert!(ok, "git {args:?} failed");
+        }
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        // Canonicalize so `git rev-parse --show-toplevel` (a real path) matches
+        // the absolute file_path stored at ingest time — the macOS
+        // /var↔/private/var symlink would otherwise break exact path equality.
+        let repo = std::fs::canonicalize(tmp.path()).unwrap();
+
+        git(&repo, &["init", "-q"]);
+        git(&repo, &["config", "user.email", "t@t.test"]);
+        git(&repo, &["config", "user.name", "t"]);
+        git(&repo, &["config", "commit.gpgsign", "false"]);
+
+        let file = repo.join("code.rs");
+        std::fs::write(
+            &file,
+            "pub fn callee() -> i32 {\n    let a = 1;\n    a + 1\n}\n\n\
+             pub fn caller() -> i32 {\n    callee() + callee()\n}\n",
+        )
+        .unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-q", "-m", "base"]);
+
+        // Head: edit callee's body only (caller is untouched, merely shifted).
+        std::fs::write(
+            &file,
+            "pub fn callee() -> i32 {\n    let a = 1;\n    let b = 2;\n    a + b\n}\n\n\
+             pub fn caller() -> i32 {\n    callee() + callee()\n}\n",
+        )
+        .unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-q", "-m", "head"]);
+
+        // Ingest the head tree.
+        let dim = 8;
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let embedder = MockEmbedder { dim };
+        let index = HnswIndex::new(dim, 4096).unwrap();
+        ministr_core::ingestion::IngestionPipeline::new()
+            .ingest_paths_with_embeddings(std::slice::from_ref(&repo), &storage, &embedder, &index)
+            .await
+            .expect("ingest repo");
+
+        let query = ministr_core::service::QueryService::new(
+            storage,
+            Arc::new(MockEmbedder { dim }),
+            Arc::new(HnswIndex::new(dim, 1).unwrap()),
+        );
+        let backend = crate::backend::Backend::local(Arc::new(query));
+
+        // Parse the diff, then compute the union impact over the changed symbols.
+        let changed =
+            ministr_core::git::diff::changed_lines(&repo, "HEAD~1..HEAD").expect("git diff");
+        assert!(!changed.is_empty(), "diff touched at least one file");
+
+        let (impact, seed) = diff_impact(
+            &backend,
+            None,
+            None,
+            &changed,
+            "HEAD~1..HEAD",
+            3,
+            ministr_core::service::CallDirection::Incoming,
+            false,
+        )
+        .await
+        .expect("diff_impact");
+
+        // The edited callee is a seed; caller (unchanged) is not.
+        let names: Vec<&str> = seed
+            .changed_symbols
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        assert!(
+            names.contains(&"callee"),
+            "callee is a changed symbol: {names:?}"
+        );
+        assert!(!names.contains(&"caller"), "caller untouched: {names:?}");
+
+        // Incoming blast radius of the changed callee includes its caller.
+        let impacted: Vec<&str> = impact.callers.iter().map(|c| c.name.as_str()).collect();
+        assert!(
+            impacted.contains(&"caller"),
+            "caller is in the blast radius: {impacted:?}"
+        );
+        assert_eq!(seed.range, "HEAD~1..HEAD");
     }
 
     fn make_test_doc() -> DocumentTree {

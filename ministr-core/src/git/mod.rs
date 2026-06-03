@@ -8,8 +8,10 @@
 use std::path::Path;
 use std::process::Command;
 
+pub mod diff;
 pub mod fetcher;
 
+pub use diff::{ChangedFile, ChangedRange, DiffError};
 pub use fetcher::{CloneMetadata, CloneResult, GitFetcher, GitFetcherConfig, GitStalenessResult};
 
 /// Get the HEAD commit SHA for a directory inside a git repository.

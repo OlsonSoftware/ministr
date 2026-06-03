@@ -704,6 +704,21 @@ pub struct ImpactParams {
     )]
     pub symbol_id: String,
 
+    /// FL7 — a git revision range. When set, the diff's changed symbols are
+    /// resolved and their blast radius is unioned (`symbol_id` is ignored).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(
+        description = "Git revision range (e.g. 'main..HEAD', 'HEAD~3'). When set, analyzes the diff-aware blast radius: which indexed symbols the range touched and the union of what they can break. Overrides symbol_id."
+    )]
+    pub range: Option<String>,
+
+    /// Working directory for the git range (default: the server's cwd).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(
+        description = "Path inside the git work tree to resolve `range` against. Defaults to the server's working directory. Only used with `range`."
+    )]
+    pub repo_path: Option<String>,
+
     /// Maximum BFS depth to walk (default 3, capped at 10).
     #[serde(default, deserialize_with = "coerce::lenient_opt_u32")]
     #[schemars(description = "Maximum BFS depth to walk the call graph. Default 3, capped at 10.")]
@@ -811,8 +826,41 @@ pub(crate) struct ReferencesResponse {
 /// Response from the `ministr_impact` tool.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct ImpactResponse {
-    /// The impact analysis result.
+    /// The impact analysis result. For a `range` query this is the *union*
+    /// blast radius across every changed symbol (`target_symbol_id` carries the
+    /// range spec).
     pub(crate) impact: ImpactResult,
+    /// FL7 — present only for a `range` query: the diff seed set (the symbols
+    /// the range touched, whose union blast radius `impact` describes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) changed: Option<DiffSeed>,
+}
+
+/// FL7 — the symbols a git revision range touched (the seed set behind a
+/// diff-aware impact query).
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct DiffSeed {
+    /// The revision range analyzed (e.g. `"main..HEAD"`).
+    pub(crate) range: String,
+    /// Number of changed files that contained indexed symbols.
+    pub(crate) changed_files: usize,
+    /// The indexed symbols whose span the diff touched.
+    pub(crate) changed_symbols: Vec<ChangedSymbol>,
+}
+
+/// FL7 — one symbol touched by a diff range.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct ChangedSymbol {
+    /// Symbol ID (use with `ministr_definition` / `ministr_references`).
+    pub(crate) symbol_id: String,
+    /// Symbol name.
+    pub(crate) name: String,
+    /// Symbol kind (e.g. `"function"`, `"struct"`).
+    pub(crate) kind: String,
+    /// Source file path.
+    pub(crate) file: String,
+    /// First line of the symbol.
+    pub(crate) line: u32,
 }
 
 /// Response from the `ministr_dead` tool.
