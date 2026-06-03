@@ -12,7 +12,7 @@
  * 4. Connect your AI tool: placeholder for the MCP wizard. Real impl
  *    lands in M3 (Settings → AI assistants is the same panel reused).
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AnimatePresence, motion } from "motion/react";
 import {
@@ -29,13 +29,13 @@ import {
 import { cn } from "../lib/utils";
 import { fadeRise, listContainer, listItem } from "../lib/motion";
 import type { CorpusInfo, DetectedProject } from "../lib/types";
-import { useIndexingProgress } from "../hooks/useIndexingProgress";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
+import { useCorpusFleet } from "../lib/corpusFleet";
 import { Progress } from "./ui/progress";
 import { Button } from "./ui/button";
 import { ErrorCallout } from "./ui/error-callout";
 import { AiAssistantsPanel } from "./surfaces/AiAssistantsPanel";
-import { formatEtaBare } from "../lib/format";
+import { IndexingPanel } from "./IndexingPanel";
 
 type Step = "setup" | "pick" | "index" | "connect";
 
@@ -636,24 +636,24 @@ function StepIndex({
   onContinue: () => void;
 }) {
   const { status } = useDaemonStatus();
-  const progress = useIndexingProgress();
 
   // Filter the daemon's corpus list down to "the ones we just added", or
   // fall back to all corpora when add_project_dialog gave us no IDs.
-  const watched: CorpusInfo[] = (() => {
+  const watched: CorpusInfo[] = useMemo(() => {
     if (!status) return [];
     if (watchIds.length > 0) {
       return status.corpora.filter((c) => watchIds.includes(c.id));
     }
     return status.corpora;
-  })();
+  }, [status, watchIds]);
 
-  const anyComplete = watched.some(
-    (c) => c.status.state === "idle" && c.files_indexed > 0,
-  );
+  // Single source of truth: the same fleet view model the Projects surface
+  // consumes, instead of hand-rolling progress math here.
+  const { fleet } = useCorpusFleet(watched);
+
+  const anyComplete = fleet.some((vm) => vm.lifecycle === "ready");
   const allComplete =
-    watched.length > 0 &&
-    watched.every((c) => c.status.state === "idle" && c.files_indexed > 0);
+    fleet.length > 0 && fleet.every((vm) => vm.lifecycle === "ready");
 
   return (
     <div>
@@ -670,46 +670,33 @@ function StepIndex({
       </p>
 
       <ul className="mt-8 space-y-3">
-        {watched.length === 0 && (
+        {fleet.length === 0 && (
           <li className="font-sans text-sm text-text-dim">
             Waiting for the daemon to register your project…
           </li>
         )}
-        {watched.map((c) => {
-          const ev = progress[c.id];
-          const indexing = c.status.state === "indexing";
-          const filesDone = ev?.files_done ?? 0;
-          const filesTotal = ev?.files_total ?? 0;
-          const pct = filesTotal > 0 ? (filesDone / filesTotal) * 100 : 0;
-          const done = c.status.state === "idle" && c.files_indexed > 0;
-          const eta = ev?.estimated_remaining_secs;
+        {fleet.map((vm) => {
+          const ready = vm.lifecycle === "ready";
           return (
             <li
-              key={c.id}
+              key={vm.id}
               className="rounded-lg border border-border bg-surface px-4 py-3"
             >
               <div className="flex items-center justify-between gap-3">
                 <span className="font-mono text-sm font-bold text-text truncate">
-                  {c.display_name ?? c.id}
+                  {vm.label}
                 </span>
-                <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
-                  {done
-                    ? "Ready"
-                    : indexing
-                      ? `${filesDone.toLocaleString()} / ${filesTotal.toLocaleString()} files${eta != null ? ` · ~${formatEtaBare(eta)}` : ""}`
-                      : "Pending…"}
-                </span>
+                {!vm.isIndexing && (
+                  <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
+                    {ready ? "Ready" : "Pending…"}
+                  </span>
+                )}
               </div>
-              {indexing && (
-                <Progress
-                  className="mt-2"
-                  tone="warning"
-                  value={pct}
-                />
-              )}
-              {done && (
+              {vm.isIndexing ? (
+                <IndexingPanel vm={vm} compact className="mt-2" />
+              ) : ready ? (
                 <Progress className="mt-2" tone="success" value={100} />
-              )}
+              ) : null}
             </li>
           );
         })}
@@ -719,7 +706,7 @@ function StepIndex({
         <Button
           size="lg"
           onClick={onContinue}
-          disabled={!anyComplete && watched.length > 0}
+          disabled={!anyComplete && fleet.length > 0}
         >
           {allComplete
             ? "Continue"
