@@ -8,7 +8,7 @@ import { AlertTriangle, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "./button";
 import { popIn, scrim } from "../../lib/motion";
-import { overlayScrim, transitionInteractive } from "../../lib/ui-tokens";
+import { glassPanel, overlayScrim, transitionInteractive } from "../../lib/ui-tokens";
 import { useDialog } from "../../hooks/useDialog";
 import { cn } from "../../lib/utils";
 
@@ -73,8 +73,11 @@ export function ConfirmDialog({
             animate="animate"
             exit="exit"
             className={cn(
-              "w-full max-w-md overflow-hidden rounded-xl border bg-surface shadow-lg origin-top",
-              danger ? "border-danger/60" : "border-border",
+              // §4 glass tier — floating chrome reads as translucent glass
+              // (with the reduced-transparency solid fallback baked in).
+              glassPanel,
+              "w-full max-w-md overflow-hidden origin-top",
+              danger && "ring-1 ring-danger/60",
             )}
             onClick={(e) => e.stopPropagation()}
           >

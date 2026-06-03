@@ -20,6 +20,10 @@ export function Progress({
   const pct = Math.min(100, Math.max(0, value));
   return (
     <div
+      role="progressbar"
+      aria-valuenow={Math.round(pct)}
+      aria-valuemin={0}
+      aria-valuemax={100}
       className={cn(
         "relative h-1.5 w-full overflow-hidden rounded-full bg-surface-overlay",
         className,
