@@ -76,6 +76,8 @@ import { OnboardingWizard } from "../onboarding/OnboardingWizard";
 import { useDialog } from "../../hooks/useDialog";
 import {
   cloudClient,
+  isCloudDemo,
+  setCloudDemo,
   type CloudAclEntry,
   type CloudApiKey,
   type CloudCorpusInfo,
@@ -92,6 +94,8 @@ import {
   type CloudWebhookSub,
   type CloudWebhookTestResult,
 } from "../../lib/cloudClient";
+import { phaseLabel, type IndexPhase } from "../../lib/corpusFleet";
+import { formatEta } from "../../lib/format";
 import { cn } from "../../lib/utils";
 
 const DEFAULT_ENDPOINT = "https://mcp.ministr.ai";
@@ -134,6 +138,7 @@ export function CloudPanel() {
   const [signInError, setSignInError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [usage, setUsage] = useState<CloudUsage | null>(null);
+  const [demo, setDemo] = useState(isCloudDemo());
 
   const refreshUsage = useCallback(async () => {
     try {
@@ -150,6 +155,21 @@ export function CloudPanel() {
     setStatus(s);
     setEndpointDraft(s.endpoint || DEFAULT_ENDPOINT);
   }, []);
+
+  // Demo mode: flip the cloudClient flag, then re-read status so the whole
+  // surface re-renders against canned data (or back to live on exit).
+  const enterDemo = useCallback(() => {
+    setCloudDemo(true);
+    setDemo(true);
+    void refreshStatus();
+  }, [refreshStatus]);
+  const exitDemo = useCallback(() => {
+    setCloudDemo(false);
+    setDemo(false);
+    setHealth(null);
+    setHealthError(null);
+    void refreshStatus();
+  }, [refreshStatus]);
 
   useEffect(() => {
     void refreshStatus();
@@ -318,9 +338,22 @@ export function CloudPanel() {
       active={visibleSection}
       onSelect={setActiveSection}
     >
+      {demo && (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-accent/40 bg-accent/10 px-3 py-2 mb-4">
+          <span className="font-mono text-xs text-accent">
+            Demo data — preview only, not a live cloud connection.
+          </span>
+          <Button size="sm" variant="ghost" onClick={exitDemo}>
+            <X className="size-3.5" />
+            Exit demo
+          </Button>
+        </div>
+      )}
+
       {visibleSection === "connection" && !authenticated && (
         <SignedOutCloud
           busy={busy}
+          onPreviewDemo={enterDemo}
           signInError={signInError}
           advancedOpen={advancedOpen}
           setAdvancedOpen={setAdvancedOpen}
@@ -613,6 +646,7 @@ export function CloudPanel() {
 
 interface SignedOutCloudProps {
   busy: string | null;
+  onPreviewDemo: () => void;
   signInError: string | null;
   advancedOpen: boolean;
   setAdvancedOpen: Dispatch<SetStateAction<boolean>>;
@@ -639,6 +673,7 @@ interface SignedOutCloudProps {
  */
 function SignedOutCloud({
   busy,
+  onPreviewDemo,
   signInError,
   advancedOpen,
   setAdvancedOpen,
@@ -691,6 +726,14 @@ function SignedOutCloud({
           Opens your browser to authorize through GitHub; the resulting token is
           stored in your OS keychain. Times out after 3 minutes.
         </p>
+
+        <button
+          type="button"
+          onClick={onPreviewDemo}
+          className="text-xs text-text-muted hover:text-accent transition-colors underline underline-offset-2"
+        >
+          Preview with demo data
+        </button>
 
         <button
           type="button"
@@ -3124,11 +3167,19 @@ function ProgressDrawer({ corpusId, onClose }: ProgressDrawerProps) {
             <span className="font-mono text-xs uppercase text-text-muted">
               Phase
             </span>
-            <span className="font-mono text-text">{event.phase}</span>
-            {terminal && (
+            <span className="font-mono text-text">
+              {phaseLabel(event.phase as IndexPhase)}
+            </span>
+            {terminal ? (
               <span className="ml-auto text-accent text-xs font-mono">
                 ✓ complete
               </span>
+            ) : (
+              event.estimated_remaining_secs != null && (
+                <span className="ml-auto text-xs font-mono text-text-muted tabular-nums">
+                  {formatEta(event.estimated_remaining_secs)}
+                </span>
+              )
             )}
           </div>
           {event.files_total !== undefined && (

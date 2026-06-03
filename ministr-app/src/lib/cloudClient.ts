@@ -292,7 +292,7 @@ export interface CloudProgressEvent {
   estimated_remaining_secs?: number | null;
 }
 
-export const cloudClient = {
+const liveCloudClient = {
   status: () => invoke<CloudStatus>("cloud_status"),
   setEndpoint: (endpoint: string) =>
     invoke<void>("cloud_set_endpoint", { endpoint }),
@@ -462,3 +462,349 @@ export const cloudClient = {
     return channel;
   },
 } as const;
+
+// ── Demo mode ────────────────────────────────────────────────────────────────
+//
+// CloudPanel is a pure renderer over this client, so a "see real-looking fake
+// data" demo lives here, not in the components: when the localStorage flag is
+// set, `cloudClient` serves canned, realistic data for every read path and a
+// scripted indexing-progress stream, while every mutation is a safe no-op so
+// demo can never touch the network. The panel renders unchanged.
+
+const DEMO_KEY = "ministr.cloud.demo";
+
+/** True when CloudPanel should render canned demo data instead of live calls. */
+export function isCloudDemo(): boolean {
+  try {
+    return (
+      typeof window !== "undefined" &&
+      window.localStorage.getItem(DEMO_KEY) === "1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Toggle demo mode (persisted to localStorage). */
+export function setCloudDemo(on: boolean): void {
+  try {
+    if (on) window.localStorage.setItem(DEMO_KEY, "1");
+    else window.localStorage.removeItem(DEMO_KEY);
+  } catch {
+    /* private-mode / no storage — demo just won't persist */
+  }
+}
+
+/** ISO day string `N` days before today (UTC), for plausible rollup series. */
+function daysAgo(n: number): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
+function demoCorpora(): CloudCorpusInfo[] {
+  return [
+    {
+      corpus_id: "acme-platform",
+      paths: ["github.com/acme/platform"],
+      display_name: "acme/platform",
+      indexing_status: "ready",
+      total_files: 4821,
+      total_chunks: 38104,
+      active_sessions: 2,
+    },
+    {
+      corpus_id: "acme-web",
+      paths: ["github.com/acme/web"],
+      display_name: "acme/web",
+      indexing_status: "indexing",
+      total_files: 1240,
+      total_chunks: 6203,
+      active_sessions: 0,
+    },
+    {
+      corpus_id: "design-system",
+      paths: ["github.com/acme/design-system"],
+      display_name: "acme/design-system",
+      indexing_status: "ready",
+      total_files: 612,
+      total_chunks: 4188,
+      active_sessions: 1,
+    },
+  ];
+}
+
+const DEMO_PROGRESS_FILES = ["src/index.ts", "src/router.ts", "src/db/pool.ts", "src/api/auth.ts", "src/ui/App.tsx"];
+
+/** Scripted indexing run the demo `corpusProgress` channel replays. */
+function demoProgressScript(): CloudProgressEvent[] {
+  const total = 1240;
+  const seq: CloudProgressEvent[] = [
+    { status: 1, phase: "discovering", files_total: total, files_processed: 0, estimated_remaining_secs: 24 },
+  ];
+  // Parsing — files climb to the total.
+  const parseSteps = [120, 340, 560, 820, 1040, total];
+  parseSteps.forEach((done, i) => {
+    seq.push({
+      status: 1,
+      phase: "parsing",
+      files_total: total,
+      files_processed: done,
+      current_file: DEMO_PROGRESS_FILES[i % DEMO_PROGRESS_FILES.length],
+      estimated_remaining_secs: Math.max(1, 18 - i * 3),
+    });
+  });
+  // Embedding — files done, GPU phase; eta winds down.
+  [6, 3, 1].forEach((eta) => {
+    seq.push({
+      status: 1,
+      phase: "embedding",
+      files_total: total,
+      files_processed: total,
+      estimated_remaining_secs: eta,
+    });
+  });
+  seq.push({ status: 1, phase: "finalizing", files_total: total, files_processed: total, estimated_remaining_secs: 0 });
+  seq.push({ status: 2, phase: "idle", files_total: total, files_processed: total, estimated_remaining_secs: 0 });
+  return seq;
+}
+
+const demoCloudClient: Partial<typeof liveCloudClient> = {
+  status: () =>
+    Promise.resolve({
+      configured: true,
+      authenticated: true,
+      endpoint: "https://mcp.ministr.ai",
+      last_health_ok: true,
+      last_health_latency_ms: 38,
+      last_health_message: "ok (demo)",
+    }),
+  healthCheck: () =>
+    Promise.resolve({ status: "ok", corpus_count: 3, version: "0.2.1-demo", latency_ms: 38 }),
+  billingUsage: () =>
+    Promise.resolve({
+      tenant_id: "demo-tenant",
+      plan: "team" as const,
+      rollups: [13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1].flatMap((n) => [
+        { day: daysAgo(n), kind: "survey", total: 40 + ((n * 17) % 60) },
+        { day: daysAgo(n), kind: "ask", total: 8 + ((n * 7) % 20) },
+      ]),
+      today_partial: [
+        { kind: "survey", total: 23 },
+        { kind: "ask", total: 5 },
+      ],
+    }),
+  listCorpora: () => Promise.resolve(demoCorpora()),
+  listOrgs: () =>
+    Promise.resolve([
+      { id: "org_acme", name: "Acme Engineering", plan_id: "team", role: "owner" },
+      { id: "org_oss", name: "Open Source", plan_id: "pro", role: "member" },
+    ]),
+  listCorpusShares: (corpusId: string) =>
+    Promise.resolve([
+      {
+        corpus_id: corpusId,
+        org_id: "org_acme",
+        user_id: null,
+        scope: "read",
+        granted_by: "you@acme.dev",
+        created_at: daysAgo(12) + "T10:14:00Z",
+      },
+    ]),
+  listApiKeys: () =>
+    Promise.resolve([
+      {
+        id: "key_live_01",
+        name: "CI pipeline",
+        prefix: "mst_pk_a1",
+        scopes: "ministr:read ministr:write",
+        last_used_at: daysAgo(0) + "T08:21:00Z",
+        expires_at: null,
+        created_at: daysAgo(40) + "T12:00:00Z",
+      },
+      {
+        id: "key_live_02",
+        name: "Local laptop",
+        prefix: "mst_pk_7f",
+        scopes: "ministr:read",
+        last_used_at: daysAgo(3) + "T19:02:00Z",
+        expires_at: daysAgo(-90) + "T00:00:00Z",
+        created_at: daysAgo(70) + "T09:30:00Z",
+      },
+    ]),
+  listWebhookSubs: (orgId: string) =>
+    Promise.resolve([
+      {
+        id: "wh_01",
+        org_id: orgId,
+        url: "https://acme.dev/hooks/ministr",
+        event_filter: "index.completed",
+        created_by: "you@acme.dev",
+        created_at: daysAgo(20) + "T11:00:00Z",
+        last_delivered_at: daysAgo(1) + "T06:45:00Z",
+      },
+    ]),
+  getOrgUsage: (orgId: string, days?: number) =>
+    Promise.resolve({
+      org_id: orgId,
+      range_days: days ?? 30,
+      rollups: [5, 4, 3, 2, 1].flatMap((n) => [
+        { user_id: "u_amy", email: "amy@acme.dev", day: daysAgo(n), kind: "survey", total: 30 + ((n * 11) % 40) },
+        { user_id: "u_ben", email: "ben@acme.dev", day: daysAgo(n), kind: "survey", total: 18 + ((n * 13) % 30) },
+      ]),
+      today_partial: [
+        { user_id: "u_amy", email: "amy@acme.dev", kind: "survey", total: 14 },
+        { user_id: "u_ben", email: "ben@acme.dev", kind: "ask", total: 6 },
+      ],
+    }),
+  listSessions: () =>
+    Promise.resolve([
+      {
+        session_id: "sess_8f2a",
+        opened_at: daysAgo(0) + "T08:00:00Z",
+        budget_used: 0.62,
+        delivered_count: 41,
+        total_delivered_tokens: 88210,
+        pressure_level: "normal",
+      },
+      {
+        session_id: "sess_3c1d",
+        opened_at: daysAgo(0) + "T07:12:00Z",
+        budget_used: 0.91,
+        delivered_count: 73,
+        total_delivered_tokens: 142880,
+        pressure_level: "elevated",
+      },
+    ]),
+  fetchSessionBundle: (sessionId: string) =>
+    Promise.resolve({
+      manifest: {
+        schema_version: 1,
+        session_id: sessionId,
+        opened_at: daysAgo(0) + "T08:00:00Z",
+        exported_at: daysAgo(0) + "T08:30:00Z",
+        budget_used: 0.62,
+        delivered_count: 2,
+        total_delivered_tokens: 1820,
+        pressure_level: "normal",
+      },
+      delivered: [
+        {
+          content_id: "acme-platform#src/router.ts",
+          resolution: "section",
+          token_count: 1024,
+          turn_delivered: 1,
+          content_hash: "a1b2c3d4",
+          compression_tier: "full",
+        },
+        {
+          content_id: "acme-platform#src/db/pool.ts",
+          resolution: "claim",
+          token_count: 796,
+          turn_delivered: 2,
+          content_hash: "e5f6a7b8",
+          compression_tier: "summary",
+          compressed_summary: "Connection-pool sizing + retry/backoff policy.",
+        },
+      ],
+      drops: [],
+    }),
+  // Mutations — safe no-ops in demo so nothing hits the network.
+  setEndpoint: () => Promise.resolve(),
+  setBearerToken: () => Promise.resolve(),
+  authenticate: () => Promise.resolve(),
+  authenticateGitHub: () => Promise.resolve(),
+  disconnect: () => {
+    setCloudDemo(false);
+    return Promise.resolve();
+  },
+  billingCheckout: () => Promise.resolve(),
+  billingPortal: () => Promise.resolve(),
+  triggerReindex: () => Promise.resolve("demo-reindex-queued"),
+  registerCorpus: (paths: string[]) =>
+    Promise.resolve({ corpus_id: paths[0] ?? "demo-corpus", indexing_started: true }),
+  cloneRepo: (repo: string) =>
+    Promise.resolve({
+      corpus_id: repo.replace(/.*\//, "").replace(/\.git$/, "") || "demo-clone",
+      cloned: true,
+      indexing_started: true,
+      cache_path: "/demo/cache",
+    }),
+  unregisterCorpus: () => Promise.resolve(),
+  shareCorpus: (corpusId: string, orgId: string) =>
+    Promise.resolve({
+      corpus_id: corpusId,
+      org_id: orgId,
+      user_id: null,
+      scope: "read",
+      granted_by: "you@acme.dev",
+      created_at: new Date().toISOString(),
+    }),
+  revokeCorpusShare: () => Promise.resolve(),
+  transferCorpusToOrg: (corpusId: string, orgId: string) =>
+    Promise.resolve({
+      corpus_id: corpusId,
+      previous_tenant_id: "demo-tenant",
+      new_tenant_id: orgId,
+      transferred: true,
+    }),
+  createApiKey: (name: string, scopes?: string) =>
+    Promise.resolve({
+      id: "key_demo_new",
+      name,
+      prefix: "mst_pk_de",
+      scopes: scopes ?? "ministr:read ministr:write",
+      last_used_at: null,
+      expires_at: null,
+      created_at: new Date().toISOString(),
+      token: "mst_pk_demo_0000000000000000000000000000",
+    }),
+  revokeApiKey: () => Promise.resolve(),
+  createWebhookSub: (orgId: string, webhookUrl: string, eventFilter?: string) =>
+    Promise.resolve({
+      id: "wh_demo_new",
+      org_id: orgId,
+      url: webhookUrl,
+      event_filter: eventFilter ?? "*",
+      created_by: "you@acme.dev",
+      created_at: new Date().toISOString(),
+      last_delivered_at: null,
+      secret: "whsec_demo_0000000000000000",
+    }),
+  deleteWebhookSub: () => Promise.resolve(),
+  testWebhookSub: () => Promise.resolve({ final_status: 200, attempts: 1, succeeded: true }),
+  exportOrgUsageCsv: () => Promise.resolve(null),
+  corpusProgress: (corpusId: string): Channel<CloudProgressEvent> => {
+    // A plain object whose `onmessage` we can read back to drive emits —
+    // avoids depending on Tauri Channel internals. ProgressDrawer only sets
+    // `.onmessage`, so this is structurally sufficient.
+    const fake = { onmessage: null } as unknown as Channel<CloudProgressEvent>;
+    const script = demoProgressScript().map((e) => ({ ...e, corpus_id: corpusId }));
+    let i = 0;
+    const timer = setInterval(() => {
+      const handler = (fake as { onmessage?: (e: CloudProgressEvent) => void }).onmessage;
+      if (!handler) return; // consumer hasn't attached yet — wait
+      handler(script[i]);
+      i += 1;
+      if (i >= script.length) clearInterval(timer);
+    }, 650);
+    return fake;
+  },
+};
+
+/**
+ * The exported client. In demo mode, reads + the progress stream come from
+ * `demoCloudClient`; everything else falls through to the live Tauri-backed
+ * implementation. Typed as the live shape so call sites are unchanged.
+ */
+export const cloudClient: typeof liveCloudClient = new Proxy(liveCloudClient, {
+  get(target, prop, receiver) {
+    if (isCloudDemo()) {
+      const demo = demoCloudClient as Record<string, unknown>;
+      if (typeof prop === "string" && prop in demo) {
+        return demo[prop];
+      }
+    }
+    return Reflect.get(target, prop, receiver);
+  },
+});
