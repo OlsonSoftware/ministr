@@ -49,12 +49,24 @@ export function DaemonDot({ status, error, onOpenLogs }: Props) {
     };
   }, [open]);
 
+  const indexing = status
+    ? status.corpora.filter((c) => c.status.state === "indexing").length
+    : 0;
   const tone =
     error || !status
       ? ("danger" as const)
-      : status.corpora.some((c) => c.status.state === "indexing")
+      : indexing > 0
         ? ("warning" as const)
         : ("success" as const);
+
+  // Ambient status: a legible word woven into the chrome — not a dot you must
+  // hover to read (aaa-chrome). Click still opens the vitals popover.
+  const label =
+    tone === "danger"
+      ? "Offline"
+      : tone === "warning"
+        ? `Indexing ${indexing}`
+        : "Ready";
 
   return (
     <div ref={ref} className="relative">
@@ -64,12 +76,26 @@ export function DaemonDot({ status, error, onOpenLogs }: Props) {
           tone === "danger"
             ? "Daemon disconnected"
             : tone === "warning"
-              ? "Indexing"
+              ? `Indexing ${indexing} project${indexing === 1 ? "" : "s"}`
               : "Daemon connected"
         }
-        className={cn("grid place-items-center h-5 w-5 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent")}
+        aria-label={`Daemon ${label}`}
+        className={cn(
+          "inline-flex items-center gap-1.5 h-8 pl-2 pr-2.5 rounded-md cursor-pointer shrink-0",
+          "border border-border bg-surface hover:bg-surface-overlay hover:border-border-hover",
+          "transition-colors duration-150",
+          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+        )}
       >
         <StatusDot tone={tone} pulse={tone === "warning" ? "live" : "off"} size="md" />
+        <span
+          className={cn(
+            "font-mono text-mono-mini uppercase tracking-[0.08em]",
+            tone === "danger" ? "text-danger" : "text-text-dim",
+          )}
+        >
+          {label}
+        </span>
       </button>
 
       {open && (

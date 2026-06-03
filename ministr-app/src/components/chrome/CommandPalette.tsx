@@ -1,27 +1,34 @@
 /**
- * CommandPalette — a real command system with mode prefixes.
+ * CommandPalette — the workspace's PRIMARY nav (aaa-chrome).
  *
- *   (none)  everything: navigation + actions + projects
- *   >       actions only (add project, open logs via nav…)
- *   @       switch project
+ * Raycast model: go to any facet, project, or action by typing. Results are
+ * grouped (Go to · Projects · Sessions · Actions) and speak the integrated
+ * IA's vocabulary — the four facets (Ask/Explore/Activity/Tend) plus the
+ * Fleet collection and the global Account area — not the retired 6-surface
+ * rail. Mode prefixes scope the search:
+ *
+ *   (none)  everything, grouped
+ *   >       actions only
+ *   @       switch project (instant keyboard project switch)
  *   #       open a live session
- *   ?       jump to Ask
+ *   ?       ask the codebase
  *
- * Fuzzy-ish substring match on label + keywords; arrow keys navigate;
- * Enter/click activates; Esc closes. Spring-animated open/close.
+ * Fuzzy-ish substring match on label + keywords; arrow keys navigate across
+ * groups; Enter/click activates; Esc closes. Spring-animated open/close.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
-  Cloud,
+  CircleUser,
+  Compass,
   Eye,
-  Terminal,
   FileText,
   FolderOpen,
+  Layers,
   MessageSquare,
   Plus,
   RefreshCw,
-  Settings as SettingsIcon,
+  Sprout,
   Sparkles,
   SunMoon,
   type LucideIcon,
@@ -39,6 +46,8 @@ import { useEntityPanel } from "../../hooks/useEntityPanel";
 import { useDialog } from "../../hooks/useDialog";
 import type { SurfaceId } from "./Sidebar";
 
+type CommandCategory = "Go to" | "Projects" | "Sessions" | "Actions";
+
 interface CommandItem {
   id: string;
   label: string;
@@ -47,8 +56,18 @@ interface CommandItem {
   icon: LucideIcon;
   /** Which prefix-mode this item belongs to ("" = always). */
   mode: "" | ">" | "@" | "#" | "?";
+  /** Section the item is grouped under in the results list. */
+  category: CommandCategory;
   run: () => void;
 }
+
+/** Render order for the grouped results. */
+const CATEGORY_ORDER: CommandCategory[] = [
+  "Go to",
+  "Projects",
+  "Sessions",
+  "Actions",
+];
 
 interface Props {
   open: boolean;
@@ -64,7 +83,7 @@ interface Props {
 }
 
 const MODE_HINT: Record<string, string> = {
-  "": "Type to search · > actions · @ projects · # sessions · ? ask",
+  "": "Go anywhere · > actions · @ projects · # sessions · ? ask",
   ">": "Actions",
   "@": "Switch project",
   "#": "Open a live session",
@@ -109,60 +128,69 @@ export function CommandPalette({
 
   const items = useMemo<CommandItem[]>(() => {
     const list: CommandItem[] = [
+      // ── Facets — the verbs applied to the spine project. ───────────────
       {
         id: "nav:ask",
-        label: "Go to Ask",
-        hint: "Codebase Q&A",
-        keywords: "ask question query",
+        label: "Ask",
+        hint: "Converse with the project — cited answers",
+        keywords: "ask question query facet conversation",
         icon: MessageSquare,
         mode: "",
+        category: "Go to",
         run: () => onNavigate("ask"),
       },
       {
-        id: "nav:projects",
-        label: "Go to Projects",
-        hint: "Manage indexed projects",
-        keywords: "projects manage corpus",
-        icon: FolderOpen,
-        mode: "",
-        run: () => onNavigate("projects"),
-      },
-      {
-        id: "nav:sessions",
-        label: "Go to Sessions",
-        hint: "Live agent sessions",
-        keywords: "sessions agents live monitor",
-        icon: Activity,
-        mode: "",
-        run: () => onNavigate("sessions"),
-      },
-      {
-        id: "nav:cloud",
-        label: "Go to Cloud",
-        hint: "ministr Cloud account + billing",
-        keywords: "cloud account billing api keys webhooks orgs",
-        icon: Cloud,
-        mode: "",
-        run: () => onNavigate("cloud"),
-      },
-      {
         id: "nav:explore",
-        label: "Go to Explore",
-        hint: "Logs, query playground, server diagnostics",
-        keywords: "explore developer logs query playground server debug",
-        icon: Terminal,
+        label: "Explore",
+        hint: "Browse the index — symbols, bridges, source",
+        keywords: "explore index symbols bridges code browser facet",
+        icon: Compass,
         mode: "",
+        category: "Go to",
         run: () => onNavigate("explore"),
       },
       {
-        id: "nav:settings",
-        label: "Go to Settings",
-        hint: "Theme, AI assistants, developer",
-        keywords: "settings preferences theme",
-        icon: SettingsIcon,
+        id: "nav:activity",
+        label: "Activity",
+        hint: "Live agents, indexing, recent deliveries",
+        keywords: "activity sessions agents live monitor board facet",
+        icon: Activity,
         mode: "",
+        category: "Go to",
+        run: () => onNavigate("sessions"),
+      },
+      {
+        id: "nav:tend",
+        label: "Tend",
+        hint: "Care for the project — health, config, reindex, sharing",
+        keywords: "tend care health config model reindex paths sharing facet settings",
+        icon: Sprout,
+        mode: "",
+        category: "Go to",
         run: () => onNavigate("settings"),
       },
+      // ── Cross-cutting areas. ───────────────────────────────────────────
+      {
+        id: "nav:fleet",
+        label: "Fleet",
+        hint: "All projects — the collection view",
+        keywords: "fleet projects collection all corpora overview",
+        icon: Layers,
+        mode: "",
+        category: "Go to",
+        run: () => onNavigate("projects"),
+      },
+      {
+        id: "nav:account",
+        label: "Account",
+        hint: "Global settings, cloud, system",
+        keywords: "account settings global theme cloud server logs about billing",
+        icon: CircleUser,
+        mode: "",
+        category: "Go to",
+        run: () => onNavigate("cloud"),
+      },
+      // ── Actions. ───────────────────────────────────────────────────────
       {
         id: "action:add-project",
         label: "Add project…",
@@ -170,6 +198,7 @@ export function CommandPalette({
         keywords: "add new project import",
         icon: Plus,
         mode: ">",
+        category: "Actions",
         run: onAddProject,
       },
       {
@@ -179,6 +208,7 @@ export function CommandPalette({
         keywords: "reindex rebuild index refresh",
         icon: RefreshCw,
         mode: ">",
+        category: "Actions",
         run: onReindexActive,
       },
       {
@@ -188,6 +218,7 @@ export function CommandPalette({
         keywords: "logs log file debug troubleshoot",
         icon: FileText,
         mode: ">",
+        category: "Actions",
         run: onOpenLogs,
       },
       {
@@ -197,15 +228,17 @@ export function CommandPalette({
         keywords: "theme dark light system appearance",
         icon: SunMoon,
         mode: ">",
+        category: "Actions",
         run: onCycleTheme,
       },
       {
         id: "action:ask",
         label: "Ask the codebase…",
-        hint: "Open the Ask surface",
+        hint: "Open the Ask facet",
         keywords: "ask question",
         icon: Sparkles,
         mode: "?",
+        category: "Actions",
         run: () => onNavigate("ask"),
       },
     ];
@@ -215,9 +248,10 @@ export function CommandPalette({
         id: `corpus:${c.id}`,
         label: `Switch to ${corpusLabel(c)}`,
         hint: corpusRoot(c.paths),
-        keywords: `${corpusLabel(c)} ${c.id}`,
+        keywords: `${corpusLabel(c)} ${c.id} switch project spine`,
         icon: FolderOpen,
         mode: "@",
+        category: "Projects",
         run: () => onSelectCorpus(c.id),
       });
     }
@@ -231,6 +265,7 @@ export function CommandPalette({
         keywords: `${s.session_id} ${s.client_name ?? ""}`,
         icon: Activity,
         mode: "#",
+        category: "Sessions",
         run: () =>
           openEntity({
             kind: "session",
@@ -249,6 +284,7 @@ export function CommandPalette({
         keywords: `inspect ${corpusLabel(active)} corpus detail project`,
         icon: Eye,
         mode: ">",
+        category: "Actions",
         run: () => openEntity({ kind: "corpus", corpus: active }),
       });
     }
@@ -267,7 +303,7 @@ export function CommandPalette({
   ]);
 
   const filtered = useMemo(() => {
-    return items.filter((i) => {
+    const matched = items.filter((i) => {
       if (mode && i.mode !== mode) return false;
       if (!term) return true;
       return (
@@ -275,6 +311,12 @@ export function CommandPalette({
         i.keywords.toLowerCase().includes(term)
       );
     });
+    // Order by section so the flat keyboard index matches the grouped
+    // visual order (Array.prototype.sort is stable → intra-group order kept).
+    return matched.sort(
+      (a, b) =>
+        CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category),
+    );
   }, [items, mode, term]);
 
   useEffect(() => {
@@ -354,8 +396,20 @@ export function CommandPalette({
                 {filtered.map((item, idx) => {
                   const Icon = item.icon;
                   const active = idx === highlight;
+                  // Raycast-style section header whenever the category changes
+                  // (skipped in a single-mode view where it's redundant).
+                  const showHeader =
+                    !mode && (idx === 0 || filtered[idx - 1].category !== item.category);
                   return (
                     <li key={item.id}>
+                      {showHeader && (
+                        <div
+                          className="px-3 pt-2 pb-1 font-mono text-mono-micro uppercase tracking-[0.08em] text-text-dim select-none"
+                          aria-hidden
+                        >
+                          {item.category}
+                        </div>
+                      )}
                       <button
                         type="button"
                         role="option"
