@@ -187,6 +187,119 @@ impl QueryService {
         Ok(results)
     }
 
+    /// Type-hierarchy-aware references (FL3b): the normal references of
+    /// `symbol_id`, PLUS — when it is a method on a trait/interface-related
+    /// type — the callers of the same-named method on every co-implementor.
+    ///
+    /// ministr's `Implements` graph is *type-level* (`class implements trait`,
+    /// not `method overrides method`), so this approximates LSP "find
+    /// references including overrides" with a bounded, name-based heuristic:
+    ///
+    /// 1. Split `symbol_id` (`…::Type::method`) into its container type + name.
+    /// 2. From the container's (bidirectional) `Implements` edges, gather
+    ///    *peer types*: the container's own implementors (if it is a trait) and
+    ///    the co-implementors of every trait the container implements.
+    /// 3. For each peer type `P`, if `P::method` exists, append its callers.
+    ///
+    /// Bounded by `max_implementors` peer methods; a single `Implements` hop +
+    /// direct callers only, never a transitive / full-graph walk. With no peers
+    /// (free function, non-trait type, or no same-named method) the result is
+    /// exactly [`Self::get_symbol_references`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::SymbolNotFound`] if `symbol_id` does not exist, or
+    /// [`QueryError::Storage`] on database errors.
+    #[instrument(skip(self))]
+    pub async fn get_symbol_references_through_implementors(
+        &self,
+        symbol_id: &str,
+        ref_kind: Option<RefKind>,
+        max_implementors: usize,
+    ) -> Result<Vec<SymbolRefResult>, QueryError> {
+        let mut results = self.get_symbol_references(symbol_id, ref_kind).await?;
+
+        // `…::Container::method` → (container_id, method_name). A free function
+        // or top-level symbol has no usable container hop.
+        let Some((container_id, method_name)) = symbol_id.rsplit_once("::") else {
+            return Ok(results);
+        };
+        let container = SymbolId(container_id.to_string());
+
+        // Peer implementor TYPES from the type-level `Implements` graph.
+        // `query_refs` is bidirectional, so one query yields both directions:
+        // edges INTO the container (it is a trait → implementors) and edges OUT
+        // of it (it is a concrete type → the traits it implements).
+        let mut peer_types: Vec<String> = Vec::new();
+        let mut seen = std::collections::HashSet::from([container_id.to_string()]);
+        for edge in self
+            .storage
+            .query_refs(&container, Some(RefKind::Implements))
+            .await?
+        {
+            if edge.to_symbol_id.0 == container_id {
+                // Something implements the container → the container is a trait.
+                let implementor = edge.from_symbol_id.0;
+                if seen.insert(implementor.clone()) {
+                    peer_types.push(implementor);
+                }
+            } else if edge.from_symbol_id.0 == container_id {
+                // Container implements a trait → gather the trait's other impls.
+                let trait_sid = edge.to_symbol_id;
+                for t in self
+                    .storage
+                    .query_refs(&trait_sid, Some(RefKind::Implements))
+                    .await?
+                {
+                    if t.to_symbol_id == trait_sid && seen.insert(t.from_symbol_id.0.clone()) {
+                        peer_types.push(t.from_symbol_id.0);
+                    }
+                }
+            }
+        }
+
+        // Append callers of each peer type's same-named method, deduped against
+        // the base results.
+        let mut seen_refs: std::collections::HashSet<(String, String)> = results
+            .iter()
+            .map(|r| (r.from_symbol_id.clone(), r.to_symbol_id.clone()))
+            .collect();
+        for peer in peer_types.into_iter().take(max_implementors) {
+            let peer_method = SymbolId(format!("{peer}::{method_name}"));
+            let Some(method_sym) = self.storage.get_symbol(&peer_method).await? else {
+                continue;
+            };
+            for c in self
+                .storage
+                .query_refs(&peer_method, Some(RefKind::Calls))
+                .await?
+            {
+                if c.to_symbol_id != peer_method {
+                    continue; // incoming callers of the peer method only
+                }
+                let Some(caller) = self.storage.get_symbol(&c.from_symbol_id).await? else {
+                    continue;
+                };
+                if !seen_refs.insert((caller.id.0.clone(), method_sym.id.0.clone())) {
+                    continue;
+                }
+                results.push(SymbolRefResult {
+                    from_symbol_id: caller.id.0,
+                    from_name: caller.name,
+                    from_file: caller.file_path,
+                    from_line: caller.line_start,
+                    to_symbol_id: method_sym.id.0.clone(),
+                    to_name: method_sym.name.clone(),
+                    to_file: method_sym.file_path.clone(),
+                    to_line: method_sym.line_start,
+                    ref_kind: RefKind::Calls.to_string(),
+                });
+            }
+        }
+
+        Ok(results)
+    }
+
     /// Compute transitive caller counts for a batch of symbols.
     ///
     /// Delegates to storage-level recursive CTE query. Returns a map from
@@ -653,6 +766,114 @@ mod tests {
         assert_eq!(
             tests.tests, 1,
             "the test-file count reflects the filtered set"
+        );
+    }
+
+    /// FL3b — `get_symbol_references_through_implementors` adds callers of the
+    /// same-named method on co-implementor types. With `English` and `Spanish`
+    /// both implementing `Greeter`, querying `English::greet` surfaces the
+    /// caller of `Spanish::greet` (the type-hierarchy hop) — which plain
+    /// `get_symbol_references` does not.
+    #[tokio::test]
+    async fn references_through_implementors_spans_co_implementors() {
+        use crate::embedding::Embedder;
+        use crate::error::IndexError;
+        use crate::index::{HnswIndex, VectorIndex};
+        use crate::service::QueryService;
+        use crate::storage::{SqliteStorage, Storage, SymbolRecord, SymbolRefRecord};
+        use crate::types::{RefKind, SymbolId};
+        use std::sync::Arc;
+
+        struct ZeroEmbedder;
+        impl Embedder for ZeroEmbedder {
+            fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, IndexError> {
+                Ok(vec![vec![0.0; 4]; texts.len()])
+            }
+            fn dimension(&self) -> usize {
+                4
+            }
+        }
+
+        let sym = |id: &str, kind: &str| SymbolRecord {
+            id: SymbolId(id.into()),
+            file_path: "src/lib.rs".into(),
+            name: id.rsplit("::").next().unwrap().into(),
+            kind: kind.into(),
+            visibility: "pub".into(),
+            signature: String::new(),
+            doc_comment: None,
+            module_path: String::new(),
+            line_start: 1,
+            line_end: 2,
+            cyclomatic_complexity: None,
+        };
+        let edge = |from: &str, to: &str, kind: RefKind| SymbolRefRecord {
+            from_symbol_id: SymbolId(from.into()),
+            to_symbol_id: SymbolId(to.into()),
+            ref_kind: kind,
+        };
+
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        storage
+            .insert_symbols(&[
+                sym("sym-g::Greeter", "trait"),
+                sym("sym-g::English", "struct"),
+                sym("sym-g::English::greet", "function"),
+                sym("sym-g::Spanish", "struct"),
+                sym("sym-g::Spanish::greet", "function"),
+                sym("sym-g::call_en", "function"),
+                sym("sym-g::call_es", "function"),
+            ])
+            .await
+            .unwrap();
+        storage
+            .insert_symbol_refs(&[
+                edge("sym-g::English", "sym-g::Greeter", RefKind::Implements),
+                edge("sym-g::Spanish", "sym-g::Greeter", RefKind::Implements),
+                edge("sym-g::call_en", "sym-g::English::greet", RefKind::Calls),
+                edge("sym-g::call_es", "sym-g::Spanish::greet", RefKind::Calls),
+            ])
+            .await
+            .unwrap();
+
+        let embedder: Arc<dyn Embedder> = Arc::new(ZeroEmbedder);
+        let index: Arc<dyn VectorIndex> = Arc::new(HnswIndex::new(4, 16).unwrap());
+        let svc = QueryService::new(storage, embedder, index);
+
+        // Plain references of English::greet: only its own direct caller.
+        let plain = svc
+            .get_symbol_references("sym-g::English::greet", Some(RefKind::Calls))
+            .await
+            .unwrap();
+        assert!(
+            plain.iter().any(|r| r.from_symbol_id == "sym-g::call_en"),
+            "plain refs include the direct caller"
+        );
+        assert!(
+            !plain.iter().any(|r| r.from_symbol_id == "sym-g::call_es"),
+            "plain refs must NOT cross to the sibling implementor"
+        );
+
+        // Through implementors: the Spanish caller surfaces via the hop.
+        let hier = svc
+            .get_symbol_references_through_implementors(
+                "sym-g::English::greet",
+                Some(RefKind::Calls),
+                16,
+            )
+            .await
+            .unwrap();
+        assert!(
+            hier.iter().any(|r| r.from_symbol_id == "sym-g::call_en"),
+            "hierarchy refs still include the direct caller"
+        );
+        let peer = hier
+            .iter()
+            .find(|r| r.from_symbol_id == "sym-g::call_es")
+            .expect("hierarchy refs surface the co-implementor's caller");
+        assert_eq!(
+            peer.to_symbol_id, "sym-g::Spanish::greet",
+            "the peer caller is attributed to the sibling method"
         );
     }
 }
