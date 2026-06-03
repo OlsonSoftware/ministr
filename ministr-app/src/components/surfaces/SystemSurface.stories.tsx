@@ -1,7 +1,21 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { CorpusInfo, DaemonStatus } from "../../lib/types";
 import type { McpClientView } from "../../hooks/useMcpClients";
-import { SystemSurface } from "./SystemSurface";
+import { SystemSurface, type SetupStatus } from "./SystemSurface";
+
+const SETUP_OK: SetupStatus = {
+  cli_on_path: true,
+  cli_path: "/usr/local/bin/ministr",
+  data_dir: "~/.ministr/",
+  version: "0.2.1",
+};
+
+const SETUP_NEEDS_FIX: SetupStatus = {
+  cli_on_path: false,
+  cli_path: null,
+  data_dir: "~/.ministr/",
+  version: "0.2.1",
+};
 
 /**
  * SystemSurface — the Account "System" tab (aaa-settings): Settings dissolved
@@ -85,6 +99,8 @@ const meta = {
   args: {
     theme: "dark",
     density: "comfortable",
+    setup: SETUP_OK,
+    onFixPath: noop,
     onThemeChange: noop,
     onDensityChange: noop,
     onToggleAutostart: noop,
@@ -158,4 +174,9 @@ export const Error: Story = {
 /** No project selected — integrations point back to the spine. */
 export const NoProject: Story = {
   args: { status: STATUS, integrations: [], projectRoot: null },
+};
+
+/** CLI not on PATH — the relocated setup check surfaces a one-click Fix PATH. */
+export const PathNeedsFix: Story = {
+  args: { status: STATUS, integrations: INTEGRATIONS, setup: SETUP_NEEDS_FIX },
 };

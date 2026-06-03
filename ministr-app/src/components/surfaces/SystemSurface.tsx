@@ -16,7 +16,7 @@
  * every state without Tauri; `SystemSurfaceConnector` wires the live hooks +
  * commands (useDensity, useMcpClients, set_autostart, open_path, …).
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Activity,
@@ -37,6 +37,7 @@ import {
   ScrollText,
   Sparkles,
   Sun,
+  Terminal,
   Trash2,
 } from "lucide-react";
 
@@ -63,10 +64,25 @@ import { useToast } from "../shell/ToastTray";
 
 type ThemeChoice = "system" | "dark" | "light";
 
+/** Mirror of the Rust `SetupStatus` (commands.rs::setup_status) — first-run
+ *  setup state, relocated out of the retired onboarding wizard into the
+ *  System diagnostics (aaa-onboarding-setup-mcp-relocate). */
+export interface SetupStatus {
+  cli_on_path: boolean;
+  cli_path: string | null;
+  data_dir: string;
+  version: string;
+}
+
 export interface SystemSurfaceProps {
   status: DaemonStatus;
   theme: ThemeChoice;
   density: Density;
+  /** First-run CLI-on-PATH setup state, or null while loading. */
+  setup?: SetupStatus | null;
+  /** True while the one-click PATH repair is running. */
+  fixingPath?: boolean;
+  onFixPath?: () => void;
   /** Live AI-assistant integration views (from useMcpClients). */
   integrations: McpClientView[];
   integrationsLoading?: boolean;
@@ -126,7 +142,7 @@ function Section({
 }
 
 export function SystemSurface(props: SystemSurfaceProps) {
-  const { status, theme, density, integrations } = props;
+  const { status, theme, density, integrations, setup } = props;
 
   // Aggregate index health across every registered corpus — the diagnostics
   // lens (is the whole fleet healthy?), distinct from per-project Tend care.
@@ -224,6 +240,39 @@ export function SystemSurface(props: SystemSurfaceProps) {
               value={fleetLabel}
             />
           </div>
+
+          {/* CLI-on-PATH — relocated out of the retired onboarding wizard.
+              A passive health row here, not a first-run gate. */}
+          {setup && (
+            <div className="flex items-center gap-3 rounded-md border border-border-soft bg-surface px-3 py-2.5">
+              <StatusDot tone={setup.cli_on_path ? "success" : "danger"} />
+              <div className="min-w-0 flex-1">
+                <p className="font-sans text-sm font-medium text-text">
+                  ministr CLI on PATH
+                </p>
+                <p className="font-mono text-[10px] text-text-dim truncate mt-0.5">
+                  {setup.cli_on_path
+                    ? (setup.cli_path ?? "resolved")
+                    : "not resolvable from this app — repair to let editors find it"}
+                </p>
+              </div>
+              {!setup.cli_on_path && props.onFixPath && (
+                <Button
+                  size="sm"
+                  onClick={props.onFixPath}
+                  disabled={props.fixingPath}
+                  className="shrink-0"
+                >
+                  {props.fixingPath ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+                  ) : (
+                    <Terminal className="h-3.5 w-3.5" strokeWidth={2} />
+                  )}
+                  Fix PATH
+                </Button>
+              )}
+            </div>
+          )}
         </Card>
       </Section>
 
@@ -545,6 +594,35 @@ export function SystemSurfaceConnector({
   const { density, setDensity } = useDensity();
   const { toast } = useToast();
 
+  const [setup, setSetup] = useState<SetupStatus | null>(null);
+  const [fixingPath, setFixingPath] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    invoke<SetupStatus>("setup_status")
+      .then((s) => !cancelled && setSetup(s))
+      .catch(() => !cancelled && setSetup(null));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function fixPath() {
+    setFixingPath(true);
+    try {
+      await invoke<string>("fix_path");
+      const next = await invoke<SetupStatus>("setup_status");
+      setSetup(next);
+      toast(next.cli_on_path ? "PATH repaired" : "PATH still unresolved", {
+        tone: next.cli_on_path ? "info" : "danger",
+      });
+    } catch (e) {
+      toast("Fix PATH failed", { detail: String(e), tone: "danger" });
+    } finally {
+      setFixingPath(false);
+    }
+  }
+
   const corpus =
     status.corpora.find((c) => c.id === activeCorpusId) ??
     status.corpora[0] ??
@@ -613,6 +691,9 @@ export function SystemSurfaceConnector({
         status={status}
         theme={theme}
         density={density}
+        setup={setup}
+        fixingPath={fixingPath}
+        onFixPath={fixPath}
         integrations={views}
         integrationsLoading={loading}
         integrationsBusy={busy}
