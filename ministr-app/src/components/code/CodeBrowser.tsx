@@ -24,8 +24,7 @@ import { cn } from "../../lib/utils";
 import { FileTree } from "./FileTree";
 import { CodeViewer } from "./CodeViewer";
 import { CodeLanding } from "./CodeLanding";
-import { SymbolPeek } from "./SymbolPeek";
-import { ReferencesPanel } from "./ReferencesPanel";
+import { SymbolNeighborhoodConnector } from "./SymbolNeighborhood";
 import { RelatedFilesPanel } from "./RelatedFilesPanel";
 import { SymbolPalette } from "./SymbolPalette";
 import { useCodeNavigation } from "./useCodeNavigation";
@@ -228,24 +227,14 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
   // (inline column when wide, slide-over drawer when narrow): a clicked
   // symbol's peek/references, else the open file's related files.
   const rightPanel = panel ? (
-    panel.mode === "peek" ? (
-      <SymbolPeek
-        corpusId={corpusId}
-        symbolId={panel.symbolId}
-        symbolName={panel.symbolName}
-        onGoToDefinition={goToDefinition}
-        onShowReferences={() => setPanel((p) => (p ? { ...p, mode: "refs" } : p))}
-        onClose={closeRight}
-      />
-    ) : (
-      <ReferencesPanel
-        corpusId={corpusId}
-        symbolId={panel.symbolId}
-        symbolName={panel.symbolName}
-        onBack={() => setPanel((p) => (p ? { ...p, mode: "peek" } : p))}
-        onJump={jumpToRef}
-      />
-    )
+    <SymbolNeighborhoodConnector
+      corpusId={corpusId}
+      symbolId={panel.symbolId}
+      symbolName={panel.symbolName}
+      onGoToDefinition={goToDefinition}
+      onJumpRef={jumpToRef}
+      onClose={closeRight}
+    />
   ) : file ? (
     <RelatedFilesPanel
       corpusId={corpusId}
