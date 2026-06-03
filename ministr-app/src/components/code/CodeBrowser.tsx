@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, Code2, Command, PanelRight, X } from "lucide-react";
+import { ArrowLeft, Cable, Code2, Command, PanelRight, X } from "lucide-react";
 import type {
   DaemonStatus,
   FileContent,
@@ -24,6 +24,7 @@ import { cn } from "../../lib/utils";
 import { FileTree } from "./FileTree";
 import { CodeViewer } from "./CodeViewer";
 import { CodeLanding } from "./CodeLanding";
+import { BridgeMapConnector } from "./BridgeMap";
 import { SymbolNeighborhoodConnector } from "./SymbolNeighborhood";
 import { RelatedFilesPanel } from "./RelatedFilesPanel";
 import { SymbolPalette } from "./SymbolPalette";
@@ -63,6 +64,8 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
   // Narrow-width drawer: when the right panel can't be an inline column, it
   // slides over instead. `rightOpen` gates that drawer (no effect when wide).
   const [rightOpen, setRightOpen] = useState(false);
+  // The Explore lens: the code browser, or the cross-language bridge map.
+  const [lens, setLens] = useState<"code" | "bridges">("code");
 
   const gridRef = useRef<HTMLDivElement>(null);
   const surfaceWidth = useContainerWidth(gridRef);
@@ -246,21 +249,31 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
   return (
     <div className="@container/page relative flex h-full min-h-0 flex-col">
       <header className="flex shrink-0 items-center gap-2 border-b border-border-soft bg-surface px-3 py-1.5">
-        {nav.canBack && (
-          <button
-            type="button"
-            onClick={nav.back}
-            aria-label="Back"
-            className="grid h-6 w-6 place-items-center rounded-md border border-border-soft text-text-muted hover:border-border hover:text-text cursor-pointer transition-colors duration-150 ease-out"
-          >
-            <ArrowLeft className="h-3 w-3" strokeWidth={2} />
-          </button>
+        <LensToggle lens={lens} onChange={setLens} />
+        <div className="h-4 w-px bg-border-soft" aria-hidden />
+        {lens === "code" ? (
+          <>
+            {nav.canBack && (
+              <button
+                type="button"
+                onClick={nav.back}
+                aria-label="Back"
+                className="grid h-6 w-6 place-items-center rounded-md border border-border-soft text-text-muted hover:border-border hover:text-text cursor-pointer transition-colors duration-150 ease-out"
+              >
+                <ArrowLeft className="h-3 w-3" strokeWidth={2} />
+              </button>
+            )}
+            <span className="truncate font-mono text-xs text-text-muted">
+              {path ?? "Select a file"}
+            </span>
+          </>
+        ) : (
+          <span className="truncate font-mono text-xs text-text-muted">
+            Cross-language seams
+          </span>
         )}
-        <span className="truncate font-mono text-xs text-text-muted">
-          {path ?? "Select a file"}
-        </span>
         <div className="ml-auto flex items-center gap-2">
-          {!isWide && file && (
+          {lens === "code" && !isWide && file && (
             <button
               type="button"
               onClick={() => setRightOpen((o) => !o)}
@@ -277,18 +290,31 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
               <PanelRight className="h-3 w-3" strokeWidth={2} />
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => setPaletteOpen(true)}
-            className="inline-flex items-center gap-1 rounded-md border border-border-soft px-2 py-1 font-mono text-mono-mini text-text-muted hover:border-border hover:text-text cursor-pointer transition-colors duration-150 ease-out"
-          >
-            <Command className="h-3 w-3" strokeWidth={2} />
-            <span>K</span>
-            <span className="text-text-dim">jump to symbol</span>
-          </button>
+          {lens === "code" && (
+            <button
+              type="button"
+              onClick={() => setPaletteOpen(true)}
+              className="inline-flex items-center gap-1 rounded-md border border-border-soft px-2 py-1 font-mono text-mono-mini text-text-muted hover:border-border hover:text-text cursor-pointer transition-colors duration-150 ease-out"
+            >
+              <Command className="h-3 w-3" strokeWidth={2} />
+              <span>K</span>
+              <span className="text-text-dim">jump to symbol</span>
+            </button>
+          )}
         </div>
       </header>
 
+      {lens === "bridges" ? (
+        <div className="min-h-0 flex-1">
+          <BridgeMapConnector
+            corpusId={corpusId}
+            onOpenFile={(p) => {
+              setLens("code");
+              nav.push({ path: p });
+            }}
+          />
+        </div>
+      ) : (
       <div
         ref={gridRef}
         className={cn(
@@ -334,6 +360,7 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
           <aside className="min-h-0 min-w-0 bg-surface">{rightPanel}</aside>
         )}
       </div>
+      )}
 
       {/* Narrow: the same panel slides over the viewer instead of stealing its
           width. Backdrop + Escape (above) + the X dismiss it. */}
@@ -380,6 +407,50 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
         onClose={() => setPaletteOpen(false)}
         onPick={pickFromPalette}
       />
+    </div>
+  );
+}
+
+/** Code | Bridges lens switch — the two ways to read the index: file-by-file,
+ *  or by its cross-language seams. A segmented control in the Explore header. */
+function LensToggle({
+  lens,
+  onChange,
+}: {
+  lens: "code" | "bridges";
+  onChange: (l: "code" | "bridges") => void;
+}) {
+  const items: Array<{ id: "code" | "bridges"; label: string; icon: typeof Code2 }> = [
+    { id: "code", label: "Code", icon: Code2 },
+    { id: "bridges", label: "Bridges", icon: Cable },
+  ];
+  return (
+    <div
+      role="tablist"
+      aria-label="Explore lens"
+      className="inline-flex items-center gap-0.5 rounded-md border border-border-soft bg-surface-sunken p-0.5"
+    >
+      {items.map(({ id, label, icon: Icon }) => {
+        const active = lens === id;
+        return (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(id)}
+            className={cn(
+              "inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-mono-mini font-semibold uppercase tracking-[0.06em] cursor-pointer transition-colors duration-150 ease-out",
+              active
+                ? "bg-surface-overlay text-text shadow-[var(--glow-soft)]"
+                : "text-text-dim hover:text-text",
+            )}
+          >
+            <Icon className="h-3 w-3" strokeWidth={2.25} />
+            {label}
+          </button>
+        );
+      })}
     </div>
   );
 }

@@ -18,6 +18,7 @@
  * Shapes mirror `lib/types.ts` + `surfaces/ask/{thread,internals}.ts` exactly.
  */
 import type {
+  BridgeLink,
   CorpusInfo,
   DaemonStatus,
   FileContent,
@@ -357,6 +358,81 @@ function searchSymbols(args: Record<string, unknown>): SymbolInfo[] {
 
 const NO_OCCURRENCES: Occurrence[] = [];
 
+// ── Cross-language bridges — the ministr↔ts Tauri seam + the daemon HTTP API. ─
+
+function bridge(over: Partial<BridgeLink> & { kind: string }): BridgeLink {
+  return {
+    confidence: 0.93,
+    export_file: "ministr-app/src-tauri/src/commands.rs",
+    export_binding_key: "",
+    export_symbol: "",
+    export_language: "rust",
+    export_line: 1,
+    import_file: "ministr-app/src/lib/api.ts",
+    import_binding_key: "",
+    import_symbol: "",
+    import_language: "typescript",
+    import_line: 1,
+    ...over,
+  };
+}
+
+const LIVE_BRIDGES: BridgeLink[] = [
+  bridge({ kind: "tauri_command", export_symbol: "survey_corpus", import_symbol: "surveyCorpus", export_line: 412, import_line: 88, confidence: 0.96 }),
+  bridge({ kind: "tauri_command", export_symbol: "list_sessions", import_symbol: "listSessions", export_line: 980, import_line: 142, confidence: 0.97 }),
+  bridge({ kind: "tauri_command", export_symbol: "bridge_query", import_symbol: "bridgeQuery", export_line: 1254, import_line: 203, confidence: 0.9 }),
+  bridge({ kind: "tauri_command", export_symbol: "read_file", import_symbol: "readFile", export_line: 640, import_line: 51, confidence: 0.94 }),
+  bridge({ kind: "tauri_command", export_symbol: "symbol_definition", import_symbol: "symbolDefinition", export_line: 1102, import_line: 167, confidence: 0.89 }),
+  bridge({
+    kind: "http_route",
+    export_file: "ministr-daemon/src/daemon.rs",
+    export_symbol: "GET /api/v1/corpora/{id}/files",
+    export_binding_key: "list_files",
+    export_line: 1640,
+    import_file: "ministr-api/src/client.rs",
+    import_symbol: "list_corpus_files",
+    import_language: "rust",
+    import_line: 349,
+    confidence: 0.83,
+  }),
+  bridge({
+    kind: "http_route",
+    export_file: "ministr-daemon/src/daemon.rs",
+    export_symbol: "GET /api/v1/sessions",
+    export_binding_key: "list_sessions",
+    export_line: 1480,
+    import_file: "ministr-api/src/client.rs",
+    import_symbol: "list_sessions",
+    import_language: "rust",
+    import_line: 526,
+    confidence: 0.8,
+  }),
+  bridge({
+    kind: "ffi",
+    export_file: "vendor/sqlite/sqlite3.c",
+    export_symbol: "sqlite3_open_v2",
+    export_language: "c",
+    export_line: 178002,
+    import_file: "ministr-core/src/storage/sqlite.rs",
+    import_symbol: "open",
+    import_language: "rust",
+    import_line: 64,
+    confidence: 0.58,
+  }),
+];
+
+/** bridge_query honours the kind + file_path filters (the BridgeView "other of
+ *  kind" section relies on server-side kind filtering). */
+function bridgeQuery(args: Record<string, unknown>): BridgeLink[] {
+  const kind = args.kind ? String(args.kind) : null;
+  const filePath = args.filePath ? String(args.filePath) : null;
+  return LIVE_BRIDGES.filter(
+    (b) =>
+      (!kind || b.kind === kind) &&
+      (!filePath || b.export_file === filePath || b.import_file === filePath),
+  );
+}
+
 const SUPPORTED_MODELS = [
   { name: "jina-code-v2", dimension: 768, description: "Code-optimised, Matryoshka", code_optimized: true },
   { name: "bge-m3", dimension: 1024, description: "Multilingual dense+sparse", code_optimized: false },
@@ -376,6 +452,7 @@ export const LIVE_FIXTURES: TauriFixtures = {
   search_symbols: searchSymbols,
   symbol_definition: symbolDefinition,
   symbol_references: REFERENCES,
+  bridge_query: bridgeQuery,
   // Tend
   list_supported_models: SUPPORTED_MODELS,
   // Ask
