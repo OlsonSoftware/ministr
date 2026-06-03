@@ -16,7 +16,7 @@ import { EntityPanel } from "../EntityPanel";
 import type { SurfaceId } from "../chrome/Sidebar";
 import { AskSurface } from "../surfaces/ask/AskSurface";
 import { SessionsSurface } from "../surfaces/SessionsSurface";
-import { ProjectsSurface } from "../surfaces/ProjectsSurface";
+import { FleetSurface } from "../surfaces/FleetSurface";
 import { ExploreSurface } from "../surfaces/ExploreSurface";
 import { TendSurface } from "../surfaces/TendSurface";
 import { AccountSettings } from "../surfaces/AccountSettings";
@@ -256,7 +256,7 @@ export function WorkspaceScreen({
   const renderFleet = useCallback(() => {
     if (!status) return null;
     return (
-      <ProjectsSurface
+      <FleetSurface
         corpora={status.corpora}
         activeCorpusId={activeProjectId}
         onSelectCorpus={selectProject}
