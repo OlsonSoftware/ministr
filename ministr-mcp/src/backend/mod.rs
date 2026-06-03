@@ -184,6 +184,17 @@ pub trait QueryBackend: Send + Sync {
         language: Option<&str>,
         file_path: Option<&str>,
     ) -> impl Future<Output = Result<Vec<BridgeLinkDetail>, BackendError>> + Send;
+
+    /// Resolve a file position (1-based `line`, 0-based byte `col`) to the
+    /// symbol id of the identifier under the cursor, or `None` when the
+    /// position covers no occurrence. The position→symbol bridge (FL2) that
+    /// makes [`Self::definition`]/[`Self::references`] position-addressable.
+    fn symbol_at_position(
+        &self,
+        file_path: &str,
+        line: u32,
+        col: u32,
+    ) -> impl Future<Output = Result<Option<String>, BackendError>> + Send;
 }
 
 // ---------------------------------------------------------------------------
@@ -895,6 +906,44 @@ impl Backend {
                 Err(default) => Ok(default
                     .query_bridges(query, kind, language, file_path)
                     .await?),
+            },
+        }
+    }
+
+    pub async fn symbol_at_position(
+        &self,
+        tenant_subject: Option<&str>,
+        project: Option<&str>,
+        file_path: &str,
+        line: u32,
+        col: u32,
+    ) -> Result<Option<String>, BackendError> {
+        match self {
+            Self::Local(b) => b.symbol_at_position(file_path, line, col).await,
+            Self::Daemon(b) => b.symbol_at_position(file_path, line, col).await,
+            Self::DaemonMulti(m) => {
+                m.for_project(project)
+                    .symbol_at_position(file_path, line, col)
+                    .await
+            }
+            Self::Registry {
+                default_service,
+                registry,
+                tenant_filter,
+            } => match Self::resolve_registry_handle(
+                default_service,
+                registry,
+                tenant_filter.as_ref(),
+                tenant_subject,
+                project,
+            )
+            .await
+            {
+                Ok(handle) => Ok(handle
+                    .service
+                    .symbol_at_position(file_path, line, col)
+                    .await?),
+                Err(default) => Ok(default.symbol_at_position(file_path, line, col).await?),
             },
         }
     }

@@ -674,6 +674,86 @@ async fn extract_nonexistent_section_returns_user_friendly_error() {
 }
 
 // ---------------------------------------------------------------------------
+// FL2 — position-addressed nav (definition/references accept {file,line,col})
+// ---------------------------------------------------------------------------
+
+/// `ministr_definition` accepts a position. With a corpus that has no
+/// occurrence index (this doc-only fixture), resolving a position yields a
+/// cascade-safe soft error naming the position — proving the `{file,line,col}`
+/// argument is parsed and routed through `symbol_at_position`, not ignored.
+#[tokio::test]
+async fn definition_by_position_without_occurrences_soft_errors() {
+    let (client, _server) = wrap_as_client(setup_server().await).await;
+
+    let result = call_tool(
+        &client,
+        "ministr_definition",
+        json!({"file": "src/lib.rs", "line": 10, "col": 4}),
+    )
+    .await;
+
+    assert_eq!(result.is_error, Some(false));
+    let text = extract_text(&result.content);
+    assert!(
+        text.contains("no_symbol_at_position"),
+        "position resolution should be wired: {text}"
+    );
+}
+
+/// `ministr_references` likewise accepts a position and routes it through
+/// the same resolver.
+#[tokio::test]
+async fn references_by_position_without_occurrences_soft_errors() {
+    let (client, _server) = wrap_as_client(setup_server().await).await;
+
+    let result = call_tool(
+        &client,
+        "ministr_references",
+        json!({"file": "src/lib.rs", "line": 10, "col": 4}),
+    )
+    .await;
+
+    assert_eq!(result.is_error, Some(false));
+    let text = extract_text(&result.content);
+    assert!(
+        text.contains("no_symbol_at_position"),
+        "position resolution should be wired: {text}"
+    );
+}
+
+/// Calling a nav tool with neither a `symbol_id` nor a complete position is a
+/// soft `missing_argument` failure (never a cascade-cancelling MCP error).
+#[tokio::test]
+async fn definition_without_id_or_position_soft_errors() {
+    let (client, _server) = wrap_as_client(setup_server().await).await;
+
+    let result = call_tool(&client, "ministr_definition", json!({})).await;
+
+    assert_eq!(result.is_error, Some(false));
+    let text = extract_text(&result.content);
+    assert!(text.contains("missing_argument"), "got: {text}");
+}
+
+/// A partial position (file + line, no col) is incomplete → `missing_argument`,
+/// proving the resolver requires all three coordinates before touching the
+/// occurrence index.
+#[tokio::test]
+async fn references_with_partial_position_soft_errors() {
+    let (client, _server) = wrap_as_client(setup_server().await).await;
+
+    let result = call_tool(
+        &client,
+        "ministr_references",
+        json!({"file": "src/lib.rs", "line": 10}),
+    )
+    .await;
+
+    assert_eq!(result.is_error, Some(false));
+    let text = extract_text(&result.content);
+    assert!(text.contains("missing_argument"), "got: {text}");
+}
+
+// ---------------------------------------------------------------------------
 // Budget tracking end-to-end
 // ---------------------------------------------------------------------------
 

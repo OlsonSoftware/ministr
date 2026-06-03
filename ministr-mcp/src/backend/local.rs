@@ -204,4 +204,15 @@ impl QueryBackend for LocalBackend {
                 .await?)
         }
     }
+
+    fn symbol_at_position(
+        &self,
+        file_path: &str,
+        line: u32,
+        col: u32,
+    ) -> impl Future<Output = Result<Option<String>, BackendError>> + Send {
+        let service = self.service.clone();
+        let file_path = file_path.to_string();
+        async move { Ok(service.symbol_at_position(&file_path, line, col).await?) }
+    }
 }

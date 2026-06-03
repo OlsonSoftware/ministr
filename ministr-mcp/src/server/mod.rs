@@ -2369,6 +2369,51 @@ impl MinistrServer {
         .await
     }
 
+    /// Resolve the effective symbol id for a position-addressable nav tool.
+    ///
+    /// Returns the explicit `symbol_id` when present. Otherwise, when a
+    /// `{file, line, col}` position is fully supplied, maps it through the
+    /// occurrence index (FL1/FL2) to the symbol under the cursor — the
+    /// LSP-style position addressing that lets an agent click any token
+    /// without first looking up an id. `Err` carries a cascade-safe
+    /// [`soft_error`] result to return verbatim (missing args, no symbol at
+    /// the position, or a backend miss).
+    async fn resolve_nav_symbol(
+        &self,
+        tenant_subject: Option<&str>,
+        project: Option<&str>,
+        symbol_id: &str,
+        file: Option<&str>,
+        line: Option<u32>,
+        col: Option<u32>,
+    ) -> Result<String, CallToolResult> {
+        if !symbol_id.is_empty() {
+            return Ok(symbol_id.to_string());
+        }
+        let (Some(file), Some(line), Some(col)) = (file, line, col) else {
+            return Err(soft_error(
+                "missing_argument",
+                "Provide a symbol_id, or a position as file + line (1-based) + col (0-based).",
+            ));
+        };
+        match self
+            .backend
+            .symbol_at_position(tenant_subject, project, file, line, col)
+            .await
+        {
+            Ok(Some(sym)) => Ok(sym),
+            Ok(None) => Err(soft_error(
+                "no_symbol_at_position",
+                format!(
+                    "No symbol under the cursor at {file}:{line}:{col}. The position may be \
+                     whitespace/punctuation, or the corpus was indexed without the occurrence \
+                     index (re-index to enable click-any-token)."
+                ),
+            )),
+            Err(e) => Err(soft_backend_error(&e)),
+        }
+    }
+
     /// Get the full definition of a code symbol.
     ///
     /// Returns the symbol's source code with 3 lines of surrounding context,
@@ -2387,14 +2432,29 @@ impl MinistrServer {
         let span = info_span!("ministr_definition", symbol_id = %params.symbol_id);
 
         async {
-            debug!(symbol_id = %params.symbol_id, "ministr_definition request");
+            let symbol_id = match self
+                .resolve_nav_symbol(
+                    tenant_subject.as_deref(),
+                    params.project.as_deref(),
+                    &params.symbol_id,
+                    params.file.as_deref(),
+                    params.line,
+                    params.col,
+                )
+                .await
+            {
+                Ok(id) => id,
+                Err(soft) => return Ok(soft),
+            };
+
+            debug!(symbol_id = %symbol_id, "ministr_definition request");
 
             match self
                 .backend
                 .definition(
                     tenant_subject.as_deref(),
                     params.project.as_deref(),
-                    &params.symbol_id,
+                    &symbol_id,
                 )
                 .await
             {
@@ -2402,17 +2462,17 @@ impl MinistrServer {
                     let token_count = count_tokens(&def.source_context);
                     let mut reg = self.registry.lock().await;
                     let entry = self.ensure_session_mut(&mut reg);
-                    let _ = entry.budget.record_tokens(&params.symbol_id, token_count);
+                    let _ = entry.budget.record_tokens(&symbol_id, token_count);
                     let usage_status = entry.budget.usage_status();
                     drop(reg);
 
-                    debug!(symbol_id = %params.symbol_id, token_count, "ministr_definition success");
+                    debug!(symbol_id = %symbol_id, token_count, "ministr_definition success");
 
                     let response = self.build_response(def, usage_status).await;
                     structured_result(&response)
                 }
                 Err(e) => {
-                    warn!(error = %e, symbol_id = %params.symbol_id, "ministr_definition failed");
+                    warn!(error = %e, symbol_id = %symbol_id, "ministr_definition failed");
                     Ok(soft_backend_error(&e))
                 }
             }
@@ -2441,6 +2501,21 @@ impl MinistrServer {
         async {
             debug!(symbol_id = %params.symbol_id, ref_kind = ?params.ref_kind, "ministr_references request");
 
+            let symbol_id = match self
+                .resolve_nav_symbol(
+                    tenant_subject.as_deref(),
+                    params.project.as_deref(),
+                    &params.symbol_id,
+                    params.file.as_deref(),
+                    params.line,
+                    params.col,
+                )
+                .await
+            {
+                Ok(id) => id,
+                Err(soft) => return Ok(soft),
+            };
+
             let ref_kind = params
                 .ref_kind
                 .as_deref()
@@ -2451,7 +2526,7 @@ impl MinistrServer {
                 .references(
                     tenant_subject.as_deref(),
                     params.project.as_deref(),
-                    &params.symbol_id,
+                    &symbol_id,
                     ref_kind,
                 )
                 .await
@@ -2465,7 +2540,7 @@ impl MinistrServer {
                     let paginated: Vec<_> =
                         refs.into_iter().skip(offset).take(limit).collect();
 
-                    debug!(symbol_id = %params.symbol_id, total, offset, returned = paginated.len(), "ministr_references success");
+                    debug!(symbol_id = %symbol_id, total, offset, returned = paginated.len(), "ministr_references success");
 
                     let mut reg = self.registry.lock().await;
                     let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
@@ -2484,7 +2559,7 @@ impl MinistrServer {
                     structured_result(&response)
                 }
                 Err(e) => {
-                    warn!(error = %e, symbol_id = %params.symbol_id, "ministr_references failed");
+                    warn!(error = %e, symbol_id = %symbol_id, "ministr_references failed");
                     Ok(soft_backend_error(&e))
                 }
             }
@@ -5903,6 +5978,9 @@ mod tests {
         let result = server
             .references(Parameters(ReferencesParams {
                 symbol_id: "nonexistent::symbol".into(),
+                file: None,
+                line: None,
+                col: None,
                 ref_kind: None,
                 offset: None,
                 limit: None,

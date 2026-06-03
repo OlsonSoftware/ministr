@@ -12,8 +12,9 @@ use ministr_core::service::{
     ClaimResult, CompressedItem, DeadSymbol, ImpactResult, RelatedClaimResult, SectionDetail,
     SolidFinding, SolidParams, SurveyResult, SymbolDefinition, SymbolRefResult,
 };
+use ministr_core::storage::traits::{OccurrenceRecord, occurrence_at};
 use ministr_core::storage::{BridgeLinkDetail, SymbolFilter, SymbolRecord};
-use ministr_core::types::{RefKind, RelationType, TocEntry};
+use ministr_core::types::{RefKind, RelationType, SymbolId, TocEntry};
 
 use super::convert::{
     api_bridge_to_storage, api_claim_to_service, api_compressed_to_service,
@@ -365,6 +366,54 @@ impl QueryBackend for DaemonBackend {
             Ok(resp.links.into_iter().map(api_bridge_to_storage).collect())
         }
     }
+
+    fn symbol_at_position(
+        &self,
+        file_path: &str,
+        line: u32,
+        col: u32,
+    ) -> impl Future<Output = Result<Option<String>, BackendError>> + Send {
+        // No dedicated daemon route: reuse the existing `/occurrences`
+        // endpoint (file_occurrences) and run the SAME pure covering-match
+        // (`occurrence_at`) the local backend uses via the query service, so
+        // resolution logic stays single-sourced across both deployment shapes.
+        let client = self.client.clone();
+        let corpus_id = self.corpus_id.clone();
+        let file_path = file_path.to_string();
+        async move {
+            let occurrences = client
+                .file_occurrences(&corpus_id, file_path.clone())
+                .await?;
+            Ok(resolve_occurrence(&file_path, occurrences, line, col))
+        }
+    }
+}
+
+/// Map a file's wire occurrences to the symbol id covering `(line, col)`.
+///
+/// The daemon backend has no dedicated `symbol_at` route — it fetches the
+/// file's occurrences over the existing `/occurrences` endpoint and runs the
+/// SAME pure covering-match ([`occurrence_at`]) the query service uses, so the
+/// position→symbol logic is single-sourced across local and daemon modes.
+fn resolve_occurrence(
+    file_path: &str,
+    occurrences: Vec<ministr_api::query::Occurrence>,
+    line: u32,
+    col: u32,
+) -> Option<String> {
+    let records: Vec<OccurrenceRecord> = occurrences
+        .into_iter()
+        .map(|o| OccurrenceRecord {
+            file_path: file_path.to_string(),
+            name: o.name,
+            symbol_id: SymbolId(o.symbol_id),
+            byte_start: o.byte_start,
+            byte_end: o.byte_end,
+            line: o.line,
+            col: o.col,
+        })
+        .collect();
+    occurrence_at(&records, line, col).map(|o| o.symbol_id.0.clone())
 }
 
 /// Keep only references whose kind matches `ref_kind` (no-op when `None`).
@@ -421,5 +470,45 @@ mod tests {
         retain_ref_kind(&mut implements, Some(RefKind::Implements));
         assert_eq!(implements.len(), 1);
         assert_eq!(implements[0].ref_kind, "implements");
+    }
+
+    fn occ(name: &str, sym: &str, line: u32, col: u32, len: u32) -> ministr_api::query::Occurrence {
+        ministr_api::query::Occurrence {
+            symbol_id: sym.into(),
+            name: name.into(),
+            byte_start: 0,
+            byte_end: len,
+            line,
+            col,
+        }
+    }
+
+    #[test]
+    fn resolve_occurrence_picks_covering_symbol() {
+        // line 7: `foo` at col 4 (len 3) → covers cols 4..7.
+        let occs = vec![occ("a", "sym-a", 7, 0, 1), occ("foo", "sym-foo", 7, 4, 3)];
+        assert_eq!(
+            resolve_occurrence("src/x.rs", occs.clone(), 7, 4).as_deref(),
+            Some("sym-foo")
+        );
+        // mid-token still hits.
+        assert_eq!(
+            resolve_occurrence("src/x.rs", occs.clone(), 7, 6).as_deref(),
+            Some("sym-foo")
+        );
+        // col 0 hits the 1-char `a`.
+        assert_eq!(
+            resolve_occurrence("src/x.rs", occs.clone(), 7, 0).as_deref(),
+            Some("sym-a")
+        );
+        // whitespace gap (col 3) covers nothing.
+        assert_eq!(resolve_occurrence("src/x.rs", occs.clone(), 7, 3), None);
+        // wrong line.
+        assert_eq!(resolve_occurrence("src/x.rs", occs, 8, 4), None);
+    }
+
+    #[test]
+    fn resolve_occurrence_empty_is_none() {
+        assert_eq!(resolve_occurrence("src/x.rs", Vec::new(), 1, 0), None);
     }
 }

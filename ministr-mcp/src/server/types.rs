@@ -607,6 +607,27 @@ pub struct DefinitionParams {
     #[schemars(description = "Symbol ID to get the definition for (from ministr_symbols results)")]
     pub symbol_id: String,
 
+    /// Position-addressed lookup: file path of the cursor. When `symbol_id`
+    /// is empty and `file`+`line`+`col` are supplied, the symbol under the
+    /// cursor is resolved via the occurrence index (LSP-style addressing).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(
+        description = "Position-addressed alternative to symbol_id: file path (with line+col) to resolve the symbol under the cursor"
+    )]
+    pub file: Option<String>,
+
+    /// 1-based line of the cursor position.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_u32")]
+    #[schemars(description = "1-based line for position-addressed lookup (requires file+col)")]
+    pub line: Option<u32>,
+
+    /// 0-based byte column of the cursor position.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_u32")]
+    #[schemars(
+        description = "0-based byte column for position-addressed lookup (requires file+line)"
+    )]
+    pub col: Option<u32>,
+
     /// Optional linked-project label.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
@@ -620,6 +641,27 @@ pub struct ReferencesParams {
     #[serde(default, deserialize_with = "coerce::lenient_string")]
     #[schemars(description = "Symbol ID to find references for (from ministr_symbols results)")]
     pub symbol_id: String,
+
+    /// Position-addressed lookup: file path of the cursor. When `symbol_id`
+    /// is empty and `file`+`line`+`col` are supplied, references to the
+    /// symbol under the cursor are returned (LSP-style addressing).
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(
+        description = "Position-addressed alternative to symbol_id: file path (with line+col) to resolve the symbol under the cursor"
+    )]
+    pub file: Option<String>,
+
+    /// 1-based line of the cursor position.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_u32")]
+    #[schemars(description = "1-based line for position-addressed lookup (requires file+col)")]
+    pub line: Option<u32>,
+
+    /// 0-based byte column of the cursor position.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_u32")]
+    #[schemars(
+        description = "0-based byte column for position-addressed lookup (requires file+line)"
+    )]
+    pub col: Option<u32>,
 
     /// Optional reference kind filter.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
