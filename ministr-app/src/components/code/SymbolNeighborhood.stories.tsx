@@ -1,5 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import type { SymbolDefinitionDetail, SymbolRef } from "../../lib/types";
+import type {
+  SearchResult,
+  SymbolDefinitionDetail,
+  SymbolInfo,
+  SymbolRef,
+} from "../../lib/types";
 import { SymbolNeighborhood } from "./SymbolNeighborhood";
 
 /**
@@ -45,6 +50,43 @@ const REFS: SymbolRef[] = [
   ref("survey (JS)", "ministr-app/src/lib/cloudClient.ts", "bridge"),
 ];
 
+function sym(name: string, kind: string, file_path: string): SymbolInfo {
+  return {
+    id: `sym::${name}`,
+    name,
+    kind,
+    file_path,
+    visibility: "pub",
+    signature: `${kind} ${name}`,
+    doc_comment: null,
+    module_path: file_path.replace(/\//g, "::"),
+  };
+}
+
+const SAME_FILE: SymbolInfo[] = [
+  sym("QueryService", "struct", "ministr-core/src/service/query.rs"),
+  sym("rerank", "function", "ministr-core/src/service/query.rs"),
+  sym("SurveyRequest", "struct", "ministr-core/src/service/query.rs"),
+  sym("SurveyResponse", "struct", "ministr-core/src/service/query.rs"),
+];
+
+const MENTIONS: SearchResult[] = [
+  {
+    content_id: "ministr-core/src/service/query.rs#survey",
+    resolution: "section",
+    score: 0.91,
+    text: "survey embeds the query and runs cosine retrieval…",
+    heading_path: ["service", "query", "survey"],
+  },
+  {
+    content_id: "docs/retrieval.md#how-survey-works",
+    resolution: "section",
+    score: 0.78,
+    text: "How survey ranks and reranks results…",
+    heading_path: ["Retrieval", "How survey works"],
+  },
+];
+
 const noop = () => {};
 
 const meta = {
@@ -56,24 +98,54 @@ const meta = {
     onClose: noop,
     onGoToDefinition: noop,
     onJumpRef: noop,
+    onOpenSymbol: noop,
+    onOpenSection: noop,
   },
   decorators: [
-    (Story) => (
-      <div className="h-[680px] w-full bg-bg p-6 grid place-items-center">
-        <div className="flex h-full w-[420px] flex-col overflow-hidden rounded-lg border border-border bg-surface">
-          <Story />
+    (Story, ctx) => {
+      const w = (ctx.parameters.frameWidth as number | undefined) ?? 420;
+      const host = ctx.parameters.hostLabel as string | undefined;
+      return (
+        <div className="h-[760px] w-full bg-bg p-6 grid place-items-center">
+          <div
+            style={{ width: w }}
+            className="flex h-full max-w-full flex-col overflow-hidden rounded-lg border border-border bg-surface"
+          >
+            {host && (
+              <div className="flex h-11 shrink-0 items-center border-b border-border bg-surface-overlay px-4 font-mono text-xs font-semibold text-text">
+                {host}
+              </div>
+            )}
+            <div className="min-h-0 flex-1">
+              <Story />
+            </div>
+          </div>
         </div>
-      </div>
-    ),
+      );
+    },
   ],
 } satisfies Meta<typeof SymbolNeighborhood>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** The full neighborhood — definition + most-relevant files + grouped neighbors. */
+/** The full neighborhood — definition + most-relevant files + grouped neighbors.
+ *  In the Explore peek it offers "Inspect" to escalate to the shared panel. */
 export const Rich: Story = {
-  args: { definition: DEF, references: REFS },
+  args: { definition: DEF, references: REFS, onInspect: noop },
+};
+
+/** The SAME renderer, embedded in the wide EntityPanel (no own chrome), with the
+ *  deep sections — Same-file symbols + semantic Mentions. One symbol renderer. */
+export const Inspector: Story = {
+  parameters: { frameWidth: 720, hostLabel: "SYMBOL · survey" },
+  args: {
+    definition: DEF,
+    references: REFS,
+    embedded: true,
+    sameFile: SAME_FILE,
+    mentions: MENTIONS,
+  },
 };
 
 /** A symbol nothing references yet — honest empty neighborhood. */

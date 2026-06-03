@@ -31,14 +31,23 @@ import {
   ChevronRight,
   FileCode2,
   GitFork,
+  Layers,
   Link2,
   ListTree,
   PackageOpen,
+  PanelRight,
+  Quote,
   X,
 } from "lucide-react";
 
-import type { SymbolDefinitionDetail, SymbolRef } from "../../lib/types";
+import type {
+  SearchResult,
+  SymbolDefinitionDetail,
+  SymbolInfo,
+  SymbolRef,
+} from "../../lib/types";
 import { cn } from "../../lib/utils";
+import { useEntityPanel } from "../../hooks/useEntityPanel";
 import { Badge } from "../ui/badge";
 
 export interface SymbolNeighborhoodProps {
@@ -48,9 +57,22 @@ export interface SymbolNeighborhoodProps {
   /** Incoming edges (callers/implementors/importers/bridges) — symbol is target. */
   references: SymbolRef[];
   loading?: boolean;
-  onClose: () => void;
+  /** Embedded inside a host that provides its own chrome (the EntityPanel) —
+   *  hides this component's header + close so there's no double chrome. */
+  embedded?: boolean;
+  /** Other symbols defined in the same file (optional — the deep inspector). */
+  sameFile?: SymbolInfo[];
+  /** Semantic mentions of this symbol across the corpus (optional). */
+  mentions?: SearchResult[];
+  onClose?: () => void;
   onGoToDefinition: (filePath: string, line: number) => void;
   onJumpRef: (ref: SymbolRef) => void;
+  /** Open another symbol (same-file rows) in the host inspector. */
+  onOpenSymbol?: (symbol: SymbolInfo) => void;
+  /** Open a mentioned section in the host inspector. */
+  onOpenSection?: (result: SearchResult) => void;
+  /** Escalate this symbol into the shared EntityPanel (the Explore peek). */
+  onInspect?: () => void;
 }
 
 // ── Edge-kind → group meta (ordered: the strongest relationships first) ──────
@@ -80,9 +102,15 @@ export function SymbolNeighborhood({
   definition,
   references,
   loading = false,
+  embedded = false,
+  sameFile,
+  mentions,
   onClose,
   onGoToDefinition,
   onJumpRef,
+  onOpenSymbol,
+  onOpenSection,
+  onInspect,
 }: SymbolNeighborhoodProps) {
   const [showSource, setShowSource] = useState(false);
 
@@ -116,29 +144,31 @@ export function SymbolNeighborhood({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* ── Header ──────────────────────────────────────────────────────── */}
-      <header className="flex items-center justify-between gap-2 border-b border-border-soft bg-surface-overlay px-3 py-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <ListTree className="h-3.5 w-3.5 shrink-0 text-accent" strokeWidth={2.25} />
-          <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent">
-            Neighborhood
-          </span>
-          <span className="truncate font-mono text-xs font-semibold text-text">
-            {symbolName}
-          </span>
-          {definition && (
-            <Badge variant="muted">{definition.kind}</Badge>
+      {/* ── Header (host provides chrome when embedded) ──────────────────── */}
+      {!embedded && (
+        <header className="flex items-center justify-between gap-2 border-b border-border-soft bg-surface-overlay px-3 py-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <ListTree className="h-3.5 w-3.5 shrink-0 text-accent" strokeWidth={2.25} />
+            <span className="font-mono text-xs font-bold uppercase tracking-[0.08em] text-accent">
+              Neighborhood
+            </span>
+            <span className="truncate font-mono text-xs font-semibold text-text">
+              {symbolName}
+            </span>
+            {definition && <Badge variant="muted">{definition.kind}</Badge>}
+          </div>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close neighborhood"
+              className="grid h-5 w-5 shrink-0 place-items-center rounded-md border border-border-soft text-text-muted hover:border-border hover:text-text cursor-pointer transition-colors duration-150 ease-out"
+            >
+              <X className="h-2.5 w-2.5" strokeWidth={2} />
+            </button>
           )}
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close neighborhood"
-          className="grid h-5 w-5 shrink-0 place-items-center rounded-md border border-border-soft text-text-muted hover:border-border hover:text-text cursor-pointer transition-colors duration-150 ease-out"
-        >
-          <X className="h-2.5 w-2.5" strokeWidth={2} />
-        </button>
-      </header>
+        </header>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {loading && !definition ? (
@@ -180,6 +210,17 @@ export function SymbolNeighborhood({
                     <ArrowUpRight className="h-3 w-3" strokeWidth={2.5} />
                     Go to definition
                   </button>
+                  {onInspect && (
+                    <button
+                      type="button"
+                      onClick={onInspect}
+                      title="Open in the shared inspector"
+                      className="inline-flex items-center gap-1 rounded-md border border-border-soft px-2 py-1 font-mono text-mono-mini uppercase tracking-[0.08em] text-text-muted hover:border-accent hover:text-text cursor-pointer transition-colors duration-150 ease-out"
+                    >
+                      <PanelRight className="h-3 w-3" strokeWidth={2.5} />
+                      Inspect
+                    </button>
+                  )}
                   {definition.source_context && (
                     <button
                       type="button"
@@ -278,13 +319,77 @@ export function SymbolNeighborhood({
               </NeighborSection>
             ))}
 
-            {/* ── Empty neighborhood ──────────────────────────────────── */}
-            {!loading && totalEdges === 0 && (
-              <p className="px-3 py-4 font-mono text-mono-mini text-text-dim">
-                No neighbors in the code graph yet — nothing references{" "}
-                <span className="text-text">{symbolName}</span>.
-              </p>
+            {/* ── Same-file symbols (deep inspector) ──────────────────── */}
+            {sameFile && sameFile.length > 0 && (
+              <NeighborSection icon={Layers} label="Same file" count={sameFile.length}>
+                {sameFile.slice(0, 40).map((s) => {
+                  const { name, parent } = fileName(s.file_path);
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      title={`${s.name} · ${s.file_path}`}
+                      onClick={() => onOpenSymbol?.(s)}
+                      className="group flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-mono-mini text-text-muted hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
+                    >
+                      <Layers className="h-3 w-3 shrink-0 text-text-dim group-hover:text-accent" strokeWidth={2} />
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span className="truncate text-text">{s.name}</span>
+                        <span className="truncate text-text-dim">
+                          {s.module_path || parent || name}
+                        </span>
+                      </span>
+                      <span className="shrink-0 font-mono text-mono-micro uppercase tracking-[0.06em] text-text-dim">
+                        {s.kind}
+                      </span>
+                    </button>
+                  );
+                })}
+              </NeighborSection>
             )}
+
+            {/* ── Mentions (semantic) ─────────────────────────────────── */}
+            {mentions && mentions.length > 0 && (
+              <NeighborSection icon={Quote} label="Mentions" count={mentions.length}>
+                {mentions.map((r, i) => {
+                  const id = r.content_id.replace(/\\/g, "/");
+                  const tail = id.split("/").slice(-2).join("/");
+                  return (
+                    <button
+                      key={`${r.content_id}:${i}`}
+                      type="button"
+                      title={r.heading_path.join(" / ") || tail}
+                      onClick={() => onOpenSection?.(r)}
+                      className="group flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-mono-mini text-text-muted hover:bg-surface-overlay hover:text-text cursor-pointer transition-colors duration-150 ease-out"
+                    >
+                      <Quote className="h-3 w-3 shrink-0 text-text-dim group-hover:text-accent" strokeWidth={2} />
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span className="truncate text-text">{tail}</span>
+                        {r.heading_path.length > 0 && (
+                          <span className="truncate text-text-dim">
+                            {r.heading_path.join(" / ")}
+                          </span>
+                        )}
+                      </span>
+                      <span className="shrink-0 tabular-nums text-text-dim">
+                        {Math.round(r.score * 100)}%
+                      </span>
+                    </button>
+                  );
+                })}
+              </NeighborSection>
+            )}
+
+            {/* ── Empty neighborhood ──────────────────────────────────── */}
+            {!loading &&
+              totalEdges === 0 &&
+              !(sameFile && sameFile.length > 0) &&
+              !(mentions && mentions.length > 0) && (
+                <p className="px-3 py-4 font-mono text-mono-mini text-text-dim">
+                  No neighbors in the code graph yet — nothing references{" "}
+                  <span className="text-text">{symbolName}</span>.
+                </p>
+              )}
           </>
         )}
       </div>
@@ -368,6 +473,7 @@ export function SymbolNeighborhoodConnector({
   const [definition, setDefinition] = useState<SymbolDefinitionDetail | null>(null);
   const [references, setReferences] = useState<SymbolRef[]>([]);
   const [loading, setLoading] = useState(true);
+  const { openEntity } = useEntityPanel();
 
   useEffect(() => {
     let cancelled = false;
@@ -403,6 +509,25 @@ export function SymbolNeighborhoodConnector({
       onClose={onClose}
       onGoToDefinition={onGoToDefinition}
       onJumpRef={onJumpRef}
+      onInspect={
+        definition
+          ? () =>
+              openEntity({
+                kind: "symbol",
+                corpusId,
+                symbol: {
+                  id: definition.id,
+                  name: definition.name,
+                  kind: definition.kind,
+                  file_path: definition.file_path,
+                  visibility: definition.visibility,
+                  signature: definition.signature,
+                  doc_comment: definition.doc_comment,
+                  module_path: definition.heading_path?.join("::") ?? "",
+                },
+              })
+          : undefined
+      }
     />
   );
 }
