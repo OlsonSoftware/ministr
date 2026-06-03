@@ -106,6 +106,7 @@ fn main() {
             commands::dead_code,
             commands::solid_findings,
             commands::diagnostics,
+            commands::diff_impact,
             commands::read_source_excerpt,
             commands::open_path,
             commands::ingestion_progress,
