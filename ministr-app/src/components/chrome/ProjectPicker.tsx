@@ -4,6 +4,9 @@ import { AnimatePresence, motion } from "motion/react";
 import { popIn } from "../../lib/motion";
 import { cn } from "../../lib/utils";
 import { corpusLabel, corpusRoot } from "../../lib/corpus";
+import { useCorpusFleet } from "../../lib/corpusFleet";
+import { corpusTone, isCorpusLive } from "../../lib/status";
+import { StatusDot } from "../ui/status-dot";
 import type { CorpusInfo } from "../../lib/types";
 
 interface Props {
@@ -39,7 +42,11 @@ export function ProjectPicker({
     };
   }, [open]);
 
+  // Single source of truth: the shared fleet view model carries live,
+  // phase-aware indexing state so the always-visible pill reflects it.
+  const { byId } = useCorpusFleet(corpora);
   const active = corpora.find((c) => c.id === activeId) ?? null;
+  const activeVm = activeId ? byId[activeId] : undefined;
 
   const triggerCls = cn(
     "inline-flex items-center gap-2 px-3 h-8 cursor-pointer rounded-md max-w-[280px]",
@@ -66,9 +73,20 @@ export function ProjectPicker({
         aria-expanded={open}
         className={triggerCls}
       >
+        {active && (
+          <StatusDot
+            tone={corpusTone(active)}
+            pulse={isCorpusLive(active) ? "live" : "off"}
+          />
+        )}
         <span className="font-mono text-xs font-medium truncate">
           {active ? corpusLabel(active) : "Select project"}
         </span>
+        {activeVm?.isIndexing && (
+          <span className="font-mono text-mono-mini tabular-nums text-text-dim shrink-0">
+            {Math.round(activeVm.primary.pct)}%
+          </span>
+        )}
         <ChevronDown
           className={cn(
             "h-3.5 w-3.5 shrink-0 transition-transform duration-150",
@@ -96,6 +114,7 @@ export function ProjectPicker({
               {corpora.map((c) => {
                 const isActive = c.id === activeId;
                 const root = corpusRoot(c.paths);
+                const vm = byId[c.id];
                 return (
                   <li key={c.id}>
                     <button
@@ -121,6 +140,10 @@ export function ProjectPicker({
                         )}
                         strokeWidth={3}
                       />
+                      <StatusDot
+                        tone={corpusTone(c)}
+                        pulse={isCorpusLive(c) ? "live" : "off"}
+                      />
                       <div className="flex-1 min-w-0">
                         <div className="font-mono text-xs font-medium truncate">
                           {corpusLabel(c)}
@@ -131,6 +154,11 @@ export function ProjectPicker({
                           </div>
                         )}
                       </div>
+                      {vm?.isIndexing && (
+                        <span className="font-mono text-mono-mini tabular-nums text-text-dim shrink-0">
+                          {Math.round(vm.primary.pct)}%
+                        </span>
+                      )}
                     </button>
                   </li>
                 );

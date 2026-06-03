@@ -1,5 +1,5 @@
 import type { CorpusInfo } from "../../lib/types";
-import { corpusLabel } from "../../lib/corpus";
+import { toCorpusViewModel } from "../../lib/corpusFleet";
 import { corpusTone, isCorpusLive } from "../../lib/status";
 import { cn } from "../../lib/utils";
 import { StatusDot } from "./status-dot";
@@ -17,13 +17,12 @@ export function CorpusChip({
   onClick,
   className,
 }: CorpusChipProps) {
-  const name = corpusLabel(corpus);
-  const state = corpus.status.state;
+  // Single source of truth: the shared corpus view model. Phase-aware %
+  // (files while parsing, vectors while embedding) instead of a files-only
+  // ratio computed inline.
+  const vm = toCorpusViewModel(corpus);
   const tone = corpusTone(corpus);
-  const pct =
-    state === "indexing" && corpus.status.files_total > 0
-      ? (corpus.status.files_done / corpus.status.files_total) * 100
-      : null;
+  const pct = vm.isIndexing ? vm.primary.pct : null;
 
   return (
     <button
@@ -41,19 +40,19 @@ export function CorpusChip({
     >
       <StatusDot tone={tone} pulse={isCorpusLive(corpus) ? "live" : "off"} />
       <span className="font-mono font-semibold tracking-[0.04em] max-w-[140px] truncate">
-        {name}
+        {vm.label}
       </span>
       <span className="text-xs tabular-nums font-mono opacity-80">
-        {corpus.sections_count.toLocaleString()}
+        {vm.sectionsIndexed.toLocaleString()}
       </span>
       {pct !== null && (
         <span className="text-xs tabular-nums font-mono">
           {pct.toFixed(0)}%
         </span>
       )}
-      {corpus.active_sessions > 0 && (
+      {vm.sessions > 0 && (
         <span className="text-xs tabular-nums font-mono">
-          {corpus.active_sessions}↯
+          {vm.sessions}↯
         </span>
       )}
     </button>
