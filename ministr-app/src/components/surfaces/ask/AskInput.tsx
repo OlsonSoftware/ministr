@@ -60,7 +60,7 @@ export function AskInput({
           onSubmit();
         }}
       >
-        <div className="flex items-start gap-2">
+        <div className="flex items-stretch gap-2">
           <textarea
             ref={ref}
             value={query}
@@ -87,6 +87,7 @@ export function AskInput({
             type="submit"
             size="lg"
             disabled={loading || disabled || !query.trim()}
+            className="h-auto self-stretch"
           >
             {loading ? (
               <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.5} />

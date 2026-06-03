@@ -328,6 +328,29 @@ body {
   }
 }
 
+/* ------------------------------------------------------------------
+   Code excerpt — Shiki-highlighted snippet that drops onto any surface.
+   Neutralises Shiki's inline theme background so the excerpt inherits the
+   host surface; keeps the TextMate token colours. See ui/code-excerpt.tsx.
+   ------------------------------------------------------------------ */
+.code-excerpt pre.shiki,
+.code-excerpt--plain {
+  margin: 0;
+  padding: 0;
+  background: transparent !important;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+  tab-size: 2;
+}
+.code-excerpt--plain {
+  color: var(--color-text-muted);
+}
+/* The plain (pre-highlight) fallback shouldn't show its own scrollbar flash. */
+.code-excerpt pre.shiki { scrollbar-width: thin; }
+
 /* Strong-border utility (compat with workspace dividers). */
 .border-strong { border-width: var(--border-width-strong); }
 

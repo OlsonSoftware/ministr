@@ -4,17 +4,21 @@ import {
   AlertTriangle,
   Check,
   Copy,
+  Cpu,
   ExternalLink,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { motion } from "motion/react";
 
 import type {
   CorpusInfo,
   SearchResult,
   SymbolDefinitionDetail,
 } from "../../../lib/types";
+import { fadeRise, listContainer, listItem } from "../../../lib/motion";
 import { Card } from "../../ui/card";
+import { CodeExcerpt } from "../../ui/code-excerpt";
 import { BrutalPin } from "../../ui/brutal-icons";
 import { useEntityPanel } from "../../../hooks/useEntityPanel";
 import { basename, corpusRelative } from "../../../lib/path";
@@ -80,7 +84,12 @@ export function AskAnswer({
   const cited = useMemo(() => citedIndices(entry.answer), [entry.answer]);
 
   return (
-    <div className="flex flex-col gap-4">
+    <motion.div
+      className="flex flex-col gap-4"
+      variants={fadeRise}
+      initial="initial"
+      animate="animate"
+    >
       {verifiedUnsupported && verifiedUnsupported.length > 0 && (
         <UnsupportedBanner count={verifiedUnsupported.length} />
       )}
@@ -97,6 +106,15 @@ export function AskAnswer({
             {entry.source_ids.length} source
             {entry.source_ids.length === 1 ? "" : "s"}
           </span>
+          {entry.model && (
+            <span
+              title={`Synthesized by ${entry.model}`}
+              className="hidden @min-[440px]/page:inline-flex items-center gap-1 font-mono text-mono-mini text-text-dim"
+            >
+              <Cpu className="h-3 w-3 opacity-60" strokeWidth={2} aria-hidden />
+              <span className="max-w-[11rem] truncate">{entry.model}</span>
+            </span>
+          )}
           <span className="flex-1" />
           <button
             onClick={pinned ? onUnpin : onPin}
@@ -147,7 +165,7 @@ export function AskAnswer({
           corpus={corpus}
         />
       )}
-    </div>
+    </motion.div>
   );
 }
 
@@ -406,16 +424,24 @@ function SourcesPanel({
           </span>
         )}
       </div>
-      {sourceIds.map((id, i) => (
-        <SourceRow
-          key={id}
-          index={i + 1}
-          contentId={id}
-          corpusId={corpusId}
-          corpus={corpus}
-          cited={cited.size === 0 || cited.has(i + 1)}
-        />
-      ))}
+      <motion.div
+        className="flex flex-col gap-2"
+        variants={listContainer}
+        initial="initial"
+        animate="animate"
+      >
+        {sourceIds.map((id, i) => (
+          <motion.div key={id} variants={listItem}>
+            <SourceRow
+              index={i + 1}
+              contentId={id}
+              corpusId={corpusId}
+              corpus={corpus}
+              cited={cited.size === 0 || cited.has(i + 1)}
+            />
+          </motion.div>
+        ))}
+      </motion.div>
     </div>
   );
 }
@@ -503,9 +529,12 @@ function SourceRow({
           )}
         </div>
         {excerpt && (
-          <p className="font-mono text-xs text-text-muted mt-1 line-clamp-2 break-words">
-            {excerpt}
-          </p>
+          <CodeExcerpt
+            code={excerpt}
+            filename={filePath}
+            maxLines={3}
+            className="mt-1.5"
+          />
         )}
       </div>
       <ExternalLink

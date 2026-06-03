@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AnimatePresence, motion } from "motion/react";
 import { popIn } from "../../../lib/motion";
+import { glassPanel } from "../../../lib/ui-tokens";
 import { cn } from "../../../lib/utils";
 import { BrutalPin } from "../../ui/brutal-icons";
 import type { SectionDetailOut } from "./internals";
@@ -117,11 +118,20 @@ export function AskCitation({
           animate="animate"
           exit="exit"
           className={cn(
+            // §4 glass tier — the expandable source card is floating chrome,
+            // so it reads as translucent layered glass (with the mandatory
+            // reduced-transparency solid fallback baked into the token).
+            glassPanel,
             "absolute left-0 top-full mt-1 z-[1300] w-[360px] origin-top-left",
-            "block overflow-hidden rounded-lg border border-border bg-surface shadow-lg",
+            "block overflow-hidden",
           )}
         >
-          <header className="flex items-center justify-between gap-2 border-b border-border bg-surface-overlay px-2.5 py-1.5">
+          {/* The popover renders inline inside a markdown <p>, so every
+              element here must be phrasing content (a <span>): block tags
+              like header/div/footer/pre are invalid descendants of <p> and
+              trip React's HTML-nesting validation. Block layout comes from
+              display utilities, not block tags. */}
+          <span className="flex items-center justify-between gap-2 border-b border-border bg-surface-overlay px-2.5 py-1.5">
             <span className="font-mono text-mono-mini font-semibold uppercase tracking-[0.08em] text-text-dim">
               Source [{n}]
             </span>
@@ -130,21 +140,21 @@ export function AskCitation({
                 {detail.heading_path.join(" / ")}
               </span>
             )}
-          </header>
-          <div className="px-2.5 py-2 max-h-[200px] overflow-y-auto">
+          </span>
+          <span className="block px-2.5 py-2 max-h-[200px] overflow-y-auto">
             {error ? (
-              <p className="font-mono text-mono-mini text-danger">
+              <span className="block font-mono text-mono-mini text-danger">
                 Failed to load: {error}
-              </p>
+              </span>
             ) : !detail ? (
               <SkeletonLines />
             ) : (
-              <pre className="font-mono text-xs leading-snug text-text-muted whitespace-pre-wrap break-words">
+              <span className="block font-mono text-xs leading-snug text-text-muted whitespace-pre-wrap break-words">
                 {truncate(detail.text, 480)}
-              </pre>
+              </span>
             )}
-          </div>
-          <footer className="flex items-center gap-1.5 border-t border-border bg-surface-overlay px-2.5 py-1.5">
+          </span>
+          <span className="flex items-center gap-1.5 border-t border-border bg-surface-overlay px-2.5 py-1.5">
             {onPinAnswer && (
               <button
                 onClick={() => {
@@ -178,7 +188,7 @@ export function AskCitation({
             >
               Open ↗
             </button>
-          </footer>
+          </span>
         </motion.span>
       )}
       </AnimatePresence>
@@ -188,15 +198,15 @@ export function AskCitation({
 
 function SkeletonLines() {
   return (
-    <div className="space-y-1.5">
+    <span className="block space-y-1.5">
       {[80, 70, 90, 60].map((w, i) => (
-        <div
+        <span
           key={i}
-          className="h-2 ministr-skeleton"
+          className="block h-2 ministr-skeleton"
           style={{ width: `${w}%` }}
         />
       ))}
-    </div>
+    </span>
   );
 }
 

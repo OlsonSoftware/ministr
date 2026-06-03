@@ -253,8 +253,12 @@ export async function fetchSourcePreview(
 }
 
 function shortExcerpt(text: string): string {
-  const trimmed = text.trim().replace(/\s+/g, " ");
-  return trimmed.length > 220 ? trimmed.slice(0, 220) + "…" : trimmed;
+  // Preserve indentation + newlines so the excerpt can be syntax-highlighted
+  // as real code (CodeExcerpt clamps the visible line count). Only trim
+  // surrounding blank lines and cap the raw size so the preview cache stays
+  // small.
+  const trimmed = text.replace(/^\s*\n/, "").replace(/\s+$/, "");
+  return trimmed.length > 600 ? trimmed.slice(0, 600) : trimmed;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
