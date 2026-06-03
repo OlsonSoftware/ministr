@@ -569,8 +569,9 @@ async fn migration_rollforward() {
     assert_eq!(docs.len(), 1);
 
     // Current version should match (bump in lockstep with new migrations —
-    // last bumped to 24 when the V24 `indexed_vectors` table landed).
-    assert_eq!(CURRENT_SCHEMA_VERSION, 24);
+    // last bumped to 25 when the V25 `index_meta` table landed, holding the
+    // `vector_generation` HNSW-cache freshness counter).
+    assert_eq!(CURRENT_SCHEMA_VERSION, 25);
 }
 
 /// F-CodeExplorer v2: occurrences round-trip through the V23 table —

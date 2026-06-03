@@ -5,6 +5,14 @@ All notable changes to ministr will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Near-instant daemon/CLI restart: the persisted HNSW dump is now loaded as a validated derived *cache* instead of being rebuilt from SQLite on every start. A `{cache-version, model, dimension, vector-count, generation}` validity token (the `generation` is a monotonic counter bumped inside every indexed-vector mutation, stored in the new `index_meta` table) gates the load — any mismatch falls back to a full rebuild, so ADR 0001 D4's no-drift guarantee is preserved while the common unchanged-corpus restart skips the O(N·log N·M) graph construction that cost ~10–18s on large corpora.
+
+### Fixed
+- Fixed `ministr_read` reporting `claims_available: 0` for sections served from the agent-intent prefetch cache: intent-prefetched sections hardcoded a zero claim count, so a warm read could wrongly tell the agent there were no claims to `ministr_extract`. The prefetch now stamps the true per-section claim count. (Also de-flakes the `full_flow_survey_read_extract_via_call_tool` e2e test, whose intermittent failure was this bug surfacing.)
+
 ## [0.6.0](https://github.com/OlsonSoftware/ministr/releases/tag/v0.6.0) - 2026-05-19
 
 ### Added

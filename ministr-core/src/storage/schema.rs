@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 24;
+pub const CURRENT_SCHEMA_VERSION: usize = 25;
 
 /// Returns the migration set for the content database.
 ///
@@ -435,6 +435,24 @@ fn migrations() -> Migrations<'static> {
                 vector     BLOB NOT NULL,
                 dimension  INTEGER NOT NULL
             );
+            ",
+        ),
+        // V25: Index-cache validity metadata (f-ingest-hnsw-cache-token). A
+        // tiny key/value table holding `vector_generation`, a monotonic
+        // counter bumped inside every `indexed_vectors` mutation. It is the
+        // O(1) freshness signal that lets the daemon/CLI LOAD a persisted
+        // HNSW dump on restart instead of rebuilding it from SQLite — while
+        // staying drift-safe: the persisted graph is a derived *cache* keyed
+        // by {cache-version, model, dim, count, generation}; any mismatch
+        // (incl. a same-count delete+add churn the count alone would miss)
+        // forces a rebuild, so the ADR 0001 D4 no-drift guarantee holds.
+        M::up(
+            "
+            CREATE TABLE index_meta (
+                key   TEXT PRIMARY KEY NOT NULL,
+                value INTEGER NOT NULL
+            );
+            INSERT INTO index_meta (key, value) VALUES ('vector_generation', 0);
             ",
         ),
     ])

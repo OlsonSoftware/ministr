@@ -15,7 +15,10 @@ mod rebuild;
 pub use health::{VectorSetHealth, analyze_vectors};
 pub use hnsw::{HnswIndex, HnswIndexConfig};
 pub use inverted::InvertedIndex;
-pub use rebuild::{IndexedVectorStore, rebuild_hnsw_from_store};
+pub use rebuild::{
+    HNSW_CACHE_VERSION, IndexedVectorStore, VectorFingerprint, load_cached_or_rebuild_hnsw,
+    rebuild_hnsw_from_store,
+};
 
 use std::path::Path;
 

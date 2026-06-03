@@ -243,30 +243,30 @@ async fn load_or_create_index(
     model_name: &str,
     storage: &ministr_core::storage::SqliteStorage,
 ) -> Result<Arc<dyn ministr_core::index::VectorIndex>> {
-    use ministr_core::index::VectorIndex as _;
-
-    // ADR 0001 D4 (parity with the daemon, commit d8a3b69): prefer rebuilding
-    // the in-memory HNSW from the ACID vector source of truth (the
-    // `indexed_vectors` table). No separate on-disk graph to drift, and the
-    // degenerate-vector guard re-runs on every insert — so the
-    // zero-vector-poison and "fixed in code / stale on disk" bug classes are
-    // structurally impossible on the CLI serve path too. Falls back to the
-    // legacy on-disk dump for corpora indexed before the V24 flip (their
-    // `indexed_vectors` is empty), then to a fresh index.
-    match ministr_core::index::rebuild_hnsw_from_store(storage, dim, Some(model_name)).await {
-        Ok(rebuilt) if !rebuilt.is_empty() => {
-            tracing::info!(
-                vectors = rebuilt.len(),
-                "rebuilt vector index from the SQLite source of truth"
-            );
-            return Ok(Arc::new(rebuilt));
-        }
-        Ok(_) => {
+    // ADR 0001 D4 + f-ingest-hnsw-cache-token (parity with the daemon): the
+    // ACID `indexed_vectors` table is the source of truth; the HNSW is a
+    // derived cache. On the CLI serve path we LOAD a persisted dump when a
+    // validity token proves it still matches the source of truth, else
+    // REBUILD from SQLite (re-running the degenerate guard) — so the
+    // zero-vector-poison and "fixed in code / stale on disk" bug classes stay
+    // structurally impossible and no graph can drift. `None` means a legacy
+    // corpus with no `indexed_vectors` (pre-V24): fall through to the on-disk
+    // dump, then a fresh index.
+    match ministr_core::index::load_cached_or_rebuild_hnsw(
+        storage,
+        index_dir,
+        dim,
+        Some(model_name),
+    )
+    .await
+    {
+        Ok(Some(index)) => return Ok(Arc::new(index)),
+        Ok(None) => {
             // No persisted indexed vectors — a legacy corpus. Fall through to
             // the on-disk dump so pre-V24 corpora keep loading unchanged.
         }
         Err(e) => {
-            tracing::warn!(error = %e, "rebuild from SQLite source of truth failed; falling back to on-disk index");
+            tracing::warn!(error = %e, "cache/rebuild from SQLite source of truth failed; falling back to on-disk index");
         }
     }
 

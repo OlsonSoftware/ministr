@@ -2188,6 +2188,11 @@ impl Storage for SqliteStorage {
                         reason: format!("insert indexed_vectors failed for {id}: {e}"),
                     })?;
             }
+            drop(stmt);
+            // Advance the freshness counter so a persisted HNSW cache built
+            // before this mutation is detected as stale on the next load
+            // (f-ingest-hnsw-cache-token).
+            bump_vector_generation(conn)?;
             Ok(())
         })
         .await
@@ -2212,6 +2217,10 @@ impl Storage for SqliteStorage {
                         reason: format!("delete indexed_vectors failed for {id}: {e}"),
                     })?;
             }
+            drop(stmt);
+            // See store_indexed_vectors: any vector mutation advances the
+            // generation so a stale persisted HNSW cache is rejected on load.
+            bump_vector_generation(conn)?;
             Ok(())
         })
         .await
@@ -3221,6 +3230,52 @@ impl crate::index::IndexedVectorStore for SqliteStorage {
         })
         .await
     }
+
+    async fn indexed_vector_fingerprint(
+        &self,
+    ) -> Result<Option<crate::index::VectorFingerprint>, StorageError> {
+        self.with_conn(move |conn| {
+            let count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM indexed_vectors", [], |row| row.get(0))
+                .map_err(|e| StorageError::Database {
+                    reason: format!("count indexed_vectors failed: {e}"),
+                })?;
+            // COALESCE keeps this a single always-present row even on the
+            // (impossible post-migration) chance the seed row is missing.
+            let generation: i64 = conn
+                .query_row(
+                    "SELECT COALESCE((SELECT value FROM index_meta \
+                     WHERE key = 'vector_generation'), 0)",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: format!("read vector_generation failed: {e}"),
+                })?;
+            Ok(Some(crate::index::VectorFingerprint {
+                count: u64::try_from(count).unwrap_or(0),
+                generation: u64::try_from(generation).unwrap_or(0),
+            }))
+        })
+        .await
+    }
+}
+
+/// Advance the monotonic `vector_generation` counter in `index_meta`.
+///
+/// Called inside every `indexed_vectors` mutation so a persisted HNSW cache
+/// built before the mutation is detected as stale on the next load
+/// (f-ingest-hnsw-cache-token). Idempotent w.r.t. the seed row created by the
+/// V25 migration.
+fn bump_vector_generation(conn: &rusqlite::Connection) -> Result<(), StorageError> {
+    conn.execute(
+        "UPDATE index_meta SET value = value + 1 WHERE key = 'vector_generation'",
+        [],
+    )
+    .map_err(|e| StorageError::Database {
+        reason: format!("bump vector_generation failed: {e}"),
+    })?;
+    Ok(())
 }
 
 /// Encode a `f32` slice as little-endian bytes.
