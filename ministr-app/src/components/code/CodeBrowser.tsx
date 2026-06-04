@@ -89,13 +89,39 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
 
   const path = nav.current?.path ?? null;
 
-  // Reset everything when the active corpus changes.
+  // Reset everything when the active corpus changes — and restore the last
+  // lens this corpus was viewed in (so Explore remembers where you were).
   useEffect(() => {
     nav.reset();
     setFile(null);
     setPanel(null);
+    let restored: Lens = "code";
+    try {
+      const stored = corpusId
+        ? localStorage.getItem(`ministr.explore.lens.${corpusId}`)
+        : null;
+      if (stored && (LENS_IDS as string[]).includes(stored)) {
+        restored = stored as Lens;
+      }
+    } catch {
+      // localStorage unavailable (private mode / SSR) — fall back to "code".
+    }
+    setLens(restored);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [corpusId]);
+
+  // Switch lens AND remember it per corpus (the next visit reopens here).
+  const selectLens = useCallback(
+    (l: Lens) => {
+      setLens(l);
+      try {
+        if (corpusId) localStorage.setItem(`ministr.explore.lens.${corpusId}`, l);
+      } catch {
+        // ignore — remembering the lens is best-effort.
+      }
+    },
+    [corpusId],
+  );
 
   // Load the current file.
   useEffect(() => {
@@ -265,7 +291,7 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
   return (
     <div className="@container/page relative flex h-full min-h-0 flex-col">
       <header className="flex shrink-0 items-center gap-2 border-b border-border-soft bg-surface px-3 py-1.5">
-        <LensToggle lens={lens} onChange={setLens} />
+        <LensToggle lens={lens} onChange={selectLens} />
         <div className="h-4 w-px bg-border-soft" aria-hidden />
         {lens === "code" ? (
           <>
@@ -285,11 +311,7 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
           </>
         ) : (
           <span className="truncate font-mono text-xs text-text-muted">
-            {lens === "bridges"
-              ? "Cross-language seams"
-              : lens === "unused"
-                ? "Unused candidates"
-                : "Architecture findings"}
+            {lensQuestion(lens)}
           </span>
         )}
         <div className="ml-auto flex items-center gap-2">
@@ -329,7 +351,7 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
           <BridgeMapConnector
             corpusId={corpusId}
             onOpenFile={(p) => {
-              setLens("code");
+              selectLens("code");
               nav.push({ path: p });
             }}
           />
@@ -339,7 +361,7 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
           <DeadCodeMapConnector
             corpusId={corpusId}
             onOpenFile={(p, line) => {
-              setLens("code");
+              selectLens("code");
               nav.push({ path: p, line });
             }}
           />
@@ -353,7 +375,7 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
           <DiagnosticsMapConnector
             corpusId={corpusId}
             onOpenFile={(p, line) => {
-              setLens("code");
+              selectLens("code");
               nav.push({ path: p, line });
             }}
           />
@@ -364,7 +386,7 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
             corpusId={corpusId}
             repoPath={corpus?.paths[0] ?? null}
             onOpenFile={(p, line) => {
-              setLens("code");
+              selectLens("code");
               nav.push({ path: p, line });
             }}
           />
@@ -387,7 +409,7 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
               corpusId={corpusId}
               corpus={corpus}
               onOpen={(p) => nav.push({ path: p })}
-              onOpenLens={setLens}
+              onOpenLens={selectLens}
             />
           ) : fileLoading && !file ? (
             <div className="grid h-full place-items-center">
@@ -469,12 +491,35 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
 
 type Lens = "code" | "bridges" | "unused" | "solid" | "diagnostics" | "changes";
 
+/**
+ * The lens vocabulary — the single source of truth for the Explore switcher.
+ * Each lens is one way to read the index, paired with the QUESTION it answers
+ * (the self-explaining "what this answers" microcopy shown in the toggle tooltip
+ * + the header subtitle, so a new user knows what each lens is for).
+ */
+const LENS_META: Array<{
+  id: Lens;
+  label: string;
+  icon: typeof Code2;
+  question: string;
+}> = [
+  { id: "code", label: "Code", icon: Code2, question: "Read the code file-by-file" },
+  { id: "bridges", label: "Bridges", icon: Cable, question: "Where one language calls into another" },
+  { id: "unused", label: "Unused", icon: Trash2, question: "What nothing references — safe to delete?" },
+  { id: "solid", label: "Quality", icon: ShieldCheck, question: "SOLID / architecture smells worth refactoring" },
+  { id: "diagnostics", label: "Diagnostics", icon: Stethoscope, question: "What the toolchain flags — the verify stage" },
+  { id: "changes", label: "Changes", icon: GitCompareArrows, question: "What a branch changed & what it can break" },
+];
+
+const LENS_IDS = LENS_META.map((m) => m.id);
+
+function lensQuestion(lens: Lens): string {
+  return LENS_META.find((m) => m.id === lens)?.question ?? "";
+}
+
 /** Code | Bridges | Unused | Quality | Diagnostics | Changes lens switch — the
- *  six ways to read the index: file-by-file, by its cross-language seams, by
- *  what nothing references (dead code), by SOLID/architecture smells, by the
- *  project's own toolchain findings (the verify stage), or by a branch DIFF
- *  (what changed + who owns it + what it can break). A segmented control in the
- *  Explore header. */
+ *  six ways to read the index. A segmented control in the Explore header; each
+ *  tab carries its "what this answers" question as a tooltip. */
 function LensToggle({
   lens,
   onChange,
@@ -482,21 +527,13 @@ function LensToggle({
   lens: Lens;
   onChange: (l: Lens) => void;
 }) {
-  const items: Array<{ id: Lens; label: string; icon: typeof Code2 }> = [
-    { id: "code", label: "Code", icon: Code2 },
-    { id: "bridges", label: "Bridges", icon: Cable },
-    { id: "unused", label: "Unused", icon: Trash2 },
-    { id: "solid", label: "Quality", icon: ShieldCheck },
-    { id: "diagnostics", label: "Diagnostics", icon: Stethoscope },
-    { id: "changes", label: "Changes", icon: GitCompareArrows },
-  ];
   return (
     <div
       role="tablist"
       aria-label="Explore lens"
       className="inline-flex items-center gap-0.5 rounded-md border border-border-soft bg-surface-sunken p-0.5"
     >
-      {items.map(({ id, label, icon: Icon }) => {
+      {LENS_META.map(({ id, label, icon: Icon, question }) => {
         const active = lens === id;
         return (
           <button
@@ -504,6 +541,7 @@ function LensToggle({
             type="button"
             role="tab"
             aria-selected={active}
+            title={question}
             onClick={() => onChange(id)}
             className={cn(
               "inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-mono-mini font-semibold uppercase tracking-[0.06em] cursor-pointer transition-colors duration-150 ease-out",

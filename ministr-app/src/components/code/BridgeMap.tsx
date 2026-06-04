@@ -29,7 +29,7 @@ import {
 import type { BridgeLink } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
-import { EmptyState } from "../ui/empty-state";
+import { LensHeader, LensLoading, LensEmpty } from "../ui/lens-frame";
 
 // ── Mechanism → display meta (the seam vocabulary). ────────────────────────
 const KIND_META: Record<string, { label: string; icon: typeof Cable }> = {
@@ -124,39 +124,28 @@ export function BridgeMap({
   }, [filtered]);
 
   if (loading) {
-    return (
-      <div className="grid h-full place-items-center">
-        <span className="font-mono text-sm text-text-dim">
-          Mapping cross-language seams<span className="ministr-blink">_</span>
-        </span>
-      </div>
-    );
+    return <LensLoading label="Mapping cross-language seams" />;
   }
 
   if (links.length === 0) {
     return (
-      <div className="grid h-full place-items-center p-6">
-        <EmptyState
-          icon={ArrowLeftRight}
-          title="No cross-language bridges"
-          hint="This project looks single-language — ministr maps Tauri, PyO3, NAPI, wasm-bindgen, HTTP-route and FFI seams the moment a project spans two languages."
-        />
-      </div>
+      <LensEmpty
+        icon={ArrowLeftRight}
+        title="No cross-language bridges"
+        hint="This project looks single-language — ministr maps Tauri, PyO3, NAPI, wasm-bindgen, HTTP-route and FFI seams the moment a project spans two languages."
+      />
     );
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* ── Glance header + facet filters. ─────────────────────────────── */}
-      <header className="shrink-0 border-b border-border-soft bg-surface px-4 py-3 space-y-2.5">
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <div className="flex items-center gap-2 text-accent">
-            <Cable className="h-4 w-4" strokeWidth={2} />
-            <span className="font-mono text-xs font-bold uppercase tracking-[0.08em]">
-              Cross-language bridges
-            </span>
-          </div>
-          <span className="font-mono text-mono-mini text-text-dim">
+      {/* ── Glance header + facet filters (shared lens-chrome). ────────── */}
+      <LensHeader
+        icon={Cable}
+        title="Cross-language bridges"
+        tone="accent"
+        glance={
+          <>
             <span className="tabular-nums font-semibold text-text">
               {links.length}
             </span>{" "}
@@ -173,9 +162,9 @@ export function BridgeMap({
               {fileCount}
             </span>{" "}
             files
-          </span>
-        </div>
-
+          </>
+        }
+      >
         {/* Mechanism filter chips. */}
         <div className="flex flex-wrap gap-1.5">
           <FacetChip
@@ -214,7 +203,7 @@ export function BridgeMap({
             ))}
           </div>
         )}
-      </header>
+      </LensHeader>
 
       {/* ── The seams, grouped by mechanism. ───────────────────────────── */}
       <div className="min-h-0 flex-1 overflow-y-auto">

@@ -31,7 +31,7 @@ import type { SolidFinding, SolidSymbolRef } from "../../lib/types";
 import type { SymbolInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
-import { EmptyState } from "../ui/empty-state";
+import { LensHeader, LensLoading, LensEmpty } from "../ui/lens-frame";
 
 // ── Principle → display meta. ──────────────────────────────────────────────
 const PRINCIPLE_META: Record<
@@ -186,39 +186,28 @@ export function SolidMap({
   );
 
   if (loading) {
-    return (
-      <div className="grid h-full place-items-center">
-        <span className="font-mono text-sm text-text-dim">
-          Auditing the architecture<span className="ministr-blink">_</span>
-        </span>
-      </div>
-    );
+    return <LensLoading label="Auditing the architecture" />;
   }
 
   if (findings.length === 0) {
     return (
-      <div className="grid h-full place-items-center p-6">
-        <EmptyState
-          icon={ShieldCheck}
-          accent
-          title="No SOLID findings"
-          hint="No near-duplicate clusters, low-cohesion containers, fat interfaces, concrete cross-package dependencies, shotgun-surgery families, or import cycles surfaced. The architecture looks tidy."
-        />
-      </div>
+      <LensEmpty
+        icon={ShieldCheck}
+        accent
+        title="No SOLID findings"
+        hint="No near-duplicate clusters, low-cohesion containers, fat interfaces, concrete cross-package dependencies, shotgun-surgery families, or import cycles surfaced. The architecture looks tidy."
+      />
     );
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="shrink-0 border-b border-border-soft bg-surface px-4 py-3 space-y-2.5">
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <div className="flex items-center gap-2 text-accent">
-            <ShieldCheck className="h-4 w-4" strokeWidth={2} />
-            <span className="font-mono text-xs font-bold uppercase tracking-[0.08em]">
-              Architecture findings
-            </span>
-          </div>
-          <span className="font-mono text-mono-mini text-text-dim">
+      <LensHeader
+        icon={ShieldCheck}
+        title="Architecture findings"
+        tone="accent"
+        glance={
+          <>
             <span className="tabular-nums font-semibold text-text">
               {findings.length}
             </span>{" "}
@@ -227,9 +216,10 @@ export function SolidMap({
               {principles.length}
             </span>{" "}
             principles
-          </span>
-        </div>
-
+          </>
+        }
+        hint="Heuristic smells — candidates for refactoring, not failures. Inspect a symbol to judge it in context."
+      >
         <div className="flex flex-wrap gap-1.5">
           <PrincipleChip
             label="All"
@@ -248,12 +238,7 @@ export function SolidMap({
             />
           ))}
         </div>
-
-        <p className="font-mono text-mono-micro text-text-dim">
-          Heuristic smells — candidates for refactoring, not failures. Inspect a
-          symbol to judge it in context.
-        </p>
-      </header>
+      </LensHeader>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-2.5">
         {ordered.map((n, i) => (

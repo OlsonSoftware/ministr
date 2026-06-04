@@ -20,7 +20,7 @@ import { FileCode2, Sparkles, Trash2 } from "lucide-react";
 import type { DeadSymbol, SymbolInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
-import { EmptyState } from "../ui/empty-state";
+import { LensHeader, LensLoading, LensEmpty } from "../ui/lens-frame";
 
 function fileTail(path: string): string {
   return path.replace(/\\/g, "/").split("/").slice(-2).join("/");
@@ -80,40 +80,29 @@ export function DeadCodeMap({
   }, [filtered]);
 
   if (loading) {
-    return (
-      <div className="grid h-full place-items-center">
-        <span className="font-mono text-sm text-text-dim">
-          Tracing the reference graph<span className="ministr-blink">_</span>
-        </span>
-      </div>
-    );
+    return <LensLoading label="Tracing the reference graph" />;
   }
 
   if (symbols.length === 0) {
     return (
-      <div className="grid h-full place-items-center p-6">
-        <EmptyState
-          icon={Sparkles}
-          accent
-          title="No dead code"
-          hint="Every indexed symbol is referenced (or looks like an entry point). Nothing to prune — the reference graph is clean."
-        />
-      </div>
+      <LensEmpty
+        icon={Sparkles}
+        accent
+        title="No dead code"
+        hint="Every indexed symbol is referenced (or looks like an entry point). Nothing to prune — the reference graph is clean."
+      />
     );
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* ── Glance header + kind filters. ──────────────────────────────── */}
-      <header className="shrink-0 border-b border-border-soft bg-surface px-4 py-3 space-y-2.5">
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <div className="flex items-center gap-2 text-warning">
-            <Trash2 className="h-4 w-4" strokeWidth={2} />
-            <span className="font-mono text-xs font-bold uppercase tracking-[0.08em]">
-              Unused candidates
-            </span>
-          </div>
-          <span className="font-mono text-mono-mini text-text-dim">
+      {/* ── Glance header + kind filters (shared lens-chrome). ─────────── */}
+      <LensHeader
+        icon={Trash2}
+        title="Unused candidates"
+        tone="warning"
+        glance={
+          <>
             <span className="tabular-nums font-semibold text-text">
               {symbols.length}
             </span>{" "}
@@ -126,9 +115,10 @@ export function DeadCodeMap({
               {groups.length}
             </span>{" "}
             files
-          </span>
-        </div>
-
+          </>
+        }
+        hint="Zero references in the graph — candidates, not a verdict. Inspect to confirm before deleting."
+      >
         <div className="flex flex-wrap gap-1.5">
           <KindChip
             label="All"
@@ -146,12 +136,7 @@ export function DeadCodeMap({
             />
           ))}
         </div>
-
-        <p className="font-mono text-mono-micro text-text-dim">
-          Zero references in the graph — candidates, not a verdict. Inspect to
-          confirm before deleting.
-        </p>
-      </header>
+      </LensHeader>
 
       {/* ── Candidates, grouped by file. ───────────────────────────────── */}
       <div className="min-h-0 flex-1 overflow-y-auto">

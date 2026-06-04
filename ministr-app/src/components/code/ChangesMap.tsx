@@ -28,7 +28,7 @@ import {
 import type { ChangedSymbol, DiffImpact, ImpactedSymbol, SymbolInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
-import { EmptyState } from "../ui/empty-state";
+import { LensLoading, LensEmpty } from "../ui/lens-frame";
 
 function baseName(path: string): string {
   return path.replace(/\\/g, "/").split("/").pop() ?? path;
@@ -161,44 +161,32 @@ export function ChangesMap({
 
       {/* ── Body. ──────────────────────────────────────────────────────── */}
       {!hasRepo ? (
-        <div className="grid h-full place-items-center p-6">
-          <EmptyState
-            icon={GitBranch}
-            title="Not a git checkout"
-            hint="This corpus has no git work tree, so there's no branch diff to review. Open a project that's a git repository to see what a range changed and what it can break."
-          />
-        </div>
+        <LensEmpty
+          icon={GitBranch}
+          title="Not a git checkout"
+          hint="This corpus has no git work tree, so there's no branch diff to review. Open a project that's a git repository to see what a range changed and what it can break."
+        />
       ) : error ? (
-        <div className="grid h-full place-items-center p-6">
-          <EmptyState
-            icon={TriangleAlert}
-            title="Couldn't resolve that range"
-            hint={error}
-          />
-        </div>
+        <LensEmpty
+          icon={TriangleAlert}
+          title="Couldn't resolve that range"
+          hint={error}
+        />
       ) : loading ? (
-        <div className="grid h-full place-items-center">
-          <span className="font-mono text-sm text-text-dim">
-            Resolving the diff<span className="ministr-blink">_</span>
-          </span>
-        </div>
+        <LensLoading label="Resolving the diff" />
       ) : !data ? (
-        <div className="grid h-full place-items-center p-6">
-          <EmptyState
-            icon={GitCompareArrows}
-            accent
-            title="Review a branch"
-            hint="Enter a range like main..HEAD or HEAD~3 and press Diff. ministr resolves which indexed symbols the change touched, who wrote them, and the union blast radius — what the branch can break."
-          />
-        </div>
+        <LensEmpty
+          icon={GitCompareArrows}
+          accent
+          title="Review a branch"
+          hint="Enter a range like main..HEAD or HEAD~3 and press Diff. ministr resolves which indexed symbols the change touched, who wrote them, and the union blast radius — what the branch can break."
+        />
       ) : data.changed_symbols.length === 0 ? (
-        <div className="grid h-full place-items-center p-6">
-          <EmptyState
-            icon={GitCompareArrows}
-            title="Nothing indexed changed"
-            hint={`No indexed symbols were touched by ${data.range}. The range may be empty, touch only un-indexed files (config, docs), or fall outside symbol bodies.`}
-          />
-        </div>
+        <LensEmpty
+          icon={GitCompareArrows}
+          title="Nothing indexed changed"
+          hint={`No indexed symbols were touched by ${data.range}. The range may be empty, touch only un-indexed files (config, docs), or fall outside symbol bodies.`}
+        />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
           {/* WHAT changed — symbols grouped by file, with authorship. */}

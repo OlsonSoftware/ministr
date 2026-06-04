@@ -29,7 +29,7 @@ import {
 import type { Diagnostic, DiagnosticSeverity, SymbolInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
-import { EmptyState } from "../ui/empty-state";
+import { LensHeader, LensLoading, LensEmpty, type LensTone } from "../ui/lens-frame";
 
 const SEVERITY_ORDER: DiagnosticSeverity[] = ["error", "warning", "info", "hint"];
 
@@ -137,49 +137,32 @@ export function DiagnosticsMap({
   }, [filtered]);
 
   if (loading) {
-    return (
-      <div className="grid h-full place-items-center">
-        <span className="font-mono text-sm text-text-dim">
-          Running the toolchain<span className="ministr-blink">_</span>
-        </span>
-      </div>
-    );
+    return <LensLoading label="Running the toolchain" />;
   }
 
   if (diagnostics.length === 0) {
     return (
-      <div className="grid h-full place-items-center p-6">
-        <EmptyState
-          icon={ShieldCheck}
-          accent
-          title="Clean build"
-          hint="The project's toolchain reports no compiler or linter findings — or no toolchain was detected for this corpus. Run the verify step after an edit to catch regressions here."
-        />
-      </div>
+      <LensEmpty
+        icon={ShieldCheck}
+        accent
+        title="Clean build"
+        hint="The project's toolchain reports no compiler or linter findings — or no toolchain was detected for this corpus. Run the verify step after an edit to catch regressions here."
+      />
     );
   }
 
+  const tone: LensTone =
+    counts.error > 0 ? "danger" : counts.warning > 0 ? "warning" : "success";
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* ── Glance header + severity filters. ──────────────────────────── */}
-      <header className="shrink-0 border-b border-border-soft bg-surface px-4 py-3 space-y-2.5">
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <div
-            className={cn(
-              "flex items-center gap-2",
-              counts.error > 0
-                ? "text-danger"
-                : counts.warning > 0
-                  ? "text-warning"
-                  : "text-success",
-            )}
-          >
-            <Stethoscope className="h-4 w-4" strokeWidth={2} />
-            <span className="font-mono text-xs font-bold uppercase tracking-[0.08em]">
-              Diagnostics
-            </span>
-          </div>
-          <span className="font-mono text-mono-mini text-text-dim">
+      {/* ── Glance header + severity filters (shared lens-chrome). ─────── */}
+      <LensHeader
+        icon={Stethoscope}
+        title="Diagnostics"
+        tone={tone}
+        glance={
+          <>
             <span
               className={cn(
                 "tabular-nums font-semibold",
@@ -202,9 +185,15 @@ export function DiagnosticsMap({
               {groups.length}
             </span>{" "}
             files
-          </span>
-        </div>
-
+          </>
+        }
+        hint={
+          <>
+            The project&apos;s own toolchain (cargo · tsc · eslint · ruff · go vet
+            · …) normalised to one shape — structured findings, never raw logs.
+          </>
+        }
+      >
         <div className="flex flex-wrap gap-1.5">
           <SevChip
             label="All"
@@ -223,12 +212,7 @@ export function DiagnosticsMap({
             />
           ))}
         </div>
-
-        <p className="font-mono text-mono-micro text-text-dim">
-          The project&apos;s own toolchain (cargo · tsc · eslint · ruff · go vet
-          · …) normalised to one shape — structured findings, never raw logs.
-        </p>
-      </header>
+      </LensHeader>
 
       {/* ── Diagnostics, grouped by file (errors-first). ───────────────── */}
       <div className="min-h-0 flex-1 overflow-y-auto">
