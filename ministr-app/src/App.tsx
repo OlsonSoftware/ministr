@@ -8,6 +8,7 @@ import { useTheme } from "./hooks/useTheme";
 import { useDensity } from "./hooks/usePreferences";
 import { FirstRunOverlay } from "./components/onboarding/FirstRunGuide";
 import { ToastProvider, useToast } from "./components/shell/ToastTray";
+import { ConnectingState } from "./components/shell/ConnectingState";
 import { EntityPanelProvider } from "./hooks/useEntityPanel";
 import { WorkspaceProvider } from "./components/workspace/WorkspaceContext";
 import { WorkspaceScreen } from "./components/workspace/WorkspaceScreen";
@@ -202,17 +203,4 @@ function DaemonErrorBanner({
   );
 }
 
-function ConnectingState({ error }: { error: string | null }) {
-  return (
-    <div className="flex flex-col items-center justify-center h-full gap-4">
-      <div className="text-display text-text">
-        Connecting<span className="ministr-blink">_</span>
-      </div>
-      {error && (
-        <p className="max-w-md text-center text-sm font-sans text-danger">
-          {error}
-        </p>
-      )}
-    </div>
-  );
-}
+// ConnectingState now lives in components/shell/ConnectingState.tsx (storied).
