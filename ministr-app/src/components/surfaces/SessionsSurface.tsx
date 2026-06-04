@@ -27,7 +27,7 @@ import { useSessions } from "../../hooks/useSessions";
 import { EmptyState } from "../ui/empty-state";
 import { NumberTicker } from "../ui/number-ticker";
 import { SessionCard, SessionCardSkeleton } from "../ui/session-card";
-import { H1 } from "../ui/heading";
+import { FacetHeader } from "../ui/facet-header";
 import { AdaptiveSurface } from "../ui/adaptive-surface";
 
 const CONNECT_CMD = "npx @modelcontextprotocol/inspector ministr stdio";
@@ -106,31 +106,31 @@ export function SessionsSurface({
   return (
     <AdaptiveSurface>
       <div className="h-full flex flex-col min-h-0">
-        <header className="flex items-center justify-between gap-4 p-5 pb-3 shrink-0">
-          <div className="min-w-0">
-            <H1>Sessions</H1>
-            <p className="font-sans text-sm text-text-dim mt-1">
-              {agg.count === 0
-                ? "No agents connected."
-                : `${agg.count} live agent ${agg.count === 1 ? "session" : "sessions"}.`}
-            </p>
-          </div>
-          {agg.count > 0 && (
-            <div className="flex items-center gap-5 shrink-0">
-              <AggStat label="budget">
-                <span className={toneTextClass(utilizationTone(agg.util))}>
-                  {clampPct(agg.util * 100)}%
-                </span>
-              </AggStat>
-              <AggStat label="saved">
-                <NumberTicker value={agg.saved} format={formatTokens} />
-              </AggStat>
-              <AggStat label="dedup">
-                <NumberTicker value={agg.dedup} flashOnChange />
-              </AggStat>
-            </div>
-          )}
-        </header>
+        <FacetHeader
+          title="Sessions"
+          glance={
+            agg.count === 0
+              ? "No agents connected."
+              : `${agg.count} live agent ${agg.count === 1 ? "session" : "sessions"}.`
+          }
+          actions={
+            agg.count > 0 ? (
+              <div className="flex items-center gap-5">
+                <AggStat label="budget">
+                  <span className={toneTextClass(utilizationTone(agg.util))}>
+                    {clampPct(agg.util * 100)}%
+                  </span>
+                </AggStat>
+                <AggStat label="saved">
+                  <NumberTicker value={agg.saved} format={formatTokens} />
+                </AggStat>
+                <AggStat label="dedup">
+                  <NumberTicker value={agg.dedup} flashOnChange />
+                </AggStat>
+              </div>
+            ) : undefined
+          }
+        />
 
         <div className="flex-1 min-h-0 overflow-y-auto px-5 pb-5">
           {!loaded ? (

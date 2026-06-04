@@ -50,6 +50,7 @@ import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { ConfirmDialog } from "../ui/confirm-dialog";
 import { EmptyState } from "../ui/empty-state";
+import { FacetHeader } from "../ui/facet-header";
 import { MetricTile } from "../ui/metric-tile";
 import { StatusDot } from "../ui/status-dot";
 import { useToast } from "../shell/ToastTray";
@@ -171,23 +172,21 @@ export function FleetDeck({
     <AdaptiveSurface>
       <div className="h-full flex flex-col min-h-0">
         {/* ── Fleet vitals — the collection's identity, not any one project. ── */}
-        <header className="shrink-0 px-5 pt-5 pb-4">
-          <div className="flex items-end justify-between gap-4">
-            <div className="min-w-0">
-              <h1 className="font-sans text-lg font-semibold tracking-[-0.01em] text-text">
-                Fleet
-              </h1>
-              <p className="font-sans text-sm text-text-dim mt-0.5">
-                {corpora.length} {corpora.length === 1 ? "project" : "projects"}
-                {vitals.live > 0 && (
-                  <>
-                    {" · "}
-                    <span className="text-accent">{vitals.live} live</span>
-                  </>
-                )}
-              </p>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
+        <FacetHeader
+          title="Fleet"
+          glance={
+            <>
+              {corpora.length} {corpora.length === 1 ? "project" : "projects"}
+              {vitals.live > 0 && (
+                <>
+                  {" · "}
+                  <span className="text-accent">{vitals.live} live</span>
+                </>
+              )}
+            </>
+          }
+          actions={
+            <>
               <Button variant="outline" size="sm" onClick={onScan} disabled={busyScan}>
                 {busyScan ? (
                   <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
@@ -200,10 +199,10 @@ export function FleetDeck({
                 <Plus className="h-4 w-4" strokeWidth={2} />
                 Add project
               </Button>
-            </div>
-          </div>
-
-          <div className="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-4">
+            </>
+          }
+        >
+          <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-4">
             <MetricTile
               variant="cell"
               className="bg-surface"
@@ -234,7 +233,7 @@ export function FleetDeck({
               value={vitals.live.toLocaleString()}
             />
           </div>
-        </header>
+        </FacetHeader>
 
         {/* ── The constellation — self-sorted project instruments. ─────────── */}
         <div className="flex-1 min-h-0 overflow-y-auto px-5 pb-5">
