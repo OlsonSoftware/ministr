@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { FileCode } from "lucide-react";
 import { useEntityPanel, type Entity } from "../../hooks/useEntityPanel";
 import { EntityRow } from "./EntityRow";
 import {
@@ -114,15 +115,26 @@ export function FileView({ entity }: Props) {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* §1 Overview */}
+      {/* §1 Overview — a command-deck source-identity header (mirrors
+          SectionView): a file medallion + the filename + the full path, over
+          the file's vital readout. */}
       <EntitySection chapter={1} title="Overview">
-        <div className="px-3 py-3 space-y-1.5">
-          <p className="font-mono text-base font-bold text-text break-all">
-            {path.split(/[\\/]/).pop()}
-          </p>
-          <p className="font-mono text-xs text-text-dim break-all">
-            {path}
-          </p>
+        <div className="flex items-start gap-3 px-3 py-3">
+          {/* Quiet accent medallion — a file isn't "live", so no glow. */}
+          <span
+            aria-hidden
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-accent/40 bg-surface-overlay text-accent"
+          >
+            <FileCode className="h-[18px] w-[18px]" strokeWidth={2} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="break-all font-mono text-[15px] font-semibold leading-tight text-text">
+              {path.split(/[\\/]/).pop()}
+            </p>
+            <p className="mt-0.5 break-all font-mono text-mono-mini text-text-dim">
+              {path}
+            </p>
+          </div>
         </div>
         <div className="grid grid-cols-3 border-t border-border-soft divide-x divide-border-soft">
           <MetricTile
