@@ -171,110 +171,160 @@ export function SystemSurface(props: SystemSurfaceProps) {
 
   return (
     <div className="h-full overflow-y-auto px-5 py-5 space-y-6">
-      {/* ── Diagnostics — daemon + index as a living health panel. ────────── */}
-      <Section
-        icon={Gauge}
-        title="Diagnostics"
-        meta={
-          <Badge variant={fleetTone === "danger" ? "danger" : fleetTone === "warning" ? "warning" : "success"} dot>
-            {fleetLabel}
-          </Badge>
-        }
-      >
-        <Card className="p-4 space-y-3">
-          <div className="flex items-center gap-3">
-            <StatusDot tone="success" pulse="live" size="md" />
-            <div className="min-w-0 flex-1">
-              <span className="font-sans text-sm font-semibold text-text">
-                Daemon running
-              </span>
-              <p className="font-mono text-[10px] text-text-dim truncate mt-0.5">
-                v{status.version} · up {formatUptime(status.uptime_secs)} ·{" "}
-                {status.total_sessions.toLocaleString()} session
-                {status.total_sessions === 1 ? "" : "s"}
-              </p>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-3">
-            <MetricTile
-              variant="cell"
-              className="bg-surface"
-              icon={Cpu}
-              label="Model"
-              value={`${status.model} · ${status.model_dimension}d`}
-            />
-            <MetricTile
-              variant="cell"
-              className="bg-surface"
-              icon={HardDrive}
-              label="Memory"
-              value={`${status.memory_mb.toFixed(0)} MB`}
-            />
-            <MetricTile
-              variant="cell"
-              className="bg-surface"
-              icon={Boxes}
-              label="Projects"
-              value={health.projects.toLocaleString()}
-            />
-            <MetricTile
-              variant="cell"
-              className="bg-surface"
-              icon={ScrollText}
-              label="Files"
-              value={health.files.toLocaleString()}
-            />
-            <MetricTile
-              variant="cell"
-              className="bg-surface"
-              icon={Activity}
-              label="Vectors"
-              value={health.vectors.toLocaleString()}
-            />
-            <MetricTile
-              variant="cell"
-              className="bg-surface"
-              icon={Gauge}
-              label="Index health"
-              tone={fleetTone}
-              value={fleetLabel}
-            />
-          </div>
+      {/* ── Diagnostics — the system as a command-deck status hero. ──────────
+          The first thing on the Account surface: a raised-tier banner with a
+          lit top edge (brighter when the fleet is healthy) + a glowing system
+          medallion, mirroring the ScopeHeader spine-object deck. Tone rides
+          the medallion glow / status dot / health pill border; every readout
+          value stays full-contrast text-* for AA. */}
+      <section className="space-y-2.5">
+        <div className="flex items-center gap-2">
+          <Gauge className="h-3.5 w-3.5 text-accent" strokeWidth={2.25} />
+          <h3 className="font-mono text-mono-micro uppercase tracking-[0.08em] text-text-dim">
+            Diagnostics
+          </h3>
+        </div>
 
-          {/* CLI-on-PATH — relocated out of the retired onboarding wizard.
-              A passive health row here, not a first-run gate. */}
-          {setup && (
-            <div className="flex items-center gap-3 rounded-md border border-border-soft bg-surface px-3 py-2.5">
-              <StatusDot tone={setup.cli_on_path ? "success" : "danger"} />
+        <div className="relative overflow-hidden rounded-xl border border-border bg-surface-raised shadow-sm">
+          <span
+            aria-hidden
+            className={cn(
+              "pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent to-transparent",
+              fleetTone === "success" ? "via-accent/50" : "via-border-hover",
+            )}
+          />
+          <div className="space-y-3.5 px-4 py-3.5">
+            {/* Identity — glowing system medallion + daemon vitals + health pill. */}
+            <div className="flex min-w-0 items-center gap-3">
+              <span
+                aria-hidden
+                className={cn(
+                  "relative grid h-11 w-11 shrink-0 place-items-center rounded-xl border bg-surface-overlay",
+                  fleetTone === "success"
+                    ? "border-accent/50 text-accent shadow-[var(--glow-soft)]"
+                    : "border-border text-text-muted",
+                )}
+              >
+                <Gauge className="h-[18px] w-[18px]" strokeWidth={2} />
+                <span className="absolute -right-1 -top-1 grid place-items-center rounded-full bg-surface-raised p-0.5">
+                  <StatusDot
+                    tone={fleetTone}
+                    pulse={fleetTone === "success" ? "live" : "off"}
+                    size="md"
+                  />
+                </span>
+              </span>
               <div className="min-w-0 flex-1">
-                <p className="font-sans text-sm font-medium text-text">
-                  ministr CLI on PATH
-                </p>
-                <p className="font-mono text-[10px] text-text-dim truncate mt-0.5">
-                  {setup.cli_on_path
-                    ? (setup.cli_path ?? "resolved")
-                    : "not resolvable from this app — repair to let editors find it"}
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-[15px] font-semibold text-text">
+                    Daemon running
+                  </span>
+                  <Badge
+                    variant={
+                      fleetTone === "danger"
+                        ? "danger"
+                        : fleetTone === "warning"
+                          ? "warning"
+                          : "success"
+                    }
+                    dot
+                  >
+                    {fleetLabel}
+                  </Badge>
+                </div>
+                <p className="mt-0.5 truncate font-mono text-mono-mini text-text-dim">
+                  v{status.version} · up {formatUptime(status.uptime_secs)} ·{" "}
+                  {status.total_sessions.toLocaleString()} session
+                  {status.total_sessions === 1 ? "" : "s"}
                 </p>
               </div>
-              {!setup.cli_on_path && props.onFixPath && (
-                <Button
-                  size="sm"
-                  onClick={props.onFixPath}
-                  disabled={props.fixingPath}
-                  className="shrink-0"
-                >
-                  {props.fixingPath ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
-                  ) : (
-                    <Terminal className="h-3.5 w-3.5" strokeWidth={2} />
-                  )}
-                  Fix PATH
-                </Button>
-              )}
             </div>
-          )}
-        </Card>
-      </Section>
+
+            {/* Vitals — the divided readout cluster. Kept at 2/3 cols: the
+                Account panel is far narrower than the viewport, so a 6-up row
+                (a viewport breakpoint can't see the panel width) would truncate
+                the model + health values. Legibility wins over a single row. */}
+            <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-3">
+              <MetricTile
+                variant="cell"
+                className="bg-surface"
+                icon={Cpu}
+                label="Model"
+                value={`${status.model} · ${status.model_dimension}d`}
+              />
+              <MetricTile
+                variant="cell"
+                className="bg-surface"
+                icon={HardDrive}
+                label="Memory"
+                value={`${status.memory_mb.toFixed(0)} MB`}
+              />
+              <MetricTile
+                variant="cell"
+                className="bg-surface"
+                icon={Boxes}
+                label="Projects"
+                value={health.projects.toLocaleString()}
+              />
+              <MetricTile
+                variant="cell"
+                className="bg-surface"
+                icon={ScrollText}
+                label="Files"
+                value={health.files.toLocaleString()}
+              />
+              <MetricTile
+                variant="cell"
+                className="bg-surface"
+                icon={Activity}
+                label="Vectors"
+                value={health.vectors.toLocaleString()}
+              />
+              <MetricTile
+                variant="cell"
+                className="bg-surface"
+                icon={Gauge}
+                label="Index health"
+                tone={fleetTone}
+                value={fleetLabel}
+              />
+            </div>
+
+            {/* CLI-on-PATH — relocated out of the retired onboarding wizard.
+                A passive health row here, not a first-run gate. */}
+            {setup && (
+              <div className="flex items-center gap-3 rounded-md border border-border-soft bg-surface px-3 py-2.5">
+                <StatusDot tone={setup.cli_on_path ? "success" : "danger"} />
+                <div className="min-w-0 flex-1">
+                  <p className="font-sans text-sm font-medium text-text">
+                    ministr CLI on PATH
+                  </p>
+                  <p className="mt-0.5 truncate font-mono text-mono-mini text-text-dim">
+                    {setup.cli_on_path
+                      ? (setup.cli_path ?? "resolved")
+                      : "not resolvable from this app — repair to let editors find it"}
+                  </p>
+                </div>
+                {!setup.cli_on_path && props.onFixPath && (
+                  <Button
+                    size="sm"
+                    onClick={props.onFixPath}
+                    disabled={props.fixingPath}
+                    className="shrink-0"
+                  >
+                    {props.fixingPath ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+                    ) : (
+                      <Terminal className="h-3.5 w-3.5" strokeWidth={2} />
+                    )}
+                    Fix PATH
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
 
       {/* ── Integrations — AI assistants as LIVE connection cards. ────────── */}
       <Section
