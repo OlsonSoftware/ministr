@@ -1574,6 +1574,109 @@ pub async fn diff_impact(
     })
 }
 
+// ── Symbol call hierarchy + test coverage (FL3 + FL6) for the inspector. ─────
+
+/// One node in a symbol's call hierarchy — a caller, callee, or covering test.
+#[derive(Serialize)]
+pub struct ImpactNodeOut {
+    pub symbol_id: String,
+    pub name: String,
+    pub kind: String,
+    pub file: String,
+    pub line: u32,
+    /// Distance from the target symbol in the call graph.
+    pub depth: u32,
+}
+
+/// A symbol's impact: who calls it (incoming / blast radius), what it calls
+/// (outgoing), and which tests cover it (FL6). Backs the symbol inspector's
+/// "Impact" view. The daemon impact endpoint supplies all three via
+/// `direction` + `tests_only`, so this is a thin passthrough (×3).
+#[derive(Serialize)]
+pub struct SymbolImpactOut {
+    pub incoming: Vec<ImpactNodeOut>,
+    pub incoming_symbols: usize,
+    pub incoming_files: usize,
+    pub incoming_tests: usize,
+    pub risk: String,
+    pub outgoing: Vec<ImpactNodeOut>,
+    pub outgoing_symbols: usize,
+    pub tests: Vec<ImpactNodeOut>,
+}
+
+fn impact_node(c: ministr_api::query::ImpactCaller) -> ImpactNodeOut {
+    ImpactNodeOut {
+        symbol_id: c.symbol_id,
+        name: c.name,
+        kind: c.kind,
+        file: c.file,
+        line: c.line,
+        depth: c.depth,
+    }
+}
+
+fn impact_risk_str(r: ministr_api::query::ImpactRisk) -> &'static str {
+    match r {
+        ministr_api::query::ImpactRisk::Low => "low",
+        ministr_api::query::ImpactRisk::Medium => "medium",
+        ministr_api::query::ImpactRisk::High => "high",
+    }
+}
+
+/// FL3 + FL6 — a symbol's call hierarchy and test coverage for the inspector's
+/// "Impact" view. Incoming callers (blast radius + risk), outgoing callees, and
+/// the tests that transitively exercise the symbol. Thin passthrough over the
+/// daemon impact endpoint (`direction` + `tests_only`).
+#[tauri::command]
+pub async fn symbol_impact(
+    corpus_id: String,
+    symbol_id: String,
+    max_depth: Option<u32>,
+) -> Result<SymbolImpactOut, CommandError> {
+    let client = ministr_api::client::DaemonClient::new();
+    let incoming = client
+        .impact(
+            &corpus_id,
+            &symbol_id,
+            max_depth,
+            Some("incoming"),
+            false,
+            None,
+        )
+        .await?;
+    let outgoing = client
+        .impact(
+            &corpus_id,
+            &symbol_id,
+            max_depth,
+            Some("outgoing"),
+            false,
+            None,
+        )
+        .await?;
+    let tests = client
+        .impact(
+            &corpus_id,
+            &symbol_id,
+            max_depth,
+            Some("incoming"),
+            true,
+            None,
+        )
+        .await?;
+
+    Ok(SymbolImpactOut {
+        incoming_symbols: incoming.symbols,
+        incoming_files: incoming.files,
+        incoming_tests: incoming.tests,
+        risk: impact_risk_str(incoming.risk).to_string(),
+        incoming: incoming.callers.into_iter().map(impact_node).collect(),
+        outgoing_symbols: outgoing.symbols,
+        outgoing: outgoing.callers.into_iter().map(impact_node).collect(),
+        tests: tests.callers.into_iter().map(impact_node).collect(),
+    })
+}
+
 /// Ingestion progress snapshot for a corpus.
 #[derive(Serialize)]
 pub struct IngestionProgressInfo {
