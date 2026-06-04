@@ -7,8 +7,9 @@ import {
   EntitySectionEmpty,
   EntitySectionLoading,
 } from "./EntitySection";
-import { ChevronRight } from "lucide-react";
-import type { CoherenceEvent, SymbolInfo } from "../../lib/types";
+import { ChevronRight, FileText } from "lucide-react";
+import type { CoherenceEvent, SearchResult, SymbolInfo } from "../../lib/types";
+import { basename } from "../../lib/path";
 
 interface Props {
   entity: Extract<Entity, { kind: "section" }>;
@@ -23,6 +24,16 @@ function filePathFromContentId(contentId: string): string | null {
   const candidate = hashIdx >= 0 ? noPrefix.slice(0, hashIdx) : noPrefix;
   if (!candidate.includes("/") && !candidate.includes("\\")) return null;
   return candidate;
+}
+
+/** A human title for the section: the deepest heading segment, else the file
+ *  basename, else the raw id. Keeps the identity legible instead of a content_id. */
+function sectionTitle(result: SearchResult): string {
+  const hp = result.heading_path;
+  if (hp.length > 0) return hp[hp.length - 1];
+  const fp = filePathFromContentId(result.content_id);
+  if (fp) return basename(fp);
+  return result.content_id;
 }
 
 export function SectionView({ entity }: Props) {
@@ -85,19 +96,57 @@ export function SectionView({ entity }: Props) {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* §1 Overview */}
+      {/* §1 Overview — a command-deck source-identity header: a document
+          medallion + the human title + file path + a relevance vital/meter,
+          with the raw content_id kept but de-emphasized. */}
       <EntitySection chapter={1} title="Overview">
-        <div className="px-3 py-3 space-y-1.5">
-          <div className="flex items-baseline gap-2 flex-wrap">
-            <span className="font-mono text-xs font-semibold tabular-nums text-text-dim">
-              {(result.score * 100).toFixed(0)}%
+        <div className="space-y-3 px-3 py-3">
+          <div className="flex items-start gap-3">
+            {/* Quiet accent medallion — a source isn't "live", so no glow. */}
+            <span
+              aria-hidden
+              className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-accent/40 bg-surface-overlay text-accent"
+            >
+              <FileText className="h-[18px] w-[18px]" strokeWidth={2} />
             </span>
-            <span className="font-mono text-sm text-text break-all">
-              {result.content_id}
-            </span>
+            <div className="min-w-0 flex-1">
+              <p className="break-words text-[15px] font-semibold leading-tight text-text">
+                {sectionTitle(result)}
+              </p>
+              {filePath && (
+                <p className="mt-0.5 truncate font-mono text-mono-mini text-text-dim">
+                  {filePath}
+                </p>
+              )}
+            </div>
+            {/* Relevance vital — tone stays off the number (AA). */}
+            <div className="shrink-0 text-right">
+              <p className="font-mono text-mono-micro uppercase tracking-[0.08em] text-text-dim">
+                match
+              </p>
+              <p className="font-mono text-base font-semibold tabular-nums text-text">
+                {(result.score * 100).toFixed(0)}%
+              </p>
+            </div>
           </div>
+
+          {/* The relevance meter. */}
+          <div
+            className="h-1 overflow-hidden rounded-full bg-border-soft"
+            role="meter"
+            aria-valuenow={Math.round(result.score * 100)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="Retrieval relevance"
+          >
+            <div
+              className="h-full rounded-full bg-accent"
+              style={{ width: `${Math.round(result.score * 100)}%` }}
+            />
+          </div>
+
           {result.heading_path.length > 0 && (
-            <div className="flex items-center gap-1 flex-wrap font-sans text-xs text-text-dim mt-1">
+            <div className="flex flex-wrap items-center gap-1 font-sans text-xs text-text-dim">
               {result.heading_path.map((h, i) => (
                 <span key={i} className="flex items-center gap-1">
                   {i > 0 && (
@@ -108,6 +157,11 @@ export function SectionView({ entity }: Props) {
               ))}
             </div>
           )}
+
+          {/* The raw content id — kept for precision, de-emphasized. */}
+          <p className="break-all font-mono text-mono-mini text-text-dim">
+            {result.content_id}
+          </p>
         </div>
       </EntitySection>
 
