@@ -4,17 +4,16 @@ import type {
   DaemonStatus,
   SessionDetail,
 } from "../../lib/types";
-import type { SessionSample } from "../../lib/sessions";
 import { SessionsSurface } from "./SessionsSurface";
-import { SessionCard, SessionCardSkeleton } from "../ui/session-card";
+import { SessionCardSkeleton } from "../ui/session-card";
 import { surfaceContainer } from "../../lib/ui-tokens";
 import { withTauriMock } from "../../../.storybook/tauri-mock";
 
 /**
  * SessionsSurface — mission control. Cards expand in place; subagents nest
  * under their parent; the board auto-sorts by pressure. The full surface
- * renders via the tauri-mock `list_sessions` fixture; per-card states are
- * rendered directly.
+ * renders via the tauri-mock `list_sessions` fixture. (Per-card states live
+ * in the `UI/SessionCard` atom story.)
  */
 
 const corpusInfo: CorpusInfo = {
@@ -50,14 +49,6 @@ const session = (over: Partial<SessionDetail>): SessionDetail => ({
   client_name: "claude-code",
   ...over,
 });
-
-// A rising token-usage sample ring so the sparkline + burn/projection render.
-const SAMPLES: SessionSample[] = Array.from({ length: 12 }, (_, i) => ({
-  t: Date.now() - (12 - i) * 1500,
-  tokensUsed: 20_000 + i * 2_000,
-  utilization: 0.15 + i * 0.02,
-  turn: 3 + i,
-}));
 
 const SESSIONS: SessionDetail[] = [
   session({}),
@@ -163,152 +154,5 @@ export const Loading: Story = {
         ))}
       </div>
     </Frame>
-  ),
-};
-
-// ── Per-card states ────────────────────────────────────────────────────────
-
-function Cell({
-  children,
-  width = 360,
-}: {
-  children: React.ReactNode;
-  width?: number;
-}) {
-  return (
-    <div className="bg-bg p-6" style={{ width }}>
-      {children}
-    </div>
-  );
-}
-
-const noop = () => {};
-
-export const CardCollapsed: Story = {
-  render: () => (
-    <Cell>
-      <SessionCard
-        session={session({})}
-        corpus={corpusInfo}
-        samples={SAMPLES}
-        fresh={false}
-        expanded={false}
-        onToggle={noop}
-        onOpenInspector={noop}
-      />
-    </Cell>
-  ),
-};
-
-/** The transformation: a card expanded in place to its economics dashboard. */
-export const CardExpanded: Story = {
-  render: () => (
-    <Cell>
-      <SessionCard
-        session={session({
-          utilization: 0.75,
-          pressure_level: "elevated",
-          current_turn: 14,
-          tokens_used: 150_000,
-          tokens_remaining: 50_000,
-        })}
-        corpus={corpusInfo}
-        samples={SAMPLES}
-        fresh
-        expanded
-        onToggle={noop}
-        onOpenInspector={noop}
-      />
-    </Cell>
-  ),
-};
-
-export const CardCritical: Story = {
-  render: () => (
-    <Cell>
-      <SessionCard
-        session={session({
-          utilization: 0.96,
-          pressure_level: "critical",
-          tokens_used: 192_000,
-          tokens_remaining: 8_000,
-        })}
-        corpus={corpusInfo}
-        samples={SAMPLES}
-        fresh={false}
-        expanded={false}
-        onToggle={noop}
-        onOpenInspector={noop}
-      />
-    </Cell>
-  ),
-};
-
-/** A parent card with a nested subagent, mirroring the board's lineage. */
-export const Lineage: Story = {
-  render: () => (
-    <Cell width={380}>
-      <div className="flex flex-col gap-2">
-        <SessionCard
-          session={session({})}
-          corpus={corpusInfo}
-          samples={SAMPLES}
-          fresh={false}
-          expanded={false}
-          onToggle={noop}
-          onOpenInspector={noop}
-        />
-        <div className="ml-3 pl-3 border-l border-border-soft flex flex-col gap-2">
-          <span className="pl-0.5 font-mono text-mono-micro uppercase tracking-[0.08em] text-text-dim">
-            1 subagent
-          </span>
-          <SessionCard
-            session={session({
-              session_id: "sess_subagent01",
-              client_name: "claude-code (Task)",
-              utilization: 0.15,
-            })}
-            corpus={corpusInfo}
-            samples={SAMPLES}
-            fresh={false}
-            expanded={false}
-            onToggle={noop}
-            onOpenInspector={noop}
-            child
-          />
-        </div>
-      </div>
-    </Cell>
-  ),
-};
-
-export const CardSkeleton: Story = {
-  render: () => (
-    <Cell>
-      <SessionCardSkeleton />
-    </Cell>
-  ),
-};
-
-/** The SAME renderer in `inspect` mode (the Projects/Tend slice): no expand
- *  chevron, the whole card opens the inspector on click. No samples → the
- *  trend falls back to a budget bar. (aaa-session-renderer-dedup) */
-export const CardInspect: Story = {
-  render: () => (
-    <Cell>
-      <SessionCard
-        interaction="inspect"
-        session={session({
-          utilization: 0.62,
-          pressure_level: "elevated",
-          current_turn: 14,
-          tokens_used: 124_000,
-          tokens_remaining: 76_000,
-        })}
-        corpora={[corpusInfo]}
-        fresh={false}
-        onOpenInspector={noop}
-      />
-    </Cell>
   ),
 };
