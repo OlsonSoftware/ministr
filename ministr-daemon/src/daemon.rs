@@ -56,6 +56,7 @@ pub fn corpora_read_router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/definition/{sym}", get(definition))
         .route("/api/v1/corpora/{id}/references/{sym}", get(references))
         .route("/api/v1/corpora/{id}/impact/{sym}", get(impact))
+        .route("/api/v1/corpora/{id}/diff-impact", get(diff_impact))
         .route("/api/v1/corpora/{id}/dead", post(dead_code))
         .route("/api/v1/corpora/{id}/solid", post(solid))
         .route("/api/v1/corpora/{id}/diagnostics", post(diagnostics))
@@ -1363,6 +1364,54 @@ async fn impact(
             );
             if let Some(sid) = q.session_id {
                 tick_session_turn(&state, &id, &sid, "impact", response_tokens(&body)).await;
+            }
+            with_summary(Json(body), summary)
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct DiffImpactQuery {
+    /// Git revision range (e.g. `main..HEAD`).
+    range: String,
+    #[serde(default)]
+    max_depth: Option<u32>,
+    #[serde(default)]
+    session_id: Option<String>,
+}
+
+/// FL7 — diff-aware blast radius. The repo is resolved from the corpus's local
+/// root inside the service; callers default to `incoming`.
+async fn diff_impact(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<DiffImpactQuery>,
+) -> impl IntoResponse {
+    let handle = get_corpus!(&state, &id);
+    let max_depth = q.max_depth.unwrap_or(3);
+    let result = handle
+        .service
+        .compute_diff_impact(
+            &q.range,
+            max_depth,
+            ministr_core::service::CallDirection::Incoming,
+            false,
+        )
+        .await;
+    drop(handle);
+    match result {
+        Ok(r) => {
+            let body = convert::diff_impact_response(r);
+            let summary = format!(
+                "{range} — {changed} changed, {impacted} impacted, {risk:?} risk",
+                range = q.range,
+                changed = body.changed_symbols.len(),
+                impacted = body.impacted_symbols,
+                risk = body.risk,
+            );
+            if let Some(sid) = q.session_id {
+                tick_session_turn(&state, &id, &sid, "diff_impact", response_tokens(&body)).await;
             }
             with_summary(Json(body), summary)
         }

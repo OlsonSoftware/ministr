@@ -461,7 +461,9 @@ export function ChangesMapConnector({
     if (!repoPath) return;
     setLoading(true);
     setError(null);
-    invoke<DiffImpact>("diff_impact", { corpusId, repoPath, range: r, maxDepth: 3 })
+    // The daemon resolves the repo from the corpus's local root; `repoPath`
+    // stays only as the local "is this a git checkout?" UX gate (`hasRepo`).
+    invoke<DiffImpact>("diff_impact", { corpusId, range: r, maxDepth: 3 })
       .then((d) => {
         setData(d);
         setLoading(false);

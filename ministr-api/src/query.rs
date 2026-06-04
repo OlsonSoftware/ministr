@@ -203,6 +203,39 @@ fn default_impact_direction() -> String {
     "incoming".to_string()
 }
 
+/// One contributor's share of a changed symbol's lines (git blame).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DiffChangeAuthor {
+    pub name: String,
+    pub lines: u32,
+}
+
+/// A symbol a diff range touched (the seed set), with authorship.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DiffChangedSymbol {
+    pub symbol_id: String,
+    pub name: String,
+    pub kind: String,
+    pub file: String,
+    pub line: u32,
+    pub authors: Vec<DiffChangeAuthor>,
+    pub last_author: Option<String>,
+}
+
+/// Diff-aware blast radius (FL7): which indexed symbols a `base..head` range
+/// touched (the seed set, with blame) and the union of what they can break.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DiffImpactResponse {
+    pub range: String,
+    pub changed_files: usize,
+    pub changed_symbols: Vec<DiffChangedSymbol>,
+    pub impacted_symbols: usize,
+    pub impacted_files: usize,
+    pub impacted_tests: usize,
+    pub risk: ImpactRisk,
+    pub impacted: Vec<ImpactCaller>,
+}
+
 /// A dead-code candidate returned by `ministr_dead`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeadSymbol {

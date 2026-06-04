@@ -128,6 +128,45 @@ pub fn impact_response(r: ministr_core::service::ImpactResult) -> query::ImpactR
     }
 }
 
+fn diff_changed_symbol(s: ministr_core::service::DiffChangedSymbol) -> query::DiffChangedSymbol {
+    query::DiffChangedSymbol {
+        symbol_id: s.symbol_id,
+        name: s.name,
+        kind: s.kind,
+        file: s.file,
+        line: s.line,
+        authors: s
+            .authors
+            .into_iter()
+            .map(|a| query::DiffChangeAuthor {
+                name: a.name,
+                lines: a.lines,
+            })
+            .collect(),
+        last_author: s.last_author,
+    }
+}
+
+#[must_use]
+pub fn diff_impact_response(
+    r: ministr_core::service::DiffImpactResult,
+) -> query::DiffImpactResponse {
+    query::DiffImpactResponse {
+        range: r.range,
+        changed_files: r.changed_files,
+        changed_symbols: r
+            .changed_symbols
+            .into_iter()
+            .map(diff_changed_symbol)
+            .collect(),
+        impacted_symbols: r.impacted_symbols,
+        impacted_files: r.impacted_files,
+        impacted_tests: r.impacted_tests,
+        risk: impact_risk(r.risk),
+        impacted: r.impacted.into_iter().map(impact_caller).collect(),
+    }
+}
+
 #[must_use]
 pub fn dead_symbol(s: ministr_core::service::DeadSymbol) -> query::DeadSymbol {
     query::DeadSymbol {

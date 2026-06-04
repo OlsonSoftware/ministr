@@ -60,9 +60,9 @@ use crate::corpus::{
     RegisterCorpusResponse, UpdateCorpusPathsRequest,
 };
 use crate::query::{
-    DeadCodeRequest, DeadCodeResponse, DiagnosticsRequest, DiagnosticsResponse, ExtractRequest,
-    ExtractResponse, ImpactResponse, ReferencesResponse, SectionDetail, SolidRequest,
-    SolidResponse, SurveyRequest, SurveyResponse, SymbolDefinition, SymbolsRequest,
+    DeadCodeRequest, DeadCodeResponse, DiagnosticsRequest, DiagnosticsResponse, DiffImpactResponse,
+    ExtractRequest, ExtractResponse, ImpactResponse, ReferencesResponse, SectionDetail,
+    SolidRequest, SolidResponse, SurveyRequest, SurveyResponse, SymbolDefinition, SymbolsRequest,
     SymbolsResponse,
 };
 use crate::status::DaemonStatus;
@@ -623,6 +623,31 @@ impl DaemonClient {
             format!("?{}", qs.join("&"))
         };
         let path = format!("/api/v1/corpora/{corpus_id}/impact/{encoded}{suffix}");
+        self.get(&path).await
+    }
+
+    /// Diff-aware blast radius (FL7): which indexed symbols a `base..head`
+    /// `range` touched (the seed set, with blame) and the union of what they
+    /// can break. The daemon resolves the repo from the corpus's local root.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn diff_impact(
+        &self,
+        corpus_id: &str,
+        range: &str,
+        max_depth: Option<u32>,
+        session_id: Option<&str>,
+    ) -> Result<DiffImpactResponse, ClientError> {
+        let mut qs: Vec<String> = vec![format!("range={}", encode_path_component(range))];
+        if let Some(d) = max_depth {
+            qs.push(format!("max_depth={d}"));
+        }
+        if let Some(sid) = session_id {
+            qs.push(format!("session_id={}", encode_path_component(sid)));
+        }
+        let path = format!("/api/v1/corpora/{corpus_id}/diff-impact?{}", qs.join("&"));
         self.get(&path).await
     }
 

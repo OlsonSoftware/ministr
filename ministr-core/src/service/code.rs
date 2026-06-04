@@ -3,14 +3,17 @@
 //! Symbol search, definition lookup, cross-reference queries, bridge link
 //! queries, and source file resolution helpers.
 
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+
 use tracing::instrument;
 
 use crate::storage::{BridgeLinkDetail, Storage, SymbolFilter, SymbolRecord};
-use crate::types::{RefKind, SymbolId};
+use crate::types::{RefKind, RootKind, SymbolId};
 
 use super::{
-    CallDirection, DeadSymbol, ImpactCaller, ImpactResult, ImpactRisk, QueryError, QueryService,
-    SymbolDefinition, SymbolRefResult,
+    CallDirection, DeadSymbol, DiffChangeAuthor, DiffChangedSymbol, DiffImpactResult, ImpactCaller,
+    ImpactResult, ImpactRisk, QueryError, QueryService, SymbolDefinition, SymbolRefResult,
 };
 
 impl QueryService {
@@ -444,6 +447,176 @@ impl QueryService {
             tests: test_files.len(),
             risk,
             callers,
+        })
+    }
+
+    /// Map a parsed diff's changed lines to the enclosing indexed symbols (the
+    /// seed set), attaching per-symbol git blame. Returns the bounded seeds plus
+    /// the count of files that yielded a symbol.
+    async fn diff_seed_set(
+        &self,
+        changed: &[crate::git::ChangedFile],
+        max_seeds: usize,
+    ) -> Result<(Vec<DiffChangedSymbol>, usize), QueryError> {
+        let mut seeds: Vec<DiffChangedSymbol> = Vec::new();
+        let mut seed_ids: HashSet<String> = HashSet::new();
+        let mut changed_files = 0usize;
+        for file in changed {
+            let filter = SymbolFilter {
+                file_path: Some(file.path.clone()),
+                ..SymbolFilter::default()
+            };
+            let mut file_hit = false;
+            for s in self.storage.list_symbols(&filter).await? {
+                let touched = file
+                    .ranges
+                    .iter()
+                    .any(|r| r.overlaps(s.line_start, s.line_end));
+                if touched && seed_ids.insert(s.id.0.clone()) {
+                    file_hit = true;
+                    let blame = crate::git::blame::blame_range(
+                        Path::new(&s.file_path),
+                        s.line_start,
+                        s.line_end,
+                    )
+                    .ok()
+                    .flatten();
+                    let (authors, last_author) = blame.map_or((Vec::new(), None), |b| {
+                        (
+                            b.authors
+                                .into_iter()
+                                .take(4)
+                                .map(|a| DiffChangeAuthor {
+                                    name: a.name,
+                                    lines: a.lines,
+                                })
+                                .collect(),
+                            b.last_author,
+                        )
+                    });
+                    seeds.push(DiffChangedSymbol {
+                        symbol_id: s.id.0,
+                        name: s.name,
+                        kind: s.kind,
+                        file: s.file_path,
+                        line: s.line_start,
+                        authors,
+                        last_author,
+                    });
+                }
+            }
+            if file_hit {
+                changed_files += 1;
+            }
+            if seeds.len() >= max_seeds {
+                break;
+            }
+        }
+        seeds.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
+        seeds.truncate(max_seeds);
+        Ok((seeds, changed_files))
+    }
+
+    /// Diff-aware blast radius (FL7): resolve a `range` (e.g. `main..HEAD`) to
+    /// the indexed symbols it touched (the seed set, with git blame), then union
+    /// their impact (what the change can break).
+    ///
+    /// The repo is the corpus's first on-disk local root; git runs there. The
+    /// `direction`/`tests_only` knobs are forwarded to the per-seed impact walk
+    /// (callers default to `Incoming`). Results are bounded for token safety.
+    /// Returns an empty result (never an error) when the corpus has no local git
+    /// root, the range is unresolvable, or it touched no indexed symbols.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::Storage`] only on a database failure.
+    #[instrument(skip(self))]
+    pub async fn compute_diff_impact(
+        &self,
+        range: &str,
+        max_depth: u32,
+        direction: CallDirection,
+        tests_only: bool,
+    ) -> Result<DiffImpactResult, QueryError> {
+        /// Cap on the diff seed set (token safety).
+        const MAX_SEEDS: usize = 200;
+        /// Cap on unioned impacted nodes (token safety).
+        const MAX_IMPACTED: usize = 500;
+
+        let empty = || DiffImpactResult {
+            range: range.to_string(),
+            changed_files: 0,
+            changed_symbols: Vec::new(),
+            impacted_symbols: 0,
+            impacted_files: 0,
+            impacted_tests: 0,
+            risk: ImpactRisk::Low,
+            impacted: Vec::new(),
+        };
+
+        // The repo dir is the first on-disk local corpus root.
+        let roots = self.storage.list_corpus_roots().await?;
+        let Some(repo) = roots
+            .into_iter()
+            .find(|r| matches!(r.kind, RootKind::Local) && Path::new(&r.path).is_dir())
+        else {
+            return Ok(empty());
+        };
+        let Ok(changed) = crate::git::diff::changed_lines(Path::new(&repo.path), range) else {
+            return Ok(empty());
+        };
+
+        let (seeds, changed_files) = self.diff_seed_set(&changed, MAX_SEEDS).await?;
+
+        // Union the blast radius across the seeds (shallowest depth wins).
+        let mut impacted_map: HashMap<String, ImpactCaller> = HashMap::new();
+        for seed in &seeds {
+            if let Ok(ir) = self
+                .compute_impact(&seed.symbol_id, max_depth, direction, tests_only)
+                .await
+            {
+                for c in ir.callers {
+                    impacted_map
+                        .entry(c.symbol_id.clone())
+                        .and_modify(|e| {
+                            if c.depth < e.depth {
+                                e.depth = c.depth;
+                            }
+                        })
+                        .or_insert(c);
+                }
+            }
+        }
+        let mut impacted: Vec<ImpactCaller> = impacted_map.into_values().collect();
+        impacted.sort_by(|a, b| {
+            a.depth
+                .cmp(&b.depth)
+                .then_with(|| a.file.cmp(&b.file))
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        impacted.truncate(MAX_IMPACTED);
+
+        let mut files: HashSet<&str> = HashSet::new();
+        let mut tests: HashSet<&str> = HashSet::new();
+        for c in &impacted {
+            files.insert(c.file.as_str());
+            if is_test_path(&c.file) {
+                tests.insert(c.file.as_str());
+            }
+        }
+        let (impacted_symbols, impacted_files, impacted_tests) =
+            (impacted.len(), files.len(), tests.len());
+        let risk = compute_risk(impacted_symbols, impacted_files, impacted_tests);
+
+        Ok(DiffImpactResult {
+            range: range.to_string(),
+            changed_files,
+            changed_symbols: seeds,
+            impacted_symbols,
+            impacted_files,
+            impacted_tests,
+            risk,
+            impacted,
         })
     }
 

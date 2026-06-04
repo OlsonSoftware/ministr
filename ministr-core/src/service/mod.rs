@@ -251,6 +251,59 @@ pub struct ImpactResult {
     pub callers: Vec<ImpactCaller>,
 }
 
+/// One contributor's share of a changed symbol's lines (git blame), used in
+/// [`DiffImpactResult`].
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct DiffChangeAuthor {
+    /// Author name as recorded by git.
+    pub name: String,
+    /// Lines in the symbol's range last touched by this author.
+    pub lines: u32,
+}
+
+/// A symbol a diff range touched (the seed set), with authorship — part of
+/// [`DiffImpactResult`].
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct DiffChangedSymbol {
+    /// Symbol ID.
+    pub symbol_id: String,
+    /// Symbol name.
+    pub name: String,
+    /// Symbol kind.
+    pub kind: String,
+    /// Source file path.
+    pub file: String,
+    /// Start line of the symbol.
+    pub line: u32,
+    /// Contributors to the symbol's lines, most lines first (top few).
+    pub authors: Vec<DiffChangeAuthor>,
+    /// Author of the most-recently-committed line in the symbol's range.
+    pub last_author: Option<String>,
+}
+
+/// Result of a diff-aware blast-radius query (FL7): which indexed symbols a
+/// `base..head` range touched (the seed set, with blame) and the union of what
+/// they can break (the impact graph over the seeds).
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct DiffImpactResult {
+    /// The revision range analyzed (e.g. `main..HEAD`).
+    pub range: String,
+    /// Number of changed files that contained indexed symbols.
+    pub changed_files: usize,
+    /// The indexed symbols the range touched — the seed set.
+    pub changed_symbols: Vec<DiffChangedSymbol>,
+    /// Distinct symbols in the union blast radius.
+    pub impacted_symbols: usize,
+    /// Distinct files in the union blast radius.
+    pub impacted_files: usize,
+    /// Distinct test files in the union blast radius.
+    pub impacted_tests: usize,
+    /// Aggregate risk of the union.
+    pub risk: ImpactRisk,
+    /// The union of impacted nodes (deduped, shallowest depth, bounded).
+    pub impacted: Vec<ImpactCaller>,
+}
+
 /// A dead-code candidate: a non-public symbol with zero references.
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct DeadSymbol {
