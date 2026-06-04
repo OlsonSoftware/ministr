@@ -33,7 +33,7 @@ export function Chip({
         <span
           className={cn(
             "tabular-nums",
-            active ? "text-accent/70" : "text-text-dim/60",
+            active ? "text-accent" : "text-text-dim",
           )}
         >
           {count}

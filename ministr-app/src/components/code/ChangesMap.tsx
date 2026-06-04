@@ -274,32 +274,23 @@ function ChangedRow({
   onOpenFile: (path: string, line: number) => void;
 }) {
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      data-roving-item
-      onClick={onInspect}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onInspect();
-        }
-      }}
-      title={`Inspect ${sym.name}`}
-      className="group flex items-center gap-2.5 px-4 py-2 cursor-pointer hover:bg-surface-overlay transition-colors duration-150 ease-out"
-    >
-      <span className="shrink-0 rounded border border-border-soft bg-surface px-1 font-mono text-mono-micro lowercase tracking-[0.04em] text-text-dim">
-        {sym.kind || "sym"}
-      </span>
-      <span className="truncate font-mono text-xs font-semibold text-text">{sym.name}</span>
-      <AuthorChips authors={sym.authors} />
-      <span className="flex-1" />
+    <div className="group flex items-center gap-2.5 px-4 py-2 hover:bg-surface-overlay transition-colors duration-150 ease-out">
       <button
         type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onOpenFile(sym.file, sym.line);
-        }}
+        data-roving-item
+        onClick={onInspect}
+        title={`Inspect ${sym.name}`}
+        className="flex min-w-0 flex-1 items-center gap-2.5 text-left cursor-pointer"
+      >
+        <span className="shrink-0 rounded border border-border-soft bg-surface px-1 font-mono text-mono-micro lowercase tracking-[0.04em] text-text-dim">
+          {sym.kind || "sym"}
+        </span>
+        <span className="truncate font-mono text-xs font-semibold text-text">{sym.name}</span>
+        <AuthorChips authors={sym.authors} />
+      </button>
+      <button
+        type="button"
+        onClick={() => onOpenFile(sym.file, sym.line)}
         title={`Open ${sym.file}:${sym.line}`}
         className="shrink-0 font-mono text-mono-micro tabular-nums text-text-dim hover:text-accent cursor-pointer transition-colors duration-150"
       >
@@ -322,8 +313,14 @@ function AuthorChips({ authors }: { authors: ChangedSymbol["authors"] }) {
           title={`${a.name} · ${a.lines} ${a.lines === 1 ? "line" : "lines"}`}
         >
           <span
-            className="grid h-3.5 w-3.5 place-items-center rounded-full font-mono text-[8px] font-bold text-bg"
-            style={{ backgroundColor: `hsl(${authorHue(a.name)} 55% 60%)` }}
+            className="grid h-3.5 w-3.5 place-items-center rounded-full font-mono text-[8px] font-bold"
+            // Always-light pastel chip → dark ink in BOTH themes (theme-invariant,
+            // so a theme token can't be used); white initials failed AA on the
+            // light hues. hsl lightness 82% + near-black ink clears 4.5:1.
+            style={{
+              backgroundColor: `hsl(${authorHue(a.name)} 60% 82%)`,
+              color: "#16130E",
+            }}
           >
             {initials(a.name)}
           </span>
@@ -379,34 +376,27 @@ function BlastRadius({
         {impacted.map((c) => (
           <div
             key={c.symbol_id || `${c.file}:${c.line}`}
-            role="button"
-            tabIndex={0}
-            data-roving-item
-            onClick={() => onInspect(c.symbol_id, c.name, c.kind, c.file)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onInspect(c.symbol_id, c.name, c.kind, c.file);
-              }
-            }}
-            title={`Inspect ${c.name}`}
-            className="group flex items-center gap-2.5 px-4 py-1.5 cursor-pointer hover:bg-surface-overlay transition-colors duration-150"
+            className="group flex items-center gap-2.5 px-4 py-1.5 hover:bg-surface-overlay transition-colors duration-150"
           >
-            <span
-              className="shrink-0 rounded-full border border-border-soft px-1.5 font-mono text-mono-micro tabular-nums text-text-dim"
-              title={`${c.depth} hop${c.depth === 1 ? "" : "s"} from a changed symbol`}
-            >
-              {c.depth}↑
-            </span>
-            <span className="truncate font-mono text-xs text-text">{c.name}</span>
-            <span className="truncate font-mono text-mono-micro text-text-dim">{fileTail(c.file)}</span>
-            <span className="flex-1" />
             <button
               type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenFile(c.file, c.line);
-              }}
+              data-roving-item
+              onClick={() => onInspect(c.symbol_id, c.name, c.kind, c.file)}
+              title={`Inspect ${c.name}`}
+              className="flex min-w-0 flex-1 items-center gap-2.5 text-left cursor-pointer"
+            >
+              <span
+                className="shrink-0 rounded-full border border-border-soft px-1.5 font-mono text-mono-micro tabular-nums text-text-dim"
+                title={`${c.depth} hop${c.depth === 1 ? "" : "s"} from a changed symbol`}
+              >
+                {c.depth}↑
+              </span>
+              <span className="truncate font-mono text-xs text-text">{c.name}</span>
+              <span className="truncate font-mono text-mono-micro text-text-dim">{fileTail(c.file)}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenFile(c.file, c.line)}
               title={`Open ${c.file}:${c.line}`}
               className="shrink-0 font-mono text-mono-micro tabular-nums text-text-dim hover:text-accent cursor-pointer transition-colors duration-150"
             >

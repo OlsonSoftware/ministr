@@ -53,7 +53,7 @@ export const Header: Story = {
             }
           >
             <span className="font-semibold">{l}</span>
-            <span className="tabular-nums opacity-70">{[42, 18, 12, 8][i]}</span>
+            <span className="tabular-nums">{[42, 18, 12, 8][i]}</span>
           </span>
         ))}
       </div>

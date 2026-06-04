@@ -296,34 +296,31 @@ function DiagnosticRow({
   const meta = SEVERITY_META[diag.severity];
   const Icon = meta.icon;
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      data-roving-item
-      onClick={() => onOpenFile(diag.file, diag.line_start)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onOpenFile(diag.file, diag.line_start);
-        }
-      }}
-      title={`Open ${diag.file}:${diag.line_start}`}
-      className="group flex items-center gap-2.5 px-4 py-2 cursor-pointer hover:bg-surface-overlay transition-colors duration-150 ease-out"
-    >
-      <span
-        className={cn(
-          "inline-flex shrink-0 items-center gap-1 rounded border px-1 font-mono text-mono-micro font-semibold uppercase tracking-[0.06em]",
-          meta.chip,
-        )}
-        title={meta.label}
+    // Container (not a button): the IDE problems-panel "row = jump to error"
+    // action is a sibling button so the inner symbol/:line buttons aren't
+    // nested interactive controls (a11y: nested-interactive).
+    <div className="group flex items-center gap-2.5 px-4 py-2 hover:bg-surface-overlay transition-colors duration-150 ease-out">
+      <button
+        type="button"
+        data-roving-item
+        onClick={() => onOpenFile(diag.file, diag.line_start)}
+        title={`Open ${diag.file}:${diag.line_start}`}
+        className="flex min-w-0 flex-1 items-center gap-2.5 text-left cursor-pointer"
       >
-        <Icon className="h-3 w-3" strokeWidth={2.25} />
-        {diag.code ?? meta.label}
-      </span>
-      <span className="truncate font-mono text-xs text-text">
-        {diag.message}
-      </span>
-      <span className="flex-1" />
+        <span
+          className={cn(
+            "inline-flex shrink-0 items-center gap-1 rounded border px-1 font-mono text-mono-micro font-semibold uppercase tracking-[0.06em]",
+            meta.chip,
+          )}
+          title={meta.label}
+        >
+          <Icon className="h-3 w-3" strokeWidth={2.25} />
+          {diag.code ?? meta.label}
+        </span>
+        <span className="truncate font-mono text-xs text-text">
+          {diag.message}
+        </span>
+      </button>
       <span
         className="shrink-0 rounded-full border border-border-soft px-1.5 font-mono text-mono-micro lowercase tracking-[0.04em] text-text-dim"
         title="Reporting tool"
@@ -388,7 +385,7 @@ function SevChip({
         />
       )}
       <span className="font-semibold">{label}</span>
-      <span className="tabular-nums opacity-70">{count}</span>
+      <span className="tabular-nums">{count}</span>
     </button>
   );
 }

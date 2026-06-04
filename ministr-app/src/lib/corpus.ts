@@ -28,8 +28,8 @@ export function corpusLabelById(
 /** Longest common ancestor directory of a path set. Exposed for
  *  surfaces that want a path-style subtitle (e.g. the project-list
  *  row's secondary line) without re-implementing the LCA logic. */
-export function corpusRoot(paths: readonly string[]): string {
-  if (!paths.length) return "";
+export function corpusRoot(paths: readonly string[] | undefined | null): string {
+  if (!paths || paths.length === 0) return "";
   if (paths.length === 1) return paths[0].replace(/[\\/]+$/, "");
   const segments = paths.map((p) => p.split(/[\\/]/));
   let common = 0;

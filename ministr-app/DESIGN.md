@@ -247,9 +247,12 @@ Anchored to WCAG 2.2 (2026 norms):
   from a primitive **must** apply `focusRing`.
 - **Non-text contrast — WCAG 1.4.11.** UI component boundaries, icons, and
   graphical objects (status dots, meters, sparklines) meet **≥ 3:1**.
-- **Text contrast — WCAG 1.4.3 (AA ≥ 4.5:1) / 1.4.6 (AAA ≥ 7:1).** `text` and
-  `text-muted` clear AA on their surfaces; `text-dim` is reserved for
-  non-essential captions only.
+- **Text contrast — WCAG 1.4.3 (AA ≥ 4.5:1) / 1.4.6 (AAA ≥ 7:1).** `text`,
+  `text-muted`, **and `text-dim`** all clear AA on their surfaces in **both
+  themes** (light `text-dim` = `#635F58`, dark = `#928D84`); `text-dim` stays
+  reserved for non-essential captions but is no longer sub-AA. Status tones, the
+  accent, and the Shiki code theme are likewise AA on the surfaces they sit on
+  (the inset code surface uses `github-light-high-contrast`).
 - **Reduced motion.** Honor `prefers-reduced-motion` (§8) — no exceptions.
 - **Reduced transparency / contrast.** Glass (§4) degrades to solid — no
   information conveyed by translucency alone.
@@ -257,7 +260,21 @@ Anchored to WCAG 2.2 (2026 norms):
   keyboard; the ⌘K command palette is the primary nav accelerator; focus order
   follows reading order; dialogs trap focus and restore it on close.
 - **Semantics.** Real roles/labels (`aria-*`) on custom controls; icon-only
-  buttons carry an accessible name.
+  buttons carry an accessible name. No nested interactive controls — a row that
+  both "inspects" and "opens" uses two sibling buttons, never a button inside a
+  `role="button"` row.
+
+### The floor is mechanical, not manual
+
+`@storybook/addon-a11y` runs **axe on every story** as part of the gate, via
+`@storybook/addon-vitest` (stories become Vitest component tests in Playwright
+Chromium). `a11y.test: "error"` (`.storybook/preview.tsx`) makes any WCAG
+violation **fail `pnpm test`**. The `storybook` (light) and `storybook-dark`
+Vitest projects render every story in **both themes**, so contrast is checked on
+both surface tiers; animations are forced to their final frame so axe never
+snapshots text mid-fade. The M·F·R·S checklist below is now pass/fail in CI, not
+a manual review — a regression that drops any text/icon below its WCAG floor
+turns the gate red. (Verified: a seeded low-contrast story fails the run.)
 
 ---
 

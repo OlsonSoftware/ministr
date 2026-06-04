@@ -17,7 +17,13 @@ type Story = StoryObj<typeof meta>;
  */
 export const ContainerQueryGrid: Story = {
   render: () => (
-    <div className="h-80 resize-x overflow-auto rounded-lg border border-border-soft" style={{ width: 520 }}>
+    <div
+      tabIndex={0}
+      role="group"
+      aria-label="Resizable container-query demo"
+      className="h-80 resize-x overflow-auto rounded-lg border border-border-soft"
+      style={{ width: 520 }}
+    >
       <AdaptiveSurface>
         <div className="grid grid-cols-1 gap-3 p-4 @min-[600px]/surface:grid-cols-2 @min-[900px]/surface:grid-cols-3">
           {Array.from({ length: 6 }, (_, i) => (

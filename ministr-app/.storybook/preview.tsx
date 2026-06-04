@@ -10,8 +10,10 @@ import "../src/app.css";
 const preview: Preview = {
   parameters: {
     controls: { matchers: { color: /(background|color)$/i, date: /Date$/i } },
-    // axe runs on every story; surfaces §9 WCAG violations in the a11y panel
-    a11y: { test: "todo" },
+    // axe runs on every story. "error" makes a WCAG violation FAIL the Vitest
+    // run (via addon-vitest), so the §9 floor is enforced mechanically in the
+    // gate — not just surfaced in the interactive a11y panel.
+    a11y: { test: "error" },
   },
   decorators: [
     withThemeByClassName({

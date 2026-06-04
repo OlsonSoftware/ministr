@@ -21,7 +21,7 @@ export function CorpusSelect({
   corpora,
   disabled,
   className,
-  ariaLabel,
+  ariaLabel = "Select corpus",
 }: CorpusSelectProps) {
   return (
     <select

@@ -210,36 +210,30 @@ function DeadRow({
   onOpenFile: (path: string, line: number) => void;
 }) {
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      data-roving-item
-      onClick={onInspect}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onInspect();
-        }
-      }}
-      title="Inspect — confirm it's truly unreferenced before deleting"
-      className="group flex items-center gap-2.5 px-4 py-2 cursor-pointer hover:bg-surface-overlay transition-colors duration-150 ease-out"
-    >
-      <span className="shrink-0 rounded border border-border-soft bg-surface px-1 font-mono text-mono-micro font-semibold uppercase tracking-[0.06em] text-text-dim">
-        {sym.kind}
-      </span>
-      <span className="truncate font-mono text-xs font-semibold text-text">
-        {sym.name}
-      </span>
-      <span className="shrink-0 font-mono text-mono-micro uppercase tracking-[0.06em] text-text-dim">
-        {sym.visibility}
-      </span>
-      <span className="flex-1" />
+    // Row is a plain container (NOT a button) so the inner "open :line" button
+    // isn't a nested interactive control (a11y: nested-interactive). The
+    // row-inspect action is its own sibling button that fills the row.
+    <div className="group flex items-center gap-2.5 px-4 py-2 hover:bg-surface-overlay transition-colors duration-150 ease-out">
       <button
         type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onOpenFile(sym.file, sym.line);
-        }}
+        data-roving-item
+        onClick={onInspect}
+        title="Inspect — confirm it's truly unreferenced before deleting"
+        className="flex min-w-0 flex-1 items-center gap-2.5 text-left cursor-pointer"
+      >
+        <span className="shrink-0 rounded border border-border-soft bg-surface px-1 font-mono text-mono-micro font-semibold uppercase tracking-[0.06em] text-text-dim">
+          {sym.kind}
+        </span>
+        <span className="truncate font-mono text-xs font-semibold text-text">
+          {sym.name}
+        </span>
+        <span className="shrink-0 font-mono text-mono-micro uppercase tracking-[0.06em] text-text-dim">
+          {sym.visibility}
+        </span>
+      </button>
+      <button
+        type="button"
+        onClick={() => onOpenFile(sym.file, sym.line)}
         title={`Open ${sym.file}:${sym.line}`}
         className="shrink-0 font-mono text-mono-micro text-text-dim hover:text-accent cursor-pointer transition-colors duration-150"
       >
@@ -275,7 +269,7 @@ function KindChip({
       )}
     >
       <span className="font-semibold">{label}</span>
-      <span className="tabular-nums opacity-70">{count}</span>
+      <span className="tabular-nums">{count}</span>
     </button>
   );
 }

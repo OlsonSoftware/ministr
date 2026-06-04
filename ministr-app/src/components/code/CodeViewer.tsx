@@ -12,11 +12,14 @@ import type { FileContent, Occurrence, SymbolSpan } from "../../lib/types";
 import { buildOccurrenceDecorations, buildSymbolDecorations } from "./decorations";
 import { useHighlightedHtml } from "./useHighlighter";
 import type { ColorScheme } from "./useColorScheme";
+import { useDocumentScheme } from "../../hooks/useDocumentScheme";
 import "./code.css";
 
 interface Props {
   file: FileContent;
-  scheme: ColorScheme;
+  /** Shiki colour scheme. Defaults to the live `.dark` class on <html> so the
+   *  highlight always matches the surface it renders on (incl. Storybook). */
+  scheme?: ColorScheme;
   /** 1-based line to scroll into view (e.g. a go-to-definition target). */
   focusLine?: number;
   /** v2 occurrence index — when non-empty, EVERY resolved token is clickable;
@@ -33,11 +36,13 @@ interface HoverState {
 
 export function CodeViewer({
   file,
-  scheme,
+  scheme: schemeProp,
   focusLine,
   occurrences,
   onSymbolClick,
 }: Props) {
+  const docScheme = useDocumentScheme();
+  const scheme = schemeProp ?? docScheme;
   // Prefer the v2 occurrence index (every resolved token) when present;
   // otherwise fall back to v1 definition name-spans.
   const decorations = useMemo(

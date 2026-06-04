@@ -274,20 +274,10 @@ function BridgeRow({
   onOpenFile: (path: string) => void;
 }) {
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      data-roving-item
-      onClick={onInspect}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onInspect();
-        }
-      }}
-      title="Inspect this bridge"
-      className="group grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-4 py-2 cursor-pointer hover:bg-surface-overlay transition-colors duration-150 ease-out"
-    >
+    // Container (not a button): the two Endpoints each own a real "open file"
+    // button, so the row-inspect action lives on the center column button
+    // instead of wrapping them (a11y: nested-interactive).
+    <div className="group grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-4 py-2 hover:bg-surface-overlay transition-colors duration-150 ease-out">
       <Endpoint
         language={link.export_language}
         symbol={link.export_symbol || link.export_binding_key}
@@ -297,7 +287,13 @@ function BridgeRow({
         align="start"
       />
 
-      <div className="flex flex-col items-center gap-0.5 px-1">
+      <button
+        type="button"
+        data-roving-item
+        onClick={onInspect}
+        title="Inspect this bridge"
+        className="flex flex-col items-center gap-0.5 px-1 cursor-pointer"
+      >
         <ArrowLeftRight
           className="h-3.5 w-3.5 text-text-dim group-hover:text-accent transition-colors duration-150"
           strokeWidth={2.25}
@@ -311,7 +307,7 @@ function BridgeRow({
         >
           {Math.round(link.confidence * 100)}
         </span>
-      </div>
+      </button>
 
       <Endpoint
         language={link.import_language}
@@ -399,7 +395,7 @@ function FacetChip({
     >
       {Icon && <Icon className="h-3 w-3" strokeWidth={2.25} />}
       <span className={small ? "" : "font-semibold"}>{label}</span>
-      <span className="tabular-nums opacity-70">{count}</span>
+      <span className="tabular-nums">{count}</span>
     </button>
   );
 }

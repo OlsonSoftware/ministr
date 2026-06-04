@@ -307,43 +307,37 @@ function FindingCard({
           // lens (the shared cross-lens convention — inspect vs. open-to-code).
           <div
             key={s.symbol_id || `${s.file}:${s.line}`}
-            role="button"
-            tabIndex={0}
-            data-roving-item
-            onClick={() => onInspect(s)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onInspect(s);
-              }
-            }}
-            title={`Inspect ${s.name}`}
-            className="group flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-surface-overlay cursor-pointer transition-colors duration-150 ease-out"
+            className="group flex w-full items-center gap-2 px-3 py-1.5 hover:bg-surface-overlay transition-colors duration-150 ease-out"
           >
-            <ChevronRight
-              className="h-3 w-3 shrink-0 text-text-dim group-hover:text-accent"
-              strokeWidth={2.5}
-            />
-            <span className="shrink-0 rounded border border-border-soft bg-surface px-1 font-mono text-mono-micro uppercase tracking-[0.06em] text-text-dim">
-              {s.kind}
-            </span>
-            <span className="truncate font-mono text-mono-mini font-semibold text-text">
-              {s.name}
-            </span>
+            <button
+              type="button"
+              data-roving-item
+              onClick={() => onInspect(s)}
+              title={`Inspect ${s.name}`}
+              className="flex min-w-0 flex-1 items-center gap-2 text-left cursor-pointer"
+            >
+              <ChevronRight
+                className="h-3 w-3 shrink-0 text-text-dim group-hover:text-accent"
+                strokeWidth={2.5}
+              />
+              <span className="shrink-0 rounded border border-border-soft bg-surface px-1 font-mono text-mono-micro uppercase tracking-[0.06em] text-text-dim">
+                {s.kind}
+              </span>
+              <span className="truncate font-mono text-mono-mini font-semibold text-text">
+                {s.name}
+              </span>
+            </button>
             {onOpenFile ? (
               <button
                 type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenFile(s.file, s.line);
-                }}
+                onClick={() => onOpenFile(s.file, s.line)}
                 title={`Open ${s.file}:${s.line}`}
-                className="ml-auto shrink-0 truncate font-mono text-mono-micro text-text-dim hover:text-accent cursor-pointer transition-colors duration-150"
+                className="shrink-0 truncate font-mono text-mono-micro text-text-dim hover:text-accent cursor-pointer transition-colors duration-150"
               >
                 {fileTail(s.file)}:{s.line}
               </button>
             ) : (
-              <span className="ml-auto shrink-0 truncate font-mono text-mono-micro text-text-dim">
+              <span className="shrink-0 truncate font-mono text-mono-micro text-text-dim">
                 {fileTail(s.file)}:{s.line}
               </span>
             )}
@@ -385,7 +379,7 @@ function PrincipleChip({
     >
       {Icon && <Icon className="h-3 w-3" strokeWidth={2.25} />}
       <span className="font-semibold">{label}</span>
-      <span className="tabular-nums opacity-70">{count}</span>
+      <span className="tabular-nums">{count}</span>
     </button>
   );
 }

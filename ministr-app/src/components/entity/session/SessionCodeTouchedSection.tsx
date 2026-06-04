@@ -121,7 +121,7 @@ export function SessionCodeTouchedSection({
               <Chip
                 label={`+${summary.symbols.length - 24} more`}
                 asStatic
-                className="opacity-70"
+                className="text-text-dim"
               />
             )}
           </ChipGroup>

@@ -16,7 +16,11 @@ import {
 import type { ColorScheme } from "./useColorScheme";
 
 const THEME_DARK = "github-dark-default";
-const THEME_LIGHT = "github-light-default";
+// High-contrast light theme: github-light-default's comment/keyword tokens only
+// reach ~4.1:1 on our tinted code surfaces (they're tuned for pure white), which
+// trips the a11y gate. The high-contrast variant clears 4.5:1 on the inset
+// surface while keeping the familiar GitHub palette.
+const THEME_LIGHT = "github-light-high-contrast";
 
 let highlighterPromise: Promise<Highlighter> | null = null;
 
@@ -89,6 +93,10 @@ export function useHighlightedHtml(req: HighlightRequest | null): HighlightState
           lang,
           theme: req.scheme === "dark" ? THEME_DARK : THEME_LIGHT,
           decorations: req.decorations,
+          // github-light-high-contrast's comment token (#66707b) only reaches
+          // 4.0:1 on the inset code surface; darken it to clear the 4.5 AA floor.
+          colorReplacements:
+            req.scheme === "dark" ? undefined : { "#66707b": "#586069" },
         });
         if (!cancelled) setState({ html, loading: false, error: null });
       } catch (e) {

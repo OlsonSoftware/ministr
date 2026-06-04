@@ -23,13 +23,20 @@
 
   --color-text: #16130E;
   --color-text-muted: #524E47;
-  --color-text-dim: #7A766F;
+  /* #7A766F only reached 4.29:1 on the off-white canvas — below the 4.5 AA
+     floor. #635F58 keeps the warm-grey hue and clears 4.5 on every light
+     surface (incl. the #E8E5DF sunken code void). The a11y gate enforces this. */
+  --color-text-dim: #635F58;
 
   --color-brand: #F59E0B;
   --color-brand-hover: #FBB833;
 
-  --color-accent: #D97706;
-  --color-accent-hover: #B45309;
+  /* Light-theme accent darkened to a sienna-amber: #D97706 failed AA both as
+     text on the canvas (3.19) and as a fill behind white (3.19). #A8490A clears
+     4.5:1 as text on every light surface AND behind white fills. Dark theme
+     keeps the bright amber (it sits on ink, where it already passes). */
+  --color-accent: #A8490A;
+  --color-accent-hover: #8A3D08;
   --color-accent-fg-on: #ffffff;
   --color-accent-glow: 245 158 11;
   --glow-soft: 0 0 0 1px rgb(var(--color-accent-glow) / 0.35),
@@ -37,11 +44,13 @@
   --color-accent-ring: var(--color-accent);
   --color-accent-soft: color-mix(in oklab, var(--color-accent) 16%, transparent);
 
-  /* ---- Semantic tones ---- */
-  --color-success: #1f8a5b;
-  --color-warning: #b07400;
-  --color-danger: #d23b46;
-  --color-info: #1f7a96;
+  /* ---- Semantic tones (light) — darkened to clear 4.5:1 as text on the
+     white/off-white/overlay surfaces they label. Dark theme keeps its brighter
+     tones (those sit on a dark canvas). ---- */
+  --color-success: #157049;
+  --color-warning: #855700;
+  --color-danger: #c32f3a;
+  --color-info: #1a6a82;
 
   /* ---- Radius — soft, modern. Data surfaces slightly tighter. ---- */
   --radius-button: 8px;
@@ -99,7 +108,9 @@
 
   --color-text: #EDEAE4;
   --color-text-muted: #C0BCB4;
-  --color-text-dim: #7A766F;
+  /* #7A766F only reached 3.4:1 on the dark surfaces — below AA. #928D84 keeps
+     the warm grey and clears 4.5 on every dark tier (incl. #28241C overlay). */
+  --color-text-dim: #928D84;
 
   --color-brand: #F59E0B;
   --color-brand-hover: #FBB833;

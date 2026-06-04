@@ -92,7 +92,9 @@ const meta = {
   title: "Code/CodeViewer",
   component: CodeViewer,
   parameters: { layout: "fullscreen" },
-  args: { file: RUST, scheme: "dark", occurrences: [], onSymbolClick: () => {} },
+  // No pinned scheme — CodeViewer follows the live theme (the Storybook theme
+  // toolbar / the gate's rendered surface), so highlight + surface always agree.
+  args: { file: RUST, occurrences: [], onSymbolClick: () => {} },
   decorators: [
     (Story) => (
       <div className="h-[640px] w-full bg-surface-sunken">
@@ -114,7 +116,10 @@ export const FocusLine: Story = {
   args: { focusLine: 14 },
 };
 
-/** Light theme (the Shiki theme follows `scheme`). */
+/** Explicit light scheme regardless of the surrounding theme — kept for the
+ *  toolbar's light view. Tagged !test so the a11y gate (which audits both
+ *  themes) doesn't flag light syntax rendered on the dark surface tier. */
 export const Light: Story = {
   args: { scheme: "light", focusLine: 14 },
+  tags: ["!test"],
 };

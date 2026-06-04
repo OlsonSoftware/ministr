@@ -186,34 +186,31 @@ function Lane({
 
 function NodeRow({ node, onOpen }: { node: ImpactedSymbol; onOpen: () => void }) {
   return (
-    <li
-      role="button"
-      tabIndex={0}
-      onClick={onOpen}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onOpen();
-        }
-      }}
-      title={`Inspect ${node.name}`}
-      className="group flex items-center gap-2.5 px-1 py-1.5 cursor-pointer hover:bg-surface-overlay rounded transition-colors duration-150"
-    >
-      <span
-        className="shrink-0 rounded-full border border-border-soft px-1.5 font-mono text-mono-micro tabular-nums text-text-dim"
-        title={`${node.depth} hop${node.depth === 1 ? "" : "s"} away`}
+    // Keep the <li> a real listitem (a11y: list / aria-allowed-role) — the
+    // interactive control is a <button> inside it, not a role on the <li>.
+    <li>
+      <button
+        type="button"
+        onClick={onOpen}
+        title={`Inspect ${node.name}`}
+        className="group flex w-full items-center gap-2.5 px-1 py-1.5 text-left cursor-pointer hover:bg-surface-overlay rounded transition-colors duration-150"
       >
-        {node.depth}↑
-      </span>
-      <span className="shrink-0 rounded border border-border-soft bg-surface px-1 font-mono text-mono-micro lowercase tracking-[0.04em] text-text-dim">
-        {node.kind || "sym"}
-      </span>
-      <span className="min-w-0 flex-1 truncate font-mono text-xs text-text group-hover:text-accent">
-        {node.name}
-      </span>
-      <span className="ml-2 max-w-[40%] shrink-0 truncate font-mono text-mono-micro text-text-dim">
-        {fileTail(node.file)}
-      </span>
+        <span
+          className="shrink-0 rounded-full border border-border-soft px-1.5 font-mono text-mono-micro tabular-nums text-text-dim"
+          title={`${node.depth} hop${node.depth === 1 ? "" : "s"} away`}
+        >
+          {node.depth}↑
+        </span>
+        <span className="shrink-0 rounded border border-border-soft bg-surface px-1 font-mono text-mono-micro lowercase tracking-[0.04em] text-text-dim">
+          {node.kind || "sym"}
+        </span>
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-text group-hover:text-accent">
+          {node.name}
+        </span>
+        <span className="ml-2 max-w-[40%] shrink-0 truncate font-mono text-mono-micro text-text-dim">
+          {fileTail(node.file)}
+        </span>
+      </button>
     </li>
   );
 }

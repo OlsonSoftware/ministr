@@ -518,57 +518,57 @@ function SourceRow({
   const label = sourceLabel(contentId, headingPath ?? undefined);
 
   return (
+    // Container (not a button): the "keep in thread" control is a real button,
+    // so the row-open action is a sibling button rather than its parent
+    // (a11y: nested-interactive).
     <div
-      onClick={open}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          open();
-        }
-      }}
       className={cn(
-        "group flex items-start gap-3 rounded-lg border p-2.5 text-left",
-        "cursor-pointer transition-colors duration-150",
+        "group flex items-start gap-3 rounded-lg border p-2.5",
+        "transition-colors duration-150",
         cited
           ? "border-border bg-surface hover:border-accent hover:bg-surface-overlay"
-          : "border-border bg-surface opacity-60 hover:opacity-100 hover:border-border-hover",
+          : "border-border bg-surface hover:border-border-hover",
       )}
     >
-      <span
-        className={cn(
-          "inline-flex items-center justify-center shrink-0 mt-0.5",
-          "border h-5 min-w-[1.25rem] px-1",
-          "font-mono text-mono-mini font-bold tabular-nums leading-none",
-          cited
-            ? "border-accent bg-surface text-accent"
-            : "border-border-soft bg-surface text-text-dim",
-          "rounded-md",
-        )}
+      <button
+        type="button"
+        onClick={open}
+        className="flex min-w-0 flex-1 items-start gap-3 text-left cursor-pointer"
       >
-        {index}
-      </span>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-2 min-w-0">
-          <span className="font-sans text-sm font-medium text-text truncate">
-            {label}
-          </span>
-          {fileTag && fileTag !== label && (
-            <span className="font-mono text-mono-mini text-text-dim truncate">
-              {fileTag}
+        <span
+          className={cn(
+            "inline-flex items-center justify-center shrink-0 mt-0.5",
+            "border h-5 min-w-[1.25rem] px-1",
+            "font-mono text-mono-mini font-bold tabular-nums leading-none",
+            cited
+              ? "border-accent bg-surface text-accent"
+              : "border-border-soft bg-surface text-text-dim",
+            "rounded-md",
+          )}
+        >
+          {index}
+        </span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline gap-2 min-w-0">
+            <span className="font-sans text-sm font-medium text-text truncate">
+              {label}
             </span>
+            {fileTag && fileTag !== label && (
+              <span className="font-mono text-mono-mini text-text-dim truncate">
+                {fileTag}
+              </span>
+            )}
+          </div>
+          {excerpt && (
+            <CodeExcerpt
+              code={excerpt}
+              filename={filePath}
+              maxLines={3}
+              className="mt-1.5"
+            />
           )}
         </div>
-        {excerpt && (
-          <CodeExcerpt
-            code={excerpt}
-            filename={filePath}
-            maxLines={3}
-            className="mt-1.5"
-          />
-        )}
-      </div>
+      </button>
       <div className="flex items-center gap-0.5 shrink-0 mt-0.5">
         <button
           onClick={(e) => {

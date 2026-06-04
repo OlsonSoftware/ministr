@@ -1,35 +1,33 @@
 /**
- * Resolve the app's theme preference to a concrete Shiki colour scheme.
+ * Resolve the concrete Shiki colour scheme from the *rendered* surface.
  *
- * The preference is `system | dark | light`; Shiki needs a concrete
- * `dark | light`. For `system` we follow `prefers-color-scheme` and react to
- * OS-level changes live.
+ * The single source of truth is the `.dark` class on <html> (set by useTheme
+ * from the `system | dark | light` preference). Reading the class — rather than
+ * the preference directly — guarantees syntax highlighting always matches the
+ * surface it sits on, including in Storybook where the theme decorator toggles
+ * the class independently of the app's theme state. A MutationObserver keeps it
+ * live when the theme flips.
  */
 import { useEffect, useState } from "react";
-import { useTheme } from "../../hooks/useTheme";
 
 export type ColorScheme = "dark" | "light";
 
-function systemPrefersDark(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    window.matchMedia("(prefers-color-scheme: dark)").matches
-  );
+function readScheme(): ColorScheme {
+  if (typeof document === "undefined") return "dark";
+  return document.documentElement.classList.contains("dark") ? "dark" : "light";
 }
 
 export function useColorScheme(): ColorScheme {
-  const { theme } = useTheme();
-  const [systemDark, setSystemDark] = useState(systemPrefersDark);
+  const [scheme, setScheme] = useState<ColorScheme>(readScheme);
 
   useEffect(() => {
-    if (theme !== "system") return;
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = (e: MediaQueryListEvent) => setSystemDark(e.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, [theme]);
+    const root = document.documentElement;
+    const obs = new MutationObserver(() => setScheme(readScheme()));
+    obs.observe(root, { attributes: true, attributeFilter: ["class"] });
+    // Sync once on mount in case the class changed before the observer attached.
+    setScheme(readScheme());
+    return () => obs.disconnect();
+  }, []);
 
-  if (theme === "dark") return "dark";
-  if (theme === "light") return "light";
-  return systemDark ? "dark" : "light";
+  return scheme;
 }

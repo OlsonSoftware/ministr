@@ -45,7 +45,7 @@ export function FilterPill({
     >
       {children ?? label}
       {typeof count === "number" && count > 0 && (
-        <span className="tabular-nums opacity-70">{count}</span>
+        <span className="tabular-nums">{count}</span>
       )}
     </button>
   );

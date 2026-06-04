@@ -174,7 +174,7 @@ export function FileView({ entity }: Props) {
                     )}
                   >
                     {k.toUpperCase()}
-                    <span className="opacity-70 tabular-nums">
+                    <span className="tabular-nums">
                       {symbolsByKind.get(k)}
                     </span>
                   </button>
