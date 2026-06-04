@@ -16,11 +16,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  AlertTriangle,
   Box,
+  CheckCircle2,
+  CircleDashed,
   Clock,
   Cloud,
   Code2,
   FolderOpen,
+  Loader,
   Lock,
   RefreshCw,
   Sprout,
@@ -31,7 +35,8 @@ import { useWorkspace } from "../workspace/WorkspaceContext";
 import type { CorpusInfo } from "../../lib/types";
 import { corpusLabel } from "../../lib/corpus";
 import { formatRelativeTime } from "../../lib/format";
-import { corpusStatusBadge } from "../../lib/status";
+import { corpusHealth } from "../../lib/corpus-health";
+import { corpusStatusBadge, toneTextClass } from "../../lib/status";
 import { cn } from "../../lib/utils";
 
 import { AdaptiveSurface } from "../ui/adaptive-surface";
@@ -152,6 +157,14 @@ function TendBody({
               coverage, live load) — complements, never repeats, the header's
               size stats (files/sections/symbols). ─────────────────────────── */}
           <CareSection icon={Sprout} title="Health">
+            {/* Freshness is the HEADLINE — is this index still worth trusting?
+                (the corpusHealth verdict in tone color), with a drift line and
+                a reindex nudge when it's gone stale. */}
+            <HealthHeadline
+              corpus={corpus}
+              indexing={!!indexing}
+              onReindex={() => setConfirmReindex(true)}
+            />
             <div className="grid grid-cols-3 gap-2">
               <MetricTile
                 icon={Clock}
@@ -248,6 +261,98 @@ function CareSection({
   );
 }
 
+/** Per-verdict meaning + icon for the freshness headline. Keyed by the
+ *  `corpusHealth().word` so the copy + glyph track the verdict exactly. */
+const HEALTH_META: Record<
+  string,
+  { icon: typeof CheckCircle2; meaning: string; spin?: boolean }
+> = {
+  FRESH: { icon: CheckCircle2, meaning: "Index is up to date." },
+  INDEXED: { icon: CheckCircle2, meaning: "Indexed recently — still current." },
+  STALE: {
+    icon: AlertTriangle,
+    meaning: "Index may be out of date — re-index to refresh.",
+  },
+  "NOT INDEXED": {
+    icon: CircleDashed,
+    meaning: "This project hasn’t been indexed yet.",
+  },
+  "INDEX ERROR": {
+    icon: AlertTriangle,
+    meaning: "The last index run failed — try re-indexing.",
+  },
+  INDEXING: { icon: Loader, meaning: "Building the index…", spin: true },
+};
+
+/**
+ * The freshness verdict as the SECTION HEADLINE (aaa-projects-living acceptance
+ * #3 "health is the headline, not buried"): the `corpusHealth` word in its tone
+ * colour, a plain-language meaning, the time since the last index (the drift
+ * signal), and a re-index nudge whenever the index isn't fresh. Reuses the
+ * confirm-reindex flow already wired in TendBody.
+ */
+function HealthHeadline({
+  corpus,
+  indexing,
+  onReindex,
+}: {
+  corpus: CorpusInfo;
+  indexing: boolean;
+  onReindex: () => void;
+}) {
+  const health = corpusHealth(corpus, indexing);
+  const meta = HEALTH_META[health.word] ?? HEALTH_META.INDEXED;
+  const Icon = meta.icon;
+  const drift = corpus.last_indexed
+    ? `Indexed ${formatRelativeTime(corpus.last_indexed)}`
+    : "Never indexed";
+  const nudge = !health.ok && !indexing;
+
+  return (
+    <div className="flex items-center gap-3 rounded-md border border-border-soft bg-surface px-3.5 py-3">
+      <span
+        className={cn(
+          "grid h-9 w-9 shrink-0 place-items-center rounded-md border border-border bg-surface-overlay",
+          toneTextClass(health.tone),
+        )}
+        aria-hidden
+      >
+        <Icon
+          className={cn("h-4 w-4", meta.spin && "animate-spin")}
+          strokeWidth={2.25}
+        />
+      </span>
+
+      <div className="min-w-0 flex-1">
+        <p
+          className={cn(
+            "font-mono text-base font-bold uppercase tracking-[0.06em] leading-none",
+            toneTextClass(health.tone),
+          )}
+        >
+          {health.word}
+        </p>
+        <p className="mt-1.5 font-sans text-xs leading-snug text-text-dim">
+          {meta.meaning}
+          <span className="text-text-muted"> · {drift}</span>
+        </p>
+      </div>
+
+      {nudge && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onReindex}
+          className="shrink-0"
+        >
+          <RefreshCw className="h-3.5 w-3.5" strokeWidth={2} />
+          Re-index
+        </Button>
+      )}
+    </div>
+  );
+}
+
 /** A fresh determinate progress bar driven by the indexing file counts. */
 function ReindexProgress({ done, total }: { done: number; total: number }) {
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
@@ -262,6 +367,7 @@ function ReindexProgress({ done, total }: { done: number; total: number }) {
       <div
         className="h-1.5 rounded-full bg-surface-overlay overflow-hidden"
         role="progressbar"
+        aria-label="Indexing progress"
         aria-valuenow={pct}
         aria-valuemin={0}
         aria-valuemax={100}
