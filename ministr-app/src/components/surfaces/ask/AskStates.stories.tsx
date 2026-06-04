@@ -195,9 +195,13 @@ export const StatusFromCache: Story = {
 // ── Empty / pre-question states ────────────────────────────────────────────
 
 export const EmptyReady: Story = {
+  // Render at real surface height + as a flex column so the hero's `flex-1`
+  // can fill and vertically center, exactly as it does inside AskSurface.
   render: () => (
-    <Pad>
-      <AskEmpty variant="ready" onApply={() => {}} disabled={false} />
+    <Pad width={840}>
+      <div className="flex h-[640px] flex-col">
+        <AskEmpty variant="ready" onApply={() => {}} disabled={false} />
+      </div>
     </Pad>
   ),
 };

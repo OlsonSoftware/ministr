@@ -1,7 +1,8 @@
-import { FolderPlus, MessageSquare, Sparkles } from "lucide-react";
+import { ArrowUpRight, FolderPlus, MessageSquare, Sparkles } from "lucide-react";
 import { Button } from "../../ui/button";
 import { EmptyState } from "../../ui/empty-state";
 import { cn } from "../../../lib/utils";
+import { headingDisplay, labelMicro } from "../../../lib/ui-tokens";
 
 const STARTERS = [
   "Give me a tour of the project's architecture.",
@@ -71,41 +72,74 @@ export function AskEmpty(props: Props) {
     );
   }
 
+  // ── The "ready" hero — the flagship's front door. A vertically-centered
+  //    command-deck canvas (glowing medallion + display headline + value
+  //    line + premium starter cards) so the first impression has presence
+  //    instead of a top-hugging strip over a dead void. Tone colour stays on
+  //    NON-TEXT (the medallion glyph/glow + the hover arrow); the headline,
+  //    subtitle and starter text keep full-contrast text-* for AA. ──────────
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <Sparkles
-          className="h-3.5 w-3.5 text-accent"
-          strokeWidth={2.5}
+    <div className="flex flex-1 min-h-0 flex-col items-center justify-center gap-8 px-4 py-8 text-center">
+      <div className="flex flex-col items-center gap-4">
+        <span
           aria-hidden
-        />
-        <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
-          Try asking
+          className={cn(
+            "relative grid h-14 w-14 shrink-0 place-items-center rounded-2xl",
+            "border border-accent/50 bg-surface-overlay text-accent",
+            "shadow-[var(--glow-soft)]",
+          )}
+        >
+          <Sparkles className="h-6 w-6" strokeWidth={2} />
         </span>
-        <span className="flex-1 h-px bg-border-soft" />
+        <div className="flex flex-col items-center gap-1.5">
+          <h2 className={headingDisplay}>Ask this codebase anything</h2>
+          <p className="max-w-md font-sans text-sm text-text-dim leading-relaxed">
+            Grounded answers, synthesized from what&rsquo;s actually indexed —
+            every claim carries a citation you can open.
+          </p>
+        </div>
       </div>
-      <div className="grid grid-cols-1 @min-[680px]/page:grid-cols-2 gap-2">
-        {STARTERS.map((s) => (
-          <button
-            key={s}
-            onClick={() => props.onApply(s)}
-            disabled={props.disabled}
-            className={cn(
-              "group flex items-start gap-2.5 rounded-lg",
-              "bg-surface-sunken px-3.5 py-3 text-left",
-              "hover:bg-surface-overlay hover:shadow-xs",
-              "disabled:opacity-50 disabled:hover:bg-surface-sunken disabled:hover:shadow-none",
-              "cursor-pointer disabled:cursor-not-allowed transition-all duration-150 ease-out",
-            )}
-          >
-            <span className="font-mono text-xs font-bold text-accent shrink-0 mt-0.5">
-              ?
-            </span>
-            <span className="font-sans text-sm text-text leading-snug">
-              {s}
-            </span>
-          </button>
-        ))}
+
+      <div className="w-full max-w-2xl">
+        <div className="mb-3 flex items-center gap-2.5">
+          <span className="h-px flex-1 bg-border-soft" />
+          <span className={cn(labelMicro, "inline-flex items-center gap-1.5")}>
+            <Sparkles className="h-3 w-3 text-accent" strokeWidth={2.5} aria-hidden />
+            Try asking
+          </span>
+          <span className="h-px flex-1 bg-border-soft" />
+        </div>
+        <div className="grid grid-cols-1 gap-2.5 @min-[680px]/page:grid-cols-2">
+          {STARTERS.map((s) => (
+            <button
+              key={s}
+              onClick={() => props.onApply(s)}
+              disabled={props.disabled}
+              className={cn(
+                "group flex items-center gap-3 rounded-xl text-left",
+                "border border-border bg-surface-raised px-4 py-3 shadow-xs",
+                "hover:border-border-hover hover:bg-surface-overlay hover:shadow-sm",
+                "disabled:opacity-50 disabled:shadow-none",
+                "disabled:hover:border-border disabled:hover:bg-surface-raised",
+                "cursor-pointer disabled:cursor-not-allowed",
+                "transition-all duration-150 ease-out",
+              )}
+            >
+              <span className="font-sans text-sm text-text leading-snug">
+                {s}
+              </span>
+              <ArrowUpRight
+                aria-hidden
+                strokeWidth={2.5}
+                className={cn(
+                  "ml-auto h-4 w-4 shrink-0 text-text-muted opacity-0",
+                  "transition-all duration-150 ease-out",
+                  "group-hover:opacity-100 group-hover:text-accent",
+                )}
+              />
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
