@@ -38,8 +38,15 @@ export function EntityRow({
       )}
     >
       {tag && (
-        <span className="font-mono text-mono-mini font-medium uppercase tracking-[0.08em] text-text-dim w-16 shrink-0 mt-0.5">
-          {tag}
+        // A FIXED-WIDTH tag cell holding a content-sized kind-chip. The cell
+        // keeps every name aligned at the same x (no staggered left edges);
+        // the chip inside is auto-width (so short tags aren't padded out) and
+        // truncates if a tag is unusually long — so it can never overflow into
+        // the name the way the old bare `w-16` mono label did.
+        <span className="mt-0.5 w-24 shrink-0">
+          <span className="inline-flex h-[1.125rem] max-w-full items-center rounded-md border border-border-soft bg-surface px-1.5 font-mono text-mono-micro font-semibold uppercase leading-none tracking-[0.06em] text-text-dim transition-colors duration-150 group-hover:border-border group-hover:text-text-muted">
+            <span className="truncate">{tag}</span>
+          </span>
         </span>
       )}
       <span className="min-w-0 flex-1">
