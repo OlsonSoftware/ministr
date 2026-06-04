@@ -7,6 +7,8 @@ import {
   Copy,
   Cpu,
   ExternalLink,
+  Library,
+  Sparkles,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -20,6 +22,7 @@ import type {
 import { fadeRise, listContainer, listItem } from "../../../lib/motion";
 import { Card } from "../../ui/card";
 import { CodeExcerpt } from "../../ui/code-excerpt";
+import { MetricTile } from "../../ui/metric-tile";
 import { BrutalPin } from "../../ui/brutal-icons";
 import { useEntityPanel } from "../../../hooks/useEntityPanel";
 import { basename, corpusRelative } from "../../../lib/path";
@@ -98,58 +101,76 @@ export function AskAnswer({
         <UnsupportedBanner count={verifiedUnsupported.length} />
       )}
 
-      <Card className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2 border-b border-border-soft pb-2">
-          <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
-            Answer
-          </span>
-          <span className="font-mono text-mono-mini text-text-dim tabular-nums">
-            {formatDuration(entry.elapsed_ms)}
-          </span>
-          <span className="font-mono text-mono-mini text-text-dim tabular-nums">
-            {entry.source_ids.length} source
-            {entry.source_ids.length === 1 ? "" : "s"}
-          </span>
-          {entry.model && (
-            <span
-              title={`Synthesized by ${entry.model}`}
-              className="hidden @min-[440px]/page:inline-flex items-center gap-1 font-mono text-mono-mini text-text-dim"
+      {/* The command-deck answer briefing: a lit-spine card whose accent left
+          edge rhymes with the question's accent rule, pairing Q↔A as one unit.
+          A glowing synthesis medallion + a divided vital readout replace the
+          old flat micro-label strip. */}
+      <Card className="space-y-3 border-l-2 border-l-accent/45">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-border-soft pb-3">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <AnswerMedallion />
+            <div className="min-w-0">
+              <span className="text-[15px] font-semibold leading-tight text-text">
+                Answer
+              </span>
+              <div className="flex items-center gap-1 truncate font-mono text-mono-mini text-text-dim">
+                <span>synthesized</span>
+                {entry.model && (
+                  <span
+                    title={`Synthesized by ${entry.model}`}
+                    className="hidden min-w-0 items-center gap-1 @min-[440px]/page:inline-flex"
+                  >
+                    <span aria-hidden>·</span>
+                    <Cpu
+                      className="h-3 w-3 opacity-60"
+                      strokeWidth={2}
+                      aria-hidden
+                    />
+                    <span className="max-w-[12rem] truncate">{entry.model}</span>
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Divided vital readout — the briefing's at-a-glance stats. Tone
+              stays off the numbers so they keep full AA contrast. */}
+          <div className="flex items-stretch divide-x divide-border overflow-hidden rounded-lg border border-border bg-surface">
+            <MetricTile
+              variant="cell"
+              label="elapsed"
+              value={formatDuration(entry.elapsed_ms)}
+            />
+            <MetricTile
+              variant="cell"
+              label={entry.source_ids.length === 1 ? "source" : "sources"}
+              value={entry.source_ids.length}
+            />
+          </div>
+
+          {/* Deck controls. */}
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={pinned ? onUnpin : onPin}
+              title={pinned ? "Unpin this answer" : "Pin this answer"}
+              className={cn(deckBtn, pinned ? deckBtnActive : deckBtnIdle)}
             >
-              <Cpu className="h-3 w-3 opacity-60" strokeWidth={2} aria-hidden />
-              <span className="max-w-[11rem] truncate">{entry.model}</span>
-            </span>
-          )}
-          <span className="flex-1" />
-          <button
-            onClick={pinned ? onUnpin : onPin}
-            title={pinned ? "Unpin this answer" : "Pin this answer"}
-            className={cn(
-              "inline-flex items-center gap-1 border px-1.5 py-0.5 cursor-pointer transition-colors duration-150 rounded-full",
-              "font-mono text-mono-mini font-semibold uppercase tracking-[0.08em]",
-              pinned
-                ? "border-info bg-surface-overlay text-info"
-                : "border-border-soft bg-surface text-text-muted hover:text-text hover:border-border",
-            )}
-          >
-            <BrutalPin className="h-3 w-3" />
-            {pinned ? "Pinned" : "Pin"}
-          </button>
-          <button
-            onClick={copy}
-            title={copied ? "Copied" : "Copy to clipboard"}
-            className={cn(
-              "inline-flex items-center gap-1 border px-1.5 py-0.5 cursor-pointer transition-colors duration-150 rounded-full",
-              "font-mono text-mono-mini font-semibold uppercase tracking-[0.08em]",
-              "border-border-soft bg-surface text-text-muted hover:text-text hover:border-border",
-            )}
-          >
-            {copied ? (
-              <Check className="h-3 w-3" strokeWidth={2.5} />
-            ) : (
-              <Copy className="h-3 w-3" strokeWidth={2.5} />
-            )}
-            {copied ? "Copied" : "Copy"}
-          </button>
+              <BrutalPin className="h-3 w-3" />
+              {pinned ? "Pinned" : "Pin"}
+            </button>
+            <button
+              onClick={copy}
+              title={copied ? "Copied" : "Copy to clipboard"}
+              className={cn(deckBtn, deckBtnIdle)}
+            >
+              {copied ? (
+                <Check className="h-3 w-3" strokeWidth={2.5} />
+              ) : (
+                <Copy className="h-3 w-3" strokeWidth={2.5} />
+              )}
+              {copied ? "Copied" : "Copy"}
+            </button>
+          </div>
         </div>
 
         <Answer
@@ -174,6 +195,27 @@ export function AskAnswer({
     </motion.div>
   );
 }
+
+// ── Command-deck pieces (local, mirroring the ScopeHeader language). ─────────
+
+/** The glowing synthesis medallion — a rounded tile with a soft accent glow,
+ *  marking the answer as the deck's central artefact. */
+function AnswerMedallion() {
+  return (
+    <span
+      aria-hidden
+      className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-accent/50 bg-surface-overlay text-accent shadow-[var(--glow-soft)]"
+    >
+      <Sparkles className="h-[18px] w-[18px]" strokeWidth={2} />
+    </span>
+  );
+}
+
+const deckBtn =
+  "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 cursor-pointer transition-colors duration-150 font-mono text-mono-mini font-semibold uppercase tracking-[0.08em]";
+const deckBtnIdle =
+  "border-border bg-surface text-text-muted hover:text-text hover:border-border-hover hover:bg-surface-overlay";
+const deckBtnActive = "border-info/50 bg-info/10 text-info";
 
 function UnsupportedBanner({ count }: { count: number }) {
   return (
@@ -438,15 +480,21 @@ function SourcesPanel({
   onDropSource: (contentId: string, n: number) => void;
 }) {
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-2">
-        <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
-          Sources
+    <div className="flex flex-col gap-2.5">
+      {/* Deck rule — an icon chip + label that ties the sources list to the
+          answer card's command-deck identity. */}
+      <div className="flex items-center gap-2.5">
+        <span
+          aria-hidden
+          className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-border bg-surface-overlay text-text-muted"
+        >
+          <Library className="h-3.5 w-3.5" strokeWidth={2} />
         </span>
-        <span className="font-mono text-mono-mini tabular-nums text-text-dim">
-          ({sourceIds.length})
+        <span className="text-[13px] font-semibold text-text">Sources</span>
+        <span className="rounded-full border border-border-soft bg-surface px-1.5 font-mono text-mono-mini tabular-nums text-text-dim">
+          {sourceIds.length}
         </span>
-        <span className="flex-1 h-px bg-border-soft" />
+        <span className="h-px flex-1 bg-gradient-to-r from-border to-transparent" />
         {cited.size > 0 && cited.size < sourceIds.length && (
           <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
             {cited.size} cited
