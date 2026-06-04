@@ -26,9 +26,13 @@ describe("useCachedQuery", () => {
     expect(second.result.current.data).toEqual([1]);
 
     // Explicit refresh forces a fresh fetch (the re-run affordance).
+    // Wait on the DATA, not `calls`: the fetcher bumps `calls` synchronously
+    // the instant it's invoked, so a waitFor on `calls` can win the race
+    // before the refetched data has flushed to state — the old intermittent
+    // "[1] to equal [2]" flake. Gating on data waits for the full update.
     act(() => second.result.current.refresh());
-    await waitFor(() => expect(calls).toBe(2));
-    expect(second.result.current.data).toEqual([2]);
+    await waitFor(() => expect(second.result.current.data).toEqual([2]));
+    expect(calls).toBe(2);
   });
 
   it("keys by corpus — a different corpus is a separate entry", async () => {
