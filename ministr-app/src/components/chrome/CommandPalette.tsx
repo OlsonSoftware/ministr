@@ -28,6 +28,7 @@ import {
   MessageSquare,
   Plus,
   RefreshCw,
+  Search,
   Sprout,
   Sparkles,
   SunMoon,
@@ -39,7 +40,7 @@ import type { CorpusInfo } from "../../lib/types";
 import { corpusLabel, corpusRoot } from "../../lib/corpus";
 import { popIn, scrim } from "../../lib/motion";
 import { clampPct } from "../../lib/sessions";
-import { overlayScrim } from "../../lib/ui-tokens";
+import { overlayScrim, glassPanel } from "../../lib/ui-tokens";
 import { cn } from "../../lib/utils";
 import { useSessions } from "../../hooks/useSessions";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
@@ -369,18 +370,27 @@ export function CommandPalette({
             initial="initial"
             animate="animate"
             exit="exit"
-            className="w-full max-w-xl overflow-hidden rounded-xl border border-border bg-surface shadow-lg origin-top"
+            // The floating chrome rides the Liquid-Glass tier (DESIGN.md §4):
+            // glassPanel carries the translucency + blur + specular highlight
+            // and the reduced-transparency solid fallback. The header/footer
+            // strips stay transparent so the glass reads as one sheet.
+            className={cn(glassPanel, "w-full max-w-xl origin-top overflow-hidden")}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="border-b border-border bg-surface-overlay">
+            <div className="flex items-center gap-2.5 border-b border-border px-4">
+              <Search
+                className="h-4 w-4 shrink-0 text-text-dim"
+                strokeWidth={2}
+                aria-hidden
+              />
               <input
                 ref={inputRef}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={onKeyDown}
-                placeholder="Search commands…"
+                placeholder="Search commands, projects, sessions…"
                 className={cn(
-                  "w-full bg-transparent px-4 py-3 outline-none",
+                  "min-w-0 flex-1 bg-transparent py-3 outline-none",
                   "font-mono text-sm text-text placeholder:text-text-dim",
                 )}
                 autoComplete="off"
@@ -392,7 +402,11 @@ export function CommandPalette({
                 No matches.
               </p>
             ) : (
-              <ul role="listbox" className="max-h-[52vh] overflow-y-auto p-1.5">
+              <ul
+                role="listbox"
+                aria-label="Commands"
+                className="max-h-[52vh] overflow-y-auto p-1.5"
+              >
                 {filtered.map((item, idx) => {
                   const Icon = item.icon;
                   const active = idx === highlight;
@@ -401,7 +415,9 @@ export function CommandPalette({
                   const showHeader =
                     !mode && (idx === 0 || filtered[idx - 1].category !== item.category);
                   return (
-                    <li key={item.id}>
+                    // role=presentation so the option is a DIRECT aria child
+                    // of the listbox (ARIA forbids listbox→li→option).
+                    <li key={item.id} role="presentation">
                       {showHeader && (
                         <div
                           className="px-3 pt-2 pb-1 font-mono text-mono-micro uppercase tracking-[0.08em] text-text-dim select-none"
@@ -436,8 +452,10 @@ export function CommandPalette({
                             <div
                               className={cn(
                                 "font-mono text-mono-mini truncate",
+                                // Full opacity on the active row — /70 dropped
+                                // the hint to 3.66:1 on the accent bg (< AA).
                                 active
-                                  ? "text-[var(--color-accent-fg-on)]/70"
+                                  ? "text-[var(--color-accent-fg-on)]"
                                   : "text-text-dim",
                               )}
                             >
@@ -452,7 +470,7 @@ export function CommandPalette({
               </ul>
             )}
 
-            <footer className="flex items-center justify-between gap-3 border-t border-border bg-surface-overlay px-4 py-2 font-mono text-mono-mini text-text-dim">
+            <footer className="flex items-center justify-between gap-3 border-t border-border px-4 py-2 font-mono text-mono-mini text-text-dim">
               <span className="truncate">{MODE_HINT[mode]}</span>
               <span className="flex gap-3 shrink-0">
                 <span>↑↓</span>
