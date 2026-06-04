@@ -30,6 +30,7 @@ import type { BridgeLink } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
 import { useCachedQuery } from "../../hooks/useCachedQuery";
+import { useArrowKeyListNav } from "../../hooks/useArrowKeyListNav";
 import { LensHeader, LensLoading, LensEmpty, LensRerunButton } from "../ui/lens-frame";
 
 // ── Mechanism → display meta (the seam vocabulary). ────────────────────────
@@ -80,6 +81,7 @@ export function BridgeMap({
 }: BridgeMapProps) {
   const [kindFilter, setKindFilter] = useState<string | null>(null);
   const [langFilter, setLangFilter] = useState<string | null>(null);
+  const listRef = useArrowKeyListNav<HTMLDivElement>();
 
   // Facets derived from the data — mechanism + language tallies.
   const kinds = useMemo(() => {
@@ -219,7 +221,7 @@ export function BridgeMap({
       </LensHeader>
 
       {/* ── The seams, grouped by mechanism. ───────────────────────────── */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
         {filtered.length === 0 ? (
           <p className="px-4 py-6 font-mono text-mono-mini text-text-dim">
             No bridges match the current filter.
@@ -275,6 +277,7 @@ function BridgeRow({
     <div
       role="button"
       tabIndex={0}
+      data-roving-item
       onClick={onInspect}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {

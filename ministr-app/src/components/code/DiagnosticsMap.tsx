@@ -30,6 +30,7 @@ import type { Diagnostic, DiagnosticSeverity, SymbolInfo } from "../../lib/types
 import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
 import { useCachedQuery } from "../../hooks/useCachedQuery";
+import { useArrowKeyListNav } from "../../hooks/useArrowKeyListNav";
 import {
   LensHeader,
   LensLoading,
@@ -103,6 +104,7 @@ export function DiagnosticsMap({
   onOpenFile,
 }: DiagnosticsMapProps) {
   const [sevFilter, setSevFilter] = useState<DiagnosticSeverity | null>(null);
+  const listRef = useArrowKeyListNav<HTMLDivElement>();
 
   const counts = useMemo(() => {
     const c: Record<DiagnosticSeverity, number> = {
@@ -234,7 +236,7 @@ export function DiagnosticsMap({
       </LensHeader>
 
       {/* ── Diagnostics, grouped by file (errors-first). ───────────────── */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
         {groups.map(([file, group]) => {
           const fe = group.filter((d) => d.severity === "error").length;
           const fw = group.filter((d) => d.severity === "warning").length;
@@ -297,6 +299,7 @@ function DiagnosticRow({
     <div
       role="button"
       tabIndex={0}
+      data-roving-item
       onClick={() => onOpenFile(diag.file, diag.line_start)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {

@@ -21,6 +21,7 @@ import type { DeadSymbol, SymbolInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
 import { useCachedQuery } from "../../hooks/useCachedQuery";
+import { useArrowKeyListNav } from "../../hooks/useArrowKeyListNav";
 import { LensHeader, LensLoading, LensEmpty, LensRerunButton } from "../ui/lens-frame";
 
 function fileTail(path: string): string {
@@ -52,6 +53,7 @@ export function DeadCodeMap({
   onOpenFile,
 }: DeadCodeMapProps) {
   const [kindFilter, setKindFilter] = useState<string | null>(null);
+  const listRef = useArrowKeyListNav<HTMLDivElement>();
 
   const kinds = useMemo(() => {
     const m = new Map<string, number>();
@@ -152,7 +154,7 @@ export function DeadCodeMap({
       </LensHeader>
 
       {/* ── Candidates, grouped by file. ───────────────────────────────── */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
         {groups.map(([file, group]) => {
           const reclaim = group.reduce((a, s) => a + s.lines, 0);
           return (
@@ -211,6 +213,7 @@ function DeadRow({
     <div
       role="button"
       tabIndex={0}
+      data-roving-item
       onClick={onInspect}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {

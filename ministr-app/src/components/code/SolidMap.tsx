@@ -32,6 +32,7 @@ import type { SymbolInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
 import { useCachedQuery } from "../../hooks/useCachedQuery";
+import { useArrowKeyListNav } from "../../hooks/useArrowKeyListNav";
 import { LensHeader, LensLoading, LensEmpty, LensRerunButton } from "../ui/lens-frame";
 
 // ── Principle → display meta. ──────────────────────────────────────────────
@@ -168,6 +169,7 @@ export function SolidMap({
   onOpenFile,
 }: SolidMapProps) {
   const [principleFilter, setPrincipleFilter] = useState<string | null>(null);
+  const listRef = useArrowKeyListNav<HTMLDivElement>();
 
   const normalized = useMemo(() => findings.map(summarise), [findings]);
 
@@ -257,7 +259,7 @@ export function SolidMap({
         </div>
       </LensHeader>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-2.5">
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-3 space-y-2.5">
         {ordered.map((n, i) => (
           <FindingCard
             key={`${n.principle}:${n.title}:${i}`}
@@ -307,6 +309,7 @@ function FindingCard({
             key={s.symbol_id || `${s.file}:${s.line}`}
             role="button"
             tabIndex={0}
+            data-roving-item
             onClick={() => onInspect(s)}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {

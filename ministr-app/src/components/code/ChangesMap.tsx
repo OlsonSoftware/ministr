@@ -28,6 +28,7 @@ import {
 import type { ChangedSymbol, DiffImpact, ImpactedSymbol, SymbolInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
+import { useArrowKeyListNav } from "../../hooks/useArrowKeyListNav";
 import { LensLoading, LensEmpty } from "../ui/lens-frame";
 
 function baseName(path: string): string {
@@ -113,6 +114,8 @@ export function ChangesMap({
     return [...byFile.entries()].sort((a, b) => b[1].length - a[1].length);
   }, [data]);
 
+  const listRef = useArrowKeyListNav<HTMLDivElement>();
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* ── Range bar — the diff object's identity + a glance summary. ──── */}
@@ -188,7 +191,7 @@ export function ChangesMap({
           hint={`No indexed symbols were touched by ${data.range}. The range may be empty, touch only un-indexed files (config, docs), or fall outside symbol bodies.`}
         />
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
           {/* WHAT changed — symbols grouped by file, with authorship. */}
           {groups.map(([file, syms]) => (
             <section key={file} className="border-b border-border-soft last:border-b-0">
@@ -274,6 +277,7 @@ function ChangedRow({
     <div
       role="button"
       tabIndex={0}
+      data-roving-item
       onClick={onInspect}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -377,6 +381,7 @@ function BlastRadius({
             key={c.symbol_id || `${c.file}:${c.line}`}
             role="button"
             tabIndex={0}
+            data-roving-item
             onClick={() => onInspect(c.symbol_id, c.name, c.kind, c.file)}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
