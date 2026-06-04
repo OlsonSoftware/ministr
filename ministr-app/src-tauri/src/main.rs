@@ -27,6 +27,32 @@ fn main() {
     ministr_core::tracing::init_tracing_with_file(&log_path);
 
     tauri::Builder::default()
+        // macOS 26 (Tahoe) crash guard. The Tauri default menu includes a Help
+        // submenu, into which AppKit auto-injects a searchable "Spotlight for
+        // Help" field. On Tahoe that field's NSSearchFieldCell builds its symbol
+        // images from a dictionary containing a nil SF-Symbol, throwing
+        // NSInvalidArgumentException during NSMenuBarTrackingSession — i.e. the
+        // app SIGABRTs the moment the user clicks the menu bar. The fault is
+        // entirely in system frameworks; the only lever we control is the
+        // trigger. Build the standard menu but drop the Help submenu so AppKit
+        // never instantiates the search field (App/Edit/View/Window — clipboard
+        // and window controls — are preserved). Other platforms keep the
+        // default unchanged. See roadmap: app-help-menu-searchfield-crash.
+        .menu(|handle| {
+            let menu = tauri::menu::Menu::default(handle)?;
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::menu::MenuItemKind;
+                for item in menu.items()? {
+                    if let MenuItemKind::Submenu(submenu) = item
+                        && submenu.text().is_ok_and(|text| text == "Help")
+                    {
+                        menu.remove(&submenu)?;
+                    }
+                }
+            }
+            Ok(menu)
+        })
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // When a second instance is launched, show the main window.
             if let Some(window) = app.get_webview_window("main") {
