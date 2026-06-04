@@ -103,6 +103,7 @@ function Shell({
           error={error}
           onOpenLogs={() => {}}
           onOpenPalette={() => {}}
+          onOpenAccount={() => {}}
           onAddProject={() => {}}
         />
       </WorkspaceProvider>

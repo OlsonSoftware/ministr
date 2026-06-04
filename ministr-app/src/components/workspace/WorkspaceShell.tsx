@@ -60,11 +60,18 @@ export function WorkspaceShell({
 
   return (
     <div className="flex flex-col h-full min-h-0 bg-bg">
-      {/* Row 1 — the spine chrome (wordmark · spine · vitals · ⌘K · daemon). */}
+      {/* Row 1 — the spine chrome (wordmark · spine · vitals · ⌘K · daemon).
+          Shares the raised tier with the FacetBar + ScopeHeader below it, so
+          the whole top region reads as one layered command frame above the
+          facet body, with a faint lit top edge for the app's "powered" edge. */}
       <header
-        className="flex items-center gap-3 border-b border-border bg-surface px-3 h-12 shrink-0"
+        className="relative flex items-center gap-3 border-b border-border bg-surface-raised px-3 h-12 shrink-0"
         role="banner"
       >
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/30 to-transparent"
+        />
         <div className="ministr-wordmark shrink-0 select-none">ministr</div>
         <div className="h-5 w-px bg-border shrink-0" aria-hidden />
         <SpinePicker onAddProject={onAddProject} />
@@ -101,7 +108,7 @@ export function WorkspaceShell({
             )}
           >
             <Search className="h-3.5 w-3.5" strokeWidth={2} />
-            <kbd className="font-mono text-mono-micro rounded border border-border bg-surface-overlay px-1 py-px">
+            <kbd className="rounded-md border border-border bg-surface-overlay px-1.5 py-px font-mono text-[11px] font-medium leading-none text-text-muted">
               ⌘K
             </kbd>
           </button>
