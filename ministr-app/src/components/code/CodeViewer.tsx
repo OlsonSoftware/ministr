@@ -122,14 +122,22 @@ export function CodeViewer({
     };
   }, [html, spanById]);
 
-  // Scroll the focus line into view + flash it once the html is in the DOM.
+  // Scroll the focus line into view, FLASH it once, and leave it SUBTLY marked
+  // as the current line (so you keep your place after the flash fades). Re-runs
+  // when the html re-renders (re-applies the marker) or the focus line moves.
   useEffect(() => {
     const root = containerRef.current;
-    if (!root || !html || !focusLine) return;
+    if (!root || !html) return;
+    // Clear any previous persistent marker before (re)applying.
+    root
+      .querySelectorAll<HTMLElement>(".line.code-line-active")
+      .forEach((el) => el.classList.remove("code-line-active"));
+    if (!focusLine) return;
     const lines = root.querySelectorAll<HTMLElement>(".line");
     const target = lines[focusLine - 1];
     if (!target) return;
-    target.classList.add("code-line-focus");
+    target.classList.add("code-line-active"); // persistent current-line marker
+    target.classList.add("code-line-focus"); // one-shot flash
     target.scrollIntoView({ block: "center", behavior: "smooth" });
     const id = window.setTimeout(
       () => target.classList.remove("code-line-focus"),

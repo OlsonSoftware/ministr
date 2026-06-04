@@ -42,8 +42,17 @@
   user-select: none;
 }
 
+/* The line you navigated to FLASHES once (loud), then fades after ~1.6s. */
 .code-viewer .line.code-line-focus {
   background: var(--color-surface-overlay);
+}
+
+/* …and stays SUBTLY marked as the current line, so you keep your place after
+ * the flash fades. A left accent bar (inset shadow — no layout shift) + a faint
+ * accent wash. Persistent until you navigate to another line. */
+.code-viewer .line.code-line-active {
+  background: color-mix(in oklab, var(--color-accent) 7%, transparent);
+  box-shadow: inset 2px 0 0 0 var(--color-accent);
 }
 
 /* A definition name the index resolves — clickable. */
