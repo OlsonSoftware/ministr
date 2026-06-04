@@ -1,12 +1,14 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Activity, Compass } from "lucide-react";
+import { Activity, Compass, MessageSquare, Sprout } from "lucide-react";
 import { FacetHeader } from "./facet-header";
+import { Badge } from "./badge";
 import { Button } from "./button";
 
 /**
- * FacetHeader — the shared facet title row (icon? + title + glance + actions +
- * optional sub-content). The cohesion grammar adopted by Activity and Fleet so
- * the workspace facets share one identity row (aaa-views-cohesion-sweep).
+ * FacetHeader — the shared facet title row (icon? + title + optional inline
+ * scope chip + glance + actions + optional sub-content). The cohesion grammar
+ * adopted by every workspace facet (Ask/Activity/Tend/Fleet) so they share one
+ * identity row (aaa-views-cohesion-sweep, aaa-cohesion-ask-tend-header).
  */
 const meta = {
   title: "UI/FacetHeader",
@@ -17,10 +19,11 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** Title + glance only — the minimal facet identity row. */
+/** Icon + title + glance — the Activity identity row. */
 export const TitleAndGlance: Story = {
   args: {
-    title: "Sessions",
+    icon: Activity,
+    title: "Activity",
     glance: "4 live agent sessions.",
   },
 };
@@ -50,6 +53,36 @@ export const WithActions: Story = {
           Scan
         </Button>
         <Button size="sm">Add project</Button>
+      </>
+    ),
+  },
+};
+
+/** With an inline scope chip after the title + `bare` (the Ask pattern — the
+ *  facet hosts the row inside its own padded layout, so the built-in padding
+ *  is dropped). */
+export const ScopedAndBare: Story = {
+  args: {
+    icon: MessageSquare,
+    title: "Ask",
+    scope: "MINISTR",
+    bare: true,
+  },
+};
+
+/** Status + action grouped on the right (the Tend pattern). */
+export const StatusActions: Story = {
+  args: {
+    icon: Sprout,
+    title: "Tend",
+    actions: (
+      <>
+        <Badge variant="success" dot>
+          Ready
+        </Badge>
+        <Button variant="outline" size="sm">
+          Re-index
+        </Button>
       </>
     ),
   },

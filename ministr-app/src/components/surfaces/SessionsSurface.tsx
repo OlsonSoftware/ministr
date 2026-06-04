@@ -8,7 +8,7 @@
  * derivations — no own fetch.
  */
 import { useMemo, useState } from "react";
-import { Users } from "lucide-react";
+import { Activity, Users } from "lucide-react";
 import { motion } from "motion/react";
 
 import type { CorpusInfo, DaemonStatus, SessionDetail } from "../../lib/types";
@@ -107,7 +107,8 @@ export function SessionsSurface({
     <AdaptiveSurface>
       <div className="h-full flex flex-col min-h-0">
         <FacetHeader
-          title="Sessions"
+          icon={Activity}
+          title="Activity"
           glance={
             agg.count === 0
               ? "No agents connected."

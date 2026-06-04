@@ -37,6 +37,7 @@ import { cn } from "../../lib/utils";
 import { AdaptiveSurface } from "../ui/adaptive-surface";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { FacetHeader } from "../ui/facet-header";
 import { Card } from "../ui/card";
 import { ConfirmDialog } from "../ui/confirm-dialog";
 import { ContentTray } from "../ui/content-tray";
@@ -100,34 +101,40 @@ function TendBody({
   return (
     <AdaptiveSurface>
       <div className="h-full flex flex-col min-h-0">
-        {/* ── Care toolbar — status + the one-keystroke action. Identity +
-            size stats already live in the shell ScopeHeader above, so Tend
-            never re-renders them (OOUX: one context, no duplicate render). ── */}
-        <header className="flex items-center justify-between gap-4 px-5 pt-5 pb-3 shrink-0">
-          <div className="flex items-center gap-2">
-            <Badge variant={statusVariant} dot>
-              {statusLabel}
-            </Badge>
-            {corpus.active_sessions > 0 && (
-              <Badge variant="default" dot>
-                {corpus.active_sessions} live
+        {/* ── Care facet identity + toolbar — the shared FacetHeader grammar
+            (icon + title + right-aligned status/action), echoing the FacetBar
+            tab so Tend reads as one workspace facet. Project identity + size
+            stats still live in the shell ScopeHeader above, so Tend never
+            re-renders them (OOUX: one context, no duplicate render). ── */}
+        <FacetHeader
+          icon={Sprout}
+          title="Tend"
+          actions={
+            <>
+              <Badge variant={statusVariant} dot>
+                {statusLabel}
               </Badge>
-            )}
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setConfirmReindex(true)}
-            disabled={!!indexing}
-            className="shrink-0"
-          >
-            <RefreshCw
-              className={cn("h-3.5 w-3.5", indexing && "animate-spin")}
-              strokeWidth={2}
-            />
-            {indexing ? "Indexing…" : "Re-index"}
-          </Button>
-        </header>
+              {corpus.active_sessions > 0 && (
+                <Badge variant="default" dot>
+                  {corpus.active_sessions} live
+                </Badge>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setConfirmReindex(true)}
+                disabled={!!indexing}
+                className="shrink-0"
+              >
+                <RefreshCw
+                  className={cn("h-3.5 w-3.5", indexing && "animate-spin")}
+                  strokeWidth={2}
+                />
+                {indexing ? "Indexing…" : "Re-index"}
+              </Button>
+            </>
+          }
+        />
 
         <div className="flex-1 min-h-0 overflow-y-auto px-5 pb-6 space-y-4">
           {/* Live indexing progress — a fresh inline bar derived straight

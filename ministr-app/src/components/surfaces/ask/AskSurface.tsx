@@ -15,10 +15,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
-import { Sparkles } from "lucide-react";
+import { MessageSquare } from "lucide-react";
 
-import type { CorpusInfo, DaemonStatus } from "../../../lib/types";
+import type { DaemonStatus } from "../../../lib/types";
 import { AdaptiveSurface } from "../../ui/adaptive-surface";
+import { FacetHeader } from "../../ui/facet-header";
 import { corpusLabel } from "../../../lib/corpus";
 import { cn } from "../../../lib/utils";
 import { useWorkspaceOptional } from "../../workspace/WorkspaceContext";
@@ -355,7 +356,12 @@ export function AskSurface({ status, activeCorpusId }: Props) {
     <AdaptiveSurface>
       <div className="@container/page flex h-full gap-4 min-h-0 p-5">
         <div className="flex-1 min-w-0 flex flex-col gap-3 min-h-0">
-          <Header corpus={corpus} />
+          <FacetHeader
+            bare
+            icon={MessageSquare}
+            title="Ask"
+            scope={corpusLabel(corpus)}
+          />
 
           <div className="flex-1 min-h-0 overflow-y-auto pr-1 flex flex-col gap-6">
             {empty &&
@@ -435,24 +441,5 @@ export function AskSurface({ status, activeCorpusId }: Props) {
         </aside>
       </div>
     </AdaptiveSurface>
-  );
-}
-
-function Header({ corpus }: { corpus: CorpusInfo }) {
-  return (
-    <div className="flex items-center justify-between gap-3 shrink-0">
-      <div className="flex items-baseline gap-3 min-w-0">
-        <Sparkles
-          className="h-4 w-4 text-accent shrink-0 self-center"
-          strokeWidth={2.5}
-        />
-        <h1 className="font-sans text-2xl font-bold text-text leading-none">
-          Ask
-        </h1>
-        <span className="font-mono text-xs uppercase tracking-[0.08em] text-text-dim truncate">
-          {corpusLabel(corpus)}
-        </span>
-      </div>
-    </div>
   );
 }
