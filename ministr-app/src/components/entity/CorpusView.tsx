@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { Boxes } from "lucide-react";
 import { useEntityPanel, type Entity } from "../../hooks/useEntityPanel";
 import { useSessions } from "../../hooks/useSessions";
 import { EntityRow } from "./EntityRow";
@@ -68,25 +69,38 @@ export function CorpusView({ entity }: Props) {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* §1 Overview */}
+      {/* §1 Overview — a command-deck identity header (the corpus = the
+          project; uses the SAME Boxes glyph as its ScopeHeader banner) over
+          the paths, model, and per-corpus config editor. */}
       <EntitySection chapter={1} title="Overview">
-        <div className="px-3 py-3 space-y-1.5">
-          <p className="font-mono text-base font-bold text-text break-all">
-            {corpusLabel(corpus)}
-          </p>
-          {corpus.paths.map((p) => (
-            <p
-              key={p}
-              className="font-mono text-xs text-text-dim break-all"
+        <div className="space-y-2.5 px-3 py-3">
+          <div className="flex items-start gap-3">
+            {/* Quiet accent medallion — no glow (the inspector is static). */}
+            <span
+              aria-hidden
+              className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-accent/40 bg-surface-overlay text-accent"
             >
-              {p}
-            </p>
-          ))}
-          {corpus.model ? (
-            <p className="font-mono text-xs text-text-dim pt-1">
-              model <span className="text-text">{corpus.model}</span>
-            </p>
-          ) : null}
+              <Boxes className="h-[18px] w-[18px]" strokeWidth={2} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="break-all font-mono text-[15px] font-semibold leading-tight text-text">
+                {corpusLabel(corpus)}
+              </p>
+              {corpus.paths.map((p) => (
+                <p
+                  key={p}
+                  className="mt-0.5 break-all font-mono text-mono-mini text-text-dim"
+                >
+                  {p}
+                </p>
+              ))}
+              {corpus.model ? (
+                <p className="mt-1 font-mono text-mono-mini text-text-dim">
+                  model <span className="text-text">{corpus.model}</span>
+                </p>
+              ) : null}
+            </div>
+          </div>
           <CorpusConfigEditor corpus={corpus} />
         </div>
       </EntitySection>
