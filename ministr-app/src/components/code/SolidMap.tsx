@@ -154,6 +154,9 @@ export interface SolidMapProps {
   refreshing?: boolean;
   /** Inspect an involved symbol in the shared EntityPanel. */
   onInspect: (ref: SolidSymbolRef) => void;
+  /** Open an involved symbol's file in the code lens (the cross-lens
+   *  open-to-code affordance — keeps Quality consistent with the other lenses). */
+  onOpenFile?: (path: string, line: number) => void;
 }
 
 export function SolidMap({
@@ -162,6 +165,7 @@ export function SolidMap({
   onRefresh,
   refreshing = false,
   onInspect,
+  onOpenFile,
 }: SolidMapProps) {
   const [principleFilter, setPrincipleFilter] = useState<string | null>(null);
 
@@ -255,7 +259,12 @@ export function SolidMap({
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-2.5">
         {ordered.map((n, i) => (
-          <FindingCard key={`${n.principle}:${n.title}:${i}`} n={n} onInspect={onInspect} />
+          <FindingCard
+            key={`${n.principle}:${n.title}:${i}`}
+            n={n}
+            onInspect={onInspect}
+            onOpenFile={onOpenFile}
+          />
         ))}
       </div>
     </div>
@@ -265,9 +274,11 @@ export function SolidMap({
 function FindingCard({
   n,
   onInspect,
+  onOpenFile,
 }: {
   n: Normalized;
   onInspect: (ref: SolidSymbolRef) => void;
+  onOpenFile?: (path: string, line: number) => void;
 }) {
   const meta = principleMeta(n.principle);
   const Icon = meta.icon;
@@ -290,11 +301,20 @@ function FindingCard({
       </p>
       <div className="divide-y divide-border-soft/60">
         {n.symbols.slice(0, 8).map((s) => (
-          <button
+          // Row = inspect the symbol; the file:line chip = open it in the code
+          // lens (the shared cross-lens convention — inspect vs. open-to-code).
+          <div
             key={s.symbol_id || `${s.file}:${s.line}`}
-            type="button"
+            role="button"
+            tabIndex={0}
             onClick={() => onInspect(s)}
-            title={`Inspect ${s.name} · ${s.file}:${s.line}`}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onInspect(s);
+              }
+            }}
+            title={`Inspect ${s.name}`}
             className="group flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-surface-overlay cursor-pointer transition-colors duration-150 ease-out"
           >
             <ChevronRight
@@ -307,10 +327,24 @@ function FindingCard({
             <span className="truncate font-mono text-mono-mini font-semibold text-text">
               {s.name}
             </span>
-            <span className="ml-auto shrink-0 truncate font-mono text-mono-micro text-text-dim">
-              {fileTail(s.file)}:{s.line}
-            </span>
-          </button>
+            {onOpenFile ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenFile(s.file, s.line);
+                }}
+                title={`Open ${s.file}:${s.line}`}
+                className="ml-auto shrink-0 truncate font-mono text-mono-micro text-text-dim hover:text-accent cursor-pointer transition-colors duration-150"
+              >
+                {fileTail(s.file)}:{s.line}
+              </button>
+            ) : (
+              <span className="ml-auto shrink-0 truncate font-mono text-mono-micro text-text-dim">
+                {fileTail(s.file)}:{s.line}
+              </span>
+            )}
+          </div>
         ))}
         {n.symbols.length > 8 && (
           <p className="px-3 py-1.5 font-mono text-mono-micro text-text-dim">
@@ -369,7 +403,13 @@ function solidRefToSymbolInfo(r: SolidSymbolRef): SymbolInfo {
   };
 }
 
-export function SolidMapConnector({ corpusId }: { corpusId: string }) {
+export function SolidMapConnector({
+  corpusId,
+  onOpenFile,
+}: {
+  corpusId: string;
+  onOpenFile?: (path: string, line: number) => void;
+}) {
   const { openEntity } = useEntityPanel();
   const { data, loading, refreshing, refresh } = useCachedQuery<SolidFinding[]>(
     corpusId,
@@ -387,6 +427,7 @@ export function SolidMapConnector({ corpusId }: { corpusId: string }) {
       onInspect={(r) =>
         openEntity({ kind: "symbol", corpusId, symbol: solidRefToSymbolInfo(r) })
       }
+      onOpenFile={onOpenFile}
     />
   );
 }

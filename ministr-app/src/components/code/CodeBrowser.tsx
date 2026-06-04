@@ -368,7 +368,13 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
         </div>
       ) : lens === "solid" ? (
         <div className="min-h-0 flex-1">
-          <SolidMapConnector corpusId={corpusId} />
+          <SolidMapConnector
+            corpusId={corpusId}
+            onOpenFile={(p, line) => {
+              selectLens("code");
+              nav.push({ path: p, line });
+            }}
+          />
         </div>
       ) : lens === "diagnostics" ? (
         <div className="min-h-0 flex-1">

@@ -88,7 +88,7 @@ const meta = {
   title: "Code/SolidMap",
   component: SolidMap,
   parameters: { layout: "fullscreen" },
-  args: { onInspect: noop },
+  args: { onInspect: noop, onOpenFile: noop },
   decorators: [
     (Story) => (
       <div className="h-[820px] w-full bg-bg">
