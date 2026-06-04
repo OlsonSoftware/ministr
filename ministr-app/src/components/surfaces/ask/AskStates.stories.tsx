@@ -5,6 +5,7 @@ import { AskAnswer } from "./AskAnswer";
 import { AskEmpty } from "./AskEmpty";
 import { AskInput } from "./AskInput";
 import { AskStatus } from "./AskStatus";
+import { ErrorCard } from "./ErrorCard";
 import { PinnedAnswers } from "./PinnedAnswers";
 import type { RecentEntry } from "./internals";
 import { withTauriMock } from "../../../../.storybook/tauri-mock";
@@ -204,6 +205,36 @@ export const StatusFromCache: Story = {
   render: () => (
     <Pad>
       <AskStatus phase="done" cached />
+    </Pad>
+  ),
+};
+
+// ── Failed turn — the command-deck fault panel ──────────────────────────────
+
+export const ErrorInferenceUnavailable: Story = {
+  render: () => (
+    <Pad>
+      <ErrorCard
+        message="inference failed: spawn claude ENOENT"
+        onRetry={() => {}}
+        health={{
+          available: false,
+          reason: "The `claude` binary was not found on your PATH.",
+          binary_path: null,
+        }}
+      />
+    </Pad>
+  ),
+};
+
+export const ErrorGeneric: Story = {
+  render: () => (
+    <Pad>
+      <ErrorCard
+        message="retrieval failed: the daemon dropped the connection mid-stream"
+        onRetry={() => {}}
+        health={{ available: true, reason: "", binary_path: "/usr/local/bin/claude" }}
+      />
     </Pad>
   ),
 };
