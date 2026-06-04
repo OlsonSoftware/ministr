@@ -289,6 +289,61 @@ export type SolidFinding =
       example_edges_omitted?: number;
     };
 
+// ── Diff-aware blast radius + blame (the Explore "Changes" lens — FL7) ──
+
+/** One contributor's share of a changed symbol's lines (git blame). */
+export interface ChangeAuthor {
+  name: string;
+  lines: number;
+}
+
+/** A symbol a git range touched (the diff seed set), with authorship — from
+ *  the `diff_impact` command. `line` is the symbol's start line. */
+export interface ChangedSymbol {
+  symbol_id: string;
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  /** Contributors to the symbol's lines, most lines first (top 4). */
+  authors: ChangeAuthor[];
+  /** Author of the most-recently-committed line in the symbol's range. */
+  last_author: string | null;
+}
+
+/** One node in the union blast radius across all changed symbols. */
+export interface ImpactedSymbol {
+  symbol_id: string;
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  /** Shallowest call-graph distance from any changed symbol. */
+  depth: number;
+}
+
+/** Diff-aware blast radius for the Explore "Changes" lens — what a branch
+ *  range changed and what it can break. Returned by the `diff_impact` command
+ *  (the GUI mirror of FL7's `ministr_impact` range op). */
+export interface DiffImpact {
+  /** The revision range analysed (e.g. `main..HEAD`). */
+  range: string;
+  /** Number of changed files that contained indexed symbols. */
+  changed_files: number;
+  /** Symbols the range touched — the seed set. */
+  changed_symbols: ChangedSymbol[];
+  /** Distinct symbols in the union blast radius. */
+  impacted_symbols: number;
+  /** Distinct files in the union blast radius. */
+  impacted_files: number;
+  /** Distinct test files in the union blast radius. */
+  impacted_tests: number;
+  /** Aggregate risk of the union (`low` | `medium` | `high`). */
+  risk: "low" | "medium" | "high";
+  /** The union of impacted nodes (deduped, shallowest depth, bounded). */
+  impacted: ImpactedSymbol[];
+}
+
 /** Full symbol definition returned by `symbol_definition`. */
 export interface SymbolDefinitionDetail {
   id: string;

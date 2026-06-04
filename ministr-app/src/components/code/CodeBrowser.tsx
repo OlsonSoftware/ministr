@@ -16,6 +16,7 @@ import {
   Cable,
   Code2,
   Command,
+  GitCompareArrows,
   PanelRight,
   ShieldCheck,
   Stethoscope,
@@ -38,6 +39,7 @@ import { BridgeMapConnector } from "./BridgeMap";
 import { DeadCodeMapConnector } from "./DeadCodeMap";
 import { SolidMapConnector } from "./SolidMap";
 import { DiagnosticsMapConnector } from "./DiagnosticsMap";
+import { ChangesMapConnector } from "./ChangesMap";
 import { SymbolNeighborhoodConnector } from "./SymbolNeighborhood";
 import { RelatedFilesPanel } from "./RelatedFilesPanel";
 import { SymbolPalette } from "./SymbolPalette";
@@ -356,6 +358,17 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
             }}
           />
         </div>
+      ) : lens === "changes" ? (
+        <div className="min-h-0 flex-1">
+          <ChangesMapConnector
+            corpusId={corpusId}
+            repoPath={corpus?.paths[0] ?? null}
+            onOpenFile={(p, line) => {
+              setLens("code");
+              nav.push({ path: p, line });
+            }}
+          />
+        </div>
       ) : (
       <div
         ref={gridRef}
@@ -454,13 +467,14 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
   );
 }
 
-type Lens = "code" | "bridges" | "unused" | "solid" | "diagnostics";
+type Lens = "code" | "bridges" | "unused" | "solid" | "diagnostics" | "changes";
 
-/** Code | Bridges | Unused | Quality | Diagnostics lens switch — the five ways
- *  to read the index: file-by-file, by its cross-language seams, by what nothing
- *  references (dead code), by SOLID/architecture smells, or by the project's own
- *  toolchain findings (the verify stage). A segmented control in the Explore
- *  header. */
+/** Code | Bridges | Unused | Quality | Diagnostics | Changes lens switch — the
+ *  six ways to read the index: file-by-file, by its cross-language seams, by
+ *  what nothing references (dead code), by SOLID/architecture smells, by the
+ *  project's own toolchain findings (the verify stage), or by a branch DIFF
+ *  (what changed + who owns it + what it can break). A segmented control in the
+ *  Explore header. */
 function LensToggle({
   lens,
   onChange,
@@ -474,6 +488,7 @@ function LensToggle({
     { id: "unused", label: "Unused", icon: Trash2 },
     { id: "solid", label: "Quality", icon: ShieldCheck },
     { id: "diagnostics", label: "Diagnostics", icon: Stethoscope },
+    { id: "changes", label: "Changes", icon: GitCompareArrows },
   ];
   return (
     <div
