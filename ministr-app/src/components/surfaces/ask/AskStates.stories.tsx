@@ -158,12 +158,28 @@ export const AnswerWithUnsupportedClaims: Story = {
   ),
 };
 
-// ── Streaming status strip ─────────────────────────────────────────────────
+// ── Streaming status strip — the live pipeline, one story per stage ─────────
+
+export const StatusAnalyzing: Story = {
+  render: () => (
+    <Pad>
+      <AskStatus phase="analyzing" />
+    </Pad>
+  ),
+};
 
 export const StatusThinking: Story = {
   render: () => (
     <Pad>
       <AskStatus phase="retrieving" />
+    </Pad>
+  ),
+};
+
+export const StatusReranking: Story = {
+  render: () => (
+    <Pad>
+      <AskStatus phase="reranking" />
     </Pad>
   ),
 };
