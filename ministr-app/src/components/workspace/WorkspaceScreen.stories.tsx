@@ -1,12 +1,16 @@
+import type { ReactNode } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 import { withTauriMock } from "../../../.storybook/tauri-mock";
 import { ToastProvider } from "../shell/ToastTray";
 import { EntityPanelProvider } from "../../hooks/useEntityPanel";
 import { WorkspaceScreen } from "./WorkspaceScreen";
+import { OpenSessionInspector } from "./story-open-inspector";
 import { WorkspaceProvider, type FacetId, type Spine } from "./WorkspaceContext";
 import {
   LIVE_CORPORA,
   LIVE_FIXTURES,
+  LIVE_SESSIONS,
   LIVE_STATUS,
   seedAskThreads,
 } from "./live-fixtures";
@@ -28,7 +32,15 @@ import {
  * scopes them, and Playwright can switch facets + zoom Fleet→project.
  */
 
-function Screen({ spine, facet }: { spine: Spine; facet: FacetId }) {
+function Screen({
+  spine,
+  facet,
+  children,
+}: {
+  spine: Spine;
+  facet: FacetId;
+  children?: ReactNode;
+}) {
   return (
     <ToastProvider>
       <EntityPanelProvider>
@@ -49,6 +61,7 @@ function Screen({ spine, facet }: { spine: Spine; facet: FacetId }) {
               onRefresh={() => {}}
             />
           </div>
+          {children}
         </WorkspaceProvider>
       </EntityPanelProvider>
     </ToastProvider>
@@ -96,4 +109,66 @@ export const Tend: Story = {
 };
 export const Fleet: Story = {
   render: () => <Screen spine={{ kind: "fleet" }} facet="ask" />,
+};
+
+// ── Cross-facet jump e2e: Sessions "code touched" chip → Explore symbol peek ─
+//
+// Closes the verification gap on aaa-explore-session-codetouched: the jump
+// shipped "verified by construction" but the full live click-through was never
+// driven end-to-end. This story opens the real session inspector (programmatic
+// open — the trigger isn't the gap), then the `play` clicks a real code-touched
+// symbol chip and asserts the WHOLE integrated path fired: the inspector closed,
+// the Explore facet activated, and the symbol NEIGHBORHOOD PEEK resolved open.
+//
+// The peek is the discriminator: a search_symbols MISS only re-navigates the
+// file (no peek), so asserting the "Neighborhood" peek proves a real resolve
+// HIT, not the file-only fallback. Runs in both browser projects → light+dark.
+
+export const CodeTouchedJump: Story = {
+  render: () => (
+    <Screen spine={{ kind: "project", id: "ministr" }} facet="activity">
+      {/* sess-arch-01 — the session the activity feed is scoped to. */}
+      <OpenSessionInspector session={LIVE_SESSIONS[0]} />
+    </Screen>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // The session inspector renders §1 "Code touched" with a live symbol chip.
+    await canvas.findByText("Code touched", undefined, { timeout: 5000 });
+    const chip = await canvas.findByRole(
+      "button",
+      { name: "survey" },
+      { timeout: 5000 },
+    );
+
+    // Click the chip → cross-facet jump into Explore at that symbol.
+    await userEvent.click(chip);
+
+    // The jump landed: the symbol NEIGHBORHOOD peek resolved open AND loaded the
+    // symbol's real definition. "Go to definition" only renders when the async
+    // symbol_definition resolved non-null — i.e. a real search_symbols HIT
+    // (openSymbol), NOT the file-only fallback (which opens no peek at all). This
+    // is the discriminating assertion: it can't pass on a mere facet flip.
+    await waitFor(
+      () =>
+        expect(
+          canvas.getByRole("button", { name: /go to definition/i }),
+        ).toBeInTheDocument(),
+      { timeout: 5000 },
+    );
+    // The peek chrome + the clicked symbol's identity.
+    expect(canvas.getByText("Neighborhood")).toBeInTheDocument();
+    expect(
+      canvas.getByRole("button", { name: "Close neighborhood" }),
+    ).toBeInTheDocument();
+    expect(canvas.getAllByText("survey").length).toBeGreaterThan(0);
+
+    // We left Sessions: revealInExplore closed the inspector (§1 is gone).
+    // waitFor the EntityPanel's AnimatePresence exit to finish unmounting it.
+    await waitFor(
+      () => expect(canvas.queryByText("Code touched")).not.toBeInTheDocument(),
+      { timeout: 5000 },
+    );
+  },
 };

@@ -18,6 +18,7 @@
  * Shapes mirror `lib/types.ts` + `surfaces/ask/{thread,internals}.ts` exactly.
  */
 import type {
+  ActivityEvent,
   BridgeLink,
   CorpusInfo,
   DaemonStatus,
@@ -361,6 +362,50 @@ function searchSymbols(args: Record<string, unknown>): SymbolInfo[] {
 
 const NO_OCCURRENCES: Occurrence[] = [];
 
+// ── Per-session activity — the "Code touched" story for the spine session. ──
+//
+// `useSessionActivity` invokes `recent_activity { session_id }`; the daemon
+// writes `ActivityEvent.summary` in the tolerant `{name} — {file}` form for
+// definition/references events (see session-activity-summary.ts). These events
+// drive the session inspector's §1 "Code touched" symbol chips, and each chip
+// deep-links into Explore. The referenced (name, file) pairs are chosen to
+// exist in `ALL_SYMBOLS` above so the cross-facet resolve (`search_symbols`)
+// HITS the symbol peek rather than the file-only fallback.
+const ACTIVITY_SESSION_ID = "sess-arch-01";
+
+function ev(over: Partial<ActivityEvent> & { tool: string }): ActivityEvent {
+  return {
+    timestamp_ms: 0,
+    corpus_id: "ministr",
+    session_id: ACTIVITY_SESSION_ID,
+    summary: "",
+    cache_hit: false,
+    duration_ms: 20,
+    ...over,
+  };
+}
+
+// Newest first, as the daemon returns. The em-dash separator (` — `) is what
+// `splitNameDashFile` keys on to recover the (symbol, file) pair.
+const LIVE_SESSION_ACTIVITY: ActivityEvent[] = [
+  ev({ timestamp_ms: 12_000, tool: "ministr_definition", summary: "survey — ministr-core/src/service/query.rs", resolution: "symbol" }),
+  ev({ timestamp_ms: 40_000, tool: "ministr_references", summary: "QueryService — ministr-core/src/service/query.rs (4)", resolution: "symbol", tokens_delta: 320 }),
+  ev({ timestamp_ms: 95_000, tool: "ministr_references", summary: "HnswIndex — ministr-core/src/index/hnsw.rs (7)", resolution: "symbol", tokens_delta: 510 }),
+  ev({ timestamp_ms: 150_000, tool: "ministr_read", summary: "ministr-core/src/ingestion/pipeline.rs#embed", resolution: "section", tokens_delta: 1_240 }),
+  ev({ timestamp_ms: 210_000, tool: "ministr_bridge", summary: '"survey_corpus" · kind=tauri_command (5)', resolution: "claim" }),
+  ev({ timestamp_ms: 280_000, tool: "ministr_survey", summary: "where is retrieval reranked?", cache_hit: true, resolution: "claim" }),
+];
+
+/** recent_activity — the session-scoped feed. `useSessionActivity` filters by
+ *  session_id client-side, so honour it here too (a non-matching session gets
+ *  an empty feed). since_ms deltas return nothing new (the hook dedups). */
+function recentActivity(args: Record<string, unknown>): ActivityEvent[] {
+  const sessionId = args.session_id ? String(args.session_id) : null;
+  if (args.since_ms) return [];
+  if (sessionId && sessionId !== ACTIVITY_SESSION_ID) return [];
+  return LIVE_SESSION_ACTIVITY;
+}
+
 // ── Cross-language bridges — the ministr↔ts Tauri seam + the daemon HTTP API. ─
 
 function bridge(over: Partial<BridgeLink> & { kind: string }): BridgeLink {
@@ -524,6 +569,8 @@ const SUPPORTED_MODELS = [
 export const LIVE_FIXTURES: TauriFixtures = {
   // Activity
   list_sessions: LIVE_SESSIONS,
+  list_corpora: LIVE_CORPORA,
+  recent_activity: recentActivity,
   // Explore
   list_corpus_files: LIVE_FILES,
   read_file: readFile,
