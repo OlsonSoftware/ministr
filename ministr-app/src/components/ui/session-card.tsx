@@ -25,7 +25,7 @@ import {
   ExternalLink,
   Flame,
   Gauge,
-  Layers,
+  History,
   Scissors,
   Shrink,
   TrendingDown,
@@ -33,9 +33,9 @@ import {
 } from "lucide-react";
 import { motion } from "motion/react";
 
-import type { CorpusInfo, SessionDetail } from "../../lib/types";
+import type { ActivityEvent, CorpusInfo, SessionDetail } from "../../lib/types";
 import { corpusLabel, corpusLabelById } from "../../lib/corpus";
-import { formatTokens } from "../../lib/format";
+import { formatRelativeTime, formatTokens } from "../../lib/format";
 import { toneBgClass, toneTextClass } from "../../lib/status";
 import {
   burnRate,
@@ -79,6 +79,12 @@ export interface SessionCardProps {
   onOpenInspector?: () => void;
   /** expand mode: a nested subagent card (smaller ring). */
   child?: boolean;
+  /** expand mode: recent per-session activity events (newest first) for the
+   *  in-place live-detail peek. The board fetches these (useSessionActivity)
+   *  only while expanded; the pure card never fetches. */
+  activity?: readonly ActivityEvent[];
+  /** expand mode: true while the first activity poll is in flight. */
+  activityLoading?: boolean;
 }
 
 function SessionCardImpl({
@@ -92,6 +98,8 @@ function SessionCardImpl({
   onToggle,
   onOpenInspector,
   child = false,
+  activity,
+  activityLoading = false,
 }: SessionCardProps) {
   const tone = utilizationTone(s.utilization);
   const pct = clampPct(s.utilization * 100);
@@ -299,6 +307,8 @@ function SessionCardImpl({
         <SessionExpanded
           session={s}
           samples={samples}
+          activity={activity}
+          activityLoading={activityLoading}
           onOpenInspector={onOpenInspector}
         />
       )}
@@ -308,41 +318,38 @@ function SessionCardImpl({
 
 export const SessionCard = memo(SessionCardImpl);
 
-/** The in-place per-session dashboard revealed when a board card expands —
- *  economics grid + burn/projection + a larger trend, no panel switch. */
+/** The in-place per-session detail revealed when a board card expands. Purely
+ *  ADDITIVE: the collapsed card body already shows budget / tokens / saved /
+ *  repeats + the trend + projection, so this never repeats them — it adds the
+ *  savings mechanisms the headline omits (burn rate, evictions, compressions)
+ *  and a live recent-activity peek. The deep timeline stays in the inspector. */
 function SessionExpanded({
   session,
   samples,
+  activity,
+  activityLoading = false,
   onOpenInspector,
 }: {
   session: SessionDetail;
   samples: readonly SessionSample[];
+  activity?: readonly ActivityEvent[];
+  activityLoading?: boolean;
   onOpenInspector?: () => void;
 }) {
   const v = deriveVitals(session);
   if (!v) return null;
   const burn = burnRate(samples);
-  const proj = projectCritical(session, samples);
-  const series = samples.map((s) => s.tokensUsed);
 
   return (
     <div className="border-t border-border-soft px-3.5 py-3 flex flex-col gap-3">
+      <div className="flex items-center gap-1 font-mono text-mono-mini text-text-dim">
+        <Flame className="h-3 w-3 shrink-0" strokeWidth={2} aria-hidden />
+        {burn.tokensPerTurn != null
+          ? `${formatTokens(Math.round(burn.tokensPerTurn))} tok/turn`
+          : "stable burn"}
+      </div>
+
       <div className="grid grid-cols-2 gap-px rounded-lg overflow-hidden border border-border-soft bg-border-soft">
-        <MetricTile
-          variant="cell"
-          icon={Zap}
-          label="saved"
-          value={formatTokens(v.tokensSaved)}
-          tone="success"
-          className="bg-surface"
-        />
-        <MetricTile
-          variant="cell"
-          icon={Layers}
-          label="dedup hits"
-          value={String(v.dedupHits)}
-          className="bg-surface"
-        />
         <MetricTile
           variant="cell"
           icon={Scissors}
@@ -359,28 +366,8 @@ function SessionExpanded({
         />
       </div>
 
-      <div className="flex items-center justify-between font-mono text-mono-mini text-text-dim">
-        <span className="inline-flex items-center gap-1">
-          <Flame className="h-3 w-3" strokeWidth={2} aria-hidden />
-          {burn.tokensPerTurn != null
-            ? `${Math.round(burn.tokensPerTurn)} tok/turn`
-            : "stable burn"}
-        </span>
-        <span className={cn(proj?.turns != null && toneTextClass(v.tone))}>
-          {proj?.turns != null
-            ? `≈ ${proj.turns} turn${proj.turns === 1 ? "" : "s"} to limit`
-            : "not trending up"}
-        </span>
-      </div>
-
-      {series.length > 1 && (
-        <Sparkline
-          data={series}
-          smooth
-          tone={v.tone}
-          height={44}
-          ariaLabel={`Token usage trend for ${session.session_id}`}
-        />
+      {(activity !== undefined || activityLoading) && (
+        <RecentActivity events={activity ?? []} loading={activityLoading} />
       )}
 
       {onOpenInspector && (
@@ -391,6 +378,76 @@ function SessionExpanded({
           Open full inspector
           <ExternalLink className="h-3 w-3" strokeWidth={2} />
         </button>
+      )}
+    </div>
+  );
+}
+
+/** Compact recent-activity peek for the expanded board card — a literal
+ *  "last activity" line + the few newest tool calls, fetch-backed by the
+ *  board (useSessionActivity). The deep, searchable timeline + code-touched
+ *  grouping stay in the EntityPanel inspector ("Open full inspector"). */
+const ACTIVITY_PEEK = 4;
+
+function toolShort(tool: string): string {
+  return tool.replace(/^ministr_/, "");
+}
+
+function RecentActivity({
+  events,
+  loading,
+}: {
+  events: readonly ActivityEvent[];
+  loading: boolean;
+}) {
+  const recent = events.slice(0, ACTIVITY_PEEK);
+  const last = events[0];
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between font-mono text-mono-micro uppercase tracking-[0.08em] text-text-dim">
+        <span className="inline-flex items-center gap-1">
+          <History className="h-3 w-3" strokeWidth={2} aria-hidden />
+          recent activity
+        </span>
+        {last && (
+          <span className="normal-case tracking-normal text-text-muted">
+            last {formatRelativeTime(last.timestamp_ms / 1000)}
+          </span>
+        )}
+      </div>
+
+      {loading && events.length === 0 ? (
+        <div className="space-y-1" aria-hidden>
+          <div className="h-3 w-3/4 ministr-skeleton" />
+          <div className="h-3 w-1/2 ministr-skeleton" />
+        </div>
+      ) : recent.length === 0 ? (
+        <p className="font-mono text-mono-mini text-text-dim">
+          No recent activity yet.
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-1">
+          {recent.map((e, i) => (
+            <li
+              key={`${e.timestamp_ms}-${e.tool}-${i}`}
+              className="flex items-center gap-2 font-mono text-mono-mini"
+            >
+              <span className="shrink-0 text-accent">{toolShort(e.tool)}</span>
+              <span className="min-w-0 flex-1 truncate text-text-muted">
+                {e.summary || "—"}
+              </span>
+              {e.cache_hit && (
+                <span className="shrink-0 text-mono-micro uppercase tracking-[0.06em] text-success">
+                  cached
+                </span>
+              )}
+              <span className="shrink-0 tabular-nums text-text-dim">
+                {formatRelativeTime(e.timestamp_ms / 1000)}
+              </span>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

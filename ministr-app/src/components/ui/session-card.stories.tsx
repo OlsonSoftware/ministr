@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import type { CorpusInfo, SessionDetail } from "../../lib/types";
+import type { ActivityEvent, CorpusInfo, SessionDetail } from "../../lib/types";
 import type { SessionSample } from "../../lib/sessions";
 import { SessionCard, SessionCardSkeleton } from "./session-card";
 
@@ -59,6 +59,52 @@ const SAMPLES: SessionSample[] = Array.from({ length: 12 }, (_, i) => ({
   turn: 3 + i,
 }));
 
+// A recent per-session activity feed (newest first) for the expanded peek.
+const ACTIVITY: ActivityEvent[] = [
+  {
+    timestamp_ms: Date.now() - 8_000,
+    tool: "ministr_read",
+    corpus_id: "ministr",
+    session_id: "sess_a1b2c3d4e5f6",
+    summary: "src/auth/middleware.rs#verify_token",
+    tokens_delta: 1_240,
+    cache_hit: false,
+    resolution: "section",
+    duration_ms: 42,
+  },
+  {
+    timestamp_ms: Date.now() - 62_000,
+    tool: "ministr_survey",
+    corpus_id: "ministr",
+    session_id: "sess_a1b2c3d4e5f6",
+    summary: "where is the session budget enforced?",
+    cache_hit: true,
+    resolution: "claim",
+    duration_ms: 88,
+  },
+  {
+    timestamp_ms: Date.now() - 240_000,
+    tool: "ministr_references",
+    corpus_id: "ministr",
+    session_id: "sess_a1b2c3d4e5f6",
+    summary: "SessionRegistry::create_session",
+    tokens_delta: 640,
+    cache_hit: false,
+    resolution: "symbol",
+    duration_ms: 31,
+  },
+  {
+    timestamp_ms: Date.now() - 900_000,
+    tool: "ministr_definition",
+    corpus_id: "ministr",
+    session_id: "sess_a1b2c3d4e5f6",
+    summary: "AppState::record_activity",
+    cache_hit: true,
+    resolution: "symbol",
+    duration_ms: 12,
+  },
+];
+
 const noop = () => {};
 
 function Cell({
@@ -116,6 +162,49 @@ export const Expanded: Story = {
         samples={SAMPLES}
         fresh
         expanded
+        onToggle={noop}
+        onOpenInspector={noop}
+      />
+    </Cell>
+  ),
+};
+
+/** Expanded WITH the live recent-activity peek — a literal "last activity"
+ *  line + the few newest tool calls, the board's fetch-backed live detail
+ *  (aaa-sessions-live-detail). */
+export const ExpandedWithActivity: Story = {
+  render: () => (
+    <Cell>
+      <SessionCard
+        session={session({
+          utilization: 0.75,
+          pressure_level: "elevated",
+          current_turn: 14,
+          tokens_used: 150_000,
+          tokens_remaining: 50_000,
+        })}
+        corpus={corpusInfo}
+        samples={SAMPLES}
+        expanded
+        activity={ACTIVITY}
+        onToggle={noop}
+        onOpenInspector={noop}
+      />
+    </Cell>
+  ),
+};
+
+/** Expanded but the activity ring is empty (e.g. just-connected session) —
+ *  the peek shows its graceful empty state. */
+export const ExpandedActivityEmpty: Story = {
+  render: () => (
+    <Cell>
+      <SessionCard
+        session={session({})}
+        corpus={corpusInfo}
+        samples={SAMPLES}
+        expanded
+        activity={[]}
         onToggle={noop}
         onOpenInspector={noop}
       />

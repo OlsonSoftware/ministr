@@ -23,6 +23,7 @@ import { buildLineageGroups, type LineageGroup } from "../../lib/session-board";
 import { listContainer, listItem } from "../../lib/motion";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
 import { useSessions } from "../../hooks/useSessions";
+import { useSessionActivity } from "../../hooks/useSessionActivity";
 
 import { EmptyState } from "../ui/empty-state";
 import { NumberTicker } from "../ui/number-ticker";
@@ -213,6 +214,32 @@ type CardProps = {
   onOpenInspector: () => void;
 };
 
+/** A board SessionCard backed by a live per-session activity feed. The feed
+ *  fetches (useSessionActivity polls recent_activity) ONLY while the card is
+ *  expanded — a collapsed card passes `null`, so the resting board makes no
+ *  per-session requests. The expanded card then shows a recent-activity peek +
+ *  literal last-activity (aaa-sessions-live-detail). */
+function BoardSessionCard({
+  props,
+  child = false,
+}: {
+  props: CardProps;
+  child?: boolean;
+}) {
+  const { events, loading } = useSessionActivity(
+    props.expanded ? props.session.session_id : null,
+  );
+  return (
+    <SessionCard
+      interaction="expand"
+      {...props}
+      child={child}
+      activity={props.expanded ? events : undefined}
+      activityLoading={props.expanded ? loading : false}
+    />
+  );
+}
+
 /** One lineage group: the parent card plus its subagents nested beneath. */
 function LineageGroupCell({
   group,
@@ -223,7 +250,7 @@ function LineageGroupCell({
 }) {
   return (
     <motion.div variants={listItem} layout className="flex flex-col gap-2">
-      <SessionCard interaction="expand" {...cardProps(group.parent)} />
+      <BoardSessionCard props={cardProps(group.parent)} />
       {group.children.length > 0 && (
         <div className="ml-3 pl-3 border-l border-border-soft flex flex-col gap-2">
           <span className="pl-0.5 font-mono text-mono-micro uppercase tracking-[0.08em] text-text-dim">
@@ -231,12 +258,7 @@ function LineageGroupCell({
             {group.children.length === 1 ? "" : "s"}
           </span>
           {group.children.map((c) => (
-            <SessionCard
-              key={c.session_id}
-              interaction="expand"
-              {...cardProps(c)}
-              child
-            />
+            <BoardSessionCard key={c.session_id} props={cardProps(c)} child />
           ))}
         </div>
       )}
