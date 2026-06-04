@@ -13,7 +13,7 @@
  * Pure `SolidMap` renders from props (Storybook); `SolidMapConnector` wires the
  * `solid_findings` invoke + the shared inspector.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ChevronRight,
@@ -31,6 +31,7 @@ import type { SolidFinding, SolidSymbolRef } from "../../lib/types";
 import type { SymbolInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
+import { useCachedQuery } from "../../hooks/useCachedQuery";
 import { LensHeader, LensLoading, LensEmpty, LensRerunButton } from "../ui/lens-frame";
 
 // ── Principle → display meta. ──────────────────────────────────────────────
@@ -370,35 +371,18 @@ function solidRefToSymbolInfo(r: SolidSymbolRef): SymbolInfo {
 
 export function SolidMapConnector({ corpusId }: { corpusId: string }) {
   const { openEntity } = useEntityPanel();
-  const [findings, setFindings] = useState<SolidFinding[] | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const reqRef = useRef(0);
-
-  const load = useCallback(() => {
-    const id = ++reqRef.current;
-    setRefreshing(true);
-    invoke<SolidFinding[]>("solid_findings", { corpusId, limit: 200 })
-      .then((r) => {
-        if (reqRef.current === id) setFindings(r);
-      })
-      .catch(() => {
-        if (reqRef.current === id) setFindings([]);
-      })
-      .finally(() => {
-        if (reqRef.current === id) setRefreshing(false);
-      });
-  }, [corpusId]);
-
-  useEffect(() => {
-    setFindings(null);
-    load();
-  }, [load]);
+  const { data, loading, refreshing, refresh } = useCachedQuery<SolidFinding[]>(
+    corpusId,
+    "solid_findings",
+    () => invoke<SolidFinding[]>("solid_findings", { corpusId, limit: 200 }),
+    [],
+  );
 
   return (
     <SolidMap
-      findings={findings ?? []}
-      loading={findings === null}
-      onRefresh={load}
+      findings={data}
+      loading={loading}
+      onRefresh={refresh}
       refreshing={refreshing}
       onInspect={(r) =>
         openEntity({ kind: "symbol", corpusId, symbol: solidRefToSymbolInfo(r) })

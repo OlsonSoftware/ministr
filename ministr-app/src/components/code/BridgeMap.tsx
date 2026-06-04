@@ -14,7 +14,7 @@
  * The pure `BridgeMap` renders from props (Storybook); `BridgeMapConnector`
  * wires the live `bridge_query` invoke + the shared inspector.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowLeftRight,
@@ -29,6 +29,7 @@ import {
 import type { BridgeLink } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
+import { useCachedQuery } from "../../hooks/useCachedQuery";
 import { LensHeader, LensLoading, LensEmpty, LensRerunButton } from "../ui/lens-frame";
 
 // ── Mechanism → display meta (the seam vocabulary). ────────────────────────
@@ -411,42 +412,26 @@ export function BridgeMapConnector({
   onOpenFile: (path: string) => void;
 }) {
   const { openEntity } = useEntityPanel();
-  const [links, setLinks] = useState<BridgeLink[] | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const reqRef = useRef(0);
-
-  const load = useCallback(() => {
-    const id = ++reqRef.current;
-    setRefreshing(true);
-    invoke<BridgeLink[]>("bridge_query", {
-      corpusId,
-      query: null,
-      kind: null,
-      sourceLanguage: null,
-      filePath: null,
-      limit: 500,
-    })
-      .then((r) => {
-        if (reqRef.current === id) setLinks(r);
-      })
-      .catch(() => {
-        if (reqRef.current === id) setLinks([]);
-      })
-      .finally(() => {
-        if (reqRef.current === id) setRefreshing(false);
-      });
-  }, [corpusId]);
-
-  useEffect(() => {
-    setLinks(null);
-    load();
-  }, [load]);
+  const { data, loading, refreshing, refresh } = useCachedQuery<BridgeLink[]>(
+    corpusId,
+    "bridge_query",
+    () =>
+      invoke<BridgeLink[]>("bridge_query", {
+        corpusId,
+        query: null,
+        kind: null,
+        sourceLanguage: null,
+        filePath: null,
+        limit: 500,
+      }),
+    [],
+  );
 
   return (
     <BridgeMap
-      links={links ?? []}
-      loading={links === null}
-      onRefresh={load}
+      links={data}
+      loading={loading}
+      onRefresh={refresh}
       refreshing={refreshing}
       onInspect={(link) => openEntity({ kind: "bridge", corpusId, link })}
       onOpenFile={onOpenFile}

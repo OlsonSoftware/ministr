@@ -14,7 +14,7 @@
  * Pure `DiagnosticsMap` renders from props (Storybook); `DiagnosticsMapConnector`
  * wires the `diagnostics` invoke + the shared inspector.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   CircleAlert,
@@ -29,6 +29,7 @@ import {
 import type { Diagnostic, DiagnosticSeverity, SymbolInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
+import { useCachedQuery } from "../../hooks/useCachedQuery";
 import {
   LensHeader,
   LensLoading,
@@ -415,35 +416,18 @@ export function DiagnosticsMapConnector({
   onOpenFile: (path: string, line: number) => void;
 }) {
   const { openEntity } = useEntityPanel();
-  const [diagnostics, setDiagnostics] = useState<Diagnostic[] | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const reqRef = useRef(0);
-
-  const load = useCallback(() => {
-    const id = ++reqRef.current;
-    setRefreshing(true);
-    invoke<Diagnostic[]>("diagnostics", { corpusId, languages: null, limit: 500 })
-      .then((r) => {
-        if (reqRef.current === id) setDiagnostics(r);
-      })
-      .catch(() => {
-        if (reqRef.current === id) setDiagnostics([]);
-      })
-      .finally(() => {
-        if (reqRef.current === id) setRefreshing(false);
-      });
-  }, [corpusId]);
-
-  useEffect(() => {
-    setDiagnostics(null);
-    load();
-  }, [load]);
+  const { data, loading, refreshing, refresh } = useCachedQuery<Diagnostic[]>(
+    corpusId,
+    "diagnostics",
+    () => invoke<Diagnostic[]>("diagnostics", { corpusId, languages: null, limit: 500 }),
+    [],
+  );
 
   return (
     <DiagnosticsMap
-      diagnostics={diagnostics ?? []}
-      loading={diagnostics === null}
-      onRefresh={load}
+      diagnostics={data}
+      loading={loading}
+      onRefresh={refresh}
       refreshing={refreshing}
       onInspect={(d) => {
         if (d.symbol_id) {

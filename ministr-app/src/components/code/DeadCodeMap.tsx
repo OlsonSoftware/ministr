@@ -13,13 +13,14 @@
  * Pure `DeadCodeMap` renders from props (Storybook); `DeadCodeMapConnector`
  * wires the `dead_code` invoke + the shared inspector.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { FileCode2, Sparkles, Trash2 } from "lucide-react";
 
 import type { DeadSymbol, SymbolInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
+import { useCachedQuery } from "../../hooks/useCachedQuery";
 import { LensHeader, LensLoading, LensEmpty, LensRerunButton } from "../ui/lens-frame";
 
 function fileTail(path: string): string {
@@ -300,42 +301,25 @@ export function DeadCodeMapConnector({
   onOpenFile: (path: string, line: number) => void;
 }) {
   const { openEntity } = useEntityPanel();
-  const [symbols, setSymbols] = useState<DeadSymbol[] | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const reqRef = useRef(0);
-
-  const load = useCallback(() => {
-    const id = ++reqRef.current;
-    setRefreshing(true);
-    invoke<DeadSymbol[]>("dead_code", {
-      corpusId,
-      kind: null,
-      module: null,
-      minLines: null,
-      limit: 500,
-    })
-      .then((r) => {
-        if (reqRef.current === id) setSymbols(r);
-      })
-      .catch(() => {
-        if (reqRef.current === id) setSymbols([]);
-      })
-      .finally(() => {
-        if (reqRef.current === id) setRefreshing(false);
-      });
-  }, [corpusId]);
-
-  // Initial load + reset to the full-loading state when the corpus changes.
-  useEffect(() => {
-    setSymbols(null);
-    load();
-  }, [load]);
+  const { data, loading, refreshing, refresh } = useCachedQuery<DeadSymbol[]>(
+    corpusId,
+    "dead_code",
+    () =>
+      invoke<DeadSymbol[]>("dead_code", {
+        corpusId,
+        kind: null,
+        module: null,
+        minLines: null,
+        limit: 500,
+      }),
+    [],
+  );
 
   return (
     <DeadCodeMap
-      symbols={symbols ?? []}
-      loading={symbols === null}
-      onRefresh={load}
+      symbols={data}
+      loading={loading}
+      onRefresh={refresh}
       refreshing={refreshing}
       onInspect={(d) =>
         openEntity({ kind: "symbol", corpusId, symbol: deadToSymbolInfo(d) })
