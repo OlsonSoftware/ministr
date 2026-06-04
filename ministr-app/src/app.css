@@ -412,3 +412,54 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* ------------------------------------------------------------------
+   Forced colors — Windows High Contrast Mode (DESIGN.md §9).
+
+   In a forced-colors mode the UA strips `background-color`, `box-shadow`,
+   and gradient backgrounds, and remaps the rest to a user-chosen system
+   palette. Borders + outlines survive (their colour is forced to a system
+   colour). Many of our custom interactive surfaces (cards, lens rows,
+   `role="button"` elements) draw their boundary with token background +
+   shadow alone — so they would lose their visible box here. We give every
+   custom interactive surface + floating panel an explicit border the UA
+   maps to a system colour, and pin the focus ring to `Highlight`.
+
+   This block is scoped to the media query, so it changes NOTHING in the
+   normal themes (no layout shift, no extra borders). We never use
+   `forced-color-adjust: none` — that would override the palette the user
+   deliberately chose (so e.g. Shiki code goes monochrome here, as intended).
+   ------------------------------------------------------------------ */
+@media (forced-colors: active) {
+  /* The accent outline-colour is overridden by the UA anyway; pin it to the
+     dedicated system focus colour so the cue is the one users expect. */
+  :focus-visible {
+    outline-color: Highlight;
+  }
+
+  /* Custom controls + floating chrome rely on bg/shadow for their boundary,
+     which is now gone. A 1px border is mapped to ButtonBorder and restores
+     the box. (Links are intentionally excluded — they survive via LinkText;
+     a border would mis-box inline text links.) */
+  button,
+  [role="button"],
+  [role="tab"],
+  [role="option"],
+  [role="menuitem"],
+  [role="menuitemradio"],
+  [role="switch"],
+  [role="checkbox"],
+  [role="radio"],
+  summary,
+  .glass-panel {
+    border: 1px solid ButtonBorder;
+  }
+
+  /* The amber "fresh"/active cues are box-shadow glows the UA removes; their
+     meaning is also carried by tone bars + text, so nothing is lost. Clear
+     the now-invisible shadow so no animation ghost remains. */
+  .ministr-pulse,
+  .glow-accent {
+    box-shadow: none;
+  }
+}

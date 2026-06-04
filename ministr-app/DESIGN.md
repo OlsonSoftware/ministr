@@ -256,6 +256,16 @@ Anchored to WCAG 2.2 (2026 norms):
 - **Reduced motion.** Honor `prefers-reduced-motion` (§8) — no exceptions.
 - **Reduced transparency / contrast.** Glass (§4) degrades to solid — no
   information conveyed by translucency alone.
+- **Forced colors / High Contrast (WHCM).** Under `forced-colors: active` the UA
+  strips `background-color` + `box-shadow`, so a custom interactive surface that
+  draws its box from bg/shadow alone would vanish. `app.css` ships a
+  `@media (forced-colors: active)` floor: a system-colour (`ButtonBorder`) border
+  on `button` / `[role="button"|"tab"|"option"|"menuitem"|"switch"|…]` / `summary`
+  / `.glass-panel`, plus the focus ring pinned to `Highlight`. The block is scoped
+  to the media query, so it changes nothing in the normal themes. **No
+  `forced-color-adjust: none` anywhere** — the user's chosen palette always wins
+  (Shiki syntax colours go monochrome here, as intended). Verify via Playwright
+  `forcedColors: "active"` against `ui/forced-colors.stories.tsx`.
 - **Keyboard-first.** Everything actionable is reachable and operable by
   keyboard; the ⌘K command palette is the primary nav accelerator; focus order
   follows reading order; dialogs trap focus and restore it on close.
@@ -286,7 +296,7 @@ The unit of work for every `aaa-*` phase. Each row is scored on six axes:
 - **E** — elevation/glass correct for its role (§4)
 - **M** — motion choreographed (§8) incl. reduced-motion
 - **F** — focus-visible on every interactive element (§9)
-- **R** — reduced-motion / reduced-transparency honored
+- **R** — reduced-motion / reduced-transparency / forced-colors honored
 - **S** — state coverage (idle · hover · active · empty · loading · error ·
   disabled — those that apply)
 
