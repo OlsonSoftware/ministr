@@ -344,6 +344,27 @@ export interface DiffImpact {
   impacted: ImpactedSymbol[];
 }
 
+// ── Symbol call hierarchy + test coverage (the inspector "Impact" view — FL3/FL6) ──
+
+/** A symbol's call hierarchy and test coverage, from the `symbol_impact`
+ *  command — who calls it (incoming / blast radius), what it calls (outgoing),
+ *  and the tests that exercise it (FL6). Nodes reuse {@link ImpactedSymbol}. */
+export interface SymbolImpact {
+  /** Transitive callers — the blast radius (FL3 incoming). */
+  incoming: ImpactedSymbol[];
+  /** Distinct incoming symbols / files / test files. */
+  incoming_symbols: number;
+  incoming_files: number;
+  incoming_tests: number;
+  /** Aggregate blast-radius risk for the incoming direction. */
+  risk: "low" | "medium" | "high";
+  /** Transitive callees — what this symbol reaches (FL3 outgoing). */
+  outgoing: ImpactedSymbol[];
+  outgoing_symbols: number;
+  /** Tests that transitively exercise this symbol (FL6). */
+  tests: ImpactedSymbol[];
+}
+
 /** Full symbol definition returned by `symbol_definition`. */
 export interface SymbolDefinitionDetail {
   id: string;

@@ -21,6 +21,7 @@ import type {
   SymbolRef,
 } from "../../lib/types";
 import { SymbolNeighborhood } from "../code/SymbolNeighborhood";
+import { SymbolImpactConnector } from "../code/SymbolImpact";
 
 interface Props {
   entity: Extract<Entity, { kind: "symbol" }>;
@@ -92,28 +93,54 @@ export function SymbolView({ entity }: Props) {
   }
 
   return (
-    <SymbolNeighborhood
-      embedded
-      symbolName={symbol.name}
-      definition={definition}
-      references={refs}
-      sameFile={sameFile}
-      mentions={mentions}
-      loading={loading}
-      onGoToDefinition={(filePath) =>
-        openEntity({ kind: "file", corpusId, path: filePath })
-      }
-      onJumpRef={jumpToRef}
-      onOpenSymbol={(s) => openEntity({ kind: "symbol", corpusId, symbol: s })}
-      onOpenSection={(r) => openEntity({ kind: "section", corpusId, result: r })}
-      onAsk={
-        workspace
-          ? () => {
-              workspace.askAbout(symbol.id);
-              close();
-            }
-          : undefined
-      }
-    />
+    <div className="space-y-5">
+      <SymbolNeighborhood
+        embedded
+        symbolName={symbol.name}
+        definition={definition}
+        references={refs}
+        sameFile={sameFile}
+        mentions={mentions}
+        loading={loading}
+        onGoToDefinition={(filePath) =>
+          openEntity({ kind: "file", corpusId, path: filePath })
+        }
+        onJumpRef={jumpToRef}
+        onOpenSymbol={(s) => openEntity({ kind: "symbol", corpusId, symbol: s })}
+        onOpenSection={(r) => openEntity({ kind: "section", corpusId, result: r })}
+        onAsk={
+          workspace
+            ? () => {
+                workspace.askAbout(symbol.id);
+                close();
+              }
+            : undefined
+        }
+      />
+
+      {/* FL3 + FL6 — the symbol's call hierarchy + test coverage. The
+          ImpactCaller carries a precise symbol_id, so each row descends
+          directly (no search_symbols resolution needed). */}
+      <SymbolImpactConnector
+        corpusId={corpusId}
+        symbolId={symbol.id}
+        onOpenSymbol={(n) =>
+          openEntity({
+            kind: "symbol",
+            corpusId,
+            symbol: {
+              id: n.symbol_id,
+              name: n.name,
+              kind: n.kind,
+              file_path: n.file,
+              visibility: "",
+              signature: n.name,
+              doc_comment: null,
+              module_path: "",
+            },
+          })
+        }
+      />
+    </div>
   );
 }
