@@ -19,6 +19,7 @@
  * loading/empty/error/content template) applied to the lens vocabulary.
  */
 import type { ComponentProps, ComponentType, ReactNode } from "react";
+import { RefreshCw } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { EmptyState } from "./empty-state";
 
@@ -51,6 +52,11 @@ export interface LensHeaderProps {
   hint?: ReactNode;
   /** Lens-specific filter chips / facet rows, placed between glance and hint. */
   children?: ReactNode;
+  /** When set, a refresh button is shown that re-runs the lens's analysis —
+   *  these views are snapshots, so freshness must be one click away (2026). */
+  onRefresh?: () => void;
+  /** True while a re-run is in flight — spins the refresh icon + disables it. */
+  refreshing?: boolean;
 }
 
 /**
@@ -65,6 +71,8 @@ export function LensHeader({
   glance,
   hint,
   children,
+  onRefresh,
+  refreshing = false,
 }: LensHeaderProps) {
   return (
     <header className="shrink-0 border-b border-border-soft bg-surface px-4 py-3 space-y-2.5">
@@ -77,6 +85,21 @@ export function LensHeader({
         </div>
         {glance != null && (
           <span className="font-mono text-mono-mini text-text-dim">{glance}</span>
+        )}
+        {onRefresh && (
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={refreshing}
+            title="Re-run this analysis"
+            aria-label="Re-run this analysis"
+            className="ml-auto grid h-6 w-6 shrink-0 self-center place-items-center rounded-md border border-border-soft text-text-muted hover:border-border hover:text-text disabled:opacity-60 cursor-pointer transition-colors duration-150 ease-out"
+          >
+            <RefreshCw
+              className={cn("h-3 w-3", refreshing && "animate-spin")}
+              strokeWidth={2}
+            />
+          </button>
         )}
       </div>
       {children}
@@ -106,5 +129,32 @@ export function LensEmpty(props: ComponentProps<typeof EmptyState>) {
     <div className="grid h-full place-items-center p-6">
       <EmptyState {...props} />
     </div>
+  );
+}
+
+/** A labelled re-run button — the CTA form of the refresh affordance, for an
+ *  empty state (2026: an empty state earns a clear next action). */
+export function LensRerunButton({
+  onRefresh,
+  refreshing = false,
+  label = "Re-run",
+}: {
+  onRefresh: () => void;
+  refreshing?: boolean;
+  label?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onRefresh}
+      disabled={refreshing}
+      className="inline-flex items-center gap-1.5 rounded-md border border-border-soft bg-surface px-2.5 py-1 font-mono text-mono-mini font-semibold uppercase tracking-[0.06em] text-text-muted hover:border-border hover:text-text disabled:opacity-60 cursor-pointer transition-colors duration-150 ease-out"
+    >
+      <RefreshCw
+        className={cn("h-3 w-3", refreshing && "animate-spin")}
+        strokeWidth={2}
+      />
+      {refreshing ? "Re-running" : label}
+    </button>
   );
 }

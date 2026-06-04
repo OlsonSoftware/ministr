@@ -14,7 +14,7 @@
  * The pure `BridgeMap` renders from props (Storybook); `BridgeMapConnector`
  * wires the live `bridge_query` invoke + the shared inspector.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowLeftRight,
@@ -29,7 +29,7 @@ import {
 import type { BridgeLink } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
-import { LensHeader, LensLoading, LensEmpty } from "../ui/lens-frame";
+import { LensHeader, LensLoading, LensEmpty, LensRerunButton } from "../ui/lens-frame";
 
 // ── Mechanism → display meta (the seam vocabulary). ────────────────────────
 const KIND_META: Record<string, { label: string; icon: typeof Cable }> = {
@@ -60,6 +60,9 @@ function confidenceTone(c: number): string {
 export interface BridgeMapProps {
   links: BridgeLink[];
   loading?: boolean;
+  /** Re-map the cross-language seams (a snapshot — re-run after editing). */
+  onRefresh?: () => void;
+  refreshing?: boolean;
   /** Inspect a bridge in the shared EntityPanel. */
   onInspect: (link: BridgeLink) => void;
   /** Open a file in the code lens. */
@@ -69,6 +72,8 @@ export interface BridgeMapProps {
 export function BridgeMap({
   links = [],
   loading = false,
+  onRefresh,
+  refreshing = false,
   onInspect,
   onOpenFile,
 }: BridgeMapProps) {
@@ -133,6 +138,11 @@ export function BridgeMap({
         icon={ArrowLeftRight}
         title="No cross-language bridges"
         hint="This project looks single-language — ministr maps Tauri, PyO3, NAPI, wasm-bindgen, HTTP-route and FFI seams the moment a project spans two languages."
+        action={
+          onRefresh ? (
+            <LensRerunButton onRefresh={onRefresh} refreshing={refreshing} />
+          ) : undefined
+        }
       />
     );
   }
@@ -164,6 +174,8 @@ export function BridgeMap({
             files
           </>
         }
+        onRefresh={onRefresh}
+        refreshing={refreshing}
       >
         {/* Mechanism filter chips. */}
         <div className="flex flex-wrap gap-1.5">
@@ -400,10 +412,12 @@ export function BridgeMapConnector({
 }) {
   const { openEntity } = useEntityPanel();
   const [links, setLinks] = useState<BridgeLink[] | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const reqRef = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLinks(null);
+  const load = useCallback(() => {
+    const id = ++reqRef.current;
+    setRefreshing(true);
     invoke<BridgeLink[]>("bridge_query", {
       corpusId,
       query: null,
@@ -413,20 +427,27 @@ export function BridgeMapConnector({
       limit: 500,
     })
       .then((r) => {
-        if (!cancelled) setLinks(r);
+        if (reqRef.current === id) setLinks(r);
       })
       .catch(() => {
-        if (!cancelled) setLinks([]);
+        if (reqRef.current === id) setLinks([]);
+      })
+      .finally(() => {
+        if (reqRef.current === id) setRefreshing(false);
       });
-    return () => {
-      cancelled = true;
-    };
   }, [corpusId]);
+
+  useEffect(() => {
+    setLinks(null);
+    load();
+  }, [load]);
 
   return (
     <BridgeMap
       links={links ?? []}
       loading={links === null}
+      onRefresh={load}
+      refreshing={refreshing}
       onInspect={(link) => openEntity({ kind: "bridge", corpusId, link })}
       onOpenFile={onOpenFile}
     />

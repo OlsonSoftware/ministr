@@ -13,14 +13,14 @@
  * Pure `DeadCodeMap` renders from props (Storybook); `DeadCodeMapConnector`
  * wires the `dead_code` invoke + the shared inspector.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { FileCode2, Sparkles, Trash2 } from "lucide-react";
 
 import type { DeadSymbol, SymbolInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
-import { LensHeader, LensLoading, LensEmpty } from "../ui/lens-frame";
+import { LensHeader, LensLoading, LensEmpty, LensRerunButton } from "../ui/lens-frame";
 
 function fileTail(path: string): string {
   return path.replace(/\\/g, "/").split("/").slice(-2).join("/");
@@ -33,6 +33,9 @@ function baseName(path: string): string {
 export interface DeadCodeMapProps {
   symbols: DeadSymbol[];
   loading?: boolean;
+  /** Re-run the dead-code analysis (a snapshot — re-run after editing). */
+  onRefresh?: () => void;
+  refreshing?: boolean;
   /** Inspect a candidate in the shared EntityPanel (confirm before deleting). */
   onInspect: (sym: DeadSymbol) => void;
   /** Open the candidate's file in the code lens, focused on its line. */
@@ -42,6 +45,8 @@ export interface DeadCodeMapProps {
 export function DeadCodeMap({
   symbols = [],
   loading = false,
+  onRefresh,
+  refreshing = false,
   onInspect,
   onOpenFile,
 }: DeadCodeMapProps) {
@@ -90,6 +95,11 @@ export function DeadCodeMap({
         accent
         title="No dead code"
         hint="Every indexed symbol is referenced (or looks like an entry point). Nothing to prune — the reference graph is clean."
+        action={
+          onRefresh ? (
+            <LensRerunButton onRefresh={onRefresh} refreshing={refreshing} />
+          ) : undefined
+        }
       />
     );
   }
@@ -118,6 +128,8 @@ export function DeadCodeMap({
           </>
         }
         hint="Zero references in the graph — candidates, not a verdict. Inspect to confirm before deleting."
+        onRefresh={onRefresh}
+        refreshing={refreshing}
       >
         <div className="flex flex-wrap gap-1.5">
           <KindChip
@@ -289,10 +301,12 @@ export function DeadCodeMapConnector({
 }) {
   const { openEntity } = useEntityPanel();
   const [symbols, setSymbols] = useState<DeadSymbol[] | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const reqRef = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    setSymbols(null);
+  const load = useCallback(() => {
+    const id = ++reqRef.current;
+    setRefreshing(true);
     invoke<DeadSymbol[]>("dead_code", {
       corpusId,
       kind: null,
@@ -301,20 +315,28 @@ export function DeadCodeMapConnector({
       limit: 500,
     })
       .then((r) => {
-        if (!cancelled) setSymbols(r);
+        if (reqRef.current === id) setSymbols(r);
       })
       .catch(() => {
-        if (!cancelled) setSymbols([]);
+        if (reqRef.current === id) setSymbols([]);
+      })
+      .finally(() => {
+        if (reqRef.current === id) setRefreshing(false);
       });
-    return () => {
-      cancelled = true;
-    };
   }, [corpusId]);
+
+  // Initial load + reset to the full-loading state when the corpus changes.
+  useEffect(() => {
+    setSymbols(null);
+    load();
+  }, [load]);
 
   return (
     <DeadCodeMap
       symbols={symbols ?? []}
       loading={symbols === null}
+      onRefresh={load}
+      refreshing={refreshing}
       onInspect={(d) =>
         openEntity({ kind: "symbol", corpusId, symbol: deadToSymbolInfo(d) })
       }

@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Cable, Sparkles, Stethoscope } from "lucide-react";
-import { LensHeader, LensLoading, LensEmpty } from "./lens-frame";
+import { LensHeader, LensLoading, LensEmpty, LensRerunButton } from "./lens-frame";
 
 /**
  * lens-frame — the shared lens-chrome grammar (aaa-explore-integration-cohesion).
@@ -39,6 +39,7 @@ export const Header: Story = {
         </>
       }
       hint="Where one language calls into another — Tauri, PyO3, NAPI, wasm-bindgen, HTTP-route, FFI."
+      onRefresh={() => {}}
     >
       <div className="flex flex-wrap gap-1.5">
         {["All", "Tauri command", "PyO3", "HTTP route"].map((l, i) => (
@@ -91,6 +92,35 @@ export const Empty: Story = {
       accent
       title="No dead code"
       hint="Every indexed symbol is referenced (or looks like an entry point). The reference graph is clean."
+    />
+  ),
+};
+
+/** An empty state with a re-run CTA — these views are snapshots, so the empty
+ *  state earns a clear next action (2026). */
+export const EmptyWithRerun: Story = {
+  render: () => (
+    <LensEmpty
+      icon={Sparkles}
+      accent
+      title="No dead code"
+      hint="Every indexed symbol is referenced (or looks like an entry point). Re-run after editing to re-check."
+      action={<LensRerunButton onRefresh={() => {}} />}
+    />
+  ),
+};
+
+/** The refreshing state — the spinner is shown while a re-run is in flight. */
+export const Refreshing: Story = {
+  render: () => (
+    <LensHeader
+      icon={Stethoscope}
+      title="Diagnostics"
+      tone="success"
+      glance={<span className="text-text">Clean · re-running…</span>}
+      hint="The toolchain is re-running."
+      onRefresh={() => {}}
+      refreshing
     />
   ),
 };

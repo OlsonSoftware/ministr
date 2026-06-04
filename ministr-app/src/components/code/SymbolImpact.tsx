@@ -208,8 +208,10 @@ function NodeRow({ node, onOpen }: { node: ImpactedSymbol; onOpen: () => void })
       <span className="shrink-0 rounded border border-border-soft bg-surface px-1 font-mono text-mono-micro lowercase tracking-[0.04em] text-text-dim">
         {node.kind || "sym"}
       </span>
-      <span className="truncate font-mono text-xs text-text group-hover:text-accent">{node.name}</span>
-      <span className="ml-auto shrink-0 truncate font-mono text-mono-micro text-text-dim">
+      <span className="min-w-0 flex-1 truncate font-mono text-xs text-text group-hover:text-accent">
+        {node.name}
+      </span>
+      <span className="ml-2 max-w-[40%] shrink-0 truncate font-mono text-mono-micro text-text-dim">
         {fileTail(node.file)}
       </span>
     </li>

@@ -14,7 +14,7 @@
  * Pure `DiagnosticsMap` renders from props (Storybook); `DiagnosticsMapConnector`
  * wires the `diagnostics` invoke + the shared inspector.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   CircleAlert,
@@ -29,7 +29,13 @@ import {
 import type { Diagnostic, DiagnosticSeverity, SymbolInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
-import { LensHeader, LensLoading, LensEmpty, type LensTone } from "../ui/lens-frame";
+import {
+  LensHeader,
+  LensLoading,
+  LensEmpty,
+  LensRerunButton,
+  type LensTone,
+} from "../ui/lens-frame";
 
 const SEVERITY_ORDER: DiagnosticSeverity[] = ["error", "warning", "info", "hint"];
 
@@ -78,6 +84,9 @@ function baseName(path: string): string {
 export interface DiagnosticsMapProps {
   diagnostics: Diagnostic[];
   loading?: boolean;
+  /** Re-run the toolchain (a snapshot — re-run after editing, the verify loop). */
+  onRefresh?: () => void;
+  refreshing?: boolean;
   /** Inspect the enclosing symbol in the shared EntityPanel (FL1 symbol_id). */
   onInspect: (d: Diagnostic) => void;
   /** Jump to the diagnostic's location in the code lens. */
@@ -87,6 +96,8 @@ export interface DiagnosticsMapProps {
 export function DiagnosticsMap({
   diagnostics = [],
   loading = false,
+  onRefresh,
+  refreshing = false,
   onInspect,
   onOpenFile,
 }: DiagnosticsMapProps) {
@@ -147,6 +158,11 @@ export function DiagnosticsMap({
         accent
         title="Clean build"
         hint="The project's toolchain reports no compiler or linter findings — or no toolchain was detected for this corpus. Run the verify step after an edit to catch regressions here."
+        action={
+          onRefresh ? (
+            <LensRerunButton onRefresh={onRefresh} refreshing={refreshing} label="Re-run" />
+          ) : undefined
+        }
       />
     );
   }
@@ -193,6 +209,8 @@ export function DiagnosticsMap({
             · …) normalised to one shape — structured findings, never raw logs.
           </>
         }
+        onRefresh={onRefresh}
+        refreshing={refreshing}
       >
         <div className="flex flex-wrap gap-1.5">
           <SevChip
@@ -398,26 +416,35 @@ export function DiagnosticsMapConnector({
 }) {
   const { openEntity } = useEntityPanel();
   const [diagnostics, setDiagnostics] = useState<Diagnostic[] | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const reqRef = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    setDiagnostics(null);
+  const load = useCallback(() => {
+    const id = ++reqRef.current;
+    setRefreshing(true);
     invoke<Diagnostic[]>("diagnostics", { corpusId, languages: null, limit: 500 })
       .then((r) => {
-        if (!cancelled) setDiagnostics(r);
+        if (reqRef.current === id) setDiagnostics(r);
       })
       .catch(() => {
-        if (!cancelled) setDiagnostics([]);
+        if (reqRef.current === id) setDiagnostics([]);
+      })
+      .finally(() => {
+        if (reqRef.current === id) setRefreshing(false);
       });
-    return () => {
-      cancelled = true;
-    };
   }, [corpusId]);
+
+  useEffect(() => {
+    setDiagnostics(null);
+    load();
+  }, [load]);
 
   return (
     <DiagnosticsMap
       diagnostics={diagnostics ?? []}
       loading={diagnostics === null}
+      onRefresh={load}
+      refreshing={refreshing}
       onInspect={(d) => {
         if (d.symbol_id) {
           openEntity({ kind: "symbol", corpusId, symbol: diagToSymbolInfo(d) });

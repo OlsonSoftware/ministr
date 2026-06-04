@@ -13,7 +13,7 @@
  * Pure `SolidMap` renders from props (Storybook); `SolidMapConnector` wires the
  * `solid_findings` invoke + the shared inspector.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ChevronRight,
@@ -31,7 +31,7 @@ import type { SolidFinding, SolidSymbolRef } from "../../lib/types";
 import type { SymbolInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
-import { LensHeader, LensLoading, LensEmpty } from "../ui/lens-frame";
+import { LensHeader, LensLoading, LensEmpty, LensRerunButton } from "../ui/lens-frame";
 
 // ── Principle → display meta. ──────────────────────────────────────────────
 const PRINCIPLE_META: Record<
@@ -148,6 +148,9 @@ function fileTail(path: string): string {
 export interface SolidMapProps {
   findings: SolidFinding[];
   loading?: boolean;
+  /** Re-run the SOLID/architecture audit (a snapshot — re-run after editing). */
+  onRefresh?: () => void;
+  refreshing?: boolean;
   /** Inspect an involved symbol in the shared EntityPanel. */
   onInspect: (ref: SolidSymbolRef) => void;
 }
@@ -155,6 +158,8 @@ export interface SolidMapProps {
 export function SolidMap({
   findings = [],
   loading = false,
+  onRefresh,
+  refreshing = false,
   onInspect,
 }: SolidMapProps) {
   const [principleFilter, setPrincipleFilter] = useState<string | null>(null);
@@ -196,6 +201,11 @@ export function SolidMap({
         accent
         title="No SOLID findings"
         hint="No near-duplicate clusters, low-cohesion containers, fat interfaces, concrete cross-package dependencies, shotgun-surgery families, or import cycles surfaced. The architecture looks tidy."
+        action={
+          onRefresh ? (
+            <LensRerunButton onRefresh={onRefresh} refreshing={refreshing} />
+          ) : undefined
+        }
       />
     );
   }
@@ -219,6 +229,8 @@ export function SolidMap({
           </>
         }
         hint="Heuristic smells — candidates for refactoring, not failures. Inspect a symbol to judge it in context."
+        onRefresh={onRefresh}
+        refreshing={refreshing}
       >
         <div className="flex flex-wrap gap-1.5">
           <PrincipleChip
@@ -359,26 +371,35 @@ function solidRefToSymbolInfo(r: SolidSymbolRef): SymbolInfo {
 export function SolidMapConnector({ corpusId }: { corpusId: string }) {
   const { openEntity } = useEntityPanel();
   const [findings, setFindings] = useState<SolidFinding[] | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const reqRef = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    setFindings(null);
+  const load = useCallback(() => {
+    const id = ++reqRef.current;
+    setRefreshing(true);
     invoke<SolidFinding[]>("solid_findings", { corpusId, limit: 200 })
       .then((r) => {
-        if (!cancelled) setFindings(r);
+        if (reqRef.current === id) setFindings(r);
       })
       .catch(() => {
-        if (!cancelled) setFindings([]);
+        if (reqRef.current === id) setFindings([]);
+      })
+      .finally(() => {
+        if (reqRef.current === id) setRefreshing(false);
       });
-    return () => {
-      cancelled = true;
-    };
   }, [corpusId]);
+
+  useEffect(() => {
+    setFindings(null);
+    load();
+  }, [load]);
 
   return (
     <SolidMap
       findings={findings ?? []}
       loading={findings === null}
+      onRefresh={load}
+      refreshing={refreshing}
       onInspect={(r) =>
         openEntity({ kind: "symbol", corpusId, symbol: solidRefToSymbolInfo(r) })
       }
