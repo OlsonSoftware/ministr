@@ -29,10 +29,22 @@ export interface FileBucket {
   total: number;
 }
 
+/** A touched symbol paired with the file it was seen in, so the GUI can
+ *  resolve it (search_symbols by name+file) and deep-link into Explore. */
+export interface SymbolRef {
+  name: string;
+  /** Repo-relative file the symbol was touched in, or null if the event
+   *  didn't carry one (then resolution falls back to a name-only search). */
+  file: string | null;
+}
+
 export interface CodeTouchedSummary {
   files: FileBucket[];
   /** Distinct symbol short names (last `::` segment) the agent looked at. */
   symbols: string[];
+  /** Distinct touched symbols paired with their file — drives the
+   *  click-to-Explore deep-links (aaa-explore-session-codetouched). */
+  symbolRefs: SymbolRef[];
   /** Number of bridge-inspection events. */
   bridgeInspections: number;
   /** Sum of result counts on references events — how many call sites
@@ -172,6 +184,9 @@ export function summarizeCodeTouched(
 ): CodeTouchedSummary {
   const buckets = new Map<string, FileBucket>();
   const symbols = new Set<string>();
+  // name → file: keep the first file we see, but upgrade a null to a real
+  // file if a later event for the same name carries one.
+  const symbolFiles = new Map<string, string | null>();
   let bridgeInspections = 0;
   let refsChecked = 0;
 
@@ -189,6 +204,12 @@ export function summarizeCodeTouched(
 
     if (parsed.symbol) {
       symbols.add(parsed.symbol);
+      const existing = symbolFiles.get(parsed.symbol);
+      if (existing == null && parsed.file) {
+        symbolFiles.set(parsed.symbol, parsed.file);
+      } else if (!symbolFiles.has(parsed.symbol)) {
+        symbolFiles.set(parsed.symbol, parsed.file);
+      }
     }
 
     if (parsed.file) {
@@ -229,9 +250,14 @@ export function summarizeCodeTouched(
     return a.file.localeCompare(b.file);
   });
 
+  const symbolRefs: SymbolRef[] = Array.from(symbols)
+    .sort()
+    .map((name) => ({ name, file: symbolFiles.get(name) ?? null }));
+
   return {
     files,
     symbols: Array.from(symbols).sort(),
+    symbolRefs,
     bridgeInspections,
     refsChecked,
   };

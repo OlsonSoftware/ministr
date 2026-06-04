@@ -16,6 +16,10 @@ interface Props {
   /** Called when a file row is activated — wires through to the
    *  activity-timeline target filter so §1 click filters §2. */
   onFilterFile?: (file: string) => void;
+  /** Called when a touched symbol chip is activated — the cross-facet jump
+   *  into Explore at that symbol (aaa-explore-session-codetouched). When
+   *  omitted (storied in isolation) the chips render inert. */
+  onOpenSymbol?: (name: string, file: string | null) => void;
 }
 
 const COLLAPSED_LIMIT = 8;
@@ -31,6 +35,7 @@ export function SessionCodeTouchedSection({
   events,
   loading,
   onFilterFile,
+  onOpenSymbol,
 }: Props) {
   const summary = useMemo(() => summarizeCodeTouched(events), [events]);
   const [showAll, setShowAll] = useState(false);
@@ -86,7 +91,7 @@ export function SessionCodeTouchedSection({
 
       {/* File rows */}
       {summary.files.length > 0 && (
-        <div role="list">
+        <div>
           {visibleFiles.map((f) => (
             <FileRow
               key={f.file}
@@ -107,19 +112,26 @@ export function SessionCodeTouchedSection({
         </div>
       )}
 
-      {/* Symbols chip row */}
-      {summary.symbols.length > 0 && (
+      {/* Symbols chip row — each chip jumps into Explore at that symbol. */}
+      {summary.symbolRefs.length > 0 && (
         <div className="border-t border-border-soft px-3 py-2.5 space-y-2">
           <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
             Symbols
           </span>
           <ChipGroup>
-            {summary.symbols.slice(0, 24).map((s) => (
-              <Chip key={s} label={s} asStatic />
-            ))}
-            {summary.symbols.length > 24 && (
+            {summary.symbolRefs.slice(0, 24).map((s) => (
               <Chip
-                label={`+${summary.symbols.length - 24} more`}
+                key={s.name}
+                label={s.name}
+                asStatic={!onOpenSymbol}
+                onClick={
+                  onOpenSymbol ? () => onOpenSymbol(s.name, s.file) : undefined
+                }
+              />
+            ))}
+            {summary.symbolRefs.length > 24 && (
+              <Chip
+                label={`+${summary.symbolRefs.length - 24} more`}
                 asStatic
                 className="text-text-dim"
               />
@@ -152,7 +164,6 @@ function FileRow({
   return (
     <button
       type="button"
-      role="listitem"
       disabled={!interactive}
       onClick={onClick}
       className={cn(

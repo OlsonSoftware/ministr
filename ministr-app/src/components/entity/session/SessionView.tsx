@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { AlertOctagon } from "lucide-react";
 import type { Entity } from "../../../hooks/useEntityPanel";
 import { useEntityPanel } from "../../../hooks/useEntityPanel";
+import { useWorkspaceOptional } from "../../workspace/WorkspaceContext";
 import { useSession } from "../../../hooks/useSessions";
 import { useSessionActivity } from "../../../hooks/useSessionActivity";
 import { endedSessionSeed } from "../../../hooks/useSessionHistory";
@@ -41,7 +42,8 @@ interface Props {
  */
 export function SessionView({ entity }: Props) {
   const { corpusId, sessionId } = entity;
-  const { openEntity } = useEntityPanel();
+  const { openEntity, close } = useEntityPanel();
+  const workspace = useWorkspaceOptional();
 
   const live = useSession(sessionId);
   const activity = useSessionActivity(sessionId);
@@ -135,6 +137,14 @@ export function SessionView({ entity }: Props) {
         events={activity.events}
         loading={activity.loading}
         onFilterFile={setTargetFilter}
+        onOpenSymbol={
+          workspace
+            ? (name, file) => {
+                workspace.revealInExplore({ symbolName: name, filePath: file });
+                close();
+              }
+            : undefined
+        }
       />
 
       <ActivityTimeline

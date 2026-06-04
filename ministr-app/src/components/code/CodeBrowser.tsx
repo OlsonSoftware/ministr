@@ -32,6 +32,7 @@ import type {
 } from "../../lib/types";
 import { spring } from "../../lib/motion";
 import { cn } from "../../lib/utils";
+import { useWorkspaceOptional } from "../workspace/WorkspaceContext";
 import { FileTree } from "./FileTree";
 import { CodeViewer } from "./CodeViewer";
 import { CodeOverviewConnector } from "./CodeOverview";
@@ -253,6 +254,51 @@ export function CodeBrowser({ status, activeCorpusId }: Props) {
     },
     [nav],
   );
+
+  // ── Cross-facet "reveal in Explore" — consume a Sessions→Explore intent.
+  //    A session's "code touched" chip drops a (symbolName, filePath); resolve
+  //    it (search_symbols, like jumpToRef) and open its peek, falling back to
+  //    opening the file when it can't be resolved. Keyed on the intent nonce so
+  //    re-revealing the same target fires again (aaa-explore-session-codetouched).
+  const workspace = useWorkspaceOptional();
+  const exploreIntent = workspace?.exploreIntent ?? null;
+  const clearExploreIntent = workspace?.clearExploreIntent;
+  useEffect(() => {
+    if (!exploreIntent || !corpusId) return;
+    const { symbolName, filePath } = exploreIntent;
+    let active = true;
+    void (async () => {
+      selectLens("code");
+      let opened = false;
+      if (symbolName) {
+        try {
+          const matches = await invoke<SymbolInfo[]>("search_symbols", {
+            corpusId,
+            query: symbolName,
+            kind: null,
+            filePath: filePath ?? undefined,
+          });
+          if (!active) return;
+          const exact =
+            matches.find((m) => m.name === symbolName) ?? matches[0];
+          if (exact) {
+            nav.push({ path: exact.file_path, symbolId: exact.id });
+            openSymbol(exact.id, exact.name);
+            opened = true;
+          }
+        } catch {
+          // resolution failed — fall through to the file fallback below.
+        }
+      }
+      if (!active) return;
+      if (!opened && filePath) nav.push({ path: filePath });
+      clearExploreIntent?.();
+    })();
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exploreIntent?.nonce, corpusId]);
 
   if (!corpusId) {
     return (

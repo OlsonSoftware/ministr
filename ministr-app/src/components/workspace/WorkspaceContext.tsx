@@ -29,6 +29,26 @@ export interface AskIntent {
 }
 
 /**
+ * A cross-facet request to REVEAL a target in the Explore facet — the
+ * Sessions→Explore counterpart of {@link AskIntent}.
+ *
+ * A session's "code touched" chip drops a (symbolName, filePath) here and
+ * switches the facet to Explore; CodeBrowser consumes the intent (keyed on
+ * `nonce`), resolves the symbol via `search_symbols(name, file)` and opens its
+ * peek — falling back to opening the file when the symbol can't be resolved.
+ * Carried on the shared context (not a CustomEvent) so it survives the facet
+ * swap and renders in Storybook.
+ */
+export interface ExploreIntent {
+  /** Symbol short-name to resolve+reveal, or null to just open the file. */
+  symbolName: string | null;
+  /** Repo-relative file the symbol lives in (resolution scope + fallback). */
+  filePath: string | null;
+  /** Monotonic id so revealing the same target twice still triggers. */
+  nonce: number;
+}
+
+/**
  * The spine — the ONE selected object the whole workspace operates on.
  *
  * Project-as-spine (AAA-VISION.md): you are always looking at either a single
@@ -80,6 +100,18 @@ export interface WorkspaceContextValue {
   askAbout: (contentId: string, n?: number) => void;
   /** Clear a consumed ask-intent (called by the Ask surface once ingested). */
   clearAskIntent: () => void;
+
+  /** A pending cross-facet "reveal this in Explore" request, or null. */
+  exploreIntent: ExploreIntent | null;
+  /** Reveal a symbol (resolved by name+file) — or just a file — in the Explore
+   *  facet, and switch to it. Cross-facet OOUX glue: from a session's "code
+   *  touched" list straight into the code. */
+  revealInExplore: (target: {
+    symbolName?: string | null;
+    filePath?: string | null;
+  }) => void;
+  /** Clear a consumed explore-intent (called by CodeBrowser once handled). */
+  clearExploreIntent: () => void;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
@@ -183,6 +215,9 @@ export function WorkspaceProvider({
   }, [spine]);
 
   const [askIntent, setAskIntent] = useState<AskIntent | null>(null);
+  const [exploreIntent, setExploreIntent] = useState<ExploreIntent | null>(
+    null,
+  );
   const nonceRef = useRef(0);
 
   const selectProject = useCallback(
@@ -211,6 +246,25 @@ export function WorkspaceProvider({
   }, []);
   const clearAskIntent = useCallback(() => setAskIntent(null), []);
 
+  const revealInExplore = useCallback(
+    (target: { symbolName?: string | null; filePath?: string | null }) => {
+      nonceRef.current += 1;
+      setExploreIntent({
+        symbolName: target.symbolName ?? null,
+        filePath: target.filePath ?? null,
+        nonce: nonceRef.current,
+      });
+      setFacetState("explore");
+      try {
+        localStorage.setItem(FACET_STORAGE_KEY, "explore");
+      } catch {
+        /* ignore */
+      }
+    },
+    [],
+  );
+  const clearExploreIntent = useCallback(() => setExploreIntent(null), []);
+
   const value = useMemo<WorkspaceContextValue>(() => {
     const isFleet = spine.kind === "fleet";
     const activeProjectId = isFleet ? null : spine.id;
@@ -231,6 +285,9 @@ export function WorkspaceProvider({
       askIntent,
       askAbout,
       clearAskIntent,
+      exploreIntent,
+      revealInExplore,
+      clearExploreIntent,
     };
   }, [
     spine,
@@ -242,6 +299,9 @@ export function WorkspaceProvider({
     askIntent,
     askAbout,
     clearAskIntent,
+    exploreIntent,
+    revealInExplore,
+    clearExploreIntent,
   ]);
 
   return (
