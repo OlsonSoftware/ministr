@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { Waypoints } from "lucide-react";
 import { useEntityPanel, type Entity } from "../../hooks/useEntityPanel";
 import { EntityRow } from "./EntityRow";
 import {
@@ -129,9 +130,29 @@ export function BridgeView({ entity }: Props) {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* §1 Meta */}
+      {/* §1 Meta — a command-deck bridge-identity header (mirrors the
+          Section/File inspectors) over the bridge's vital readout. */}
       <EntitySection chapter={1} title="Meta">
-        <div className="grid grid-cols-3 divide-x divide-border-soft">
+        <div className="flex items-start gap-3 px-3 py-3">
+          {/* Quiet accent medallion — a bridge isn't "live", so no glow. */}
+          <span
+            aria-hidden
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-accent/40 bg-surface-overlay text-accent"
+          >
+            <Waypoints className="h-[18px] w-[18px]" strokeWidth={2} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="break-words font-mono text-[15px] font-semibold leading-tight text-text">
+              {link.export_symbol || link.export_binding_key}
+              <span className="text-text-dim"> ↔ </span>
+              {link.import_symbol || link.import_binding_key}
+            </p>
+            <p className="mt-0.5 font-mono text-mono-mini text-text-dim">
+              {link.export_language} → {link.import_language}
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 divide-x divide-border-soft border-t border-border-soft">
           <MetricTile variant="cell" label="Kind" value={link.kind.toUpperCase()} />
           <MetricTile
             variant="cell"
@@ -280,7 +301,15 @@ function CodePane({
           Loading<span className="ministr-blink">_</span>
         </p>
       ) : (
-        <pre className="m-0 bg-surface-sunken px-3 py-2.5 font-mono text-[0.8125rem] leading-[1.55] text-text whitespace-pre overflow-auto max-h-72">
+        <pre
+          // The pane scrolls (long code lines / many rows); make it keyboard-
+          // reachable so it isn't a mouse-only scroll trap (axe
+          // scrollable-region-focusable).
+          tabIndex={0}
+          role="region"
+          aria-label={`${title} source`}
+          className="m-0 max-h-72 overflow-auto bg-surface-sunken px-3 py-2.5 font-mono text-[0.8125rem] leading-[1.55] whitespace-pre text-text focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
+        >
           {source ?? "// (no source)"}
         </pre>
       )}
