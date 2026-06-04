@@ -79,32 +79,22 @@ export function FacetBar() {
   );
 }
 
-/** A quiet, always-visible keyboard-chord hint (e.g. `g a`). Rendered as a
- *  faint mono badge so the deck advertises its shortcuts the way a pro tool
- *  does, without competing with the label. Hidden from the a11y tree (the
- *  chord lives in the tab's `title`). */
+/** A quiet, always-visible keyboard-chord hint (e.g. `g a`). One legible mono
+ *  chip — lowercase, the real keys, comfortably padded — so the deck advertises
+ *  its shortcuts the way a pro tool does without the cramped micro type. Hidden
+ *  from the a11y tree (the chord lives in the tab's `title`). */
 function Chord({ chord, active }: { chord: string; active: boolean }) {
   return (
-    <span
+    <kbd
       aria-hidden
       className={cn(
-        "ml-0.5 inline-flex items-center gap-0.5 font-mono text-mono-micro uppercase tracking-[0.08em]",
-        active ? "text-text-muted" : "text-text-dim",
+        "ml-1 rounded-md border px-1.5 py-px font-mono text-[11px] font-medium leading-none tracking-tight",
+        active
+          ? "border-border bg-surface-overlay text-text-muted"
+          : "border-border-soft bg-surface text-text-dim",
       )}
     >
-      {chord.split(" ").map((k, i) => (
-        <kbd
-          key={i}
-          className={cn(
-            "grid h-3.5 min-w-3.5 place-items-center rounded border px-1 leading-none",
-            active
-              ? "border-border bg-surface-overlay"
-              : "border-border-soft bg-surface",
-          )}
-        >
-          {k}
-        </kbd>
-      ))}
-    </span>
+      {chord}
+    </kbd>
   );
 }
