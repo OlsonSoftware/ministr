@@ -1,0 +1,44 @@
+{
+  "model": "sonnet",
+  "max_budget_usd": 0.75,
+  "results": [
+    {
+      "arm": "a",
+      "label": "ministr",
+      "uses_ministr": true,
+      "allowed_tools": "Read Edit Write Bash mcp__ministr__*",
+      "workdir": "/var/folders/ml/51b226t50rxf09jwljnq7tn00000gn/T/sxs-ministr-cvhvohn_/fixture",
+      "index_secs": 0.1,
+      "wall_secs": 17.3,
+      "is_error": false,
+      "num_turns": 5,
+      "total_cost_usd": 0.08449745,
+      "input_tokens": 6,
+      "output_tokens": 708,
+      "cache_read_tokens": 120194,
+      "cache_creation_tokens": 9879,
+      "result_text": "All 16 tests pass. The fix was a one-character change on `stats.py:50`: divided by `len(values) - 1` instead of `len(values)` to apply Bessel's correction in `sample_variance`.",
+      "validator_passed": true,
+      "validator_summary": "OK"
+    },
+    {
+      "arm": "b",
+      "label": "grep",
+      "uses_ministr": false,
+      "allowed_tools": "Read Edit Write Bash Grep Glob",
+      "workdir": "/var/folders/ml/51b226t50rxf09jwljnq7tn00000gn/T/sxs-grep-1s18ljqe/fixture",
+      "index_secs": null,
+      "wall_secs": 29.2,
+      "is_error": false,
+      "num_turns": 7,
+      "total_cost_usd": 0.17006005000000002,
+      "input_tokens": 8,
+      "output_tokens": 1000,
+      "cache_read_tokens": 159691,
+      "cache_creation_tokens": 28365,
+      "result_text": "All 16 tests pass. The fix was on line 50 of `minicsv/stats.py`: changed the divisor in `sample_variance` from `len(values)` (population estimator) to `len(values) - 1` (Bessel's correction for unbiased sample variance).",
+      "validator_passed": true,
+      "validator_summary": "OK"
+    }
+  ]
+}
