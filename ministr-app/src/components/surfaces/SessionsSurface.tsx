@@ -8,7 +8,7 @@
  * derivations — no own fetch.
  */
 import { useMemo, useState } from "react";
-import { Activity, Users } from "@/components/ui/icons";
+import { Activity, GitFork, LayoutGrid, Users } from "@/components/ui/icons";
 import { motion } from "motion/react";
 
 import type { CorpusInfo, DaemonStatus, SessionDetail } from "../../lib/types";
@@ -30,20 +30,33 @@ import { NumberTicker } from "../ui/number-ticker";
 import { SessionCard, SessionCardSkeleton } from "../ui/session-card";
 import { FacetHeader } from "../ui/facet-header";
 import { AdaptiveSurface } from "../ui/adaptive-surface";
+import { ViewSwitch, type ViewOption } from "../ui/view-switch";
 import { ActivityPulseConnector } from "./ActivityPulse";
+import { SessionLineageTree } from "./SessionLineageTree";
 
 const CONNECT_CMD = "npx @modelcontextprotocol/inspector ministr stdio";
+
+type ActivityView = "board" | "tree";
+
+const ACTIVITY_VIEWS: ViewOption<ActivityView>[] = [
+  { id: "board", label: "Board", icon: LayoutGrid, hint: "Live cards — expand for per-agent economics" },
+  { id: "tree", label: "Tree", icon: GitFork, hint: "Spawn forest — agents & subagents by budget" },
+];
 
 export function SessionsSurface({
   status,
   activeCorpusId,
+  initialView,
 }: {
   status: DaemonStatus;
   activeCorpusId: string | null;
+  /** Initial view mode — Storybook renders the spawn-forest directly with "tree". */
+  initialView?: ActivityView;
 }) {
   const { sessions, byId, samples, freshIds, loaded } = useSessions();
   const { openEntity } = useEntityPanel();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [view, setView] = useState<ActivityView>(initialView ?? "board");
 
   // Activity is a FACET of the spine: when a project is selected it shows only
   // that project's agents; on the Fleet (activeCorpusId === null) it shows the
@@ -118,18 +131,26 @@ export function SessionsSurface({
           }
           actions={
             agg.count > 0 ? (
-              <div className="flex items-center gap-5">
-                <AggStat label="budget">
-                  <span className={toneTextClass(utilizationTone(agg.util))}>
-                    {clampPct(agg.util * 100)}%
-                  </span>
-                </AggStat>
-                <AggStat label="saved">
-                  <NumberTicker value={agg.saved} format={formatTokens} />
-                </AggStat>
-                <AggStat label="dedup">
-                  <NumberTicker value={agg.dedup} flashOnChange />
-                </AggStat>
+              <div className="flex items-center gap-4">
+                <ViewSwitch
+                  value={view}
+                  onChange={setView}
+                  options={ACTIVITY_VIEWS}
+                  ariaLabel="Activity view"
+                />
+                <div className="flex items-center gap-5">
+                  <AggStat label="budget">
+                    <span className={toneTextClass(utilizationTone(agg.util))}>
+                      {clampPct(agg.util * 100)}%
+                    </span>
+                  </AggStat>
+                  <AggStat label="saved">
+                    <NumberTicker value={agg.saved} format={formatTokens} />
+                  </AggStat>
+                  <AggStat label="dedup">
+                    <NumberTicker value={agg.dedup} flashOnChange />
+                  </AggStat>
+                </div>
               </div>
             ) : undefined
           }
@@ -166,26 +187,31 @@ export function SessionsSurface({
             </div>
           ) : (
             <>
-              {/* The live tool-call heartbeat — the gestalt above the board.
-                  Polls only while there are live sessions (here). */}
+              {/* The live tool-call heartbeat — the WHEN gestalt, above both
+                  views. Polls only while there are live sessions (here). */}
               <ActivityPulseConnector
                 corpusId={activeCorpusId}
                 className="mb-3"
               />
-              <motion.div
-                variants={listContainer}
-                initial="initial"
-                animate="animate"
-                className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start"
-              >
-                {groups.map((group) => (
-                  <LineageGroupCell
-                    key={group.parent.session_id}
-                    group={group}
-                    cardProps={cardProps}
-                  />
-                ))}
-              </motion.div>
+              {view === "tree" ? (
+                /* The WHO/lineage gestalt — the agent spawn-forest. */
+                <SessionLineageTree groups={groups} onOpen={openInspector} />
+              ) : (
+                <motion.div
+                  variants={listContainer}
+                  initial="initial"
+                  animate="animate"
+                  className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start"
+                >
+                  {groups.map((group) => (
+                    <LineageGroupCell
+                      key={group.parent.session_id}
+                      group={group}
+                      cardProps={cardProps}
+                    />
+                  ))}
+                </motion.div>
+              )}
             </>
           )}
         </div>

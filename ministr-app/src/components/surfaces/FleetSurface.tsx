@@ -55,12 +55,18 @@ import { EmptyState } from "../ui/empty-state";
 import { FacetHeader } from "../ui/facet-header";
 import { MetricTile } from "../ui/metric-tile";
 import { StatusDot } from "../ui/status-dot";
+import { ViewSwitch, type ViewOption } from "../ui/view-switch";
 import { VizFrame } from "../ui/viz-frame";
 import { useToast } from "../shell/ToastTray";
 
 const DAY = 86_400;
 
 type FleetView = "grid" | "map";
+
+const FLEET_VIEWS: ViewOption<FleetView>[] = [
+  { id: "grid", label: "Grid", icon: LayoutGrid, hint: "Manage projects — per-cell actions" },
+  { id: "map", label: "Map", icon: Compass, hint: "Star-map — index mass & status at a glance" },
+];
 
 interface DeckProps {
   corpora: CorpusInfo[];
@@ -196,7 +202,12 @@ export function FleetDeck({
           }
           actions={
             <>
-              <ViewToggle view={view} onChange={setView} />
+              <ViewSwitch
+                value={view}
+                onChange={setView}
+                options={FLEET_VIEWS}
+                ariaLabel="Fleet view"
+              />
               <Button variant="outline" size="sm" onClick={onScan} disabled={busyScan}>
                 {busyScan ? (
                   <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
@@ -280,51 +291,6 @@ export function FleetDeck({
         )}
       </div>
     </AdaptiveSurface>
-  );
-}
-
-// ── Grid | Map view switch — two reads of the same fleet (LensToggle grammar). ─
-
-function ViewToggle({
-  view,
-  onChange,
-}: {
-  view: FleetView;
-  onChange: (v: FleetView) => void;
-}) {
-  const tabs = [
-    { id: "grid" as const, label: "Grid", icon: LayoutGrid, hint: "Manage projects — per-cell actions" },
-    { id: "map" as const, label: "Map", icon: Compass, hint: "Star-map — index mass & status at a glance" },
-  ];
-  return (
-    <div
-      role="tablist"
-      aria-label="Fleet view"
-      className="inline-flex items-center gap-0.5 rounded-md border border-border-soft bg-surface-sunken p-0.5"
-    >
-      {tabs.map(({ id, label, icon: Icon, hint }) => {
-        const active = view === id;
-        return (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            aria-selected={active}
-            title={hint}
-            onClick={() => onChange(id)}
-            className={cn(
-              "inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-mono-mini font-semibold uppercase tracking-[0.06em] cursor-pointer transition-colors duration-150 ease-out",
-              active
-                ? "bg-surface-overlay text-text shadow-[var(--glow-soft)]"
-                : "text-text-dim hover:text-text",
-            )}
-          >
-            <Icon className="h-3 w-3" strokeWidth={2.25} />
-            {label}
-          </button>
-        );
-      })}
-    </div>
   );
 }
 

@@ -84,6 +84,19 @@ const SESSIONS: SessionDetail[] = [
   }),
 ];
 
+/** A richer spawn-forest: one root fanning out to three subagents, a second
+ *  elevated root with one subagent, and a critical lone root — exercises the
+ *  two tiers, the budget arcs, and every pressure tone at once. */
+const FOREST: SessionDetail[] = [
+  session({ session_id: "sess_orchestrator", current_turn: 9, utilization: 0.34, client_name: "claude-code" }),
+  session({ session_id: "sess_sub_a", parent_session_id: "sess_orchestrator", current_turn: 5, utilization: 0.18, client_name: "claude-code (Task)" }),
+  session({ session_id: "sess_sub_b", parent_session_id: "sess_orchestrator", current_turn: 11, utilization: 0.61, pressure_level: "elevated", client_name: "claude-code (Task)" }),
+  session({ session_id: "sess_sub_c", parent_session_id: "sess_orchestrator", current_turn: 3, utilization: 0.08, client_name: "claude-code (Task)" }),
+  session({ session_id: "sess_cursor_root", current_turn: 16, tokens_used: 150_000, tokens_remaining: 50_000, utilization: 0.78, pressure_level: "elevated", client_name: "cursor" }),
+  session({ session_id: "sess_cursor_sub", parent_session_id: "sess_cursor_root", current_turn: 6, utilization: 0.27, client_name: "cursor (Task)" }),
+  session({ session_id: "sess_lonecrit", current_turn: 24, tokens_used: 194_000, tokens_remaining: 6_000, utilization: 0.97, pressure_level: "critical", client_name: "claude-code" }),
+];
+
 const status = (corpora: CorpusInfo[]): DaemonStatus => ({
   version: "0.2.1",
   uptime_secs: 4210,
@@ -131,6 +144,22 @@ export const Fleet: Story = {
       <SessionsSurface
         status={status([corpusInfo])}
         activeCorpusId={null}
+      />
+    </Frame>
+  ),
+};
+
+/** The bespoke agent SPAWN-FOREST view — roots across the top, the subagents
+ *  they spawned hanging below, each a budget ring toned by pressure. Click a
+ *  node to open its session inspector. */
+export const LineageTree: Story = {
+  decorators: [withTauriMock({ list_sessions: FOREST })],
+  render: () => (
+    <Frame>
+      <SessionsSurface
+        status={status([corpusInfo])}
+        activeCorpusId="ministr"
+        initialView="tree"
       />
     </Frame>
   ),
