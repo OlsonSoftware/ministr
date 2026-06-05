@@ -59,6 +59,35 @@ A companion **latency** benchmark (Criterion) times the tokenizer and retrieval-
 cargo bench -p ministr-core --bench token_economics
 ```
 
+## End-to-end agent benchmark (does it help the agent?)
+
+Retrieval-token cost is a proxy. The stronger question is whether a real coding
+agent, given ministr, reaches a **correct** solution with less work. A second
+harness (`benchmarks/agent-task/`) measures exactly that: it runs the *same*
+headless coding agent on the *same* task twice, changing only the discovery tool
+— ministr vs `grep`/`glob` — across a difficulty ladder of fixtures and real
+open-source repos (with the repo's own failing→passing tests as a deterministic
+validator), and across models.
+
+Early, honest findings (directional — small trial counts, reported as measured):
+
+- **Correctness is a tie** so far — both arms tend to solve the task. The
+  difference is in *cost and turns*, not whether it works.
+- **The advantage grows with codebase size and discovery difficulty.** On small
+  fixtures, or when the task names the failing test, `grep` ties — there's
+  nothing to discover. On a large real repo (~1,600 files) with a task that only
+  describes a *symptom*, a capable model with ministr located the fix using
+  roughly half the search-related tokens and fewer turns.
+- **A weaker model benefits less** — it spends turns scanning regardless, so a
+  better search tool helps it less.
+
+Run it yourself (it calls a real model, so it is opt-in):
+
+```sh
+python3 benchmarks/agent-task/run_sxs.py --selftest          # no-LLM: tasks are valid red→green
+python3 benchmarks/agent-task/run_sxs.py --models haiku      # the matrix
+```
+
 ## Honest caveats
 
 - Retrieval cost only. It doesn't credit ministr for code-intelligence quality (symbols, references, cross-language bridges) or charge it for index build time.
