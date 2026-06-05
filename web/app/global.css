@@ -1800,9 +1800,53 @@ body:has(.ministr-v2) {
   white-space: nowrap;
 }
 
+/* ── Cross-language bridge flow (signature feature) ─────────────────
+   One call traced across language seams. SINGLE amber accent (edges,
+   bridge-kind labels, language tags); symbol names in ink; hairline
+   node boxes; mono. SVG element fills resolve v2 tokens via class. */
+.v2-bridge {
+  margin: 4px 0 0;
+  border: 1px solid var(--rule);
+  padding: 26px 24px 18px;
+  overflow-x: auto; /* wide diagram → horizontal scroll on narrow screens */
+}
+.v2-bridge-svg { display: block; width: 100%; min-width: 680px; height: auto; }
+.v2-bridge-node { fill: var(--bg-2); stroke: var(--rule-2); stroke-width: 1; }
+.v2-bridge-tag {
+  fill: var(--amber);
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+.v2-bridge-sym {
+  fill: var(--ink);
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-size: 13px;
+}
+.v2-bridge-edge { stroke: var(--amber); stroke-width: 1.5; opacity: 0.7; }
+.v2-bridge-arrowhead { fill: var(--amber); }
+.v2-bridge-kindbg { fill: var(--bg); }
+.v2-bridge-kind {
+  fill: var(--amber);
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+}
+.v2-bridge-cap {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  max-width: 74ch;
+}
+.v2-bridge-foil { color: #9a958c; }
+
 /* ── Responsive ─────────────────────────────────────────────────── */
 @media (max-width: 640px) {
   .v2-tok-row { grid-template-columns: 60px 1fr 64px; gap: 10px; }
+  .v2-bridge { padding: 22px 16px 16px; }
   .ministr-v2 { font-size: 16px; padding: 0 22px; }
   .v2-demo { grid-template-columns: 1fr; margin-top: 40px; }
   .v2-demo-col { padding: 20px 18px 22px; }

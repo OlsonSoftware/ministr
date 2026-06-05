@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { GrepVsMinistr } from '../../components/landing/grep-vs-ministr';
 import { TokenEconomics } from '../../components/landing/token-economics';
+import { CrossLanguageBridge } from '../../components/landing/cross-language-bridge';
 
 export default function HomePage() {
   return (
@@ -48,6 +49,14 @@ export default function HomePage() {
             <p>Bare-metal local indexing means queries return in milliseconds. Files auto-reindex on change, so results are never stale.</p>
           </div>
         </div>
+      </section>
+
+      <hr className="v2-rule" />
+
+      {/* ── Cross-language ───────────────────────────────── */}
+      <section className="v2-section">
+        <h2 className="v2-h2" style={{ maxWidth: "20ch" }}>One call, three languages.</h2>
+        <CrossLanguageBridge />
       </section>
 
       <hr className="v2-rule" />
