@@ -62,6 +62,8 @@ import { MetricTile } from "../ui/metric-tile";
 import { StatusDot } from "../ui/status-dot";
 import { Toggle } from "../ui/toggle";
 import { useToast } from "../shell/ToastTray";
+import { SystemVitalsPulse } from "./SystemVitalsPulse";
+import { useRollingSeries } from "../../hooks/useRollingSeries";
 
 type ThemeChoice = "system" | "dark" | "light";
 
@@ -87,6 +89,9 @@ export interface SystemSurfaceProps {
   /** Live AI-assistant integration views (from useMcpClients). */
   integrations: McpClientView[];
   integrationsLoading?: boolean;
+  /** Rolling daemon-RSS samples (MB, oldest → newest) for the memory pulse.
+   *  Accumulated by the connector across polls; empty in shell-only stories. */
+  memSeries?: number[];
   /** Client id currently mid-action (connect/test), or null. */
   integrationsBusy?: string | null;
   /** The project root the integrations configure against (null = no project). */
@@ -290,6 +295,13 @@ export function SystemSurface(props: SystemSurfaceProps) {
                 value={fleetLabel}
               />
             </div>
+
+            {/* Memory pulse — the vitals' missing TIME axis: daemon RSS as a
+                living trend (leak vs. steady), drawn from the connector's
+                rolling sample buffer. Additive; the grid above is untouched. */}
+            {props.memSeries && props.memSeries.length > 0 && (
+              <SystemVitalsPulse series={props.memSeries} />
+            )}
 
             {/* CLI-on-PATH — relocated out of the retired onboarding wizard.
                 A passive health row here, not a first-run gate. */}
@@ -647,6 +659,10 @@ export function SystemSurfaceConnector({
   const { density, setDensity } = useDensity();
   const { toast } = useToast();
 
+  // Accumulate daemon RSS into a rolling window — one sample per poll (keyed on
+  // the status object so a flat-memory daemon still scrolls a flat trend).
+  const memSeries = useRollingSeries(status.memory_mb, 48, status);
+
   const [setup, setSetup] = useState<SetupStatus | null>(null);
   const [fixingPath, setFixingPath] = useState(false);
 
@@ -749,6 +765,7 @@ export function SystemSurfaceConnector({
         onFixPath={fixPath}
         integrations={views}
         integrationsLoading={loading}
+        memSeries={memSeries}
         integrationsBusy={busy}
         projectRoot={projectRoot}
         onThemeChange={onThemeChange}
