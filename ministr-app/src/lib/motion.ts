@@ -109,5 +109,26 @@ export const listItem: Variants = {
   exit: { opacity: 0, y: -4, transition: swift },
 };
 
+/** Boot / splash choreography — a calm staggered reveal for the launch hero.
+ *  Pair the container with `bootMedallion` (the brand mark) + `bootRise` (the
+ *  wordmark / status rows). Settles to the visible final frame, so it's safe
+ *  under reduced motion (the MotionProvider snaps it) and for axe snapshots. */
+export const bootReveal: Variants = {
+  animate: { transition: { staggerChildren: 0.12, delayChildren: 0.04 } },
+};
+
+/** The brand medallion's entrance — scale + fade on the soft spring, echoing
+ *  the "still starting up" intent (value-resolving feel, no bounce). */
+export const bootMedallion: Variants = {
+  initial: { opacity: 0, scale: 0.82 },
+  animate: { opacity: 1, scale: 1, transition: springSoft },
+};
+
+/** A boot text row — fade + gentle rise, one beat behind the mark. */
+export const bootRise: Variants = {
+  initial: { opacity: 0, y: 8 },
+  animate: { opacity: 1, y: 0, transition: flow },
+};
+
 /** Shared layout id helper — keeps shared-element ids namespaced. */
 export const layoutId = (kind: string, id: string) => `le:${kind}:${id}`;
