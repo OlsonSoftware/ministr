@@ -1201,6 +1201,91 @@ body:has(.ministr-v2) {
   color: var(--ink-2);
 }
 
+/* ── Capability grid (homepage "Four things grep can't do") ─────── */
+.v2-caps {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  border-top: 1px solid var(--rule);
+  border-left: 1px solid var(--rule);
+  margin-top: 4px;
+}
+.v2-cap {
+  display: flex;
+  flex-direction: column;
+  padding: 28px 30px 22px;
+  border-right: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  background: transparent;
+  transition: background 0.15s ease;
+}
+.v2-cap:hover { background: var(--bg-2); }
+.v2-cap-glyph { height: 56px; margin-bottom: 22px; }
+.v2-cap-svg { display: block; width: 148px; max-width: 100%; height: 56px; }
+.v2-cap-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.v2-cap-index {
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--amber);
+}
+.v2-cap h3 {
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--amber);
+  margin: 0;
+}
+.v2-cap p {
+  margin: 0;
+  font-size: 16.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.v2-cap p.v2-cap-foil {
+  margin-top: auto;
+  padding-top: 16px;
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #9a958c;
+}
+/* Glyph palette — single amber, hairline, tone on non-text marks only. */
+.v2-cap-edge { stroke: var(--amber); stroke-width: 1.5; opacity: 0.75; fill: none; }
+.v2-cap-arrowhead { fill: var(--amber); }
+.v2-cap-node-core { fill: var(--bg); stroke: var(--amber); stroke-width: 1.6; }
+.v2-cap-node-dim { fill: var(--bg-2); stroke: var(--rule-2); stroke-width: 1; }
+.v2-cap-line-dim { stroke: var(--rule-2); stroke-width: 2.5; }
+.v2-cap-line-lit { stroke: var(--amber); stroke-width: 2.5; opacity: 0.85; }
+.v2-cap-sect { fill: var(--bg-2); stroke: var(--amber); stroke-width: 1.2; }
+.v2-cap-sect-tick { fill: var(--amber); }
+.v2-cap-tag {
+  fill: var(--amber);
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+.v2-cap-spark {
+  stroke: var(--amber);
+  stroke-width: 2;
+  fill: none;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.v2-cap-readout {
+  fill: var(--ink);
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-size: 15px;
+  font-weight: 600;
+}
+
 /* ── Why stat ───────────────────────────────────────────────────── */
 .v2-why-stat {
   font-size: clamp(22px, 3vw, 30px);
@@ -1854,6 +1939,7 @@ body:has(.ministr-v2) {
   .v2-init-file { grid-column: 2; }
   .v2-init-configures { grid-column: 2; }
   .v2-compare { grid-template-columns: 1fr; }
+  .v2-caps { grid-template-columns: 1fr; }
   .v2-cmp-col { padding: 20px 18px 22px; }
   .v2-nav { padding-top: 22px; }
   .v2-nav-links { gap: 18px; }

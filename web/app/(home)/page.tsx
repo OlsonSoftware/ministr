@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { GrepVsMinistr } from '../../components/landing/grep-vs-ministr';
 import { TokenEconomics } from '../../components/landing/token-economics';
 import { CrossLanguageBridge } from '../../components/landing/cross-language-bridge';
+import { FourThingsGrid } from '../../components/landing/four-things-grid';
 
 export default function HomePage() {
   return (
@@ -31,24 +32,7 @@ export default function HomePage() {
       {/* ── Features ─────────────────────────────────────── */}
       <section className="v2-section">
         <h2 className="v2-h2" style={{ maxWidth: "20ch" }}>Four things grep can&apos;t do.</h2>
-        <div className="v2-features">
-          <div className="v2-feature">
-            <h3>Structural</h3>
-            <p>Symbols, definitions, callers. The questions grep can&apos;t answer.</p>
-          </div>
-          <div className="v2-feature">
-            <h3>Semantic</h3>
-            <p>Search by meaning, not text matching. Your agent gets the section that matters, not a 300-line file dump.</p>
-          </div>
-          <div className="v2-feature">
-            <h3>Cross-language</h3>
-            <p>Follow calls across Rust, Python, TypeScript, and dozens more, through 13 bridge kinds including PyO3, Tauri, napi-rs, FFI, and gRPC.</p>
-          </div>
-          <div className="v2-feature">
-            <h3>Instant</h3>
-            <p>Bare-metal local indexing means queries return in milliseconds. Files auto-reindex on change, so results are never stale.</p>
-          </div>
-        </div>
+        <FourThingsGrid />
       </section>
 
       <hr className="v2-rule" />
