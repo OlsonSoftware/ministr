@@ -75,6 +75,7 @@ export {
   KeyCommand as Keyboard,
   Key as KeyRound,
   MultiplePages as Layers,
+  ViewGrid as LayoutGrid,
   BookStack as Library,
   LightBulb as Lightbulb,
   Link as Link2,

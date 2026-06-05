@@ -116,6 +116,17 @@ export const Selected: Story = {
   args: { corpora: FLEET, activeCorpusId: "design-system" },
 };
 
+/** The bespoke STAR-MAP view — projects packed into a constellation, bubble area
+ *  ∝ index mass, toned by status, live projects haloed. Click a bubble to zoom. */
+export const Constellation: Story = {
+  args: { corpora: FLEET, initialView: "map" },
+};
+
+/** The star-map with a project selected as the spine (bright accent ring). */
+export const ConstellationSelected: Story = {
+  args: { corpora: FLEET, initialView: "map", activeCorpusId: "ministr" },
+};
+
 /** A cold install — the whole-fleet empty state. */
 export const Empty: Story = {
   args: { corpora: [] },

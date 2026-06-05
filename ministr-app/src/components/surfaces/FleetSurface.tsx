@@ -28,8 +28,10 @@ import {
   AlertTriangle,
   Boxes,
   Code2,
+  Compass,
   FileText,
   FolderOpen,
+  LayoutGrid,
   Loader2,
   Plus,
   RefreshCw,
@@ -41,7 +43,7 @@ import {
 import type { CorpusInfo } from "../../lib/types";
 import { corpusLabel, corpusRoot } from "../../lib/corpus";
 import { formatRelativeTime } from "../../lib/format";
-import { type Tone } from "../../lib/status";
+import { type Tone, toneCssVar } from "../../lib/status";
 import { cn } from "../../lib/utils";
 
 import { AdaptiveSurface } from "../ui/adaptive-surface";
@@ -53,15 +55,20 @@ import { EmptyState } from "../ui/empty-state";
 import { FacetHeader } from "../ui/facet-header";
 import { MetricTile } from "../ui/metric-tile";
 import { StatusDot } from "../ui/status-dot";
+import { VizFrame } from "../ui/viz-frame";
 import { useToast } from "../shell/ToastTray";
 
 const DAY = 86_400;
+
+type FleetView = "grid" | "map";
 
 interface DeckProps {
   corpora: CorpusInfo[];
   activeCorpusId: string | null;
   busyAdd?: boolean;
   busyScan?: boolean;
+  /** Initial view mode — Storybook renders the star-map directly with "map". */
+  initialView?: FleetView;
   onSelect: (id: string) => void;
   onAdd: () => void;
   onScan: () => void;
@@ -94,12 +101,14 @@ export function FleetDeck({
   activeCorpusId,
   busyAdd = false,
   busyScan = false,
+  initialView,
   onSelect,
   onAdd,
   onScan,
   onReindex,
   onRemove,
 }: DeckProps) {
+  const [view, setView] = useState<FleetView>(initialView ?? "grid");
   const vitals = useMemo(() => {
     let files = 0;
     let vectors = 0;
@@ -187,6 +196,7 @@ export function FleetDeck({
           }
           actions={
             <>
+              <ViewToggle view={view} onChange={setView} />
               <Button variant="outline" size="sm" onClick={onScan} disabled={busyScan}>
                 {busyScan ? (
                   <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
@@ -235,29 +245,379 @@ export function FleetDeck({
           </div>
         </FacetHeader>
 
-        {/* ── The constellation — self-sorted project instruments. ─────────── */}
-        <div className="flex-1 min-h-0 overflow-y-auto px-5 pb-5">
-          <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 items-start">
-            {ordered.map((c) => (
-              <li key={c.id}>
-                <FleetCell
-                  corpus={c}
-                  selected={c.id === activeCorpusId}
-                  massPct={
-                    vitals.maxVectors > 0
-                      ? Math.round((c.embeddings_count / vitals.maxVectors) * 100)
-                      : 0
-                  }
-                  onSelect={() => onSelect(c.id)}
-                  onReindex={() => onReindex(c)}
-                  onRemove={() => onRemove(c)}
-                />
-              </li>
-            ))}
-          </ul>
-        </div>
+        {/* ── The constellation — self-sorted project instruments. Two reads of
+            the same fleet: a packed STAR-MAP (mass + status at a glance, zoom
+            on click) or the management GRID (per-project actions). ────────── */}
+        {view === "map" ? (
+          <div className="flex-1 min-h-0 overflow-y-auto px-5 pb-5">
+            <FleetConstellation
+              corpora={ordered}
+              activeCorpusId={activeCorpusId}
+              onSelect={onSelect}
+            />
+          </div>
+        ) : (
+          <div className="flex-1 min-h-0 overflow-y-auto px-5 pb-5">
+            <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 items-start">
+              {ordered.map((c) => (
+                <li key={c.id}>
+                  <FleetCell
+                    corpus={c}
+                    selected={c.id === activeCorpusId}
+                    massPct={
+                      vitals.maxVectors > 0
+                        ? Math.round((c.embeddings_count / vitals.maxVectors) * 100)
+                        : 0
+                    }
+                    onSelect={() => onSelect(c.id)}
+                    onReindex={() => onReindex(c)}
+                    onRemove={() => onRemove(c)}
+                  />
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     </AdaptiveSurface>
+  );
+}
+
+// ── Grid | Map view switch — two reads of the same fleet (LensToggle grammar). ─
+
+function ViewToggle({
+  view,
+  onChange,
+}: {
+  view: FleetView;
+  onChange: (v: FleetView) => void;
+}) {
+  const tabs = [
+    { id: "grid" as const, label: "Grid", icon: LayoutGrid, hint: "Manage projects — per-cell actions" },
+    { id: "map" as const, label: "Map", icon: Compass, hint: "Star-map — index mass & status at a glance" },
+  ];
+  return (
+    <div
+      role="tablist"
+      aria-label="Fleet view"
+      className="inline-flex items-center gap-0.5 rounded-md border border-border-soft bg-surface-sunken p-0.5"
+    >
+      {tabs.map(({ id, label, icon: Icon, hint }) => {
+        const active = view === id;
+        return (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            title={hint}
+            onClick={() => onChange(id)}
+            className={cn(
+              "inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-mono-mini font-semibold uppercase tracking-[0.06em] cursor-pointer transition-colors duration-150 ease-out",
+              active
+                ? "bg-surface-overlay text-text shadow-[var(--glow-soft)]"
+                : "text-text-dim hover:text-text",
+            )}
+          >
+            <Icon className="h-3 w-3" strokeWidth={2.25} />
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── The star-map — projects packed into a constellation ──────────────────────
+//
+// The Fleet's docstring calls itself a "constellation"; this view makes that
+// literal. Each project is a BUBBLE whose area is its index mass (vectors),
+// deterministically PACKED (largest at the centre, the rest spiral out
+// collision-free) and TONED by status (live=accent + a pulsing halo, indexing=
+// warning, error=danger, warming=muted, ready=success). Click a bubble to ZOOM
+// IN (it becomes the spine). The SAME circle-packing idiom the Observatory uses
+// for a codebase's modules — a ministr corpus is a constellation at every zoom.
+
+const MAP_W = 640;
+const MAP_H = 360;
+const MAP_PAD = 26;
+const STAR_MIN_R = 16;
+const STAR_MAX_R = 70;
+const STAR_GAP = 5;
+const STAR_GOLDEN = Math.PI * (3 - Math.sqrt(5)); // phyllotaxis spiral
+const STAR_STEP = 1.1;
+const STAR_MAX_SPIRAL = 6000;
+
+interface StarBubble {
+  id: string;
+  label: string;
+  tone: Tone;
+  live: boolean;
+  statusLabel: string;
+  vectors: number;
+  files: number;
+  x: number;
+  y: number;
+  r: number;
+}
+
+/** Deterministic circle pack: largest index at the centre, each next placed at
+ *  the first collision-free point along a golden-angle spiral, then the cluster
+ *  uniformly scaled to fit + centred in the viewBox. Mirrors CodebaseConstellation. */
+function buildStarLayout(corpora: CorpusInfo[]): StarBubble[] {
+  if (corpora.length === 0) return [];
+  const maxVec = corpora.reduce((m, c) => Math.max(m, c.embeddings_count), 0) || 1;
+  const ordered = [...corpora].sort(
+    (a, b) =>
+      b.embeddings_count - a.embeddings_count ||
+      corpusLabel(a).localeCompare(corpusLabel(b)),
+  );
+  const raw: StarBubble[] = ordered.map((c) => {
+    const st = statusFor(c);
+    return {
+      id: c.id,
+      label: corpusLabel(c),
+      tone: st.tone,
+      live: st.pulse,
+      statusLabel: st.label,
+      vectors: c.embeddings_count,
+      files: c.files_indexed,
+      r: STAR_MIN_R + (STAR_MAX_R - STAR_MIN_R) * Math.sqrt(c.embeddings_count / maxVec),
+      x: 0,
+      y: 0,
+    };
+  });
+
+  const placed: StarBubble[] = [];
+  for (let k = 0; k < raw.length; k++) {
+    const c = raw[k];
+    if (k === 0) {
+      placed.push(c);
+      continue;
+    }
+    let found = false;
+    for (let step = 0; step < STAR_MAX_SPIRAL; step++) {
+      const rad = step * STAR_STEP;
+      const ang = step * STAR_GOLDEN;
+      const x = Math.cos(ang) * rad;
+      const y = Math.sin(ang) * rad;
+      let ok = true;
+      for (const p of placed) {
+        if (Math.hypot(x - p.x, y - p.y) < c.r + p.r + STAR_GAP) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) {
+        c.x = x;
+        c.y = y;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      c.x = (k % 2 ? 1 : -1) * STAR_MAX_R * 2 * k;
+      c.y = 0;
+    }
+    placed.push(c);
+  }
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const c of placed) {
+    minX = Math.min(minX, c.x - c.r);
+    minY = Math.min(minY, c.y - c.r);
+    maxX = Math.max(maxX, c.x + c.r);
+    maxY = Math.max(maxY, c.y + c.r);
+  }
+  const bw = maxX - minX || 1;
+  const bh = maxY - minY || 1;
+  const scale = Math.min((MAP_W - 2 * MAP_PAD) / bw, (MAP_H - 2 * MAP_PAD) / bh);
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  return placed.map((c) => ({
+    ...c,
+    x: MAP_W / 2 + (c.x - cx) * scale,
+    y: MAP_H / 2 + (c.y - cy) * scale,
+    r: c.r * scale,
+  }));
+}
+
+/** Truncate a project label to the bubble's text room (~6px per mono char). */
+function fitStar(label: string, r: number): string {
+  const max = Math.max(3, Math.floor((r * 1.7) / 6));
+  return label.length > max ? `${label.slice(0, max - 1)}…` : label;
+}
+
+export interface FleetConstellationProps {
+  corpora: CorpusInfo[];
+  activeCorpusId: string | null;
+  /** Zoom into a project (it becomes the spine). */
+  onSelect: (id: string) => void;
+}
+
+export function FleetConstellation({
+  corpora,
+  activeCorpusId,
+  onSelect,
+}: FleetConstellationProps) {
+  const bubbles = useMemo(() => buildStarLayout(corpora), [corpora]);
+  const [hover, setHover] = useState<string | null>(null);
+
+  if (bubbles.length === 0) return null;
+
+  const totalVec = corpora.reduce((s, c) => s + c.embeddings_count, 0);
+  const liveCount = corpora.filter((c) => statusFor(c).pulse).length;
+  const hovered = hover ? bubbles.find((b) => b.id === hover) : null;
+
+  return (
+    <VizFrame
+      readout={
+        <>
+          <span>
+            <span className="tabular-nums font-semibold text-text">{corpora.length}</span>{" "}
+            {corpora.length === 1 ? "project" : "projects"} ·{" "}
+            <span className="tabular-nums font-semibold text-text">
+              {totalVec.toLocaleString()}
+            </span>{" "}
+            vectors
+            {liveCount > 0 && (
+              <>
+                {" · "}
+                <span className="tabular-nums font-semibold text-accent">{liveCount}</span> live
+              </>
+            )}
+          </span>
+          <span>sized by index mass · click to zoom in</span>
+        </>
+      }
+    >
+      <div className="-mx-1">
+        <svg
+          viewBox={`0 0 ${MAP_W} ${MAP_H}`}
+          className="w-full"
+          style={{ maxHeight: MAP_H }}
+          role="group"
+          aria-label={`Fleet star-map: ${corpora.length} project${corpora.length === 1 ? "" : "s"} drawn as bubbles sized by index mass; ${liveCount} with live agents.`}
+        >
+          {bubbles.map((b) => {
+            const selected = b.id === activeCorpusId;
+            const lit = !hover || hover === b.id;
+            const big = b.r > 30;
+            const mid = b.r > 18;
+            return (
+              <g
+                key={b.id}
+                role="button"
+                tabIndex={0}
+                aria-label={`${b.label}: ${b.vectors.toLocaleString()} vectors, ${b.files.toLocaleString()} files, ${b.statusLabel}.${selected ? " Current project." : " Open this project."}`}
+                style={{
+                  color: toneCssVar(b.tone),
+                  opacity: lit ? 1 : 0.4,
+                  transition: "opacity 150ms ease-out",
+                  cursor: "pointer",
+                }}
+                onMouseEnter={() => setHover(b.id)}
+                onMouseLeave={() => setHover(null)}
+                onFocus={() => setHover(b.id)}
+                onBlur={() => setHover(null)}
+                onClick={() => onSelect(b.id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onSelect(b.id);
+                  }
+                }}
+              >
+                <title>{`${b.label} · ${b.vectors.toLocaleString()} vec · ${b.statusLabel}`}</title>
+                {/* Live halo — opacity-pulse only (reduced-motion-safe), behind the bubble. */}
+                {b.live && (
+                  <circle
+                    cx={b.x}
+                    cy={b.y}
+                    r={b.r + 5}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeOpacity={0.5}
+                    strokeWidth={1.5}
+                    className="motion-safe:animate-pulse"
+                  />
+                )}
+                <circle
+                  cx={b.x}
+                  cy={b.y}
+                  r={b.r}
+                  fill="currentColor"
+                  fillOpacity={0.16}
+                  stroke="currentColor"
+                  strokeOpacity={hover === b.id || selected ? 1 : 0.6}
+                  strokeWidth={selected ? 2.5 : 1.5}
+                />
+                {/* Selected spine ring — the zoomed-in object. */}
+                {selected && (
+                  <circle
+                    cx={b.x}
+                    cy={b.y}
+                    r={b.r + 3.5}
+                    fill="none"
+                    stroke="currentColor"
+                    strokeOpacity={0.85}
+                    strokeWidth={1}
+                  />
+                )}
+                {big ? (
+                  <>
+                    <text
+                      x={b.x}
+                      y={b.y - 1}
+                      textAnchor="middle"
+                      className="fill-text font-mono font-semibold"
+                      style={{ fontSize: 11 }}
+                    >
+                      {fitStar(b.label, b.r)}
+                    </text>
+                    <text
+                      x={b.x}
+                      y={b.y + 12}
+                      textAnchor="middle"
+                      className="fill-text-dim font-mono tabular-nums"
+                      style={{ fontSize: 9 }}
+                    >
+                      {b.vectors.toLocaleString()} vec
+                    </text>
+                  </>
+                ) : mid ? (
+                  <text
+                    x={b.x}
+                    y={b.y + 3}
+                    textAnchor="middle"
+                    className="fill-text font-mono font-semibold"
+                    style={{ fontSize: 9 }}
+                  >
+                    {fitStar(b.label, b.r)}
+                  </text>
+                ) : null}
+              </g>
+            );
+          })}
+
+          {/* Hover caption — bottom-anchored so it never occludes the field. */}
+          {hovered && (
+            <text
+              x={MAP_W / 2}
+              y={MAP_H - 6}
+              textAnchor="middle"
+              className="fill-text font-mono"
+              style={{ fontSize: 11 }}
+            >
+              {`${hovered.label} · ${hovered.vectors.toLocaleString()} vec · ${hovered.statusLabel}`}
+            </text>
+          )}
+        </svg>
+      </div>
+    </VizFrame>
   );
 }
 
