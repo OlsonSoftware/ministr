@@ -15,11 +15,12 @@
  * wizard. The legacy Setup(PATH) + Connect(MCP) steps relocate to Account/Tend
  * (aaa-onboarding-setup-mcp-relocate).
  */
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowRight,
+  ArrowUpRight,
   FolderOpen,
   Loader2,
   Search,
@@ -36,6 +37,38 @@ import { useToast } from "../shell/ToastTray";
 import { Button } from "../ui/button";
 import { Logo } from "../ui/logo";
 import { Progress } from "../ui/progress";
+
+/** The boot screen's glowing brand medallion (aaa-logo-boot-signature), reused
+ *  here so first-run and the cold-launch boot read as one brand. Tone rides the
+ *  border + glow (non-text); the reduced-motion-safe `ministr-pulse` halo makes
+ *  it feel alive while a step is "working". */
+function HeroMedallion({
+  tone = "accent",
+  pulse = false,
+  children,
+}: {
+  tone?: "accent" | "success";
+  pulse?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "relative grid h-16 w-16 shrink-0 place-items-center rounded-2xl border bg-surface-overlay shadow-[var(--glow-soft)]",
+        tone === "success" ? "border-success/50 text-success" : "border-accent/50 text-accent",
+      )}
+    >
+      {pulse && (
+        <span
+          aria-hidden
+          className="ministr-pulse pointer-events-none absolute inset-0 rounded-2xl"
+        />
+      )}
+      <span className="relative grid place-items-center">{children}</span>
+    </span>
+  );
+}
 
 type FirstRunStep = "welcome" | "indexing" | "ask";
 
@@ -91,10 +124,10 @@ export function FirstRunGuide({
         role="dialog"
         aria-modal="true"
         aria-label="Get started"
-        className="w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl"
+        className="w-full max-w-lg overflow-hidden rounded-2xl border border-border border-t-2 border-t-accent/50 bg-surface-raised shadow-2xl"
       >
         {/* Header — wordmark + skip. */}
-        <header className="flex items-center justify-between gap-3 px-6 h-12 border-b border-border">
+        <header className="flex items-center justify-between gap-3 border-b border-border bg-surface-raised px-6 h-12">
           <div className="flex items-center gap-2.5 min-w-0">
             {/* The brand's first hello — mark + wordmark lockup. */}
             <Logo className="h-[18px] w-[18px] shrink-0" title="ministr" />
@@ -140,7 +173,7 @@ export function FirstRunGuide({
   );
 }
 
-// ── Step 1 — value-first: point at a folder. ───────────────────────────────
+// ── Step 1 — value-first: a branded hero, then point at a folder. ──────────
 function WelcomeStep({
   busy,
   onPickFolder,
@@ -151,19 +184,24 @@ function WelcomeStep({
   onAutoDetect: () => void;
 }) {
   return (
-    <div className="space-y-5">
+    <div className="flex flex-col items-center gap-5 text-center">
+      {/* The brand's first hello — the boot medallion. */}
+      <HeroMedallion pulse>
+        <Logo className="h-7 w-7" gradient />
+      </HeroMedallion>
+
       <div className="space-y-2">
-        <h1 className="font-sans text-2xl font-bold text-text leading-tight">
+        <h1 className="font-sans text-3xl font-bold leading-tight tracking-[-0.01em] text-text">
           Ask your codebase anything.
         </h1>
-        <p className="font-sans text-sm text-text-muted leading-relaxed">
+        <p className="mx-auto max-w-sm font-sans text-sm text-text-muted leading-relaxed">
           Point ministr at a folder. It indexes locally — code, docs, symbols,
           cross-language bridges — then answers with cited source. No setup
           first; value first.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="grid w-full grid-cols-1 sm:grid-cols-2 gap-3">
         <PickAction
           icon={FolderOpen}
           title="Pick a folder"
@@ -181,7 +219,7 @@ function WelcomeStep({
         />
       </div>
 
-      <div className="flex flex-wrap gap-2 pt-1">
+      <div className="flex flex-wrap justify-center gap-2 pt-0.5">
         {["Local-only", "Cited answers", "MCP-ready"].map((t) => (
           <span
             key={t}
@@ -196,21 +234,26 @@ function WelcomeStep({
   );
 }
 
-// ── Step 2 — live indexing with real, determinate progress. ────────────────
+// ── Step 2 — live indexing as an alive moment. ─────────────────────────────
 function IndexingStep({ corpora }: { corpora: CorpusInfo[] }) {
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col items-center gap-5 text-center">
+      {/* A scanning medallion — the accent pulse signals live work. */}
+      <HeroMedallion pulse>
+        <Search className="h-7 w-7" strokeWidth={2} />
+      </HeroMedallion>
+
       <div className="space-y-2">
-        <h1 className="font-sans text-2xl font-bold text-text leading-tight">
+        <h1 className="font-sans text-3xl font-bold leading-tight tracking-[-0.01em] text-text">
           Reading your code…
         </h1>
-        <p className="font-sans text-sm text-text-muted leading-relaxed">
+        <p className="mx-auto max-w-sm font-sans text-sm text-text-muted leading-relaxed">
           Scanning every file once, extracting symbols + cross-language links,
           embedding the chunks. You can ask the moment it&apos;s ready.
         </p>
       </div>
 
-      <ul className="space-y-2.5">
+      <ul className="w-full space-y-2.5 text-left">
         {corpora.map((c) => {
           const indexing = c.status.state === "indexing" ? c.status : null;
           const pct =
@@ -225,7 +268,7 @@ function IndexingStep({ corpora }: { corpora: CorpusInfo[] }) {
           return (
             <li
               key={c.id}
-              className="rounded-lg border border-border bg-surface px-3.5 py-2.5"
+              className="rounded-lg border border-border bg-surface px-3.5 py-2.5 shadow-sm"
             >
               <div className="flex items-center justify-between gap-2 mb-1.5">
                 <span className="font-mono text-sm font-semibold text-text truncate">
@@ -239,10 +282,7 @@ function IndexingStep({ corpora }: { corpora: CorpusInfo[] }) {
                       : "Ready"}
                 </span>
               </div>
-              <Progress
-                value={pct}
-                tone={pct >= 100 ? "success" : "accent"}
-              />
+              <Progress value={pct} tone={pct >= 100 ? "success" : "accent"} />
             </li>
           );
         })}
@@ -251,7 +291,7 @@ function IndexingStep({ corpora }: { corpora: CorpusInfo[] }) {
   );
 }
 
-// ── Step 3 — the first ask is part of onboarding. ──────────────────────────
+// ── Step 3 — a triumphant "ready", then the first ask. ─────────────────────
 function AskStep({
   corpus,
   onAsk,
@@ -260,16 +300,26 @@ function AskStep({
   onAsk: () => void;
 }) {
   return (
-    <div className="space-y-5">
+    <div className="flex flex-col items-center gap-5 text-center">
+      {/* Ready — a success-toned medallion lands the win. */}
+      <HeroMedallion tone="success">
+        <Sparkles className="h-7 w-7" strokeWidth={2} />
+      </HeroMedallion>
+
       <div className="space-y-2">
-        <h1 className="font-sans text-2xl font-bold text-text leading-tight">
+        <h1 className="font-sans text-3xl font-bold leading-tight tracking-[-0.01em] text-text">
           <span className="font-mono">{corpusLabel(corpus)}</span> is ready.
         </h1>
-        <p className="font-sans text-sm text-text-muted leading-relaxed">
-          {corpus.files_indexed.toLocaleString()} files ·{" "}
-          {corpus.sections_count.toLocaleString()} sections indexed. Ask your
-          first question — the answer lands right here in the workspace.
+        <p className="mx-auto max-w-sm font-sans text-sm text-text-muted leading-relaxed">
+          Ask your first question — the answer lands right here in the workspace.
         </p>
+      </div>
+
+      {/* A divided vital readout — the index, at a glance. */}
+      <div className="flex w-full items-stretch divide-x divide-border overflow-hidden rounded-lg border border-border bg-surface">
+        <Vital value={corpus.files_indexed} label="files" />
+        <Vital value={corpus.sections_count} label="sections" />
+        <Vital value={corpus.symbols_count} label="symbols" />
       </div>
 
       <Button size="lg" onClick={onAsk} className="w-full justify-center">
@@ -280,6 +330,22 @@ function AskStep({
   );
 }
 
+function Vital({ value, label }: { value: number; label: string }) {
+  return (
+    <div className="flex flex-1 flex-col items-center gap-0.5 px-3 py-2.5">
+      <span className="font-mono text-base font-semibold tabular-nums text-text">
+        {value.toLocaleString()}
+      </span>
+      <span className="font-mono text-mono-micro uppercase tracking-[0.08em] text-text-dim">
+        {label}
+      </span>
+    </div>
+  );
+}
+
+/** A premium pick action — a glowing accent icon tile that lights on hover, a
+ *  lift to the raised tier, and a hover-revealed accent arrow (the Ask-hero
+ *  starter-card pattern). */
 function PickAction({
   icon: Icon,
   title,
@@ -300,21 +366,27 @@ function PickAction({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "group flex flex-col items-start gap-1.5 p-4 text-left rounded-lg cursor-pointer",
-        "border border-border bg-surface shadow-xs",
-        "hover:bg-surface-overlay hover:border-accent hover:-translate-y-0.5 hover:shadow-md",
+        "group relative flex flex-col items-start gap-2 rounded-xl p-4 text-left cursor-pointer",
+        "border border-border bg-surface shadow-sm",
+        "hover:bg-surface-raised hover:border-accent hover:-translate-y-0.5 hover:shadow-md",
         "disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0",
         "transition-[transform,box-shadow,border-color,background-color] duration-150 ease-out",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
       )}
     >
-      {loading ? (
-        <Loader2 className="h-5 w-5 text-accent animate-spin" strokeWidth={2} />
-      ) : (
-        <Icon className="h-5 w-5 text-accent" strokeWidth={2} />
-      )}
+      <span className="grid h-9 w-9 place-items-center rounded-lg border border-accent/40 bg-accent/10 text-accent transition-shadow duration-150 group-hover:shadow-[var(--glow-soft)]">
+        {loading ? (
+          <Loader2 className="h-[18px] w-[18px] animate-spin" strokeWidth={2} />
+        ) : (
+          <Icon className="h-[18px] w-[18px]" strokeWidth={2} />
+        )}
+      </span>
       <span className="font-sans text-sm font-semibold text-text">{title}</span>
       <span className="font-mono text-mono-mini text-text-dim">{hint}</span>
+      <ArrowUpRight
+        className="absolute right-3 top-3 h-4 w-4 text-text-dim opacity-0 transition-opacity duration-150 group-hover:text-accent group-hover:opacity-100"
+        strokeWidth={2.25}
+      />
     </button>
   );
 }
