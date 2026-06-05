@@ -1,106 +1,125 @@
-# Side-by-side agent benchmark — ministr vs grep
+# Side-by-side agent benchmark suite — ministr vs grep
 
-Does giving a real coding agent **ministr** actually help it solve a real task
-with fewer tokens? This benchmark answers that end-to-end, not by proxy: it runs
-the *same* agent on the *same* task twice, changing only the **discovery tool**,
-and checks whether each run produced a **correct** solution.
+Does giving a real coding agent **ministr** help it solve real tasks with fewer
+tokens? This suite answers that end-to-end — not by proxy: it runs the *same*
+agent on the *same* tasks twice, changing only the **discovery tool**, across a
+**difficulty ladder** and **multiple models**, and checks whether each run
+produced a **correct** solution.
 
 Unlike [`../../ministr-mcp/tests/token_economics_e2e.rs`](../../ministr-mcp/tests/token_economics_e2e.rs)
-(which measures the token cost of a single retrieval), this measures the full
-agent loop: discover → edit → test → iterate → done, and whether the result
-actually passes.
+(token cost of a single retrieval), this measures the full agent loop —
+discover → edit → test → iterate → done — and whether the result actually
+passes.
 
 ## The two arms
 
-The runner is **headless Claude Code** (`claude -p --output-format json`) — a
-real coding agent, already authenticated, that reports token usage. Both arms
-get `Read`, `Edit`, `Write`, `Bash` and must make the test suite pass. They
+Runner: **headless Claude Code** (`claude -p --output-format json`) — a real
+coding agent, already authenticated, that reports token usage. Both arms get
+`Read`, `Edit`, `Write`, `Bash` and must make the task's test suite pass. They
 differ in **one** variable, the discovery tool:
 
-| arm | discovery tool | has ministr? | has grep/glob? |
-|-----|----------------|--------------|----------------|
+| arm | discovery tool | ministr? | grep/glob? |
+|-----|----------------|----------|-----------|
 | **A — ministr** | ministr MCP (`survey`/`symbols`/`definition`/…) on a pre-indexed corpus | ✅ | ❌ |
 | **B — grep** | `Grep` + `Glob` | ❌ | ✅ |
 
-Isolation: each arm runs on a fresh copy of the fixture in a throwaway `/tmp`
-dir, with `--strict-mcp-config` (so the host's own MCP servers never leak) and
-`--setting-sources user` (no project hooks). Arm A pre-indexes the fixture with
-`ministr index --corpus <tmp>`; the throwaway corpus is keyed by the tmp path and
-never touches your real corpora.
+Isolation: each run uses a fresh copy of the task fixture in a throwaway `/tmp`
+dir, with `--strict-mcp-config` (host MCP servers never leak), `--setting-sources
+user` (no project hooks), `--no-session-persistence`, and `bypassPermissions`.
+Arm A pre-indexes the fixture with `ministr index --corpus .` (run from the
+fixture dir — a cwd `.ministr.toml` would otherwise override `--corpus`); the
+throwaway corpus is keyed by the tmp path and never touches your real corpora.
 
-## The task (deterministic validator)
+## The tasks (difficulty ladder)
 
-`fixture/` is a small multi-module Python library (`minicsv`) with a genuine
-bug: `stats.sample_variance` divides the sum of squared deviations by *N*
-(population) instead of *N − 1* (Bessel's correction), so the sample standard
-deviation is biased low. There are several variance-related functions across
-modules (`population_variance`, `streaming.running_variance`,
-`aggregate.covariance`) as realistic distractors, so *locating* the right one is
-a real navigation step. [`task.md`](task.md) is the natural-language prompt the
-agent receives. The validator is the hidden test suite:
+Each task lives in `tasks/<id>/` and is fully self-contained:
 
-```sh
-python3 -m unittest discover -s tests   # exit 0 = solved
+```
+tasks/<id>/
+  task.json   manifest: {id, difficulty, language, summary, validate, golden}
+  task.md     the natural-language prompt handed to the agent
+  fixture/    the broken project (committed)
+  golden/     known-good file(s) used by the no-LLM selftest
 ```
 
-The fixture is a verified red→green task (broken fails, the golden fix passes) —
-prove it with no LLM and no spend:
+`validate` is the argv of a deterministic test command (exit 0 = solved);
+`golden` maps fixture-relative paths to known-good replacements so the suite can
+prove, **with no LLM**, that each task is a valid red→green.
+
+| id | difficulty | what it exercises |
+|----|------------|-------------------|
+| `easy-roman-numeral` | easy | single-file converter missing subtractive forms (IV/IX/…). Keyword-obvious — **grep is expected to tie here.** |
+| `medium-sample-variance` | medium | multi-module stats lib: sample variance uses N not N−1 (Bessel), among several variance-named distractors. |
+| `hard-operator-precedence` | hard | multi-file Pratt evaluator with inverted precedence. The bug is a left-binding-power table **not named "precedence"** — a semantic gap where grepping the symptom words misses the fix site. |
+
+Difficulty rubric: **easy** = one file, the buggy symbol is named after the
+symptom; **medium** = a few modules + same-named distractors; **hard** =
+multiple modules and a semantic gap between the symptom and the fix site.
+
+Prove every task is a valid red→green (no LLM, no spend):
 
 ```sh
 python3 run_sxs.py --selftest
+python3 run_sxs.py --list
 ```
 
-## Running it
+## Running the matrix
 
-⚠️ **This calls a real LLM and spends real quota. It is opt-in and never part of
-any default gate.** Cost is hard-capped per arm with `--max-budget-usd`.
+⚠️ **This calls a real LLM and spends real quota. Opt-in; never a default gate.**
+Cost is hard-capped per arm with `--max-budget-usd`.
 
 ```sh
-# See the exact commands without spending anything:
-python3 run_sxs.py --dry-run
+# See the whole matrix without spending:
+python3 run_sxs.py --dry-run --models haiku,sonnet
 
-# Run both arms (default model: sonnet; per-arm cap $0.75):
-python3 run_sxs.py
+# Cheapest real run — all tasks on haiku, both arms:
+python3 run_sxs.py --models haiku
 
-# Options:
-python3 run_sxs.py --model opus --max-budget-usd 1.50 --repeat 3 --arms both --keep
+# Full matrix across models, 3 trials each for a spread:
+python3 run_sxs.py --models haiku,sonnet --repeat 3
+
+# A subset:
+python3 run_sxs.py --tasks hard-operator-precedence --models sonnet
 ```
 
-It prints a side-by-side table (solved? · turns · input/output/cache tokens ·
-cost · wall-clock) and writes `results.json`.
+It prints a per-(task, model) side-by-side table, an aggregate scoreboard
+(solved counts, total/head-to-head cost, turns), and writes `results.json`.
 
-## Latest measured result
+## Adding a task
 
-First real run — `2026-06-05`, model `sonnet`, one trial per arm
-(`results.json`). **Both arms produced a correct fix** (the one-line Bessel
-correction; all 16 tests green), so this is a cost/efficiency comparison at
-equal correctness:
+Drop a new `tasks/<id>/` with the four pieces above, run `--selftest` to confirm
+it's a valid red→green, and it's automatically in the matrix. Any language works
+as long as `validate` is a deterministic command (exit 0 = solved) and `golden`
+lists the file(s) a correct fix would change.
 
-| metric | ministr | grep | ministr |
-|--------|--------:|-----:|--------:|
-| solved? | ✅ | ✅ | tie |
-| turns | 5 | 7 | −29% |
-| output tokens | 708 | 1,000 | −29% |
-| cache-read tokens | 120,194 | 159,691 | −25% |
-| **total cost** | **$0.0845** | **$0.1701** | **−50%** |
-| wall-clock | 17 s | 29 s | −41% |
+## Honest reading
 
-On this *small* fixture both agents find the bug, but the ministr arm gets there
-in fewer turns and at roughly **half the cost** — it navigates to
-`sample_variance` directly instead of grepping across the variance-named
-distractors and reading whole files. (`input_tokens` alone — 6 vs 8 — is *not* a
-meaningful headline: prompt caching puts the real input volume in
-`cache_read_tokens`, which is why the harness headlines **total cost**.) One
-trial is not significant; use `--repeat N` for a spread.
+- **Correctness first, then cost.** A cheaper arm that didn't solve the task is
+  not a win; the scoreboard counts solves before comparing cost.
+- **Headline on total cost, not `input_tokens`.** With prompt caching,
+  `input_tokens` is only the uncached sliver (often a handful); `total_cost_usd`
+  aggregates input + output + cache.
+- **Single trials are noisy** — an agent session is non-deterministic (the
+  fixtures and validators are not). Use `--repeat N`.
+- **On easy tasks grep is expected to tie.** ministr's advantage shows up as the
+  codebase grows and when the fix site isn't named after the symptom (the hard
+  task). Results are reported as measured, win or lose.
 
-## Honest reading of the result
+### Measured result (provenance)
 
-- The headline is **correctness first, then tokens**: a cheaper arm that didn't
-  solve the task is not a win. The harness prints the verdict as measured and
-  does **not** assume ministr wins.
-- A single agent session is **non-deterministic** (the fixture and validator are
-  not). Use `--repeat N` and read the spread, not one point.
-- On a small fixture, `grep` is strong (few files to scan). ministr's advantage
-  grows with codebase size and when the relevant code isn't named after the
-  query terms — the same shape the retrieval-token benchmark shows. Bigger,
-  realer fixtures plug into the same harness (point `FIXTURE`/`task.md` at them).
+First full matrix — `2026-06-05`, all 3 tasks × both arms × {haiku, sonnet},
+one trial each (12 runs):
+
+| model | ministr solved | grep solved | ministr cost | grep cost | head-to-head |
+|-------|:--:|:--:|--:|--:|--|
+| haiku  | 3/3 | 3/3 | $0.133 | $0.168 | **ministr 21% cheaper** |
+| sonnet | 3/3 | 3/3 | $0.264 | $0.239 | ministr 10% *more expensive* |
+
+**Correctness was a tie everywhere (12/12 solved).** The honest, un-cherry-picked
+read: on **haiku** (cheaper/weaker model) ministr lowered cost on all three
+tasks (consistently fewer output tokens); on **sonnet** over these *tiny*
+fixtures, the model solves in ~5 turns regardless and ministr's survey overhead
+made it marginally *pricier*. A single earlier sonnet trial on `medium` had shown
+"50% cheaper" — the matrix shows that was **noise** (one trial), which is exactly
+why `--repeat` and bigger fixtures matter. Expect ministr's edge to grow with
+codebase size; on small tasks a strong model needs little help.

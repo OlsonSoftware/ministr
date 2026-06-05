@@ -1,0 +1,10 @@
+{
+  "id": "hard-operator-precedence",
+  "difficulty": "hard",
+  "language": "python",
+  "summary": "Multi-file Pratt expression evaluator with inverted operator precedence. The bug is in a left-binding-power table (exprlang/parser/binding.py) that is NOT named 'precedence' — a semantic-gap task where grepping the symptom words ('precedence', 'multiplication') misses the fix site, rewarding semantic search.",
+  "validate": ["python3", "-m", "unittest", "discover", "-s", "tests"],
+  "golden": {
+    "exprlang/parser/binding.py": "golden/binding_fixed.py"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "id": "easy-roman-numeral",
+  "difficulty": "easy",
+  "language": "python",
+  "summary": "Single-file Roman-numeral converter missing the subtractive forms (IV/IX/XL/...). Keyword-obvious; grep should be just as fast as semantic search here.",
+  "validate": ["python3", "-m", "unittest", "discover", "-s", "tests"],
+  "golden": {
+    "roman.py": "golden/roman_fixed.py"
+  }
+}

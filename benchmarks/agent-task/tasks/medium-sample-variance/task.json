@@ -1,0 +1,10 @@
+{
+  "id": "medium-sample-variance",
+  "difficulty": "medium",
+  "language": "python",
+  "summary": "Sample variance divides by N (population) instead of N-1 (Bessel) in a small multi-module stats lib, among several variance-named distractor functions across modules.",
+  "validate": ["python3", "-m", "unittest", "discover", "-s", "tests"],
+  "golden": {
+    "minicsv/stats.py": "golden/stats_fixed.py"
+  }
+}

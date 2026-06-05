@@ -1,32 +1,35 @@
 #!/usr/bin/env python3
-"""Side-by-side agent benchmark: a real coding agent solving the SAME task
-WITH ministr vs WITHOUT it, with a deterministic pass/fail validator.
+"""Side-by-side agent benchmark SUITE: real coding agents solving the SAME
+tasks WITH ministr vs WITHOUT it, across a difficulty ladder and multiple
+models, with a deterministic pass/fail validator per task.
 
 The runner is **headless Claude Code** (`claude -p --output-format json`) — a
-real coding agent, already authenticated, that reports token usage. Two arms,
-differing ONLY in the discovery tool available:
+real coding agent, already authenticated, that reports token usage. For every
+(task × model) it runs two arms that differ ONLY in the discovery tool:
 
-  arm A "ministr"  : Read, Edit, Write, Bash  +  the ministr MCP server
-                     (the corpus is pre-indexed with `ministr index`), and
-                     NO Grep/Glob — discovery goes through ministr.
-  arm B "grep"     : Read, Edit, Write, Bash, Grep, Glob  and NO ministr.
+  arm A "ministr" : Read, Edit, Write, Bash  +  the ministr MCP server
+                    (the corpus is pre-indexed with `ministr index`), NO grep.
+  arm B "grep"    : Read, Edit, Write, Bash, Grep, Glob, and NO ministr.
 
-Both run on a fresh copy of the fixture in a throwaway /tmp dir, must make the
-test suite pass, and are measured on: validator pass/fail, input/output/cache
-tokens, num_turns, total_cost_usd, wall-clock. A side-by-side table is printed
-and written to a results JSON.
+Both run on a fresh copy of the task's fixture in a throwaway /tmp dir, must
+make that task's test suite pass, and are measured on: validator pass/fail,
+tokens, num_turns, total_cost_usd, wall-clock. Per-(task,model) tables plus an
+aggregate scoreboard are printed and written to results.json.
+
+TASKS live in tasks/<id>/ — each a self-contained:
+    task.json   manifest  {id, difficulty, language, summary, validate, golden}
+    task.md     the natural-language prompt handed to the agent
+    fixture/    the broken project (committed)
+    golden/     known-good file(s) for the no-LLM selftest
 
 This calls a real LLM and spends real quota, so it is OPT-IN and never part of
 any default gate. Cost is hard-capped per arm with `--max-budget-usd`.
 
 Usage:
-  python3 run_sxs.py --selftest          # deterministic, no LLM: broken fails / golden passes
-  python3 run_sxs.py --dry-run           # print the exact commands, no LLM, no spend
-  python3 run_sxs.py [--arms both] [--model sonnet] [--max-budget-usd 0.75] [--keep]
-
-Reproducibility note: a real agent session is inherently non-deterministic. The
-FIXTURE and validator are fully deterministic; the agent's path is not. Run
-with `--repeat N` to average over N trials per arm.
+  python3 run_sxs.py --selftest                      # no LLM: every task is a valid red->green
+  python3 run_sxs.py --dry-run --models haiku,sonnet # print the whole matrix, no spend
+  python3 run_sxs.py --models haiku                  # run all tasks on haiku (cheap)
+  python3 run_sxs.py --tasks easy-roman-numeral,hard-operator-precedence --models haiku,sonnet
 """
 
 import argparse
@@ -39,11 +42,7 @@ import tempfile
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FIXTURE = os.path.join(HERE, "fixture")
-TASK_FILE = os.path.join(HERE, "task.md")
-GOLDEN_STATS = os.path.join(HERE, "golden", "stats_fixed.py")
-
-VALIDATE_CMD = ["python3", "-m", "unittest", "discover", "-s", "tests"]
+TASKS_DIR = os.path.join(HERE, "tasks")
 
 ARMS = {
     # arm key -> (label, allowed tools, uses_ministr)
@@ -52,49 +51,77 @@ ARMS = {
 }
 
 
-def sh(cmd, cwd=None, env=None, timeout=None):
-    """Run a command, returning (exit_code, stdout, stderr)."""
-    p = subprocess.run(
-        cmd, cwd=cwd, env=env, timeout=timeout,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-    )
+def sh(cmd, cwd=None, timeout=None):
+    p = subprocess.run(cmd, cwd=cwd, timeout=timeout,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return p.returncode, p.stdout, p.stderr
 
 
-def make_workdir(tag):
-    """Fresh throwaway copy of the fixture under /tmp."""
+# --------------------------------------------------------------------------
+# Tasks
+# --------------------------------------------------------------------------
+
+def load_tasks(only=None):
+    """Load tasks/<id>/task.json manifests, sorted by difficulty then id."""
+    order = {"easy": 0, "medium": 1, "hard": 2}
+    tasks = []
+    for entry in sorted(os.listdir(TASKS_DIR)):
+        manifest = os.path.join(TASKS_DIR, entry, "task.json")
+        if not os.path.isfile(manifest):
+            continue
+        spec = json.load(open(manifest))
+        spec["_dir"] = os.path.join(TASKS_DIR, entry)
+        if only and spec["id"] not in only:
+            continue
+        tasks.append(spec)
+    tasks.sort(key=lambda t: (order.get(t.get("difficulty"), 9), t["id"]))
+    return tasks
+
+
+def make_workdir(task, tag):
     work = tempfile.mkdtemp(prefix=f"sxs-{tag}-")
     dst = os.path.join(work, "fixture")
-    shutil.copytree(FIXTURE, dst)
+    shutil.copytree(os.path.join(task["_dir"], "fixture"), dst)
     return dst
 
 
-def validate(workdir):
-    """Run the hidden test suite. Returns (passed: bool, summary: str)."""
-    code, out, err = sh(VALIDATE_CMD, cwd=workdir, timeout=120)
+def validate(task, workdir):
+    """Run the task's validator. Returns (passed, summary)."""
+    code, out, err = sh(task["validate"], cwd=workdir, timeout=180)
     tail = (err or out).strip().splitlines()
-    summary = tail[-1] if tail else f"exit {code}"
-    return code == 0, summary
+    return code == 0, (tail[-1] if tail else f"exit {code}")
 
 
-def selftest():
-    """Deterministic, no-LLM proof the fixture goes red->green on the fix."""
-    broken = make_workdir("selftest-broken")
-    ok_broken, sum_broken = validate(broken)
-    fixed = make_workdir("selftest-fixed")
-    shutil.copyfile(GOLDEN_STATS, os.path.join(fixed, "minicsv", "stats.py"))
-    ok_fixed, sum_fixed = validate(fixed)
-    shutil.rmtree(os.path.dirname(broken), ignore_errors=True)
-    shutil.rmtree(os.path.dirname(fixed), ignore_errors=True)
-    print(f"  broken fixture: passed={ok_broken}  ({sum_broken})")
-    print(f"  golden  fixed : passed={ok_fixed}  ({sum_fixed})")
-    good = (not ok_broken) and ok_fixed
-    print("SELFTEST:", "OK — fixture is a valid red->green task" if good else "BROKEN")
-    return 0 if good else 1
+def apply_golden(task, workdir):
+    for rel, gold in task.get("golden", {}).items():
+        shutil.copyfile(os.path.join(task["_dir"], gold), os.path.join(workdir, rel))
 
+
+def selftest(tasks):
+    """No-LLM proof every task is a valid red->green (broken fails, golden passes)."""
+    all_ok = True
+    for task in tasks:
+        broken = make_workdir(task, "selftest-broken")
+        ok_broken, sb = validate(task, broken)
+        fixed = make_workdir(task, "selftest-fixed")
+        apply_golden(task, fixed)
+        ok_fixed, sf = validate(task, fixed)
+        shutil.rmtree(os.path.dirname(broken), ignore_errors=True)
+        shutil.rmtree(os.path.dirname(fixed), ignore_errors=True)
+        good = (not ok_broken) and ok_fixed
+        all_ok = all_ok and good
+        flag = "OK " if good else "BAD"
+        print(f"  [{flag}] {task['id']:<26} broken={'fail' if not ok_broken else 'PASS?!'} "
+              f"({sb})  golden={'pass' if ok_fixed else 'FAIL?!'} ({sf})")
+    print("SELFTEST:", "OK — every task is a valid red->green" if all_ok else "BROKEN")
+    return 0 if all_ok else 1
+
+
+# --------------------------------------------------------------------------
+# One (task, arm, model) run
+# --------------------------------------------------------------------------
 
 def build_claude_cmd(arm_key, workdir, prompt, model, budget, mcp_config_path):
-    """Assemble the headless `claude -p` command for one arm."""
     label, allowed, uses_ministr = ARMS[arm_key]
     cmd = [
         "claude", "-p", prompt,
@@ -103,7 +130,7 @@ def build_claude_cmd(arm_key, workdir, prompt, model, budget, mcp_config_path):
         "--permission-mode", "bypassPermissions",
         "--no-session-persistence",
         "--setting-sources", "user",
-        "--strict-mcp-config",           # ignore host MCP servers (isolation)
+        "--strict-mcp-config",
         "--add-dir", workdir,
         "--max-budget-usd", str(budget),
         "--allowedTools", allowed,
@@ -113,64 +140,54 @@ def build_claude_cmd(arm_key, workdir, prompt, model, budget, mcp_config_path):
     return cmd
 
 
-def run_arm(arm_key, prompt, model, budget, keep, dry_run):
-    """Set up, run one arm, validate, and return a result dict."""
+def run_one(task, arm_key, model, budget, keep, dry_run):
     label, allowed, uses_ministr = ARMS[arm_key]
-    workdir = make_workdir(label)
-    result = {
-        "arm": arm_key, "label": label, "uses_ministr": uses_ministr,
-        "allowed_tools": allowed, "workdir": workdir,
-    }
+    prompt = open(os.path.join(task["_dir"], "task.md")).read()
+    workdir = make_workdir(task, f"{task['id']}-{label}-{model}")
+    res = {"task": task["id"], "difficulty": task.get("difficulty"),
+           "model": model, "arm": arm_key, "label": label,
+           "uses_ministr": uses_ministr, "workdir": workdir}
 
     mcp_config_path = None
-    index_secs = None
     if uses_ministr:
-        # Pre-index the fixture synchronously so survey works immediately.
-        # The throwaway corpus is keyed by this /tmp path — it never touches
-        # the user's real corpora.
         mcp_config = {"mcpServers": {"ministr": {
             "command": "ministr", "args": ["serve", "--corpus", workdir]}}}
         mcp_config_path = os.path.join(os.path.dirname(workdir), "ministr-mcp.json")
         with open(mcp_config_path, "w") as fh:
             json.dump(mcp_config, fh)
-        # Index the fixture as the corpus. Run from cwd=workdir with
-        # `--corpus .`: a `.ministr.toml` in the *current* dir takes precedence
-        # over an absolute --corpus, so the only safe way to target the fixture
-        # (and not whatever repo the harness was launched from) is to run inside
-        # it. The fixture has no .ministr.toml, so `.` resolves to it.
-        index_cmd = ["ministr", "index", "--corpus", "."]
+        # Index from cwd=workdir with `--corpus .` (a cwd .ministr.toml would
+        # otherwise override an absolute --corpus; the fixture has none).
         if dry_run:
-            print(f"[{label}] INDEX (cwd={workdir}): {' '.join(index_cmd)}")
+            print(f"  [{task['id']}/{model}/{label}] INDEX (cwd={workdir}): ministr index --corpus .")
         else:
             t0 = time.time()
-            code, out, err = sh(index_cmd, cwd=workdir, timeout=900)
-            index_secs = round(time.time() - t0, 1)
+            code, out, err = sh(["ministr", "index", "--corpus", "."], cwd=workdir, timeout=900)
+            res["index_secs"] = round(time.time() - t0, 1)
             if code != 0:
-                result["error"] = f"ministr index failed (exit {code}): {err[-400:]}"
-                return result
-    result["index_secs"] = index_secs
+                res["error"] = f"ministr index failed (exit {code}): {err[-300:]}"
+                return res
 
     cmd = build_claude_cmd(arm_key, workdir, prompt, model, budget, mcp_config_path)
     if dry_run:
-        print(f"[{label}] cwd={workdir}")
-        print(f"[{label}] RUN: {_quote(cmd)}")
-        result["dry_run"] = True
+        print(f"  [{task['id']}/{model}/{label}] RUN: claude -p <{task['id']} task.md> "
+              f"--model {model} --allowedTools \"{allowed}\""
+              + (f" --mcp-config {os.path.basename(mcp_config_path)} --strict-mcp-config" if uses_ministr else ""))
+        res["dry_run"] = True
         if not keep:
             shutil.rmtree(os.path.dirname(workdir), ignore_errors=True)
-        return result
+        return res
 
     t0 = time.time()
     code, out, err = sh(cmd, cwd=workdir, timeout=1800)
-    result["wall_secs"] = round(time.time() - t0, 1)
-
+    res["wall_secs"] = round(time.time() - t0, 1)
     try:
         payload = json.loads(out)
     except json.JSONDecodeError:
-        result["error"] = f"could not parse claude JSON (exit {code}): {out[-400:]} {err[-200:]}"
-        return result
+        res["error"] = f"could not parse claude JSON (exit {code}): {out[-300:]} {err[-200:]}"
+        return res
 
     usage = payload.get("usage", {}) or {}
-    result.update({
+    res.update({
         "is_error": payload.get("is_error"),
         "num_turns": payload.get("num_turns"),
         "total_cost_usd": payload.get("total_cost_usd"),
@@ -178,137 +195,162 @@ def run_arm(arm_key, prompt, model, budget, keep, dry_run):
         "output_tokens": usage.get("output_tokens"),
         "cache_read_tokens": usage.get("cache_read_input_tokens"),
         "cache_creation_tokens": usage.get("cache_creation_input_tokens"),
-        "result_text": (payload.get("result") or "")[:280],
+        "result_text": (payload.get("result") or "")[:200],
     })
-
-    passed, summary = validate(workdir)
-    result["validator_passed"] = passed
-    result["validator_summary"] = summary
+    passed, summary = validate(task, workdir)
+    res["validator_passed"] = passed
+    res["validator_summary"] = summary
 
     if not keep:
         shutil.rmtree(os.path.dirname(workdir), ignore_errors=True)
         if mcp_config_path and os.path.exists(mcp_config_path):
             os.remove(mcp_config_path)
-    return result
+    return res
 
 
-def _quote(cmd):
-    out = []
-    for c in cmd:
-        out.append(f'"{c}"' if (" " in c or "\n" in c) else c)
-    return " ".join(out)
+# --------------------------------------------------------------------------
+# Output
+# --------------------------------------------------------------------------
+
+def _fmt(v, kind):
+    if v is None:
+        return "—"
+    if kind == "bool":
+        return "YES" if v else "NO"
+    if kind == "usd":
+        return f"${v:.4f}"
+    if kind == "int":
+        return f"{v:,}"
+    if kind == "sec":
+        return f"{v:.0f}"
+    return str(v)
 
 
-def _tok(n):
-    return "—" if n is None else f"{n:,}"
-
-
-def print_table(results, model):
-    print()
-    print(f"=== Side-by-side agent benchmark (runner: claude -p, model: {model}) ===")
-    cols = ["metric"] + [r["label"] for r in results]
+def print_task_table(task_id, difficulty, model, a, b):
+    cell = 12
+    print(f"\n  {task_id}  ({difficulty}, {model})")
+    print("  " + "metric".ljust(16) + "ministr".rjust(cell) + "grep".rjust(cell))
     rows = [
-        ("solved?", "validator_passed", lambda v: "—" if v is None else ("YES" if v else "NO")),
-        ("turns", "num_turns", _tok),
-        ("input tok", "input_tokens", _tok),
-        ("output tok", "output_tokens", _tok),
-        ("cache-read tok", "cache_read_tokens", _tok),
-        ("cost USD", "total_cost_usd", lambda v: "—" if v is None else f"${v:.4f}"),
-        ("wall s", "wall_secs", lambda v: "—" if v is None else f"{v:.0f}"),
-        ("index s", "index_secs", lambda v: "—" if v is None else f"{v:.0f}"),
+        ("solved?", "validator_passed", "bool"),
+        ("turns", "num_turns", "int"),
+        ("output tok", "output_tokens", "int"),
+        ("cache-read tok", "cache_read_tokens", "int"),
+        ("cost USD", "total_cost_usd", "usd"),
+        ("wall s", "wall_secs", "sec"),
     ]
-    # simple fixed-width print
-    label_w = 16
-    cell_w = max(12, *(len(r["label"]) for r in results))
-    header = "metric".ljust(label_w) + "".join(c.rjust(cell_w) for c in cols[1:])
-    print(header)
-    print("-" * len(header))
-    for name, key, fmt in rows:
-        line = name.ljust(label_w) + "".join(fmt(r.get(key)).rjust(cell_w) for r in results)
+    for name, key, kind in rows:
+        line = "  " + name.ljust(16)
+        line += _fmt(a.get(key) if a else None, kind).rjust(cell)
+        line += _fmt(b.get(key) if b else None, kind).rjust(cell)
         print(line)
-    for r in results:
-        if r.get("error"):
-            print(f"\n[{r['label']}] ERROR: {r['error']}")
+    for arm in (a, b):
+        if arm and arm.get("error"):
+            print(f"    [{arm['label']}] ERROR: {arm['error']}")
 
+
+def scoreboard(results, models, arms_run):
+    """Aggregate across the matrix, headlining correctness then cost."""
+    print("\n" + "=" * 60)
+    print("AGGREGATE SCOREBOARD")
+    print("=" * 60)
+    for model in models:
+        rows = [r for r in results if r["model"] == model and not r.get("dry_run")]
+        if not rows:
+            continue
+        print(f"\nmodel: {model}")
+        for arm_key in arms_run:
+            label = ARMS[arm_key][0]
+            arm_rows = [r for r in rows if r["arm"] == arm_key]
+            solved = sum(1 for r in arm_rows if r.get("validator_passed"))
+            cost = sum(r.get("total_cost_usd") or 0 for r in arm_rows)
+            turns = sum(r.get("num_turns") or 0 for r in arm_rows)
+            print(f"  {label:<8} solved {solved}/{len(arm_rows)}   "
+                  f"total cost ${cost:.4f}   total turns {turns}")
+        # head-to-head cost where BOTH solved the same task
+        if set(arms_run) >= {"a", "b"}:
+            ca = cb = 0.0
+            both = 0
+            for r in [x for x in rows if x["arm"] == "a"]:
+                mate = next((x for x in rows if x["arm"] == "b" and x["task"] == r["task"]), None)
+                if mate and r.get("validator_passed") and mate.get("validator_passed"):
+                    ca += r.get("total_cost_usd") or 0
+                    cb += mate.get("total_cost_usd") or 0
+                    both += 1
+            if both and cb:
+                pct = round(100 * (1 - ca / cb))
+                verb = "cheaper" if ca < cb else "more expensive"
+                print(f"  head-to-head (both solved, {both} task(s)): "
+                      f"ministr ${ca:.4f} vs grep ${cb:.4f} → ministr {abs(pct)}% {verb}")
+
+
+# --------------------------------------------------------------------------
 
 def main():
-    ap = argparse.ArgumentParser(description="Side-by-side agent benchmark (ministr vs grep).")
-    ap.add_argument("--arms", default="both", choices=["a", "b", "both"],
-                    help="which arms to run (a=ministr, b=grep, both)")
-    ap.add_argument("--model", default="sonnet", help="claude model alias or id")
-    ap.add_argument("--max-budget-usd", type=float, default=0.75,
-                    help="hard per-arm $ cap passed to claude --max-budget-usd")
-    ap.add_argument("--repeat", type=int, default=1, help="trials per arm (averaged in JSON)")
-    ap.add_argument("--keep", action="store_true", help="keep /tmp workdirs for inspection")
-    ap.add_argument("--dry-run", action="store_true",
-                    help="print the exact commands without calling claude (no spend)")
-    ap.add_argument("--selftest", action="store_true",
-                    help="deterministic, no-LLM check that the fixture is a valid red->green task")
+    ap = argparse.ArgumentParser(description="Side-by-side agent benchmark suite (ministr vs grep).")
+    ap.add_argument("--tasks", default="", help="comma list of task ids (default: all)")
+    ap.add_argument("--models", default="sonnet", help="comma list of claude model aliases/ids")
+    ap.add_argument("--arms", default="both", choices=["a", "b", "both"])
+    ap.add_argument("--max-budget-usd", type=float, default=0.75, help="hard per-arm $ cap")
+    ap.add_argument("--repeat", type=int, default=1, help="trials per (task,arm,model)")
+    ap.add_argument("--keep", action="store_true")
+    ap.add_argument("--dry-run", action="store_true", help="print the matrix; no LLM, no spend")
+    ap.add_argument("--selftest", action="store_true", help="no-LLM red->green check for all tasks")
+    ap.add_argument("--list", action="store_true", help="list discovered tasks and exit")
     ap.add_argument("--out", default=os.path.join(HERE, "results.json"))
     args = ap.parse_args()
 
-    if args.selftest:
-        return selftest()
-
-    if not os.path.exists(TASK_FILE):
-        print(f"task.md not found at {TASK_FILE}", file=sys.stderr)
+    only = {s for s in args.tasks.split(",") if s} or None
+    tasks = load_tasks(only)
+    if not tasks:
+        print("no tasks found", file=sys.stderr)
         return 2
-    prompt = open(TASK_FILE).read()
+
+    if args.list:
+        for t in tasks:
+            print(f"  {t['difficulty']:<7} {t['id']:<26} {t.get('summary','')[:70]}")
+        return 0
+    if args.selftest:
+        return selftest(tasks)
+
+    models = [m for m in args.models.split(",") if m]
+    arm_keys = ["a", "b"] if args.arms == "both" else [args.arms]
 
     if not args.dry_run and not shutil.which("claude"):
         print("`claude` CLI not found on PATH — cannot run the agent arms.", file=sys.stderr)
         return 2
 
-    arm_keys = ["a", "b"] if args.arms == "both" else [args.arms]
-    all_results = []
-    for trial in range(args.repeat):
-        for key in arm_keys:
-            if args.repeat > 1 and not args.dry_run:
-                print(f"[trial {trial + 1}/{args.repeat}] running arm {key} ({ARMS[key][0]})...")
-            all_results.append(run_arm(key, prompt, args.model,
-                                       args.max_budget_usd, args.keep, args.dry_run))
+    n_runs = len(tasks) * len(models) * len(arm_keys) * args.repeat
+    print(f"{'DRY RUN: ' if args.dry_run else ''}matrix = {len(tasks)} task(s) × "
+          f"{len(models)} model(s) × {len(arm_keys)} arm(s) × {args.repeat} = {n_runs} run(s)")
+
+    results = []
+    for model in models:
+        for task in tasks:
+            for _ in range(args.repeat):
+                for arm_key in arm_keys:
+                    results.append(run_one(task, arm_key, model, args.max_budget_usd,
+                                           args.keep, args.dry_run))
 
     if args.dry_run:
-        print("\nDRY RUN — no agent was invoked, no quota spent.")
+        print("\nDRY RUN — no agent invoked, no quota spent.")
         return 0
 
-    # For the table, show the last trial of each arm (full JSON has them all).
-    latest = {}
-    for r in all_results:
-        latest[r["arm"]] = r
-    print_table([latest[k] for k in arm_keys if k in latest], args.model)
+    # Per-(task,model) tables (last trial of each arm).
+    for model in models:
+        for task in tasks:
+            tm = [r for r in results if r["task"] == task["id"] and r["model"] == model]
+            a = next((r for r in reversed(tm) if r["arm"] == "a"), None)
+            b = next((r for r in reversed(tm) if r["arm"] == "b"), None)
+            print_task_table(task["id"], task.get("difficulty"), model, a, b)
+
+    scoreboard(results, models, arm_keys)
 
     with open(args.out, "w") as fh:
-        json.dump({"model": args.model, "max_budget_usd": args.max_budget_usd,
-                   "results": all_results}, fh, indent=2)
+        json.dump({"models": models, "max_budget_usd": args.max_budget_usd,
+                   "arms": arm_keys, "repeat": args.repeat, "results": results}, fh, indent=2)
     print(f"\nWrote {args.out}")
-
-    # Honest verdict (does NOT assume ministr wins). Headline on total_cost_usd:
-    # with prompt caching, `input_tokens` is only the *uncached* sliver (often a
-    # handful of tokens), so it is NOT a meaningful headline — total cost
-    # aggregates input + output + cache-read/creation into one comparable number.
-    if args.arms == "both" and "a" in latest and "b" in latest:
-        a, b = latest["a"], latest["b"]
-        if a.get("validator_passed") and b.get("validator_passed"):
-            ca, cb = a.get("total_cost_usd"), b.get("total_cost_usd")
-            print("\nBoth solved it (correct + tests green).")
-            if ca and cb:
-                pct = round(100 * (1 - ca / cb))
-                verb = "cheaper" if ca < cb else "more expensive"
-                print(f"  cost:   ministr ${ca:.4f} vs grep ${cb:.4f}  → ministr {abs(pct)}% {verb}")
-            for name, key in (("turns", "num_turns"), ("output tok", "output_tokens"),
-                              ("cache-read", "cache_read_tokens")):
-                va, vb = a.get(key), b.get(key)
-                if va and vb:
-                    pct = round(100 * (1 - va / vb))
-                    rel = "fewer" if va < vb else "more"
-                    print(f"  {name}: ministr {va:,} vs grep {vb:,}  → {abs(pct)}% {rel}")
-        elif a.get("validator_passed") != b.get("validator_passed"):
-            winner = "ministr" if a.get("validator_passed") else "grep"
-            print(f"\nOnly the {winner} arm produced a CORRECT solution — correctness "
-                  "outranks tokens; the result stands as measured.")
-        else:
-            print("\nNOTE: neither arm solved the task — see the table; result stands as measured.")
+    print("\nNote: correctness first — a cheaper arm that didn't solve the task is not a win. "
+          "Single trials are noisy; use --repeat. On easy tasks grep is expected to tie.")
     return 0
 
 
