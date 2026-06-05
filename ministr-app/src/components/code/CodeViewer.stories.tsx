@@ -144,3 +144,16 @@ export const Light: Story = {
   args: { scheme: "light", focusLine: 14 },
   tags: ["!test"],
 };
+
+/** Loading skeleton — the body while Shiki resolves. Forced (Shiki resolves
+ *  synchronously in-browser, so this branch is otherwise unreachable here), so
+ *  the axe gate + visual regression cover the skeleton under the real header. */
+export const Skeleton: Story = {
+  args: { forceState: "loading" },
+};
+
+/** Quiet-fault panel — the body when highlighting fails (e.g. a grammar can't
+ *  load). Forced for the same reason; covers the danger-spine fault under axe. */
+export const Fault: Story = {
+  args: { forceState: "error" },
+};

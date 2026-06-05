@@ -42,6 +42,13 @@ interface Props {
    *  otherwise the viewer falls back to definition name-spans. */
   occurrences?: Occurrence[];
   onSymbolClick: (symbolId: string, name: string) => void;
+  /** Test-only: force the body into its `loading` (skeleton) or `error`
+   *  (quiet-fault) branch. In-browser Shiki resolves synchronously and never
+   *  errors, so those branches are otherwise unreachable from Storybook — this
+   *  lets a story render them under the axe gate + visual regression. It only
+   *  overrides TOWARD a state; a real error/loading is never hidden. Inert
+   *  (undefined) in production. */
+  forceState?: "loading" | "error";
 }
 
 interface HoverState {
@@ -56,6 +63,7 @@ export function CodeViewer({
   focusLine,
   occurrences,
   onSymbolClick,
+  forceState,
 }: Props) {
   const docScheme = useDocumentScheme();
   const scheme = schemeProp ?? docScheme;
@@ -172,6 +180,16 @@ export function CodeViewer({
     return () => window.clearTimeout(id);
   }, [html, focusLine, file.path]);
 
+  // `forceState` only overrides TOWARD a state (for Storybook coverage of the
+  // skeleton/fault branches) — a real error or loading is never suppressed.
+  const faultMessage =
+    forceState === "error"
+      ? (error ?? "Shiki couldn’t load a grammar for this file.")
+      : error;
+  const showSkeleton =
+    forceState !== "error" &&
+    (forceState === "loading" || loading || html === null);
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface-sunken">
       <CodeHeader
@@ -180,9 +198,9 @@ export function CodeViewer({
         symbolCount={file.symbol_spans.length}
       />
       <div className="relative min-h-0 flex-1">
-        {error ? (
-          <CodeFault message={error} />
-        ) : loading || html === null ? (
+        {faultMessage ? (
+          <CodeFault message={faultMessage} />
+        ) : showSkeleton ? (
           <CodeSkeleton />
         ) : (
           <>
@@ -190,7 +208,9 @@ export function CodeViewer({
               ref={containerRef}
               className="code-viewer h-full"
               // Shiki output is sanitized HTML it generated from our text + tokens.
-              dangerouslySetInnerHTML={{ __html: html }}
+              // `showSkeleton` already gates out `html === null`; the `?? ""`
+              // only satisfies the type-narrowing the computed flag can't carry.
+              dangerouslySetInnerHTML={{ __html: html ?? "" }}
             />
             {hover && <Hovercard hover={hover} />}
           </>
