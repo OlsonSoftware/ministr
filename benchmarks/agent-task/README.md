@@ -118,15 +118,12 @@ per-run venv; the index step grows with repo size (`index_secs` is reported).
 `bug_replace` is preferred over a `.patch` file because unified-diff context
 whitespace is fragile to round-trip.
 
-**Scale finding (2026-06-05, `realrepo-sympy-tribonacci`, sympy ~1590 files):**
-the task itself is valid (selftest green: base passes, bug fails), but the
-agent matrix run is currently **blocked by indexing throughput** — `ministr
-index` over sympy starts fast then stalls after ~1/3 of its embedding batches
-on a slow/pathological file (worse under contention with a live daemon: ~3% CPU
-for 20 min). So at this scale ministr's *index* step is the limiter, not the
-per-lookup economics — an ingestion-performance issue (see the `f-ingest-*` /
-`rq-nonfinite-rootcause` roadmap items), not a benchmark-harness one. The task
-is kept and will run once ingestion scales to thousands of files.
+**Indexing cost is a one-time setup, not a per-run tax.** A real-repo task
+clones + installs + indexes its base **once**; every run reuses that prebuilt
+index. Indexing sympy (~1590 files → 274 indexed, 36,850 embeddings) takes
+~430s here, amortised across the whole matrix. (An earlier version re-indexed
+per run and the parallel indexers stalled on the shared daemon — that was a
+harness bug, now fixed, not an ingestion hang.)
 
 ## Adding a task
 
@@ -180,5 +177,25 @@ both arms × {haiku, sonnet}, one trial:
 so the agent never has to do broad discovery — grep jumps straight to
 `measure_table`. The lever to actually show ministr's edge end-to-end is **both**
 a genuinely huge repo (thousands of files) **and** a discovery-hard task (vague
-symptom, no test pointer). The harness is ready for both — a bigger repo is a
-one-line manifest.
+symptom, no test pointer).
+
+Huge-repo + discovery-hard run — `2026-06-05`, `realrepo-sympy-tribonacci`
+(sympy ~1590 files; bug in an in-repo recurrence helper; task is a behavioural
+repro only — no test/file/symbol named), both arms × {haiku, sonnet}, **2
+trials each** (index built once in ~430s, shared by all 8 runs):
+
+| model | solved | ministr | grep | turns (m/g) | cache-read (m/g) | head-to-head |
+|-------|:--:|--:|--:|--|--|--|
+| **sonnet** | 4/4 both | $0.198 | $0.334 | 14 / 16 | 157k / 283k | **ministr 41% cheaper** |
+| haiku  | 4/4 both | $0.260 | $0.253 | 25 / 23 | 602k / 577k | ~even (3% pricier) |
+
+**This is where ministr's edge finally shows.** Correctness tied (all 8 solved),
+but on **sonnet** — with a huge repo *and* a task that forces discovery — ministr
+located the fix using roughly **half the cache-read tokens** and fewer turns,
+landing **41% cheaper**. Both levers mattered: the same model was ~even on click
+(~70 files, *named* test) and is now clearly ahead on sympy (1590 files,
+repro-only). **haiku stays a wash** — the weaker model spends turns scanning
+regardless, so a better search tool helps it less. Honest caveats: 2 trials per
+cell (directional, not definitive — the sonnet effect is large and consistent
+in direction); a single model/repo; correctness was never the differentiator
+here, cost/turns were.
