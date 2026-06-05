@@ -8,7 +8,7 @@ import {
   type Entity,
 } from "../hooks/useEntityPanel";
 import { scrim, slideOver, spring } from "../lib/motion";
-import { overlayScrim } from "../lib/ui-tokens";
+import { overlayScrim, glassDrawer } from "../lib/ui-tokens";
 import { useDialog } from "../hooks/useDialog";
 import { cn } from "../lib/utils";
 import { SymbolView } from "./entity/SymbolView";
@@ -34,7 +34,7 @@ export function EntityPanel() {
   // Escape now actually closes (the header's "Close · Esc" affordance
   // was a lie), focus enters the panel and is restored on close, and
   // Tab is trapped inside it.
-  const panelRef = useDialog<HTMLElement>(Boolean(current), close);
+  const panelRef = useDialog<HTMLDivElement>(Boolean(current), close);
 
   const onResizeStart = useCallback(
     (e: React.MouseEvent) => {
@@ -78,7 +78,9 @@ export function EntityPanel() {
             aria-hidden="true"
           />
 
-          <motion.aside
+          {/* A modal dialog must be a div, not <aside> (aria-allowed-role:
+              an aside cannot take role="dialog"). */}
+          <motion.div
             key="panel"
             ref={panelRef}
             variants={slideOver}
@@ -86,9 +88,12 @@ export function EntityPanel() {
             animate="animate"
             exit="exit"
             style={{ width: `min(100vw, ${width}px)` }}
+            // The inspector rides the Liquid-Glass drawer tier (DESIGN.md §4):
+            // glassDrawer carries the translucent blur + left specular + the
+            // reduced-transparency solid fallback, flush to the viewport.
             className={cn(
-              "fixed top-0 right-0 bottom-0 z-[1201] bg-surface flex flex-col",
-              "border-l border-border shadow-lg",
+              glassDrawer,
+              "fixed top-0 right-0 bottom-0 z-[1201] flex flex-col",
             )}
             role="dialog"
             aria-modal="true"
@@ -101,7 +106,7 @@ export function EntityPanel() {
               aria-hidden="true"
             />
 
-            <header className="flex items-center gap-3 border-b border-border bg-surface-overlay px-4 py-2.5 shrink-0">
+            <header className="flex items-center gap-3 border-b border-border px-4 py-2.5 shrink-0">
               <div className="flex items-center gap-1 flex-wrap min-w-0 flex-1">
                 {trail.map((e, i) => {
                   const isLast = i === trail.length - 1;
@@ -162,7 +167,7 @@ export function EntityPanel() {
                 </motion.div>
               </AnimatePresence>
             </div>
-          </motion.aside>
+          </motion.div>
         </>
       )}
     </AnimatePresence>

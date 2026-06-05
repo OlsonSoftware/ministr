@@ -152,3 +152,10 @@ export const overlayScrim = "fixed inset-0 bg-black/50 backdrop-blur-[2px]";
  *  blur + specular highlight AND the mandatory reduced-transparency solid
  *  fallback. Never use on in-flow content. Compose with `cn(glassPanel, …)`. */
 export const glassPanel = "glass-panel";
+
+/** Glass DRAWER — the material-only glass variant for a flush full-height
+ *  slide-over (the EntityPanel inspector), per DESIGN.md §4. Same translucent
+ *  blur + reduced-transparency fallback as `glassPanel`, but a left edge + left
+ *  specular and NO radius/all-border (it sits flush to the viewport, not as a
+ *  floating rounded card). Backed by the `.glass-drawer` CSS utility. */
+export const glassDrawer = "glass-drawer";

@@ -329,10 +329,24 @@ body {
     inset 0 1px 0 0 color-mix(in oklab, var(--color-text) 7%, transparent);
 }
 
+/* Material-only glass for a FLUSH full-height drawer (no radius / no all-around
+   border): the same translucent blur + specular as .glass-panel, but only a
+   left edge + a LEFT inset highlight, so it sits flush to the viewport edges
+   instead of as a floating rounded card. */
+.glass-drawer {
+  background: color-mix(in oklab, var(--color-surface) 82%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  backdrop-filter: blur(20px) saturate(1.4);
+  border-left: var(--border-width-default) solid var(--color-border);
+  box-shadow: var(--shadow-lg),
+    inset 1px 0 0 0 color-mix(in oklab, var(--color-text) 7%, transparent);
+}
+
 /* Mandatory a11y fallback: under Reduce Transparency / increased contrast,
    glass collapses to a solid surface so text never relies on translucency. */
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  .glass-panel {
+  .glass-panel,
+  .glass-drawer {
     background: var(--color-surface);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
@@ -451,7 +465,8 @@ body {
   [role="checkbox"],
   [role="radio"],
   summary,
-  .glass-panel {
+  .glass-panel,
+  .glass-drawer {
     border: 1px solid ButtonBorder;
   }
 
