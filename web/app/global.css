@@ -1709,8 +1709,100 @@ body:has(.ministr-v2) {
   color: var(--ink-2);
 }
 
+/* ── Why: token economics (measured) ───────────────────────────────
+   grep+read cost bars grow with candidate files; ministr's targeted
+   slice stays flat (the amber baseline at x=0 of every track). Same
+   v2 hairline/mono/amber language; amber = the win, neutral = cost. */
+.v2-tok {
+  --demo-dim: #9a958c;
+  margin: 28px 0 0;
+  border: 1px solid var(--rule);
+  padding: 20px 22px 18px;
+}
+.v2-tok-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--rule);
+}
+.v2-tok-eyebrow {
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--demo-dim);
+}
+.v2-tok-flat { font-size: 14px; color: var(--ink-2); }
+.v2-tok-flat b {
+  color: var(--amber);
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-weight: 600;
+}
+.v2-tok-rows { list-style: none; margin: 0; padding: 0; }
+.v2-tok-row {
+  display: grid;
+  grid-template-columns: 84px 1fr 76px;
+  gap: 14px;
+  align-items: center;
+  padding: 7px 0;
+}
+.v2-tok-label {
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-size: 12.5px;
+  color: var(--demo-dim);
+}
+.v2-tok-track {
+  position: relative;
+  height: 26px;
+  /* the flat ministr baseline — a 2px amber edge at x=0, every row. */
+  border-left: 2px solid var(--amber);
+}
+.v2-tok-fill {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  min-width: 56px;
+  background: color-mix(in oklch, var(--ink, #fff) 12%, transparent);
+  padding-right: 10px;
+}
+.v2-tok-count {
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.v2-tok-cut {
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--amber);
+  text-align: right;
+}
+.v2-tok-cap {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  max-width: 72ch;
+}
+.v2-tok-link {
+  color: var(--amber);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+}
+
 /* ── Responsive ─────────────────────────────────────────────────── */
 @media (max-width: 640px) {
+  .v2-tok-row { grid-template-columns: 60px 1fr 64px; gap: 10px; }
   .ministr-v2 { font-size: 16px; padding: 0 22px; }
   .v2-demo { grid-template-columns: 1fr; margin-top: 40px; }
   .v2-demo-col { padding: 20px 18px 22px; }

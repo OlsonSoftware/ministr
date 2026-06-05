@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { GrepVsMinistr } from '../../components/landing/grep-vs-ministr';
+import { TokenEconomics } from '../../components/landing/token-economics';
 
 export default function HomePage() {
   return (
@@ -59,6 +60,9 @@ export default function HomePage() {
           that are <em className="v2-num">structurally correct</em> instead of
           grep-approximated.
         </p>
+
+        {/* The headline number, proven with the real benchmark. */}
+        <TokenEconomics />
       </section>
 
       <hr className="v2-rule" />
