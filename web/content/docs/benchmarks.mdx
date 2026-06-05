@@ -69,17 +69,31 @@ headless coding agent on the *same* task twice, changing only the discovery tool
 open-source repos (with the repo's own failing→passing tests as a deterministic
 validator), and across models.
 
-Early, honest findings (directional — small trial counts, reported as measured):
+Measured so far (`2026-06-05`, headless Claude Code). **These are early,
+small-sample numbers — read the trial counts and treat them as directional, not
+a headline.** Correctness was a tie everywhere (both arms solved every task), so
+the comparison is **cost** at equal correctness:
 
-- **Correctness is a tie** so far — both arms tend to solve the task. The
-  difference is in *cost and turns*, not whether it works.
-- **The advantage grows with codebase size and discovery difficulty.** On small
-  fixtures, or when the task names the failing test, `grep` ties — there's
-  nothing to discover. On a large real repo (~1,600 files) with a task that only
-  describes a *symptom*, a capable model with ministr located the fix using
-  roughly half the search-related tokens and fewer turns.
-- **A weaker model benefits less** — it spends turns scanning regardless, so a
-  better search tool helps it less.
+| task (repo size) | the task | model | trials | both solved? | ministr | grep | head-to-head |
+|---|---|---|:--:|:--:|--:|--:|--|
+| sympy (~1,590 files) | symptom only, no test named | **sonnet** | 2 | ✅ | **$0.198** | $0.334 | **ministr 41% cheaper** |
+| sympy (~1,590 files) | symptom only, no test named | haiku | 2 | ✅ | $0.260 | $0.253 | ~even |
+| click (~70 files) | names the failing test | sonnet | 1 | ✅ | $0.083 | $0.082 | ~even |
+| minicsv (9 files, synthetic) | names the failing test | sonnet | 1 | ✅ | $0.090 | $0.082 | ~even |
+
+The pattern, stated honestly:
+
+- **Both levers have to be present.** ministr's cost edge shows up only when the
+  codebase is **large** *and* the task forces **discovery** (a symptom with no
+  pointer to the failing test/function). On the huge sympy repo with a
+  symptom-only task, a capable model with ministr found the fix using ~half the
+  search-related tokens and fewer turns. On small repos, or when the task names
+  the test, `grep` ties — there's nothing to discover.
+- **A weaker model benefits less** (haiku ~even) — it spends turns scanning
+  regardless, so a better search tool helps it less.
+- **Sample sizes are tiny** (1–2 trials/cell). The sympy/sonnet effect is large
+  and directionally consistent, but this is an early signal, not a published
+  guarantee. More trials and more repos are the obvious next step.
 
 Run it yourself (it calls a real model, so it is opt-in):
 
