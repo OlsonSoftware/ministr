@@ -1,0 +1,16 @@
+{
+  "id": "realrepo-sympy-tribonacci",
+  "kind": "realrepo",
+  "difficulty": "real",
+  "language": "python",
+  "summary": "REAL huge repo: sympy @1.13.3 (~1590 .py files, 43M). A planted one-line bug in the in-repo Tribonacci recurrence helper makes tribonacci numbers wrong. DISCOVERY-HARD: the task gives only a behavioural repro — no test, file, or symbol named — so locating the fix among 1590 files is the real work. Validator = the repo's own test_comb_numbers.py::test_tribonacci.",
+  "repo": "https://github.com/sympy/sympy",
+  "ref": "sympy-1.13.3",
+  "install": ["{venv}/bin/pip", "install", "--quiet", "-e", ".", "pytest", "hypothesis"],
+  "bug_replace": {
+    "file": "sympy/functions/combinatorial/numbers.py",
+    "find": "        return (prev[-3] + prev[-2] + prev[-1])",
+    "replace": "        return (prev[-3] + prev[-1])"
+  },
+  "validate": ["{venv}/bin/python", "-m", "pytest", "sympy/functions/combinatorial/tests/test_comb_numbers.py", "-q", "-k", "tribonacci"]
+}
