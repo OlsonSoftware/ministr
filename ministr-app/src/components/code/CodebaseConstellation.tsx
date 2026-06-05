@@ -13,6 +13,7 @@
 import { useMemo, useState } from "react";
 import type { FileInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";
+import { VizFrame } from "../ui/viz-frame";
 
 // ── Layout (SVG user units; the svg scales to its container width). ──────────
 const W = 600;
@@ -236,16 +237,18 @@ export function CodebaseConstellation({ files, onOpen }: CodebaseConstellationPr
   const n = layout.bubbles.length;
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between font-mono text-mono-micro text-text-dim">
-        <span>
-          <span className="tabular-nums font-semibold text-text">{layout.moduleCount}</span> modules ·{" "}
-          <span className="tabular-nums font-semibold text-text">{layout.fileCount.toLocaleString()}</span> files
-        </span>
-        <span>sized by index mass</span>
-      </div>
-
-      <div className="rounded-lg border border-border-soft bg-surface-sunken/40">
+    <VizFrame
+      readout={
+        <>
+          <span>
+            <span className="tabular-nums font-semibold text-text">{layout.moduleCount}</span> modules ·{" "}
+            <span className="tabular-nums font-semibold text-text">{layout.fileCount.toLocaleString()}</span> files
+          </span>
+          <span>sized by index mass</span>
+        </>
+      }
+    >
+      <div className="-mx-1">
         <svg
           viewBox={`0 0 ${W} ${H}`}
           className="w-full"
@@ -344,6 +347,6 @@ export function CodebaseConstellation({ files, onOpen }: CodebaseConstellationPr
           +{layout.overflow} smaller module{layout.overflow === 1 ? "" : "s"} not shown
         </p>
       )}
-    </div>
+    </VizFrame>
   );
 }

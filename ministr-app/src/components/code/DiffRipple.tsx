@@ -16,6 +16,7 @@ import { useMemo, useState } from "react";
 import { GitCompareArrows, Waypoints } from "@/components/ui/icons";
 import type { ChangedSymbol, DiffImpact, ImpactedSymbol } from "../../lib/types";
 import { cn } from "../../lib/utils";
+import { VizFrame } from "../ui/viz-frame";
 
 // ── Layout (SVG user units; the svg scales to its container width). ──────────
 const W = 460;
@@ -136,16 +137,11 @@ export function DiffRipple({ data, onInspect }: DiffRippleProps) {
   const isolated = data.impacted.length === 0;
 
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface-raised px-4 py-3 shadow-sm">
-      {/* Eyebrow + readout. */}
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
-        <div className="flex items-center gap-1.5 text-accent">
-          <GitCompareArrows className="h-3.5 w-3.5" strokeWidth={2} />
-          <span className="font-mono text-mono-micro font-bold uppercase tracking-[0.12em]">
-            Blast ripple
-          </span>
-        </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-mono-micro text-text-dim">
+    <VizFrame
+      icon={GitCompareArrows}
+      label="Blast ripple"
+      readout={
+        <>
           <span className="flex items-center gap-1.5" title="Aggregate blast-radius risk">
             <span className={cn("inline-block h-2 w-2 rounded-full", RISK_DOT[data.risk])} aria-hidden />
             <span className="font-semibold uppercase tracking-[0.06em] text-text">{data.risk} risk</span>
@@ -173,9 +169,9 @@ export function DiffRipple({ data, onInspect }: DiffRippleProps) {
               </span>
             </>
           )}
-        </div>
-      </div>
-
+        </>
+      }
+    >
       <svg
         viewBox={`0 0 ${W} ${H}`}
         className="w-full"
@@ -258,7 +254,7 @@ export function DiffRipple({ data, onInspect }: DiffRippleProps) {
           </text>
         )}
       </svg>
-    </div>
+    </VizFrame>
   );
 }
 

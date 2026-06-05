@@ -17,6 +17,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Activity } from "@/components/ui/icons";
 import type { ActivityEvent } from "../../lib/types";
 import { cn } from "../../lib/utils";
+import { VizFrame } from "../ui/viz-frame";
 
 // ── Layout (SVG user units; scales to the container width). ──────────────────
 const W = 600;
@@ -94,21 +95,12 @@ export function ActivityPulse({
       : `Activity pulse over the last ${minutes} minutes: ${total} tool call${total === 1 ? "" : "s"}, ${rate.toFixed(1)} per minute, ${hitPct}% served from cache, peak ${peak} in a ${bucketSec}-second window.`;
 
   return (
-    <div
-      className={cn(
-        "flex flex-col gap-2 rounded-xl border border-border bg-surface-raised px-4 py-3 shadow-sm",
-        className,
-      )}
-    >
-      {/* Eyebrow + readout. */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-1.5 text-accent">
-          <Activity className="h-3.5 w-3.5" strokeWidth={2} />
-          <span className="font-mono text-mono-micro font-bold uppercase tracking-[0.12em]">
-            Live activity
-          </span>
-        </div>
-        <div className="flex items-center gap-4">
+    <VizFrame
+      icon={Activity}
+      label="Live activity"
+      className={className}
+      readout={
+        <>
           <Stat value={total.toLocaleString()} label="calls" />
           <Stat value={total > 0 ? rate.toFixed(1) : "—"} label="/min" />
           <Stat
@@ -116,9 +108,9 @@ export function ActivityPulse({
             label="cache"
             tone={total > 0 ? "success" : undefined}
           />
-        </div>
-      </div>
-
+        </>
+      }
+    >
       {/* The heartbeat. */}
       <div className="relative">
         <svg
@@ -217,7 +209,7 @@ export function ActivityPulse({
           />
         )}
       </div>
-    </div>
+    </VizFrame>
   );
 }
 
