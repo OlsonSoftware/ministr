@@ -1,14 +1,25 @@
 import { useEffect, useRef, useState } from "react";
+import { ArrowUpRight, ScrollText, Server } from "lucide-react";
 import type { DaemonStatus } from "../../lib/types";
 import { StatusDot } from "../ui/status-dot";
+import { Badge } from "../ui/badge";
 import { cn } from "../../lib/utils";
-import { useToast } from "./ToastTray";
+import { glassPanel } from "../../lib/ui-tokens";
+import { toneTextClass } from "../../lib/status";
 
 interface Props {
   status: DaemonStatus | null;
   error: string | null;
   onOpenLogs?: () => void;
 }
+
+/** Quiet tone tint for the popover identity medallion (no glow — the daemon
+ *  popover is informational, not a "live" object). */
+const TONE_RING: Record<"success" | "warning" | "danger", string> = {
+  success: "border-success/40",
+  warning: "border-warning/40",
+  danger: "border-danger/40",
+};
 
 function formatUptime(secs: number): string {
   const h = Math.floor(secs / 3600);
@@ -31,7 +42,6 @@ function formatUptime(secs: number): string {
 export function DaemonDot({ status, error, onOpenLogs }: Props) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const { toast } = useToast();
 
   useEffect(() => {
     if (!open) return;
@@ -68,10 +78,16 @@ export function DaemonDot({ status, error, onOpenLogs }: Props) {
         ? `Indexing ${indexing}`
         : "Ready";
 
+  // Short word for the popover header status pill (the vitals rows carry the
+  // detail; the pill carries the one-word state).
+  const statusWord =
+    tone === "danger" ? "Offline" : tone === "warning" ? "Indexing" : "Ready";
+
   return (
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
         title={
           tone === "danger"
             ? "Daemon disconnected"
@@ -99,51 +115,87 @@ export function DaemonDot({ status, error, onOpenLogs }: Props) {
       </button>
 
       {open && (
-        <div className="absolute top-full right-0 mt-2 z-50 w-[300px] overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
-          <div className="border-b border-border bg-surface-overlay px-3 py-2">
-            <span className="font-sans text-sm font-semibold text-text">
-              Daemon
+        // Floating chrome on the Liquid-Glass tier (DESIGN.md §4): glassPanel
+        // carries the blur + specular + reduced-transparency/forced-colors
+        // solid fallbacks and owns the radius. overflow-hidden clips the
+        // header/footer hairlines to the corner (safe — the specular is an
+        // inset shadow, not a pseudo-element).
+        <div
+          role="region"
+          aria-label="Daemon status"
+          className={cn(
+            glassPanel,
+            "absolute top-full right-0 mt-2 z-50 w-[300px] overflow-hidden",
+          )}
+        >
+          {/* Command-deck identity header: quiet tone medallion + name + the
+              one-word status pill. Tone lives on the medallion + pill only. */}
+          <div className="flex items-center gap-2.5 border-b border-border/70 px-3 py-2.5">
+            <span
+              aria-hidden
+              className={cn(
+                "grid h-8 w-8 shrink-0 place-items-center rounded-lg border bg-surface-overlay",
+                TONE_RING[tone],
+                toneTextClass(tone),
+              )}
+            >
+              <Server className="h-4 w-4" strokeWidth={2} />
             </span>
-          </div>
-          <div className="p-3 space-y-1">
-            <Row
-              label="STATUS"
-              value={
-                tone === "danger"
-                  ? "DISCONNECTED"
-                  : tone === "warning"
-                    ? "INDEXING"
-                    : "CONNECTED"
-              }
-            />
-            {status && (
-              <>
-                <Row label="VERSION" value={`v${status.version}`} />
-                <Row label="UPTIME" value={formatUptime(status.uptime_secs)} />
-                <Row label="MEMORY" value={`${status.memory_mb.toFixed(0)} MB`} />
-                <Row label="MODEL" value={status.model} truncate />
-                <Row label="DIM" value={`${status.model_dimension}d`} />
-              </>
-            )}
-            {error && (
-              <div className="rounded-md border border-danger/40 bg-surface-overlay px-2 py-1.5 mt-2 font-mono text-xs text-danger break-words">
-                {error}
+            <div className="min-w-0 flex-1">
+              <div className="font-sans text-sm font-semibold text-text leading-tight">
+                Daemon
               </div>
-            )}
+              <div className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
+                Code intelligence
+              </div>
+            </div>
+            <Badge variant={tone} dot>
+              {statusWord}
+            </Badge>
           </div>
+
+          {/* Vitals */}
+          {status ? (
+            <div className="px-3 py-2.5 space-y-1.5">
+              <Row label="VERSION" value={`v${status.version}`} />
+              <Row label="UPTIME" value={formatUptime(status.uptime_secs)} />
+              <Row label="MEMORY" value={`${status.memory_mb.toFixed(0)} MB`} />
+              <Row label="MODEL" value={status.model} truncate />
+              <Row label="DIM" value={`${status.model_dimension}d`} />
+            </div>
+          ) : (
+            !error && (
+              <div className="px-3 py-3 font-sans text-xs text-text-dim">
+                No daemon connection.
+              </div>
+            )
+          )}
+
+          {error && (
+            <div className="mx-3 mb-3 mt-1 rounded-md border border-danger/40 bg-surface-overlay px-2 py-1.5 font-mono text-xs text-danger break-words">
+              {error}
+            </div>
+          )}
+
           {status?.log_path && onOpenLogs && (
             <button
               onClick={() => {
-                // The toast is owned by the App-level onOpenLogs callback
-                // now, since only it knows whether the host opener
-                // actually succeeded. DaemonDot just dispatches and
-                // closes the popover.
+                // The toast is owned by the App-level onOpenLogs callback now,
+                // since only it knows whether the host opener actually
+                // succeeded. DaemonDot just dispatches and closes the popover.
                 onOpenLogs();
                 setOpen(false);
               }}
-              className="w-full border-t border-border bg-surface text-text-muted hover:text-text hover:bg-surface-overlay cursor-pointer transition-colors duration-150 px-3 py-2 font-sans text-sm font-medium text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent"
+              className={cn(
+                "flex w-full items-center gap-2 border-t border-border/70 px-3 py-2.5 text-left",
+                "font-sans text-sm font-medium text-text-muted hover:text-text hover:bg-surface-overlay/60",
+                "cursor-pointer transition-colors duration-150",
+                "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-accent",
+              )}
             >
-              Open log file →
+              <ScrollText className="h-4 w-4 shrink-0" strokeWidth={2} />
+              <span className="flex-1">Open log file</span>
+              <ArrowUpRight className="h-4 w-4 shrink-0" strokeWidth={2} />
             </button>
           )}
         </div>
