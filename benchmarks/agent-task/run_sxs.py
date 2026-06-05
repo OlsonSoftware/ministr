@@ -308,6 +308,90 @@ def run_one(task, arm_key, model, budget, keep, dry_run):
 
 
 # --------------------------------------------------------------------------
+# Real-repo: clone + index ONCE, run the whole matrix against the shared index
+# --------------------------------------------------------------------------
+
+def prepare_realrepo_base(task, need_index):
+    """Clone+install the repo once and (once) build the ministr index. The agent
+    works in `repo` directly; reset_realrepo_base() restores the buggy state
+    between runs so every (model×arm×repeat) run reuses this ONE prebuilt index
+    instead of re-cloning/re-indexing per run. Returns a base dict."""
+    work = tempfile.mkdtemp(prefix=f"sxs-base-{task['id']}-")
+    repo = os.path.join(work, "repo")
+    venv = os.path.join(work, "venv")
+    code, _o, err = sh(["git", "clone", "--quiet", "--branch", task["ref"],
+                        "--depth", "1", task["repo"], repo], timeout=900)
+    if code != 0:
+        return {"work": work, "error": f"clone failed: {err[-300:]}"}
+    code, _o, err = sh(["python3", "-m", "venv", venv], timeout=120)
+    if code != 0:
+        return {"work": work, "error": f"venv failed: {err[-300:]}"}
+    code, _o, err = sh(_subst(task["install"], venv), cwd=repo, timeout=1200)
+    if code != 0:
+        return {"work": work, "error": f"install failed: {err[-400:]}"}
+    ok, berr = apply_bug(task, repo)
+    if not ok:
+        return {"work": work, "error": berr}
+    base = {"work": work, "repo": repo, "index_secs": None}
+    if need_index:
+        t0 = time.time()
+        code, _o, err = sh(["ministr", "index", "--corpus", "."], cwd=repo, timeout=3600)
+        base["index_secs"] = round(time.time() - t0, 1)
+        if code != 0:
+            base["error"] = f"ministr index failed: {err[-300:]}"
+    return base
+
+
+def reset_realrepo_base(task, repo):
+    """Restore the pristine buggy state so the next run starts identical (keeping
+    the prebuilt index valid — same content it was built on)."""
+    sh(["git", "checkout", "--", "."], cwd=repo, timeout=120)
+    sh(["git", "clean", "-fdq"], cwd=repo, timeout=120)
+    apply_bug(task, repo)
+
+
+def run_in_base(task, base, arm_key, model, budget):
+    """Run one (arm, model) against the shared prebuilt base repo + index."""
+    label, allowed, uses_ministr = ARMS[arm_key]
+    repo = base["repo"]
+    res = {"task": task["id"], "difficulty": task.get("difficulty"), "model": model,
+           "arm": arm_key, "label": label, "uses_ministr": uses_ministr, "kind": "realrepo",
+           "index_secs": base.get("index_secs") if uses_ministr else None}
+    reset_realrepo_base(task, repo)
+    prompt = open(os.path.join(task["_dir"], "task.md")).read()
+    run_env = dict(os.environ)
+    run_env["PATH"] = os.path.join(venv_of(repo), "bin") + os.pathsep + run_env.get("PATH", "")
+    mcp_config_path = None
+    if uses_ministr:
+        mcp = {"mcpServers": {"ministr": {"command": "ministr", "args": ["serve", "--corpus", repo]}}}
+        mcp_config_path = os.path.join(base["work"], "ministr-mcp.json")
+        with open(mcp_config_path, "w") as fh:
+            json.dump(mcp, fh)
+    cmd = build_claude_cmd(arm_key, repo, prompt, model, budget, mcp_config_path)
+    t0 = time.time()
+    code, out, err = sh(cmd, cwd=repo, timeout=2400, env=run_env)
+    res["wall_secs"] = round(time.time() - t0, 1)
+    try:
+        payload = json.loads(out)
+    except json.JSONDecodeError:
+        res["error"] = f"could not parse claude JSON (exit {code}): {out[-300:]} {err[-200:]}"
+        return res
+    usage = payload.get("usage", {}) or {}
+    res.update({
+        "is_error": payload.get("is_error"), "num_turns": payload.get("num_turns"),
+        "total_cost_usd": payload.get("total_cost_usd"),
+        "input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens"),
+        "cache_read_tokens": usage.get("cache_read_input_tokens"),
+        "cache_creation_tokens": usage.get("cache_creation_input_tokens"),
+        "result_text": (payload.get("result") or "")[:200],
+    })
+    passed, summary = validate(task, repo)
+    res["validator_passed"] = passed
+    res["validator_summary"] = summary
+    return res
+
+
+# --------------------------------------------------------------------------
 # Output
 # --------------------------------------------------------------------------
 
@@ -423,15 +507,39 @@ def main():
           f"{len(models)} model(s) × {len(arm_keys)} arm(s) × {args.repeat} = {n_runs} run(s)")
 
     results = []
-    for model in models:
-        for task in tasks:
-            for _ in range(args.repeat):
-                for arm_key in arm_keys:
-                    results.append(run_one(task, arm_key, model, args.max_budget_usd,
-                                           args.keep, args.dry_run))
+    for task in tasks:
+        is_realrepo = task.get("kind") == "realrepo"
+        if is_realrepo and not args.dry_run:
+            # Clone + install + index ONCE; every run reuses the shared base+index.
+            base = prepare_realrepo_base(task, need_index=("a" in arm_keys))
+            if base.get("error"):
+                print(f"  [{task['id']}] base setup FAILED: {base['error']}")
+                for model in models:
+                    for _ in range(args.repeat):
+                        for arm_key in arm_keys:
+                            results.append({"task": task["id"], "model": model, "arm": arm_key,
+                                            "label": ARMS[arm_key][0], "kind": "realrepo",
+                                            "error": f"base setup: {base['error']}"})
+                shutil.rmtree(base.get("work", ""), ignore_errors=True)
+                continue
+            if base.get("index_secs") is not None:
+                print(f"  [{task['id']}] indexed ONCE in {base['index_secs']}s — shared by all runs")
+            for model in models:
+                for _ in range(args.repeat):
+                    for arm_key in arm_keys:
+                        results.append(run_in_base(task, base, arm_key, model, args.max_budget_usd))
+            if not args.keep:
+                shutil.rmtree(base["work"], ignore_errors=True)
+        else:
+            for model in models:
+                for _ in range(args.repeat):
+                    for arm_key in arm_keys:
+                        results.append(run_one(task, arm_key, model, args.max_budget_usd,
+                                               args.keep, args.dry_run))
 
     if args.dry_run:
-        print("\nDRY RUN — no agent invoked, no quota spent.")
+        print("\nDRY RUN — no agent invoked, no quota spent. (real-repo tasks index ONCE, "
+              "then all runs reuse the shared index.)")
         return 0
 
     # Per-(task,model) tables (last trial of each arm).

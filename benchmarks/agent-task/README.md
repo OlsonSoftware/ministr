@@ -118,6 +118,16 @@ per-run venv; the index step grows with repo size (`index_secs` is reported).
 `bug_replace` is preferred over a `.patch` file because unified-diff context
 whitespace is fragile to round-trip.
 
+**Scale finding (2026-06-05, `realrepo-sympy-tribonacci`, sympy ~1590 files):**
+the task itself is valid (selftest green: base passes, bug fails), but the
+agent matrix run is currently **blocked by indexing throughput** — `ministr
+index` over sympy starts fast then stalls after ~1/3 of its embedding batches
+on a slow/pathological file (worse under contention with a live daemon: ~3% CPU
+for 20 min). So at this scale ministr's *index* step is the limiter, not the
+per-lookup economics — an ingestion-performance issue (see the `f-ingest-*` /
+`rq-nonfinite-rootcause` roadmap items), not a benchmark-harness one. The task
+is kept and will run once ingestion scales to thousands of files.
+
 ## Adding a task
 
 Drop a new `tasks/<id>/` with the four pieces above, run `--selftest` to confirm
