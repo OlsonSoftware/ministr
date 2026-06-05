@@ -3,9 +3,10 @@ import type { CorpusInfo, FileInfo } from "../../lib/types";
 import { CodeOverview } from "./CodeOverview";
 
 /**
- * CodeOverview — the Explore facet's entry (aaa-explore-overview). A codebase
- * overview that ties the four lenses together: identity + size, languages, and
- * the CODE INTELLIGENCE deep-link tiles (Bridges / Unused / Quality).
+ * CodeOverview — the Explore facet's entry, a command-deck CODEBASE OBSERVATORY
+ * (aaa-codeoverview-observatory). A glowing identity hero (medallion + name +
+ * LIVE) over a divided vital readout, the CODE INTELLIGENCE deck (Bridges /
+ * Unused / Quality), an accent-ramp language viz, and quick-start files.
  */
 
 const CORPUS: CorpusInfo = {
@@ -61,10 +62,21 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** The full overview — size, intelligence counts resolved, languages, files. */
+/** The full overview — live corpus (3 sessions → glowing medallion + LIVE
+ *  pill), size readout, resolved intelligence counts, languages, files. */
 export const Rich: Story = {
   args: {
     corpus: CORPUS,
+    files: FILES,
+    intel: { bridges: 8, unused: 12, quality: 6 },
+  },
+};
+
+/** A quiet corpus with no active sessions — the medallion + dot go neutral
+ *  (no glow), the LIVE pill is absent. */
+export const Quiet: Story = {
+  args: {
+    corpus: { ...CORPUS, active_sessions: 0 },
     files: FILES,
     intel: { bridges: 8, unused: 12, quality: 6 },
   },
@@ -84,6 +96,23 @@ export const SingleLanguage: Story = {
   args: {
     corpus: { ...CORPUS, display_name: "scripts" },
     files: [file("scripts/build.py", 8), file("scripts/deploy.py", 5)],
+    intel: { bridges: 0, unused: 0, quality: 0 },
+  },
+};
+
+/** A freshly-registered corpus with nothing indexed yet — zero size, no
+ *  languages section, the empty quick-start message. */
+export const Empty: Story = {
+  args: {
+    corpus: {
+      ...CORPUS,
+      display_name: "new-project",
+      files_indexed: 0,
+      sections_count: 0,
+      symbols_count: 0,
+      active_sessions: 0,
+    },
+    files: [],
     intel: { bridges: 0, unused: 0, quality: 0 },
   },
 };

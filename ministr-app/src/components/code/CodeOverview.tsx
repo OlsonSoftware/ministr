@@ -1,19 +1,22 @@
 /**
  * CodeOverview — the Explore facet's ENTRY (no file open yet).
  *
- * Where the old landing was a file-picker, this is a CODEBASE OVERVIEW: it
- * answers "what is this project, and how do I understand it?" and ties the four
- * Explore lenses together. Identity + size, language composition, and a CODE
- * INTELLIGENCE row — Bridges / Unused / Quality — where each tile shows a live
- * count and is a one-click jump into that lens. Below, the notable files for a
- * quick start. Built fresh from the v4 tokens/atoms; the pure `CodeOverview`
- * renders from props (Storybook) and `CodeOverviewConnector` wires the live
- * file list + the three intelligence counts.
+ * A command-deck CODEBASE OBSERVATORY: it answers "what is this project, and how
+ * do I understand it?" and ties the Explore lenses together. A glowing identity
+ * HERO (medallion + name + root + LIVE) sits over a divided vital readout
+ * (Files / Sections / Symbols); a premium CODE INTELLIGENCE deck — Bridges /
+ * Unused / Quality — gives each lens a live count and a one-click jump; the
+ * language composition reads as an accent-ramp proportion viz; and the notable
+ * files offer a quick start. Built from the v4 tokens/atoms (Medallion + glow,
+ * MetricTile cell readout, StatusDot liveness). The pure `CodeOverview` renders
+ * from props (Storybook); `CodeOverviewConnector` wires the live file list + the
+ * three intelligence counts.
  */
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowUpRight,
+  Boxes,
   Cable,
   Code2,
   Command,
@@ -24,9 +27,11 @@ import {
   Trash2,
 } from "@/components/ui/icons";
 
+import { MetricTile } from "@/components/ui/metric-tile";
+import { StatusDot } from "@/components/ui/status-dot";
 import type { CorpusInfo, FileInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";
-import { langStats } from "./langStats";
+import { type LangStat, langStats } from "./langStats";
 
 /** The three lenses an intelligence tile can jump to. */
 export type IntelLens = "bridges" | "unused" | "solid";
@@ -61,6 +66,15 @@ function dirHint(path: string): string {
   return segs.slice(0, -1).slice(-2).join("/");
 }
 
+/** A short, human root from the first corpus path (last two segments). */
+function rootHint(corpus: CorpusInfo | null): string | null {
+  const p = corpus?.paths?.[0];
+  if (!p) return null;
+  const segs = p.split("/").filter(Boolean);
+  if (segs.length <= 2) return p;
+  return `…/${segs.slice(-2).join("/")}`;
+}
+
 export function CodeOverview({
   corpus,
   files,
@@ -76,50 +90,81 @@ export function CodeOverview({
   );
 
   const name = corpus?.display_name?.trim() || "this corpus";
+  const root = rootHint(corpus);
   const fileCount = files.length || corpus?.files_indexed || 0;
   const sectionCount = corpus?.sections_count ?? 0;
   const symbolCount = corpus?.symbols_count ?? 0;
+  const sessions = corpus?.active_sessions ?? 0;
+  const live = sessions > 0;
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-10">
-        {/* Headline */}
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2 text-accent">
-            <Code2 className="h-5 w-5" strokeWidth={1.8} />
-            <span className="font-mono text-xs font-bold uppercase tracking-[0.08em]">
-              Code
-            </span>
+      <div className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-9">
+        {/* ── Identity hero + divided vital readout — one command-deck panel ── */}
+        <section className="flex flex-col overflow-hidden rounded-xl border border-border bg-surface-raised shadow-sm">
+          <div className="flex items-start gap-3.5 px-5 pb-5 pt-5">
+            <Medallion live={live} />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 text-accent">
+                <Code2 className="h-3.5 w-3.5" strokeWidth={2} />
+                <span className="font-mono text-mono-micro font-bold uppercase tracking-[0.12em]">
+                  Codebase
+                </span>
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                <h1 className="truncate font-sans text-2xl font-semibold leading-tight text-text">
+                  {name}
+                </h1>
+                {live && <LivePill count={sessions} />}
+              </div>
+              {root && (
+                <p className="mt-1 truncate font-mono text-mono-mini text-text-dim">
+                  {root}
+                </p>
+              )}
+              <p className="mt-2.5 max-w-xl font-sans text-sm leading-relaxed text-text-dim">
+                Browse the codebase through the same symbol graph the AI uses — or
+                read it through a lens: its cross-language seams, what nothing
+                references, and where it bends the SOLID principles.
+              </p>
+            </div>
           </div>
-          <h1 className="font-sans text-2xl font-semibold text-text">{name}</h1>
-          <p className="max-w-xl font-sans text-sm text-text-dim">
-            Browse the codebase through the same symbol graph the AI uses — or
-            read it through a lens: its cross-language seams, what nothing
-            references, and where it bends the SOLID principles.
-          </p>
-        </div>
 
-        {/* Size */}
-        <div className="grid grid-cols-3 gap-3">
-          <StatTile icon={FileCode2} label="Files" value={fileCount} />
-          <StatTile icon={Layers} label="Sections" value={sectionCount} />
-          <StatTile icon={Hash} label="Symbols" value={symbolCount} />
-        </div>
+          {/* Divided vital readout — the size of the corpus at a glance. */}
+          <div className="grid grid-cols-3 divide-x divide-border border-t border-border bg-surface">
+            <MetricTile
+              variant="cell"
+              icon={FileCode2}
+              label="files"
+              value={fileCount.toLocaleString()}
+            />
+            <MetricTile
+              variant="cell"
+              icon={Layers}
+              label="sections"
+              value={sectionCount.toLocaleString()}
+            />
+            <MetricTile
+              variant="cell"
+              icon={Hash}
+              label="symbols"
+              value={symbolCount.toLocaleString()}
+            />
+          </div>
+        </section>
 
-        {/* Code intelligence — the lens deep-links. */}
+        {/* ── Code intelligence — the premium lens deck. ── */}
         <section className="flex flex-col gap-3">
-          <h2 className="font-sans text-xs font-semibold uppercase tracking-[0.08em] text-text-dim">
-            Code intelligence
-          </h2>
+          <SectionLabel>Code intelligence</SectionLabel>
           <div className="grid grid-cols-1 gap-3 @min-[560px]/page:grid-cols-3">
-            <IntelTile
+            <IntelCard
               icon={Cable}
               label="Bridges"
               hint="Cross-language seams"
               count={intel.bridges}
               onClick={() => onOpenLens("bridges")}
             />
-            <IntelTile
+            <IntelCard
               icon={Trash2}
               label="Unused"
               hint="Dead-code candidates"
@@ -127,7 +172,7 @@ export function CodeOverview({
               tone="warning"
               onClick={() => onOpenLens("unused")}
             />
-            <IntelTile
+            <IntelCard
               icon={ShieldCheck}
               label="Quality"
               hint="SOLID findings"
@@ -137,45 +182,17 @@ export function CodeOverview({
           </div>
         </section>
 
-        {/* Languages */}
+        {/* ── Language composition — accent-ramp proportion viz. ── */}
         {langs.length > 0 && (
           <section className="flex flex-col gap-3">
-            <h2 className="font-sans text-xs font-semibold uppercase tracking-[0.08em] text-text-dim">
-              Languages
-            </h2>
-            <div className="flex h-2 w-full overflow-hidden rounded-full bg-surface-sunken">
-              {langs.map((l, i) => (
-                <div
-                  key={l.label}
-                  className={i === 0 ? "bg-accent" : "bg-border"}
-                  style={{ width: `${Math.max(l.fraction * 100, 1.5)}%` }}
-                  title={`${l.label} · ${l.count}`}
-                />
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-x-4 gap-y-1">
-              {langs.map((l, i) => (
-                <span key={l.label} className="flex items-center gap-1.5">
-                  <span
-                    className={`inline-block h-2 w-2 rounded-full ${i === 0 ? "bg-accent" : "bg-border"}`}
-                  />
-                  <span className="font-mono text-mono-mini text-text-muted">
-                    {l.label}
-                  </span>
-                  <span className="font-mono text-mono-mini tabular-nums text-text-dim">
-                    {l.count}
-                  </span>
-                </span>
-              ))}
-            </div>
+            <SectionLabel>Languages</SectionLabel>
+            <LanguageBar langs={langs} />
           </section>
         )}
 
-        {/* Notable files — quick start */}
+        {/* ── Notable files — quick start. ── */}
         <section className="flex flex-col gap-3">
-          <h2 className="font-sans text-xs font-semibold uppercase tracking-[0.08em] text-text-dim">
-            Jump in
-          </h2>
+          <SectionLabel>Jump in</SectionLabel>
           {filesLoading ? (
             <p className="font-mono text-mono-mini text-text-dim">Loading_</p>
           ) : notable.length === 0 ? (
@@ -190,10 +207,10 @@ export function CodeOverview({
                   type="button"
                   onClick={() => onOpen(f.path)}
                   title={f.path}
-                  className="group flex items-center gap-2.5 rounded-md border border-border-soft bg-surface px-3 py-2 text-left hover:border-border hover:bg-surface-overlay cursor-pointer transition-colors duration-150 ease-out"
+                  className="group flex items-center gap-2.5 rounded-lg border border-border-soft bg-surface px-3 py-2.5 text-left transition-colors duration-150 ease-out hover:border-accent/50 hover:bg-surface-raised cursor-pointer"
                 >
                   <FileCode2
-                    className="h-4 w-4 shrink-0 text-text-dim group-hover:text-accent transition-colors duration-150 ease-out"
+                    className="h-4 w-4 shrink-0 text-text-dim transition-colors duration-150 ease-out group-hover:text-accent"
                     strokeWidth={1.8}
                   />
                   <span className="flex min-w-0 flex-1 flex-col">
@@ -201,12 +218,12 @@ export function CodeOverview({
                       {baseName(f.path)}
                     </span>
                     {dirHint(f.path) && (
-                      <span className="truncate font-mono text-mono-mini text-text-dim">
+                      <span className="truncate font-mono text-mono-micro text-text-dim">
                         {dirHint(f.path)}
                       </span>
                     )}
                   </span>
-                  <span className="shrink-0 font-mono text-mono-mini tabular-nums text-text-dim">
+                  <span className="shrink-0 rounded border border-border-soft bg-surface-overlay px-1.5 py-0.5 font-mono text-mono-micro tabular-nums text-text-dim">
                     {f.section_count.toLocaleString()}
                   </span>
                 </button>
@@ -226,31 +243,63 @@ export function CodeOverview({
   );
 }
 
-function StatTile({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: typeof FileCode2;
-  label: string;
-  value: number;
-}) {
+// ───────────────────────────────────────────────────────────────────────────
+// Command-deck identity helpers (ScopeHeader language, local to this surface).
+
+/** The glowing identity medallion — the object glyph in a rounded tile, soft
+ *  accent glow + a live status dot when the corpus has active sessions. */
+function Medallion({ live }: { live: boolean }) {
   return (
-    <div className="flex flex-col gap-1 rounded-md border border-border-soft bg-surface px-3 py-2.5">
-      <div className="flex items-center gap-1.5 text-text-dim">
-        <Icon className="h-3.5 w-3.5" strokeWidth={1.8} />
-        <span className="font-sans text-xs font-medium">{label}</span>
-      </div>
-      <span className="font-mono text-xl font-semibold tabular-nums text-text">
-        {value.toLocaleString()}
+    <span
+      aria-hidden
+      className={cn(
+        "relative grid h-12 w-12 shrink-0 place-items-center rounded-xl border bg-surface-overlay",
+        live
+          ? "border-accent/50 text-accent shadow-[var(--glow-soft)]"
+          : "border-border text-text-muted",
+      )}
+    >
+      <Boxes className="h-5 w-5" strokeWidth={2} />
+      <span className="absolute -right-1 -top-1 grid place-items-center rounded-full bg-surface-raised p-0.5">
+        <StatusDot
+          tone={live ? "accent" : "muted"}
+          pulse={live ? "live" : "off"}
+          size="md"
+        />
       </span>
-    </div>
+    </span>
   );
 }
 
-/** A clickable code-intelligence tile — a deep-link into a lens with its live
- *  count. Clickable even while the count is still loading. */
-function IntelTile({
+/** A pill announcing live agents on the corpus. Accent flavour on the
+ *  border/dot; the text stays high-contrast (AA-safe). */
+function LivePill({ count }: { count: number }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5">
+      <StatusDot tone="accent" pulse="live" size="sm" />
+      <span className="font-mono text-mono-micro font-semibold uppercase tracking-[0.08em] text-text">
+        {count} live
+      </span>
+    </span>
+  );
+}
+
+/** A deck section eyebrow. */
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <h2 className="font-mono text-mono-micro font-semibold uppercase tracking-[0.12em] text-text-dim">
+      {children}
+    </h2>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Code-intelligence deck card.
+
+/** A clickable code-intelligence card — a deep-link into a lens with its live
+ *  count. Clickable + keyboard-reachable even while the count is still loading;
+ *  hover lifts it to the raised tier and lights the glyph. */
+function IntelCard({
   icon: Icon,
   label,
   hint,
@@ -270,27 +319,28 @@ function IntelTile({
       type="button"
       onClick={onClick}
       title={`${label} — ${hint}`}
-      className="group flex items-center gap-3 rounded-lg border border-border-soft bg-surface px-3 py-3 text-left hover:border-accent hover:bg-surface-overlay cursor-pointer transition-colors duration-150 ease-out"
+      className={cn(
+        "group flex items-center gap-3 rounded-xl border border-border bg-surface px-3.5 py-3 text-left",
+        "transition-all duration-150 ease-out cursor-pointer",
+        "hover:-translate-y-0.5 hover:bg-surface-raised hover:shadow-sm",
+        tone === "warning" ? "hover:border-warning/60" : "hover:border-accent/60",
+      )}
     >
       <span
         className={cn(
-          "grid h-9 w-9 shrink-0 place-items-center rounded-md border",
+          "grid h-10 w-10 shrink-0 place-items-center rounded-lg border transition-shadow duration-150",
           tone === "warning"
-            ? "border-warning/40 bg-warning/10 text-warning"
-            : "border-accent/40 bg-accent/10 text-accent",
+            ? "border-warning/40 bg-warning/10 text-warning group-hover:shadow-[var(--glow-soft)]"
+            : "border-accent/40 bg-accent/10 text-accent group-hover:shadow-[var(--glow-soft)]",
         )}
       >
-        <Icon className="h-4 w-4" strokeWidth={2} />
+        <Icon className="h-[18px] w-[18px]" strokeWidth={2} />
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="font-mono text-lg font-semibold tabular-nums leading-none text-text">
-          {count === null ? (
-            <span className="text-text-dim">·· </span>
-          ) : (
-            count.toLocaleString()
-          )}
+        <span className="font-mono text-2xl font-semibold leading-none tabular-nums text-text">
+          {count === null ? <span className="text-text-dim">··</span> : count.toLocaleString()}
         </span>
-        <span className="mt-1 font-sans text-xs font-medium text-text">
+        <span className="mt-1.5 font-sans text-xs font-semibold text-text">
           {label}
         </span>
         <span className="truncate font-mono text-mono-micro text-text-dim">
@@ -298,10 +348,71 @@ function IntelTile({
         </span>
       </span>
       <ArrowUpRight
-        className="h-3.5 w-3.5 shrink-0 text-text-dim group-hover:text-accent transition-colors duration-150"
+        className="h-4 w-4 shrink-0 text-text-dim transition-colors duration-150 group-hover:text-accent"
         strokeWidth={2.25}
       />
     </button>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Language composition — an accent-ramp proportion viz.
+
+/** Descending accent-opacity ramp — the dominant language is full accent, the
+ *  rest fade down a step at a time. Stays inside the single-accent system (no
+ *  per-language hues); "Other" is the neutral border grey. */
+const ACCENT_RAMP = [
+  "bg-accent",
+  "bg-accent/70",
+  "bg-accent/55",
+  "bg-accent/40",
+  "bg-accent/30",
+  "bg-accent/25",
+] as const;
+
+function langColor(label: string, rank: number): string {
+  if (label === "Other") return "bg-border";
+  return ACCENT_RAMP[Math.min(rank, ACCENT_RAMP.length - 1)];
+}
+
+function LanguageBar({ langs }: { langs: LangStat[] }) {
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Segmented proportion bar — gap-px lets the sunken track show through
+          as crisp dividers; the rounded container clips the ends. */}
+      <div className="flex h-3 w-full gap-px overflow-hidden rounded-full bg-surface-sunken">
+        {langs.map((l, i) => (
+          <div
+            key={l.label}
+            className={langColor(l.label, i)}
+            style={{ width: `${Math.max(l.fraction * 100, 1.5)}%` }}
+            title={`${l.label} · ${l.count}`}
+          />
+        ))}
+      </div>
+      {/* Legend — swatch · language · percent · count. */}
+      <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+        {langs.map((l, i) => {
+          const pct = Math.round(l.fraction * 100);
+          return (
+            <span key={l.label} className="flex items-center gap-1.5">
+              <span
+                className={cn(
+                  "inline-block h-2 w-2 shrink-0 rounded-full",
+                  langColor(l.label, i),
+                )}
+              />
+              <span className="font-mono text-mono-mini text-text-muted">
+                {l.label}
+              </span>
+              <span className="font-mono text-mono-mini tabular-nums text-text-dim">
+                {pct >= 1 ? `${pct}%` : `${l.count}`}
+              </span>
+            </span>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
