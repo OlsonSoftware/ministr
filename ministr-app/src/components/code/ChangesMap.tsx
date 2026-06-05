@@ -30,6 +30,7 @@ import { cn } from "../../lib/utils";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
 import { useArrowKeyListNav } from "../../hooks/useArrowKeyListNav";
 import { LensLoading, LensEmpty } from "../ui/lens-frame";
+import { DiffRipple } from "./DiffRipple";
 
 function baseName(path: string): string {
   return path.replace(/\\/g, "/").split("/").pop() ?? path;
@@ -192,6 +193,12 @@ export function ChangesMap({
         />
       ) : (
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
+          {/* The blast RIPPLE — the change at the core, impacted symbols
+              rippling out by call-graph depth. The gestalt above the lists. */}
+          <div className="px-4 py-3">
+            <DiffRipple data={data} onInspect={onInspect} />
+          </div>
+
           {/* WHAT changed — symbols grouped by file, with authorship. */}
           {groups.map(([file, syms]) => (
             <section key={file} className="border-b border-border-soft last:border-b-0">
