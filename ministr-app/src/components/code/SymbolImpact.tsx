@@ -25,6 +25,7 @@ import {
 import type { ImpactedSymbol, SymbolImpact as SymbolImpactData } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { BlastRadiusMap } from "./BlastRadiusMap";
+import { VizFrame } from "../ui/viz-frame";
 
 /** Max nodes rendered per lane before a "+N more" tail (the inspector is a
  *  narrow scroll column; the full set is always one MCP call away). */
@@ -104,10 +105,11 @@ export function SymbolImpact({ data, loading = false, onOpenSymbol }: SymbolImpa
         </span>
       </div>
 
-      {/* The Blast-Radius Map — the at-a-glance call graph (hero). */}
-      <div className="rounded-md border border-border-soft bg-surface/60 px-2 py-2">
+      {/* The Blast-Radius Map — the at-a-glance call graph (hero), on the
+          shared VizFrame so it reads as one family with the other vizzes. */}
+      <VizFrame>
         <BlastRadiusMap data={data} onOpenSymbol={onOpenSymbol} />
-      </div>
+      </VizFrame>
 
       <Lane
         title="Called by"

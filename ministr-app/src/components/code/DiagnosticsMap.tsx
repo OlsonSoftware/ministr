@@ -29,6 +29,7 @@ import {
 import type { Diagnostic, DiagnosticSeverity, SymbolInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { DiagnosticsTreemap } from "./DiagnosticsTreemap";
+import { VizFrame } from "../ui/viz-frame";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
 import { useCachedQuery } from "../../hooks/useCachedQuery";
 import { useArrowKeyListNav } from "../../hooks/useArrowKeyListNav";
@@ -240,7 +241,9 @@ export function DiagnosticsMap({
             severity (honors the active filter). The gestalt above the list. ── */}
       {filtered.length > 0 && (
         <div className="shrink-0 px-4 pb-3 pt-3">
-          <DiagnosticsTreemap diagnostics={filtered} onOpenFile={onOpenFile} />
+          <VizFrame readout={<span className="ml-auto">sized by finding count</span>}>
+            <DiagnosticsTreemap diagnostics={filtered} onOpenFile={onOpenFile} />
+          </VizFrame>
         </div>
       )}
 
