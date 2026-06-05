@@ -3,6 +3,7 @@ import { GrepVsMinistr } from '../../components/landing/grep-vs-ministr';
 import { TokenEconomics } from '../../components/landing/token-economics';
 import { CrossLanguageBridge } from '../../components/landing/cross-language-bridge';
 import { FourThingsGrid } from '../../components/landing/four-things-grid';
+import { PipelineFigure } from '../../components/landing/pipeline-figure';
 
 export default function HomePage() {
   return (
@@ -56,6 +57,14 @@ export default function HomePage() {
 
         {/* The headline number, proven with the real benchmark. */}
         <TokenEconomics />
+      </section>
+
+      <hr className="v2-rule" />
+
+      {/* ── How it works ─────────────────────────────────── */}
+      <section className="v2-section">
+        <h2 className="v2-h2" style={{ maxWidth: "20ch" }}>Indexed once. Answered in milliseconds.</h2>
+        <PipelineFigure />
       </section>
 
       <hr className="v2-rule" />
