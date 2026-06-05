@@ -32,6 +32,7 @@ import { StatusDot } from "@/components/ui/status-dot";
 import type { CorpusInfo, FileInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { type LangStat, langStats } from "./langStats";
+import { CodebaseConstellation, structureModuleCount } from "./CodebaseConstellation";
 
 /** The three lenses an intelligence tile can jump to. */
 export type IntelLens = "bridges" | "unused" | "solid";
@@ -187,6 +188,14 @@ export function CodeOverview({
           <section className="flex flex-col gap-3">
             <SectionLabel>Languages</SectionLabel>
             <LanguageBar langs={langs} />
+          </section>
+        )}
+
+        {/* ── Structure — the codebase shape as a packed module constellation. ── */}
+        {structureModuleCount(files) >= 2 && (
+          <section className="flex flex-col gap-3">
+            <SectionLabel>Structure</SectionLabel>
+            <CodebaseConstellation files={files} onOpen={onOpen} />
           </section>
         )}
 
