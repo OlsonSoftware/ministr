@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { CopyButton } from '@/components/landing/copy-button';
+import { InitWiresUp } from '@/components/landing/init-wires-up';
 import {
   DESKTOP_INSTALLERS,
   INSTALL_COMMANDS,
@@ -194,6 +195,20 @@ export function InstallClient() {
             />
           </div>
         ))}
+      </section>
+
+      <hr className="v2-rule" />
+
+      {/* ── What `ministr init` writes ──────────────────── */}
+      <section className="v2-section">
+        <h2 className="v2-h2" style={{ fontSize: 24, marginBottom: 16 }}>
+          After install: one command wires up every assistant
+        </h2>
+        <p className="v2-sub" style={{ marginTop: 0, marginBottom: 24 }}>
+          Run <code>ministr init</code> in your project — here is exactly what it
+          writes.
+        </p>
+        <InitWiresUp />
       </section>
 
       <hr className="v2-rule" />

@@ -1577,11 +1577,74 @@ body:has(.ministr-v2) {
 }
 .v2-demo-verdict-ok { color: var(--ink); }
 
+/* ── Install: what `ministr init` writes ───────────────────────────
+   A diff-add list of the real files init creates, each tagged with the
+   assistant it configures. Same v2 hairline/mono/amber language as the
+   homepage demonstration figure. `--demo-dim` stays >=4.5:1. */
+.v2-init {
+  --demo-dim: #9a958c;
+  margin: 4px 0 0;
+  border: 1px solid var(--rule);
+  padding: 20px 22px 18px;
+}
+.v2-init-cmd {
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-size: 14px;
+  color: var(--ink);
+}
+.v2-init-prompt { color: var(--amber); margin-right: 4px; }
+.v2-init-result {
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--demo-dim);
+  margin: 7px 0 18px;
+}
+.v2-init-writes { list-style: none; margin: 0; padding: 0; }
+.v2-init-writes li {
+  display: grid;
+  grid-template-columns: 16px 196px 1fr;
+  align-items: baseline;
+  gap: 14px;
+  padding: 10px 0;
+  border-top: 1px solid var(--rule);
+}
+.v2-init-writes li:first-child { border-top: 0; }
+.v2-init-add {
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--amber);
+}
+.v2-init-file {
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+  font-size: 13.5px;
+  color: var(--amber);
+  white-space: nowrap;
+}
+.v2-init-configures {
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+.v2-init-cap {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  max-width: 72ch;
+}
+
 /* ── Responsive ─────────────────────────────────────────────────── */
 @media (max-width: 640px) {
   .ministr-v2 { font-size: 16px; padding: 0 22px; }
   .v2-demo { grid-template-columns: 1fr; margin-top: 40px; }
   .v2-demo-col { padding: 20px 18px 22px; }
+  .v2-init-writes li { grid-template-columns: 16px 1fr; align-items: start; gap: 6px 12px; }
+  .v2-init-file { grid-column: 2; }
+  .v2-init-configures { grid-column: 2; }
   .v2-nav { padding-top: 22px; }
   .v2-nav-links { gap: 18px; }
   .v2-hero { padding: 72px 0 60px; }
