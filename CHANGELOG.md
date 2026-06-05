@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Near-instant daemon/CLI restart: the persisted HNSW dump is now loaded as a validated derived *cache* instead of being rebuilt from SQLite on every start. A `{cache-version, model, dimension, vector-count, generation}` validity token (the `generation` is a monotonic counter bumped inside every indexed-vector mutation, stored in the new `index_meta` table) gates the load — any mismatch falls back to a full rebuild, so ADR 0001 D4's no-drift guarantee is preserved while the common unchanged-corpus restart skips the O(N·log N·M) graph construction that cost ~10–18s on large corpora.
+- Added a **real end-to-end token-economics measurement** (`ministr-mcp` test `token_economics_e2e`): it indexes a real multi-language corpus, runs real `ministr_survey` calls through the MCP path, and counts the literal response-payload tokens against a real grep+read — measuring ~66% fewer tokens per lookup instead of a synthetic model.
+- Added a **side-by-side agent benchmark suite** (`benchmarks/agent-task`): the same headless coding agent solves the same deterministic task with vs without ministr (ministr MCP vs grep/glob), across a difficulty ladder of fixtures and real OSS repos (SWE-bench-style — the repo's own failing→passing tests as a validator), reporting validator pass/fail, tokens, turns, and cost. Real-repo tasks index the repo once and reuse it across the whole matrix.
+
+### Changed
+- Recalibrated the public token-economics claim to a real measurement. The homepage figure and `/docs/benchmarks` now report ~66% fewer tokens per lookup (measured end-to-end with ministr's own tokenizer) and honest per-lookup framing, replacing the previous synthetic best-case (~99.7%, "a flat 68 tokens"), which is kept only as an explicitly-labelled illustrative scaling model.
 
 ### Fixed
 - Fixed `ministr_read` reporting `claims_available: 0` for sections served from the agent-intent prefetch cache: intent-prefetched sections hardcoded a zero claim count, so a warm read could wrongly tell the agent there were no claims to `ministr_extract`. The prefetch now stamps the true per-section claim count. (Also de-flakes the `full_flow_survey_read_extract_via_call_tool` e2e test, whose intermittent failure was this bug surfacing.)
