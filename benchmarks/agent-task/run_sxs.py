@@ -50,6 +50,30 @@ ARMS = {
     "b": ("grep", "Read Edit Write Bash Grep Glob", False),
 }
 
+# Deployment-faithful steering for arm A: what a real `ministr init`-style
+# setup puts in the repo (CLAUDE.md project memory + hooks that block shell
+# grep). Without this the benchmark measures "agent + an unadvertised MCP
+# server" — recorded runs showed the agent shelling out to grep or skipping
+# discovery entirely. Arm B is the stock agent and gets no steering file.
+MINISTR_CLAUDE_MD = """\
+# ministr — codebase navigation
+
+This repository is indexed by ministr. Use the ministr MCP tools for ALL code
+search and discovery:
+
+- `ministr_survey(query)` — semantic search; start here for any "where is X
+  handled?" question.
+- `ministr_symbols(query)` — find functions/structs/types by name.
+- `ministr_definition(id)` / `ministr_read(id)` — full source of a hit.
+
+Shell `grep`/`rg`/`find` are blocked by hooks here — do not attempt them.
+Use Bash only to build and run tests.
+"""
+
+# The shell-out leak: the Grep TOOL can be excluded, but Bash would still run
+# `grep`. Mirror ministr's hook behavior by denying search shell-outs in arm A.
+MINISTR_ARM_DISALLOWED = "Bash(grep*) Bash(rg*) Bash(egrep*) Bash(fgrep*) Bash(ag*) Bash(ack*) Bash(find*)"
+
 
 def sh(cmd, cwd=None, timeout=None, env=None):
     p = subprocess.run(cmd, cwd=cwd, timeout=timeout, env=env,
@@ -140,10 +164,23 @@ def prepare_workdir(task, tag, apply_bug_now=True):
 
 
 def validate(task, workdir):
-    """Run the task's validator. Returns (passed, summary)."""
-    code, out, err = sh(_subst(task["validate"], venv_of(workdir)), cwd=workdir, timeout=300)
+    """Run the task's validator. Returns (passed, summary).
+
+    Hardening (agents have been shown to game validators — Berkeley RDI 2026):
+    for real-repo tasks a pass additionally requires that NOTHING under a
+    tests/ directory was modified (git diff), so "fix the tests" can't pass.
+    """
+    code, out, err = sh(_subst(task["validate"], venv_of(workdir)), cwd=workdir, timeout=600)
     tail = (err or out).strip().splitlines()
-    return code == 0, (tail[-1] if tail else f"exit {code}")
+    summary = tail[-1] if tail else f"exit {code}"
+    if code == 0 and task.get("kind") == "realrepo":
+        dcode, dout, _e = sh(["git", "diff", "--name-only"], cwd=workdir, timeout=60)
+        if dcode == 0:
+            touched_tests = [p for p in dout.splitlines()
+                             if "/tests/" in p or p.startswith("tests/")]
+            if touched_tests:
+                return False, f"tests modified ({touched_tests[0]}) — validator hardening"
+    return code == 0, summary
 
 
 def apply_golden(task, workdir):
@@ -214,7 +251,8 @@ def build_claude_cmd(arm_key, workdir, prompt, model, budget, mcp_config_path):
         "--allowedTools", allowed,
     ]
     if uses_ministr:
-        cmd += ["--mcp-config", mcp_config_path]
+        cmd += ["--mcp-config", mcp_config_path,
+                "--disallowedTools", MINISTR_ARM_DISALLOWED]
     return cmd
 
 
@@ -346,7 +384,8 @@ def reset_realrepo_base(task, repo):
     """Restore the pristine buggy state so the next run starts identical (keeping
     the prebuilt index valid — same content it was built on)."""
     sh(["git", "checkout", "--", "."], cwd=repo, timeout=120)
-    sh(["git", "clean", "-fdq"], cwd=repo, timeout=120)
+    # -e target keeps Rust/cargo build caches so runs use incremental builds.
+    sh(["git", "clean", "-fdq", "-e", "target"], cwd=repo, timeout=120)
     apply_bug(task, repo)
 
 
@@ -358,6 +397,10 @@ def run_in_base(task, base, arm_key, model, budget):
            "arm": arm_key, "label": label, "uses_ministr": uses_ministr, "kind": "realrepo",
            "index_secs": base.get("index_secs") if uses_ministr else None}
     reset_realrepo_base(task, repo)
+    if uses_ministr:
+        # Deployment-faithful steering: what a real ministr setup puts in the
+        # repo. The reset's `git clean` removes it, so arm B never sees it.
+        open(os.path.join(repo, "CLAUDE.md"), "w").write(MINISTR_CLAUDE_MD)
     prompt = open(os.path.join(task["_dir"], "task.md")).read()
     run_env = dict(os.environ)
     run_env["PATH"] = os.path.join(venv_of(repo), "bin") + os.pathsep + run_env.get("PATH", "")

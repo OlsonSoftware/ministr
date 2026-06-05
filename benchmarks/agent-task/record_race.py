@@ -90,6 +90,11 @@ def record_arm(task, base, arm_key, model, budget):
     label, allowed, uses_ministr = R.ARMS[arm_key]
     repo = base["repo"]
     R.reset_realrepo_base(task, repo)
+    if uses_ministr:
+        # Deployment-faithful steering: what `ministr init` puts in the repo.
+        # (The reset's `git clean` removes it before each arm, so arm B never
+        # sees it.)
+        open(os.path.join(repo, "CLAUDE.md"), "w").write(R.MINISTR_CLAUDE_MD)
     prompt = open(os.path.join(task["_dir"], "task.md")).read()
     env = dict(os.environ)
     env["PATH"] = os.path.join(R.venv_of(repo), "bin") + os.pathsep + env.get("PATH", "")
@@ -102,19 +107,10 @@ def record_arm(task, base, arm_key, model, budget):
         mcp = {"mcpServers": {"ministr": {"command": "ministr", "args": ["serve", "--corpus", repo]}}}
         path = os.path.join(base["work"], "ministr-mcp.json")
         json.dump(mcp, open(path, "w"))
-        # Mirror real-world ministr deployments (`ministr hooks` / CLAUDE.md
-        # steering): the agent is told to discover code via ministr, and shell
-        # grep is closed off (the Grep TOOL is already excluded, but Bash would
-        # otherwise allow `grep` as a shell-out — a leak this run made visible).
+        # Steering itself comes from the CLAUDE.md written above (deployment-
+        # faithful); here we only mirror the hook-level shell-grep block.
         cmd += ["--mcp-config", path,
-                "--append-system-prompt",
-                "This repository is indexed by ministr. For ALL code search and "
-                "discovery use the ministr MCP tools (ministr_survey for natural-"
-                "language search, ministr_symbols to find symbols, "
-                "ministr_definition/ministr_read for source). Do not use shell "
-                "grep/rg/find for searching.",
-                "--disallowedTools",
-                "Bash(grep*) Bash(rg*) Bash(egrep*) Bash(fgrep*) Bash(ag*) Bash(ack*) Bash(find*)"]
+                "--disallowedTools", R.MINISTR_ARM_DISALLOWED]
     events, final = stream_arm(cmd, repo, env, timeout=2400)
     passed, _ = R.validate(task, repo)
     return {

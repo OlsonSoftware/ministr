@@ -1,0 +1,17 @@
+{
+  "id": "realrepo-pulldown-tabstop",
+  "display": "pulldown-cmark 0.10.3 (Rust, 49 files)",
+  "kind": "realrepo",
+  "difficulty": "real",
+  "language": "rust",
+  "summary": "REAL Rust repo: pulldown-cmark @v0.10.3 (49 .rs files, CommonMark parser). A planted one-line bug in LineStart's tab-stop arithmetic makes tabs fixed-width instead of advancing to the next 4-column stop; 3 CommonMark spec-conformance tests fail. SEMANTIC GAP by design: the symptom speaks of tabs/indentation while the mechanism is unnamed arithmetic in scan_space_inner; grep 'tab' drowns in 'table' hits. Compiled language: no runtime-introspection bypass (the sympy task's python-inspect escape hatch doesn't exist). Validator = the repo's own spec suite + hardening (tests/ must be untouched).",
+  "repo": "https://github.com/pulldown-cmark/pulldown-cmark",
+  "ref": "v0.10.3",
+  "install": ["cargo", "test", "-p", "pulldown-cmark", "--test", "lib", "--no-run"],
+  "bug_replace": {
+    "file": "pulldown-cmark/src/scanners.rs",
+    "find": "                    let spaces = 4 - (self.ix - self.tab_start) % 4;",
+    "replace": "                    let spaces = 4;"
+  },
+  "validate": ["cargo", "test", "-p", "pulldown-cmark", "--test", "lib", "spec"]
+}
