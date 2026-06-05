@@ -28,6 +28,7 @@ import {
 
 import type { Diagnostic, DiagnosticSeverity, SymbolInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";
+import { DiagnosticsTreemap } from "./DiagnosticsTreemap";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
 import { useCachedQuery } from "../../hooks/useCachedQuery";
 import { useArrowKeyListNav } from "../../hooks/useArrowKeyListNav";
@@ -234,6 +235,14 @@ export function DiagnosticsMap({
           ))}
         </div>
       </LensHeader>
+
+      {/* ── Hot-spot map — files sized by finding count, coloured by worst
+            severity (honors the active filter). The gestalt above the list. ── */}
+      {filtered.length > 0 && (
+        <div className="shrink-0 px-4 pb-3 pt-3">
+          <DiagnosticsTreemap diagnostics={filtered} onOpenFile={onOpenFile} />
+        </div>
+      )}
 
       {/* ── Diagnostics, grouped by file (errors-first). ───────────────── */}
       <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
