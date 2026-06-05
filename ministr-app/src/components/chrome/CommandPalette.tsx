@@ -37,6 +37,7 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 
 import type { CorpusInfo } from "../../lib/types";
+import { Logo } from "../ui/logo";
 import { corpusLabel, corpusRoot } from "../../lib/corpus";
 import { popIn, scrim } from "../../lib/motion";
 import { clampPct } from "../../lib/sessions";
@@ -471,7 +472,11 @@ export function CommandPalette({
             )}
 
             <footer className="flex items-center justify-between gap-3 border-t border-border px-4 py-2 font-mono text-mono-mini text-text-dim">
-              <span className="truncate">{MODE_HINT[mode]}</span>
+              <span className="flex min-w-0 items-center gap-2">
+                {/* Brand sign-off at the keyboard spine. */}
+                <Logo className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{MODE_HINT[mode]}</span>
+              </span>
               <span className="flex gap-3 shrink-0">
                 <span>↑↓</span>
                 <span>↵</span>

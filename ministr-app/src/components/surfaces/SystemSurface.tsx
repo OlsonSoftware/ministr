@@ -57,6 +57,7 @@ import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { ConfirmDialog } from "../ui/confirm-dialog";
 import { EmptyState } from "../ui/empty-state";
+import { Logo } from "../ui/logo";
 import { MetricTile } from "../ui/metric-tile";
 import { StatusDot } from "../ui/status-dot";
 import { Toggle } from "../ui/toggle";
@@ -435,7 +436,9 @@ export function SystemSurface(props: SystemSurfaceProps) {
 
       {/* ── Footer — version + update check. ──────────────────────────────── */}
       <footer className="flex items-center justify-between gap-3 border-t border-border-soft pt-4 font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
-        <span>
+        <span className="flex items-center gap-2">
+          {/* The brand mark — the product-identity anchor for the About row. */}
+          <Logo className="h-3.5 w-3.5 shrink-0" title="ministr" />
           ministr · v{status.version} · up{" "}
           <span className="tabular-nums text-text-dim">
             {formatUptime(status.uptime_secs)}

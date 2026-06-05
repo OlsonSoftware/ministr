@@ -34,6 +34,7 @@ import { cn } from "../../lib/utils";
 import { useWorkspace } from "../workspace/WorkspaceContext";
 import { useToast } from "../shell/ToastTray";
 import { Button } from "../ui/button";
+import { Logo } from "../ui/logo";
 import { Progress } from "../ui/progress";
 
 type FirstRunStep = "welcome" | "indexing" | "ask";
@@ -94,7 +95,9 @@ export function FirstRunGuide({
       >
         {/* Header — wordmark + skip. */}
         <header className="flex items-center justify-between gap-3 px-6 h-12 border-b border-border">
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            {/* The brand's first hello — mark + wordmark lockup. */}
+            <Logo className="h-[18px] w-[18px] shrink-0" title="ministr" />
             <span className="ministr-wordmark select-none">ministr</span>
             <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
               Get started
