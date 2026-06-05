@@ -28,6 +28,7 @@ import {
 
 import type { BridgeLink } from "../../lib/types";
 import { cn } from "../../lib/utils";
+import { BridgeFlow } from "./BridgeFlow";
 import { useEntityPanel } from "../../hooks/useEntityPanel";
 import { useCachedQuery } from "../../hooks/useCachedQuery";
 import { useArrowKeyListNav } from "../../hooks/useArrowKeyListNav";
@@ -81,6 +82,7 @@ export function BridgeMap({
 }: BridgeMapProps) {
   const [kindFilter, setKindFilter] = useState<string | null>(null);
   const [langFilter, setLangFilter] = useState<string | null>(null);
+  const [view, setView] = useState<"list" | "graph">("list");
   const listRef = useArrowKeyListNav<HTMLDivElement>();
 
   // Facets derived from the data — mechanism + language tallies.
@@ -180,6 +182,27 @@ export function BridgeMap({
         onRefresh={onRefresh}
         refreshing={refreshing}
       >
+        {/* Graph | List view toggle — the Graph is the at-a-glance flow map,
+            the List the detailed seam-by-seam view. Both read the same filters. */}
+        <div className="flex items-center gap-1 rounded-md border border-border-soft bg-surface p-0.5 w-fit">
+          {(["graph", "list"] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => setView(v)}
+              aria-pressed={view === v}
+              className={cn(
+                "rounded px-2 py-0.5 font-mono text-mono-micro font-semibold uppercase tracking-[0.08em] cursor-pointer transition-colors duration-150",
+                view === v
+                  ? "bg-surface-overlay text-text shadow-xs"
+                  : "text-text-dim hover:text-text",
+              )}
+            >
+              {v === "graph" ? "Flow" : "List"}
+            </button>
+          ))}
+        </div>
+
         {/* Mechanism filter chips. */}
         <div className="flex flex-wrap gap-1.5">
           <FacetChip
@@ -220,9 +243,20 @@ export function BridgeMap({
         )}
       </LensHeader>
 
-      {/* ── The seams, grouped by mechanism. ───────────────────────────── */}
-      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
-        {filtered.length === 0 ? (
+      {/* ── Flow map (at-a-glance) OR the seams grouped by mechanism. ───── */}
+      {view === "graph" ? (
+        <BridgeFlow
+          links={filtered}
+          activeLang={langFilter}
+          onFilterLang={(l) => setLangFilter(langFilter === l ? null : l)}
+          onDrillPair={(exportLang) => {
+            setLangFilter(exportLang);
+            setView("list");
+          }}
+        />
+      ) : (
+        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
+          {filtered.length === 0 ? (
           <p className="px-4 py-6 font-mono text-mono-mini text-text-dim">
             No bridges match the current filter.
           </p>
@@ -258,7 +292,8 @@ export function BridgeMap({
             );
           })
         )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
