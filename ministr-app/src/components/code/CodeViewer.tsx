@@ -2,12 +2,28 @@
  * CodeViewer — renders one file with Shiki highlighting and overlays the
  * symbol index as clickable, hoverable hot-zones.
  *
- * Single responsibility: turn a {@link FileContent} into an interactive view.
+ * Self-framed command-deck code surface: an identity header (file medallion +
+ * basename + a divided LANG/lines/symbols vital readout + a Copy-source
+ * affordance) tops a scrolling body. The header renders the instant a file is
+ * in hand — before Shiki resolves — so the surface always has an identity; the
+ * body swaps a premium skeleton (while highlighting), a quiet-fault panel (on
+ * error), or the interactive code itself.
+ *
  * Clicks are captured by event delegation on the container (Shiki emits the
  * `data-symbol-id` attributes via decorations); hover shows a zero-latency
  * card from the span metadata already in hand.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  AlertTriangle,
+  Box,
+  Braces,
+  Check,
+  Copy,
+  FileCode2,
+  Hash,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import type { FileContent, Occurrence, SymbolSpan } from "../../lib/types";
 import { buildOccurrenceDecorations, buildSymbolDecorations } from "./decorations";
 import { useHighlightedHtml } from "./useHighlighter";
@@ -58,6 +74,11 @@ export function CodeViewer({
     scheme,
     decorations,
   });
+
+  const lineCount = useMemo(
+    () => file.content.replace(/\n$/, "").split("\n").length,
+    [file.content],
+  );
 
   const spanById = useMemo(() => {
     const m = new Map<string, SymbolSpan>();
@@ -151,53 +172,231 @@ export function CodeViewer({
     return () => window.clearTimeout(id);
   }, [html, focusLine, file.path]);
 
-  if (error) {
-    return (
-      <div className="grid h-full place-items-center px-6 text-center">
-        <p className="font-mono text-sm text-danger">Failed to highlight: {error}</p>
-      </div>
-    );
-  }
-
-  if (loading || html === null) {
-    return (
-      <div className="grid h-full place-items-center">
-        <span className="font-mono text-sm text-text-dim">Loading_</span>
-      </div>
-    );
-  }
-
   return (
-    <div className="relative h-full min-h-0">
-      <div
-        ref={containerRef}
-        className="code-viewer h-full bg-surface-sunken"
-        // Shiki output is sanitized HTML it generated from our text + tokens.
-        dangerouslySetInnerHTML={{ __html: html }}
+    <div className="flex h-full min-h-0 flex-col bg-surface-sunken">
+      <CodeHeader
+        file={file}
+        lineCount={lineCount}
+        symbolCount={file.symbol_spans.length}
       />
-      {hover && <Hovercard hover={hover} />}
+      <div className="relative min-h-0 flex-1">
+        {error ? (
+          <CodeFault message={error} />
+        ) : loading || html === null ? (
+          <CodeSkeleton />
+        ) : (
+          <>
+            <div
+              ref={containerRef}
+              className="code-viewer h-full"
+              // Shiki output is sanitized HTML it generated from our text + tokens.
+              dangerouslySetInnerHTML={{ __html: html }}
+            />
+            {hover && <Hovercard hover={hover} />}
+          </>
+        )}
+      </div>
     </div>
   );
 }
 
+/* ── Identity header ─────────────────────────────────────────────────────────
+ * Command-deck source identity for the surface: a quiet file medallion, the
+ * emphasised basename, a divided LANG/lines/symbols vital readout (tone on the
+ * medallion only; the numbers stay text so they read AA), and a Copy-source
+ * affordance. The full path lives in CodeBrowser's top bar — this is the
+ * complementary on-surface identity, so the path is intentionally not repeated. */
+function CodeHeader({
+  file,
+  lineCount,
+  symbolCount,
+}: {
+  file: FileContent;
+  lineCount: number;
+  symbolCount: number;
+}) {
+  const basename = file.path.split(/[\\/]/).pop() ?? file.path;
+  const [copied, setCopied] = useState(false);
+
+  function copy() {
+    void navigator.clipboard?.writeText(file.content).then(
+      () => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      },
+      () => {
+        /* clipboard denied — leave the affordance untouched. */
+      },
+    );
+  }
+
+  return (
+    <header className="flex shrink-0 items-center gap-3 border-b border-border-soft bg-surface px-3 py-2">
+      {/* Quiet accent medallion — a code surface is present, not "live", so no glow. */}
+      <span
+        aria-hidden
+        className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-accent/40 bg-surface-overlay text-accent"
+      >
+        <FileCode2 className="h-4 w-4" strokeWidth={2} />
+      </span>
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="truncate font-mono text-mono-mini font-semibold text-text">
+          {basename}
+        </span>
+        {/* Divided vital readout — hairline rules, numbers tabular. */}
+        <span className="hidden items-center gap-2.5 md:flex">
+          <LangChip lang={file.lang} />
+          <Divider />
+          <Vital value={lineCount} unit={lineCount === 1 ? "line" : "lines"} />
+          <Divider />
+          <Vital
+            value={symbolCount}
+            unit={symbolCount === 1 ? "symbol" : "symbols"}
+          />
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={copy}
+        aria-label="Copy file contents"
+        className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border-soft px-2 py-1 font-mono text-mono-mini text-text-muted hover:border-border hover:text-text cursor-pointer transition-colors duration-150 ease-out"
+      >
+        {copied ? (
+          <>
+            <Check className="h-3 w-3 text-accent" strokeWidth={2.5} aria-hidden />
+            <span>Copied</span>
+          </>
+        ) : (
+          <>
+            <Copy className="h-3 w-3" strokeWidth={2} aria-hidden />
+            <span>Copy</span>
+          </>
+        )}
+      </button>
+    </header>
+  );
+}
+
+function LangChip({ lang }: { lang: string }) {
+  return (
+    <span className="inline-flex items-center rounded border border-border-soft bg-surface px-1.5 py-0.5 font-mono text-mono-micro font-semibold uppercase tracking-[0.08em] text-text-muted">
+      {lang || "text"}
+    </span>
+  );
+}
+
+function Divider() {
+  return <span aria-hidden className="h-3 w-px bg-border-soft" />;
+}
+
+function Vital({ value, unit }: { value: number; unit: string }) {
+  return (
+    <span className="font-mono text-mono-mini text-text-dim">
+      <span className="tabular-nums text-text-muted">{value.toLocaleString()}</span>{" "}
+      {unit}
+    </span>
+  );
+}
+
+/* ── Body states ─────────────────────────────────────────────────────────── */
+
+// Faux code-line widths for the loading skeleton — varied so it reads as code,
+// not a paragraph block.
+const SKELETON_WIDTHS = [
+  "58%", "76%", "44%", "86%", "68%", "52%", "80%", "61%", "73%", "39%", "84%",
+  "64%", "49%", "78%", "55%", "70%",
+];
+
+function CodeSkeleton() {
+  return (
+    <div className="h-full overflow-hidden py-3">
+      <span className="sr-only" role="status">
+        Loading file…
+      </span>
+      <div aria-hidden>
+        {SKELETON_WIDTHS.map((w, i) => (
+          <div key={i} className="flex items-center gap-4 px-3 py-1">
+            <div className="h-3 w-7 shrink-0 rounded bg-surface-overlay motion-safe:animate-pulse" />
+            <div
+              className="h-3 rounded bg-surface-overlay motion-safe:animate-pulse"
+              style={{ width: w }}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CodeFault({ message }: { message: string }) {
+  return (
+    <div className="grid h-full place-items-center px-6">
+      {/* Quiet fault — danger spine + no-glow danger medallion (tone discipline:
+          a failure stays calm, it doesn't shout with a glow). */}
+      <div className="flex max-w-md items-start gap-3 rounded-lg border-y border-r border-border-soft border-l-2 border-l-danger bg-surface px-4 py-3 shadow-sm">
+        <span
+          aria-hidden
+          className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-danger/40 bg-surface-overlay text-danger"
+        >
+          <AlertTriangle className="h-[18px] w-[18px]" strokeWidth={2} />
+        </span>
+        <div className="min-w-0">
+          <p className="font-sans text-sm font-semibold text-text">
+            Couldn’t highlight this file
+          </p>
+          <p className="mt-1 break-words font-mono text-mono-mini text-text-dim">
+            {message}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Hovercard ───────────────────────────────────────────────────────────── */
+
+function kindIcon(kind: string): LucideIcon {
+  const k = kind.toLowerCase();
+  if (k.includes("fn") || k.includes("function") || k.includes("method")) {
+    return Braces;
+  }
+  if (
+    ["struct", "enum", "type", "trait", "interface", "class", "impl"].some((t) =>
+      k.includes(t),
+    )
+  ) {
+    return Box;
+  }
+  return Hash;
+}
+
 function Hovercard({ hover }: { hover: HoverState }) {
   const { span, x, y } = hover;
+  const Icon = kindIcon(span.kind);
   return (
     <div
-      className="pointer-events-none absolute z-30 max-w-md rounded-md border border-border bg-surface-overlay px-3 py-2 shadow-[var(--glow-soft)]"
+      className="pointer-events-none absolute z-30 max-w-md rounded-lg border border-border bg-surface-overlay px-3 py-2.5 shadow-[var(--glow-soft)]"
       style={{ left: x, top: y }}
     >
       <div className="flex items-center gap-2">
-        <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
+        <span
+          aria-hidden
+          className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-accent/40 bg-surface text-accent"
+        >
+          <Icon className="h-3.5 w-3.5" strokeWidth={2} />
+        </span>
+        <span className="font-mono text-mono-mini font-semibold text-text">
+          {span.name}
+        </span>
+        <span className="ml-0.5 inline-flex items-center rounded border border-border-soft px-1.5 py-0.5 font-mono text-mono-micro font-semibold uppercase tracking-[0.08em] text-text-muted">
           {span.kind}
         </span>
-        <span className="font-mono text-xs font-semibold text-text">{span.name}</span>
       </div>
-      <div className="mt-1 font-mono text-mono-mini text-text-muted whitespace-pre-wrap">
+      <div className="mt-1.5 font-mono text-mono-mini text-text-muted whitespace-pre-wrap">
         {span.signature}
       </div>
       {span.doc_comment && (
-        <div className="mt-1.5 border-l border-accent pl-2 font-mono text-mono-mini text-text-dim whitespace-pre-wrap line-clamp-4">
+        <div className="mt-1.5 border-l-2 border-accent pl-2 font-mono text-mono-mini text-text-dim whitespace-pre-wrap line-clamp-4">
           {span.doc_comment}
         </div>
       )}

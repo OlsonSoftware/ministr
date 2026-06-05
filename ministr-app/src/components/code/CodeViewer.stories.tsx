@@ -88,6 +88,21 @@ const RUST: FileContent = {
   ],
 };
 
+/** A plaintext file: no resolved symbols, so the body has no clickable
+ *  hot-zones — exercises the header's LANG chip + "0 symbols" vital. */
+const PLAINTEXT: FileContent = {
+  path: "docs/RELEASE_NOTES.txt",
+  lang: "text",
+  content: `ministr — release notes
+=======================
+
+- Faster, CPU+GPU-saturating indexing
+- Six Explore lenses (Code, Bridges, Unused, Quality, Diagnostics, Changes)
+- Code Viewer reborn as a command-deck code surface
+`,
+  symbol_spans: [],
+};
+
 const meta = {
   title: "Code/CodeViewer",
   component: CodeViewer,
@@ -114,6 +129,12 @@ export const Default: Story = {};
  *  subtly marked as the current line. */
 export const FocusLine: Story = {
   args: { focusLine: 14 },
+};
+
+/** Plaintext file — header shows the TEXT lang chip and "0 symbols"; the body
+ *  renders highlighted text with no clickable hot-zones. */
+export const Plaintext: Story = {
+  args: { file: PLAINTEXT },
 };
 
 /** Explicit light scheme regardless of the surrounding theme — kept for the
