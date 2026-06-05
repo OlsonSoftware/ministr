@@ -11,7 +11,8 @@ import {
   ScrollText,
 } from "@/components/ui/icons";
 import { Button } from "./ui/button";
-import { H1 } from "./ui/heading";
+import { StatusDot } from "./ui/status-dot";
+import { LogRateRibbon } from "./surfaces/LogRateRibbon";
 import { cn } from "../lib/utils";
 import { useToast } from "./shell/ToastTray";
 
@@ -202,6 +203,9 @@ export function LogViewer() {
   const errorCount = parsed.filter((p) => p.level === "error").length;
   const warnCount = parsed.filter((p) => p.level === "warn").length;
   const noLogFile = logs.length === 1 && logs[0]?.includes("No log file");
+  const levels = useMemo<LogLevel[]>(() => parsed.map((p) => p.level), [parsed]);
+  // The feed is "live" when it is actively rendering a real, unpaused tail.
+  const isLive = !paused && !noLogFile && logs.length > 0;
 
   function toggleLevel(level: LogLevel) {
     setEnabledLevels((prev) => {
@@ -237,11 +241,41 @@ export function LogViewer() {
     <div className="flex flex-col h-full gap-3 min-h-0">
       {/* Header */}
       <header className="flex flex-wrap items-center justify-between gap-3 shrink-0">
-        <div>
-          <H1>Logs</H1>
-          <p className="font-sans text-xs tracking-[0.08em] text-text-dim mt-1">
-            Daemon tail
-          </p>
+        {/* Command-deck identity — a glowing telemetry medallion + live/paused
+            status, echoing the workspace ScopeHeader vocabulary. */}
+        <div className="flex min-w-0 items-center gap-3">
+          <span
+            aria-hidden
+            className={cn(
+              "relative grid h-11 w-11 shrink-0 place-items-center rounded-xl border bg-surface-overlay",
+              isLive
+                ? "border-accent/50 text-accent shadow-[var(--glow-soft)]"
+                : "border-border text-text-muted",
+            )}
+          >
+            <ScrollText className="h-[18px] w-[18px]" strokeWidth={2} />
+          </span>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="text-[15px] font-semibold text-text font-sans">
+                Logs
+              </span>
+              {paused ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 font-mono text-mono-micro font-medium uppercase tracking-[0.06em] text-text">
+                  <StatusDot tone="warning" pulse="off" />
+                  paused
+                </span>
+              ) : isLive ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 font-mono text-mono-micro font-medium uppercase tracking-[0.06em] text-text">
+                  <StatusDot tone="accent" pulse="live" />
+                  live
+                </span>
+              ) : null}
+            </div>
+            <div className="font-mono text-mono-mini text-text-dim">
+              Daemon telemetry
+            </div>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -374,6 +408,9 @@ export function LogViewer() {
         </div>
       </header>
 
+      {/* Severity-banded log-rate histogram — the stream's shape at a glance. */}
+      {!noLogFile && <LogRateRibbon levels={levels} className="shrink-0" />}
+
       {/* Log body */}
       <div
         ref={containerRef}
@@ -460,11 +497,15 @@ function LogRow({
   onToggleExpand: () => void;
   onCopy: () => void;
 }) {
+  // Severity reads from the NON-TEXT left gutter stripe (the log-viewer
+  // convention) so the message text can stay at full-contrast AA in both
+  // themes — `text-danger`/`text-warning` on the sunken surface fail the 4.5:1
+  // floor in light mode at this size.
   const stripeClass =
     parsed.level === "error"
-      ? "border-l-danger text-danger"
+      ? "border-l-danger text-text"
       : parsed.level === "warn"
-        ? "border-l-warning text-warning"
+        ? "border-l-warning text-text"
         : "border-l-transparent text-text-muted";
 
   return (
