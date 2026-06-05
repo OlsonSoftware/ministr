@@ -1,6 +1,8 @@
-import { X } from "lucide-react";
+import { Keyboard, X } from "lucide-react";
 import { shortcutGroups } from "../lib/shortcuts";
 import { useDialog } from "../hooks/useDialog";
+import { overlayScrim, glassPanel } from "../lib/ui-tokens";
+import { cn } from "../lib/utils";
 
 interface ShortcutSheetProps {
   open: boolean;
@@ -34,20 +36,28 @@ export function ShortcutSheet({ open, onClose }: ShortcutSheetProps) {
 
   return (
     <div
-      className="fixed inset-0 z-[1000] flex items-start justify-center bg-black/40 px-6"
+      className={cn(
+        overlayScrim,
+        "z-[1000] flex items-start justify-center px-6",
+      )}
       style={{ paddingTop: "10vh" }}
       role="dialog"
       aria-modal="true"
       aria-label="Keyboard shortcuts"
       onClick={onClose}
     >
+      {/* The dialog rides the Liquid-Glass tier (DESIGN.md §4): glassPanel
+          carries the translucency + blur + specular + the reduced-transparency
+          solid fallback. The header/footer strips stay transparent so the glass
+          reads as one sheet. */}
       <div
         ref={panelRef}
-        className="w-full max-w-md border border-border-soft bg-surface shadow-md overflow-hidden"
+        className={cn(glassPanel, "w-full max-w-md overflow-hidden")}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 py-3 border-b border-border-soft bg-surface-overlay">
-          <h2 className="font-sans text-lg font-bold text-text">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border-soft">
+          <h2 className="flex items-center gap-2 font-sans text-lg font-bold text-text">
+            <Keyboard className="h-4 w-4 text-accent" strokeWidth={2} aria-hidden />
             Keyboard shortcuts
           </h2>
           <button
@@ -94,7 +104,7 @@ export function ShortcutSheet({ open, onClose }: ShortcutSheetProps) {
           ))}
         </div>
 
-        <div className="px-5 py-3 border-t border-border-soft bg-surface-overlay font-sans text-sm text-text-dim">
+        <div className="px-5 py-3 border-t border-border-soft font-sans text-sm text-text-dim">
           On Windows / Linux, use Ctrl where ⌘ is shown.
         </div>
       </div>
