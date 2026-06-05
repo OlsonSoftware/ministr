@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { LocalVsCloud } from '../../../components/landing/local-vs-cloud';
 
 export default function PricingPage() {
   return (
@@ -11,6 +12,14 @@ export default function PricingPage() {
           tool with no restrictions. Hosted cloud plans (private-repo indexing, Atlas,
           team features) are coming soon.
         </p>
+      </section>
+
+      <hr className="v2-rule" />
+
+      {/* At-a-glance: free-today vs coming-soon, shown not told. */}
+      <section className="v2-section">
+        <p className="v2-label">At a glance</p>
+        <LocalVsCloud />
       </section>
 
       <hr className="v2-rule" />
