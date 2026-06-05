@@ -30,6 +30,7 @@ import { NumberTicker } from "../ui/number-ticker";
 import { SessionCard, SessionCardSkeleton } from "../ui/session-card";
 import { FacetHeader } from "../ui/facet-header";
 import { AdaptiveSurface } from "../ui/adaptive-surface";
+import { ActivityPulseConnector } from "./ActivityPulse";
 
 const CONNECT_CMD = "npx @modelcontextprotocol/inspector ministr stdio";
 
@@ -164,20 +165,28 @@ export function SessionsSurface({
               />
             </div>
           ) : (
-            <motion.div
-              variants={listContainer}
-              initial="initial"
-              animate="animate"
-              className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start"
-            >
-              {groups.map((group) => (
-                <LineageGroupCell
-                  key={group.parent.session_id}
-                  group={group}
-                  cardProps={cardProps}
-                />
-              ))}
-            </motion.div>
+            <>
+              {/* The live tool-call heartbeat — the gestalt above the board.
+                  Polls only while there are live sessions (here). */}
+              <ActivityPulseConnector
+                corpusId={activeCorpusId}
+                className="mb-3"
+              />
+              <motion.div
+                variants={listContainer}
+                initial="initial"
+                animate="animate"
+                className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start"
+              >
+                {groups.map((group) => (
+                  <LineageGroupCell
+                    key={group.parent.session_id}
+                    group={group}
+                    cardProps={cardProps}
+                  />
+                ))}
+              </motion.div>
+            </>
           )}
         </div>
       </div>
