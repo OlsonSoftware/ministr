@@ -24,6 +24,7 @@ import {
 
 import type { ImpactedSymbol, SymbolImpact as SymbolImpactData } from "../../lib/types";
 import { cn } from "../../lib/utils";
+import { BlastRadiusMap } from "./BlastRadiusMap";
 
 /** Max nodes rendered per lane before a "+N more" tail (the inspector is a
  *  narrow scroll column; the full set is always one MCP call away). */
@@ -60,9 +61,53 @@ export function SymbolImpact({ data, loading = false, onOpenSymbol }: SymbolImpa
   if (!data) return null;
 
   const risk = RISK_META[data.risk];
+  const covered = data.tests.length > 0;
   return (
     <section className="rounded-lg border border-border-soft bg-surface-sunken/40 p-4 space-y-3">
       <BlockHeader />
+
+      {/* Summary readout — risk + the blast counts + coverage, in one line. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 font-mono text-mono-micro text-text-dim">
+        <span
+          className={cn(
+            "inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-semibold uppercase tracking-[0.06em]",
+            risk.chip,
+          )}
+          title="Aggregate blast-radius risk"
+        >
+          <risk.icon className="h-3 w-3" strokeWidth={2.25} />
+          {risk.label} risk
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="tabular-nums font-semibold text-text">{data.incoming_symbols}</span>
+          can break
+        </span>
+        <span aria-hidden className="text-border">·</span>
+        <span className="flex items-center gap-1">
+          <span className="tabular-nums font-semibold text-text">{data.outgoing_symbols}</span>
+          reached
+        </span>
+        <span aria-hidden className="text-border">·</span>
+        <span className={cn("flex items-center gap-1", covered ? "text-success" : "text-warning")}>
+          {covered ? (
+            <>
+              <FlaskConical className="h-3 w-3" strokeWidth={2.25} />
+              <span className="tabular-nums font-semibold">{data.tests.length}</span>
+              <span className="text-text-dim">covered</span>
+            </>
+          ) : (
+            <>
+              <TriangleAlert className="h-3 w-3" strokeWidth={2.25} />
+              no coverage
+            </>
+          )}
+        </span>
+      </div>
+
+      {/* The Blast-Radius Map — the at-a-glance call graph (hero). */}
+      <div className="rounded-md border border-border-soft bg-surface/60 px-2 py-2">
+        <BlastRadiusMap data={data} onOpenSymbol={onOpenSymbol} />
+      </div>
 
       <Lane
         title="Called by"
