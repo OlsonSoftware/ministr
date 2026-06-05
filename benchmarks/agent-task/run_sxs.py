@@ -51,8 +51,8 @@ ARMS = {
 }
 
 
-def sh(cmd, cwd=None, timeout=None):
-    p = subprocess.run(cmd, cwd=cwd, timeout=timeout,
+def sh(cmd, cwd=None, timeout=None, env=None):
+    p = subprocess.run(cmd, cwd=cwd, timeout=timeout, env=env,
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return p.returncode, p.stdout, p.stderr
 
@@ -63,7 +63,7 @@ def sh(cmd, cwd=None, timeout=None):
 
 def load_tasks(only=None):
     """Load tasks/<id>/task.json manifests, sorted by difficulty then id."""
-    order = {"easy": 0, "medium": 1, "hard": 2}
+    order = {"easy": 0, "medium": 1, "hard": 2, "real": 3}
     tasks = []
     for entry in sorted(os.listdir(TASKS_DIR)):
         manifest = os.path.join(TASKS_DIR, entry, "task.json")
@@ -78,16 +78,70 @@ def load_tasks(only=None):
     return tasks
 
 
-def make_workdir(task, tag):
+def venv_of(workdir):
+    """The per-run venv lives as a SIBLING of the agent's workdir (workroot/venv,
+    workdir=workroot/repo|fixture) so neither grep nor the ministr index ever
+    sees .venv's thousands of installed files."""
+    return os.path.join(os.path.dirname(workdir), "venv")
+
+
+def _subst(argv, venv):
+    """Substitute the {venv} placeholder in a manifest argv with the abs path."""
+    return [a.replace("{venv}", venv) for a in argv]
+
+
+def prepare_fixture(task, tag):
     work = tempfile.mkdtemp(prefix=f"sxs-{tag}-")
     dst = os.path.join(work, "fixture")
     shutil.copytree(os.path.join(task["_dir"], "fixture"), dst)
-    return dst
+    return dst, None
+
+
+def apply_bug(task, workdir):
+    """Apply the planted bug via a whitespace-robust find/replace (not a patch).
+    Returns (ok, error)."""
+    spec = task["bug_replace"]
+    path = os.path.join(workdir, spec["file"])
+    src = open(path).read()
+    if spec["find"] not in src:
+        return False, f"bug anchor not found in {spec['file']}"
+    open(path, "w").write(src.replace(spec["find"], spec["replace"], 1))
+    return True, None
+
+
+def prepare_realrepo(task, tag, apply_bug_now=True):
+    """Clone repo@ref into workroot/repo, build a sibling venv, run install,
+    optionally apply the planted bug. Returns (repo_dir, error)."""
+    work = tempfile.mkdtemp(prefix=f"sxs-{tag}-")
+    repo = os.path.join(work, "repo")
+    venv = os.path.join(work, "venv")
+    code, _o, err = sh(["git", "clone", "--quiet", "--branch", task["ref"],
+                        "--depth", "1", task["repo"], repo], timeout=600)
+    if code != 0:
+        return None, f"clone failed: {err[-300:]}"
+    code, _o, err = sh(["python3", "-m", "venv", venv], timeout=120)
+    if code != 0:
+        return None, f"venv failed: {err[-300:]}"
+    code, _o, err = sh(_subst(task["install"], venv), cwd=repo, timeout=900)
+    if code != 0:
+        return None, f"install failed: {err[-400:]}"
+    if apply_bug_now:
+        ok, berr = apply_bug(task, repo)
+        if not ok:
+            return None, berr
+    return repo, None
+
+
+def prepare_workdir(task, tag, apply_bug_now=True):
+    """Dispatch on task kind. Returns (workdir, error)."""
+    if task.get("kind") == "realrepo":
+        return prepare_realrepo(task, tag, apply_bug_now=apply_bug_now)
+    return prepare_fixture(task, tag)
 
 
 def validate(task, workdir):
     """Run the task's validator. Returns (passed, summary)."""
-    code, out, err = sh(task["validate"], cwd=workdir, timeout=180)
+    code, out, err = sh(_subst(task["validate"], venv_of(workdir)), cwd=workdir, timeout=300)
     tail = (err or out).strip().splitlines()
     return code == 0, (tail[-1] if tail else f"exit {code}")
 
@@ -97,22 +151,46 @@ def apply_golden(task, workdir):
         shutil.copyfile(os.path.join(task["_dir"], gold), os.path.join(workdir, rel))
 
 
+def _selftest_fixture(task):
+    """broken (no golden) fails; golden applied passes."""
+    broken, _ = prepare_fixture(task, "selftest-broken")
+    ok_broken, sb = validate(task, broken)
+    fixed, _ = prepare_fixture(task, "selftest-fixed")
+    apply_golden(task, fixed)
+    ok_fixed, sf = validate(task, fixed)
+    shutil.rmtree(os.path.dirname(broken), ignore_errors=True)
+    shutil.rmtree(os.path.dirname(fixed), ignore_errors=True)
+    return (not ok_broken) and ok_fixed, f"broken={'fail' if not ok_broken else 'PASS?!'} ({sb}); golden={'pass' if ok_fixed else 'FAIL?!'} ({sf})"
+
+
+def _selftest_realrepo(task):
+    """One clone+install: base (no bug) passes the target test; bug applied fails."""
+    repo, err = prepare_realrepo(task, "selftest", apply_bug_now=False)
+    if repo is None:
+        return None, f"SKIP (setup failed: {err})"
+    ok_base, sbase = validate(task, repo)
+    ok, berr = apply_bug(task, repo)
+    if not ok:
+        shutil.rmtree(os.path.dirname(repo), ignore_errors=True)
+        return False, f"apply bug failed: {berr}"
+    ok_bug, sbug = validate(task, repo)
+    shutil.rmtree(os.path.dirname(repo), ignore_errors=True)
+    return ok_base and (not ok_bug), f"base={'pass' if ok_base else 'FAIL?!'} ({sbase}); bug={'fail' if not ok_bug else 'PASS?!'} ({sbug})"
+
+
 def selftest(tasks):
-    """No-LLM proof every task is a valid red->green (broken fails, golden passes)."""
+    """No-LLM proof every task is a valid red->green."""
     all_ok = True
     for task in tasks:
-        broken = make_workdir(task, "selftest-broken")
-        ok_broken, sb = validate(task, broken)
-        fixed = make_workdir(task, "selftest-fixed")
-        apply_golden(task, fixed)
-        ok_fixed, sf = validate(task, fixed)
-        shutil.rmtree(os.path.dirname(broken), ignore_errors=True)
-        shutil.rmtree(os.path.dirname(fixed), ignore_errors=True)
-        good = (not ok_broken) and ok_fixed
+        if task.get("kind") == "realrepo":
+            good, detail = _selftest_realrepo(task)
+        else:
+            good, detail = _selftest_fixture(task)
+        if good is None:  # skipped (e.g. no network)
+            print(f"  [SKIP] {task['id']:<26} {detail}")
+            continue
         all_ok = all_ok and good
-        flag = "OK " if good else "BAD"
-        print(f"  [{flag}] {task['id']:<26} broken={'fail' if not ok_broken else 'PASS?!'} "
-              f"({sb})  golden={'pass' if ok_fixed else 'FAIL?!'} ({sf})")
+        print(f"  [{'OK ' if good else 'BAD'}] {task['id']:<26} {detail}")
     print("SELFTEST:", "OK — every task is a valid red->green" if all_ok else "BROKEN")
     return 0 if all_ok else 1
 
@@ -142,11 +220,41 @@ def build_claude_cmd(arm_key, workdir, prompt, model, budget, mcp_config_path):
 
 def run_one(task, arm_key, model, budget, keep, dry_run):
     label, allowed, uses_ministr = ARMS[arm_key]
-    prompt = open(os.path.join(task["_dir"], "task.md")).read()
-    workdir = make_workdir(task, f"{task['id']}-{label}-{model}")
+    kind = task.get("kind", "fixture")
     res = {"task": task["id"], "difficulty": task.get("difficulty"),
            "model": model, "arm": arm_key, "label": label,
-           "uses_ministr": uses_ministr, "workdir": workdir}
+           "uses_ministr": uses_ministr, "kind": kind}
+
+    # Dry run: describe the plan without cloning/preparing anything (no spend).
+    if dry_run:
+        steps = []
+        if kind == "realrepo":
+            steps.append(f"clone {task['repo']}@{task['ref']} + venv install + apply bug.patch")
+        else:
+            steps.append("copy fixture → /tmp")
+        if uses_ministr:
+            steps.append("ministr index --corpus . (whole repo)")
+        steps.append(f"claude -p <{task['id']} task.md> --model {model} --allowedTools \"{allowed}\""
+                     + (" --mcp-config … --strict-mcp-config" if uses_ministr else ""))
+        steps.append(f"validate: {' '.join(task['validate'])}")
+        print(f"  [{task['id']}/{model}/{label}] " + "  |  ".join(steps))
+        res["dry_run"] = True
+        return res
+
+    prompt = open(os.path.join(task["_dir"], "task.md")).read()
+    workdir, err = prepare_workdir(task, f"{task['id']}-{label}-{model}")
+    if workdir is None:
+        res["error"] = f"setup failed: {err}"
+        return res
+    res["workdir"] = workdir
+
+    # For real repos the test runner lives in the sibling venv; put it on PATH so
+    # BOTH arms' agents can run the repo's tests (fair: the venv is the runtime,
+    # not ministr). The validator itself uses the explicit {venv} path.
+    run_env = None
+    if kind == "realrepo":
+        run_env = dict(os.environ)
+        run_env["PATH"] = os.path.join(venv_of(workdir), "bin") + os.pathsep + run_env.get("PATH", "")
 
     mcp_config_path = None
     if uses_ministr:
@@ -156,29 +264,20 @@ def run_one(task, arm_key, model, budget, keep, dry_run):
         with open(mcp_config_path, "w") as fh:
             json.dump(mcp_config, fh)
         # Index from cwd=workdir with `--corpus .` (a cwd .ministr.toml would
-        # otherwise override an absolute --corpus; the fixture has none).
-        if dry_run:
-            print(f"  [{task['id']}/{model}/{label}] INDEX (cwd={workdir}): ministr index --corpus .")
-        else:
-            t0 = time.time()
-            code, out, err = sh(["ministr", "index", "--corpus", "."], cwd=workdir, timeout=900)
-            res["index_secs"] = round(time.time() - t0, 1)
-            if code != 0:
-                res["error"] = f"ministr index failed (exit {code}): {err[-300:]}"
-                return res
+        # otherwise override an absolute --corpus). The venv is a SIBLING of
+        # workdir, so it is never walked by the index.
+        t0 = time.time()
+        code, out, err = sh(["ministr", "index", "--corpus", "."], cwd=workdir, timeout=1800)
+        res["index_secs"] = round(time.time() - t0, 1)
+        if code != 0:
+            res["error"] = f"ministr index failed (exit {code}): {err[-300:]}"
+            if not keep:
+                shutil.rmtree(os.path.dirname(workdir), ignore_errors=True)
+            return res
 
     cmd = build_claude_cmd(arm_key, workdir, prompt, model, budget, mcp_config_path)
-    if dry_run:
-        print(f"  [{task['id']}/{model}/{label}] RUN: claude -p <{task['id']} task.md> "
-              f"--model {model} --allowedTools \"{allowed}\""
-              + (f" --mcp-config {os.path.basename(mcp_config_path)} --strict-mcp-config" if uses_ministr else ""))
-        res["dry_run"] = True
-        if not keep:
-            shutil.rmtree(os.path.dirname(workdir), ignore_errors=True)
-        return res
-
     t0 = time.time()
-    code, out, err = sh(cmd, cwd=workdir, timeout=1800)
+    code, out, err = sh(cmd, cwd=workdir, timeout=2400, env=run_env)
     res["wall_secs"] = round(time.time() - t0, 1)
     try:
         payload = json.loads(out)

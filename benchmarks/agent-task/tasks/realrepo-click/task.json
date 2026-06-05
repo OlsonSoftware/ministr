@@ -1,0 +1,16 @@
+{
+  "id": "realrepo-click",
+  "kind": "realrepo",
+  "difficulty": "real",
+  "language": "python",
+  "summary": "REAL repo: pallets/click @8.1.7 (~70 source files). A planted one-line off-by-one in measure_table mis-sizes help-output columns; the repo's OWN tests/test_formatting.py is the deterministic validator. The whole real repo is indexed for the ministr arm.",
+  "repo": "https://github.com/pallets/click",
+  "ref": "8.1.7",
+  "install": ["{venv}/bin/pip", "install", "--quiet", "-e", ".", "pytest"],
+  "bug_replace": {
+    "file": "src/click/formatting.py",
+    "find": "widths[idx] = max(widths.get(idx, 0), term_len(col))",
+    "replace": "widths[idx] = max(widths.get(idx, 0), term_len(col) - 1)"
+  },
+  "validate": ["{venv}/bin/python", "-m", "pytest", "tests/test_formatting.py", "-q"]
+}

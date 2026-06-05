@@ -51,6 +51,7 @@ prove, **with no LLM**, that each task is a valid red→green.
 | `easy-roman-numeral` | easy | single-file converter missing subtractive forms (IV/IX/…). Keyword-obvious — **grep is expected to tie here.** |
 | `medium-sample-variance` | medium | multi-module stats lib: sample variance uses N not N−1 (Bessel), among several variance-named distractors. |
 | `hard-operator-precedence` | hard | multi-file Pratt evaluator with inverted precedence. The bug is a left-binding-power table **not named "precedence"** — a semantic gap where grepping the symptom words misses the fix site. |
+| `realrepo-click` | real | a **real ~70-file repo** (`pallets/click` @8.1.7) with a planted off-by-one in `measure_table`; the repo's own `tests/test_formatting.py` is the validator. This is the large-index regime where ministr's bounded lookup should beat grep's read-everything cost. |
 
 Difficulty rubric: **easy** = one file, the buggy symbol is named after the
 symptom; **medium** = a few modules + same-named distractors; **hard** =
@@ -84,6 +85,38 @@ python3 run_sxs.py --tasks hard-operator-precedence --models sonnet
 
 It prints a per-(task, model) side-by-side table, an aggregate scoreboard
 (solved counts, total/head-to-head cost, turns), and writes `results.json`.
+
+## Real-repo (SWE-bench-style) tasks
+
+To reach genuinely large codebases, a task can target a **real git repo** rather
+than a committed fixture. Its `task.json` sets `"kind": "realrepo"` and adds:
+
+```json
+{
+  "kind": "realrepo",
+  "repo": "https://github.com/pallets/click",
+  "ref": "8.1.7",
+  "install": ["{venv}/bin/pip", "install", "--quiet", "-e", ".", "pytest"],
+  "bug_replace": { "file": "src/click/formatting.py", "find": "…", "replace": "…" },
+  "validate": ["{venv}/bin/python", "-m", "pytest", "tests/test_formatting.py", "-q"]
+}
+```
+
+Per run the harness: clones `repo@ref` (shallow) into `/tmp/<run>/repo`, builds a
+**sibling** venv at `/tmp/<run>/venv` (so neither grep nor the ministr index ever
+walks `.venv`), runs `install`, applies the planted bug via a whitespace-robust
+find/replace (`bug_replace`), then — for the ministr arm — `ministr index --corpus .`
+over the **whole real repo**. The venv's `bin/` is put on `PATH` for both arms so
+the agent can run the repo's own tests; the validator is the repo's real
+`FAIL_TO_PASS` suite. `--selftest` proves base-green/bug-red with no LLM.
+
+A genuinely huge repo (django, sympy, …) is a one-line addition — same shape,
+bigger `repo` + a `bug_replace` + a fast target test.
+
+**Env caveats:** real-repo tasks need network (clone + `pip install`) and a
+per-run venv; the index step grows with repo size (`index_secs` is reported).
+`bug_replace` is preferred over a `.patch` file because unified-diff context
+whitespace is fragile to round-trip.
 
 ## Adding a task
 
@@ -123,3 +156,19 @@ made it marginally *pricier*. A single earlier sonnet trial on `medium` had show
 "50% cheaper" — the matrix shows that was **noise** (one trial), which is exactly
 why `--repeat` and bigger fixtures matter. Expect ministr's edge to grow with
 codebase size; on small tasks a strong model needs little help.
+
+Real-repo run — `2026-06-05`, `realrepo-click` (pallets/click @8.1.7, ~70 files),
+both arms × {haiku, sonnet}, one trial:
+
+| model | ministr solved | grep solved | ministr cost | grep cost | head-to-head |
+|-------|:--:|:--:|--:|--:|--|
+| haiku  | 1/1 | 1/1 | $0.0644 | $0.0602 | ministr 7% more expensive |
+| sonnet | 1/1 | 1/1 | $0.0825 | $0.0822 | ~even |
+
+**Still a tie at ~70 files.** Two reasons, both honest: (1) 70 small files is
+*still* cheap to grep; (2) this task names the failing test file and the symptom,
+so the agent never has to do broad discovery — grep jumps straight to
+`measure_table`. The lever to actually show ministr's edge end-to-end is **both**
+a genuinely huge repo (thousands of files) **and** a discovery-hard task (vague
+symptom, no test pointer). The harness is ready for both — a bigger repo is a
+one-line manifest.
