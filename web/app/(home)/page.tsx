@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { GrepVsMinistr } from '../../components/landing/grep-vs-ministr';
 
 export default function HomePage() {
   return (
@@ -18,6 +19,9 @@ export default function HomePage() {
           <Link href="/install" className="v2-btn v2-btn-primary">Install ministr →</Link>
           <Link href="/docs" className="v2-btn">Read the docs</Link>
         </div>
+
+        {/* The thesis, shown not told: grep's noise vs ministr's answer. */}
+        <GrepVsMinistr />
       </section>
 
       <hr className="v2-rule" />
