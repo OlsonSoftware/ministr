@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Cloud, KeyRound, Plug, Webhook } from "lucide-react";
+import { Cloud, KeyRound, Plug, Webhook } from "@/components/ui/icons";
 import { SurfaceSidebar, type SidebarItem } from "./surface-sidebar";
 
 const ITEMS: SidebarItem[] = [

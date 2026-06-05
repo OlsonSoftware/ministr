@@ -1,5 +1,5 @@
 import type { SessionDetail } from "../../../lib/types";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight } from "@/components/ui/icons";
 import {
   clampPct,
   pressureVerdict,

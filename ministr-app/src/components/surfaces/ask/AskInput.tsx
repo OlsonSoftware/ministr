@@ -1,5 +1,5 @@
 import { useRef, type RefObject } from "react";
-import { ArrowRight, History, Loader2 } from "lucide-react";
+import { ArrowRight, History, Loader2 } from "@/components/ui/icons";
 import { cn } from "../../../lib/utils";
 import { Button } from "../../ui/button";
 import type { RecentEntry } from "./internals";

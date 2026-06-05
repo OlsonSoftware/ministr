@@ -5,7 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Search, X } from "lucide-react";
+import { Search, X } from "@/components/ui/icons";
 import type { ActivityEvent } from "../../../lib/types";
 import { formatTokens } from "../../../lib/format";
 import {

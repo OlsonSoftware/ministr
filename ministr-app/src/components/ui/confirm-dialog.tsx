@@ -4,7 +4,7 @@
  * rounded, hairline, spring pop via the shared motion presets.
  */
 import { useRef, useState } from "react";
-import { AlertTriangle, X } from "lucide-react";
+import { AlertTriangle, X } from "@/components/ui/icons";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "./button";
 import { popIn, scrim } from "../../lib/motion";

@@ -29,7 +29,7 @@ import {
   RefreshCw,
   Sprout,
   Zap,
-} from "lucide-react";
+} from "@/components/ui/icons";
 
 import { useWorkspace } from "../workspace/WorkspaceContext";
 import type { CorpusInfo } from "../../lib/types";

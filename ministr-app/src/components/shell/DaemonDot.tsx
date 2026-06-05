@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpRight, ScrollText, Server } from "lucide-react";
+import { ArrowUpRight, ScrollText, Server } from "@/components/ui/icons";
 import type { DaemonStatus } from "../../lib/types";
 import { StatusDot } from "../ui/status-dot";
 import { Badge } from "../ui/badge";

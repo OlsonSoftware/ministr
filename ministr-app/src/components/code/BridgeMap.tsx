@@ -24,7 +24,7 @@ import {
   Network,
   Plug,
   Workflow,
-} from "lucide-react";
+} from "@/components/ui/icons";
 
 import type { BridgeLink } from "../../lib/types";
 import { cn } from "../../lib/utils";

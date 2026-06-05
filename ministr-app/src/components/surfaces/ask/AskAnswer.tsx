@@ -9,7 +9,7 @@ import {
   ExternalLink,
   Library,
   Sparkles,
-} from "lucide-react";
+} from "@/components/ui/icons";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { motion } from "motion/react";
@@ -23,7 +23,7 @@ import { fadeRise, listContainer, listItem } from "../../../lib/motion";
 import { Card } from "../../ui/card";
 import { CodeExcerpt } from "../../ui/code-excerpt";
 import { MetricTile } from "../../ui/metric-tile";
-import { BrutalPin } from "../../ui/brutal-icons";
+import { Pin } from "@/components/ui/icons";
 import { useEntityPanel } from "../../../hooks/useEntityPanel";
 import { basename, corpusRelative } from "../../../lib/path";
 import { cn } from "../../../lib/utils";
@@ -155,7 +155,7 @@ export function AskAnswer({
               title={pinned ? "Unpin this answer" : "Pin this answer"}
               className={cn(deckBtn, pinned ? deckBtnActive : deckBtnIdle)}
             >
-              <BrutalPin className="h-3 w-3" />
+              <Pin className="h-3 w-3" />
               {pinned ? "Pinned" : "Pin"}
             </button>
             <button

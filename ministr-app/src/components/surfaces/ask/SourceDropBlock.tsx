@@ -11,7 +11,7 @@
  * an assembled composition. The drawer open path is preserved via "Open ↗".
  */
 import { useEffect, useState } from "react";
-import { Bookmark, ExternalLink, X } from "lucide-react";
+import { Bookmark, ExternalLink, X } from "@/components/ui/icons";
 
 import type { CorpusInfo } from "../../../lib/types";
 import { Card } from "../../ui/card";

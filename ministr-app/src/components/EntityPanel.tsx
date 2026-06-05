@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { ChevronRight, X } from "lucide-react";
+import { ChevronRight, X } from "@/components/ui/icons";
 import { AnimatePresence, motion } from "motion/react";
 import {
   entityKindLabel,

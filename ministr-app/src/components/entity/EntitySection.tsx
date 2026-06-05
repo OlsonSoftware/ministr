@@ -48,7 +48,7 @@ export function EntitySection({
           </span>
         )}
       </header>
-      <div className={cn(empty && "opacity-50")}>{children}</div>
+      <div className={cn(empty && "opacity-70")}>{children}</div>
     </motion.section>
   );
 }
@@ -62,10 +62,12 @@ export function EntitySectionLoading() {
   );
 }
 
-/** Single-line "no data" hint for sections that resolved empty. */
+/** Single-line "no data" hint for sections that resolved empty. The muted (not
+ *  dim) tone keeps the hint above the AA floor even when the parent `empty`
+ *  flag softens the whole body. */
 export function EntitySectionEmpty({ label }: { label?: string }) {
   return (
-    <p className="px-3.5 py-2.5 font-sans text-sm text-text-dim">
+    <p className="px-3.5 py-2.5 font-sans text-sm text-text-muted">
       {label ?? "—"}
     </p>
   );

@@ -14,7 +14,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowRight, ArrowLeftRight, FileSymlink } from "lucide-react";
+import { ArrowRight, ArrowLeftRight, FileSymlink } from "@/components/ui/icons";
 import { cn } from "../../lib/utils";
 import type { FileContent, SymbolRef } from "../../lib/types";
 

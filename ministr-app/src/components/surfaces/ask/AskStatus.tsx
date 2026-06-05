@@ -7,7 +7,7 @@ import {
   ScanSearch,
   ShieldCheck,
   type LucideIcon,
-} from "lucide-react";
+} from "@/components/ui/icons";
 import { motion } from "motion/react";
 import { fadeRise } from "../../../lib/motion";
 import { cn } from "../../../lib/utils";

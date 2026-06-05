@@ -15,7 +15,7 @@
  */
 import { useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { FileCode2, Sparkles, Trash2 } from "lucide-react";
+import { FileCode2, Sparkles, Trash2 } from "@/components/ui/icons";
 
 import type { DeadSymbol, SymbolInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";

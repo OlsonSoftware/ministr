@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Waypoints } from "lucide-react";
+import { Waypoints } from "@/components/ui/icons";
 import { useEntityPanel, type Entity } from "../../hooks/useEntityPanel";
 import { EntityRow } from "./EntityRow";
 import {

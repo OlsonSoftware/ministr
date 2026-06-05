@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Database, FileText, Hash, Layers } from "lucide-react";
+import { Database, FileText, Hash, Layers } from "@/components/ui/icons";
 import { Button } from "./button";
 import { Badge } from "./badge";
 import { StatusDot } from "./status-dot";

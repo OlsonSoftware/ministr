@@ -20,7 +20,7 @@ import {
   ShieldAlert,
   TriangleAlert,
   Waypoints,
-} from "lucide-react";
+} from "@/components/ui/icons";
 
 import type { ImpactedSymbol, SymbolImpact as SymbolImpactData } from "../../lib/types";
 import { cn } from "../../lib/utils";

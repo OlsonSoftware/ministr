@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { FolderOpen } from "lucide-react";
+import { FolderOpen } from "@/components/ui/icons";
 import { EmptyState } from "./empty-state";
 import { Button } from "./button";
 

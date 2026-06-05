@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { TreePine } from "lucide-react";
+import { TreePine } from "@/components/ui/icons";
 import { cn } from "../lib/utils";
 import { corpusRelative } from "../lib/path";
 import { useEntityPanel } from "../hooks/useEntityPanel";

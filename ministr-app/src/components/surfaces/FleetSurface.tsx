@@ -36,7 +36,7 @@ import {
   Search,
   Trash2,
   Zap,
-} from "lucide-react";
+} from "@/components/ui/icons";
 
 import type { CorpusInfo } from "../../lib/types";
 import { corpusLabel, corpusRoot } from "../../lib/corpus";

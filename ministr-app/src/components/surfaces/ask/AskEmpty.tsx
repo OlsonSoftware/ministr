@@ -1,4 +1,4 @@
-import { ArrowUpRight, FolderPlus, MessageSquare, Sparkles } from "lucide-react";
+import { ArrowUpRight, FolderPlus, MessageSquare, Sparkles } from "@/components/ui/icons";
 import { Button } from "../../ui/button";
 import { EmptyState } from "../../ui/empty-state";
 import { cn } from "../../../lib/utils";

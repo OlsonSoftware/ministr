@@ -1,4 +1,4 @@
-import { AlertTriangle, RefreshCw, TerminalSquare } from "lucide-react";
+import { AlertTriangle, RefreshCw, TerminalSquare } from "@/components/ui/icons";
 import { Button } from "../../ui/button";
 import type { InferenceHealth } from "./internals";
 

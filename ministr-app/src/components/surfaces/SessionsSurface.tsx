@@ -8,7 +8,7 @@
  * derivations — no own fetch.
  */
 import { useMemo, useState } from "react";
-import { Activity, Users } from "lucide-react";
+import { Activity, Users } from "@/components/ui/icons";
 import { motion } from "motion/react";
 
 import type { CorpusInfo, DaemonStatus, SessionDetail } from "../../lib/types";

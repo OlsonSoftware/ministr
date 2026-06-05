@@ -39,7 +39,7 @@ import {
   Sun,
   Terminal,
   Trash2,
-} from "lucide-react";
+} from "@/components/ui/icons";
 
 import type { DaemonStatus } from "../../lib/types";
 import type { Density } from "../../hooks/usePreferences";

@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
-import { MessageSquare } from "lucide-react";
+import { MessageSquare } from "@/components/ui/icons";
 
 import type { DaemonStatus } from "../../../lib/types";
 import { AdaptiveSurface } from "../../ui/adaptive-surface";

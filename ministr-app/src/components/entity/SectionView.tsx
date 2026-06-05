@@ -7,7 +7,7 @@ import {
   EntitySectionEmpty,
   EntitySectionLoading,
 } from "./EntitySection";
-import { ChevronRight, FileText } from "lucide-react";
+import { ChevronRight, FileText } from "@/components/ui/icons";
 import type { CoherenceEvent, SearchResult, SymbolInfo } from "../../lib/types";
 import { basename } from "../../lib/path";
 

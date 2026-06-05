@@ -19,11 +19,11 @@
  * loading/empty/error/content template) applied to the lens vocabulary.
  */
 import type { ComponentProps, ComponentType, ReactNode } from "react";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw } from "@/components/ui/icons";
 import { cn } from "../../lib/utils";
 import { EmptyState } from "./empty-state";
 
-/** A lens icon — the lucide-react icon component shape (className + strokeWidth). */
+/** A lens icon — the ministr icon component shape (className + strokeWidth). */
 type LensIcon = ComponentType<{ className?: string; strokeWidth?: number }>;
 
 /** The accent the lens header's icon + title take — usually the lens's identity

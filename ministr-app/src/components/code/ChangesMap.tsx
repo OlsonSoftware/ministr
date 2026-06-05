@@ -23,7 +23,7 @@ import {
   TriangleAlert,
   Users,
   Waypoints,
-} from "lucide-react";
+} from "@/components/ui/icons";
 
 import type { ChangedSymbol, DiffImpact, ImpactedSymbol, SymbolInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";

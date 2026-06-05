@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { motion } from "motion/react";
-import { Boxes, Layers } from "lucide-react";
+import { Boxes, Layers } from "@/components/ui/icons";
 import { useWorkspace } from "./WorkspaceContext";
 import { corpusLabel, corpusRoot } from "../../lib/corpus";
 import { type Tone, corpusTone, isCorpusLive } from "../../lib/status";

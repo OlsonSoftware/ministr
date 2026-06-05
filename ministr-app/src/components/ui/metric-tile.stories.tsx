@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { FileText, Hash, Layers } from "lucide-react";
+import { FileText, Hash, Layers } from "@/components/ui/icons";
 import { MetricTile } from "./metric-tile";
 
 const meta = {

@@ -4,7 +4,7 @@
  * Replaces the single-shot "pinned answers" headline: every conversation is
  * saved per corpus and resumable. New-conversation (⌘K) lives here too.
  */
-import { MessageSquarePlus, History, X } from "lucide-react";
+import { MessageSquarePlus, History, X } from "@/components/ui/icons";
 import { cn } from "../../../lib/utils";
 import { transitionInteractive } from "../../../lib/ui-tokens";
 import { threadTitle, type Thread } from "./thread";

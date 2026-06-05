@@ -24,7 +24,7 @@ import {
   ShieldCheck,
   Stethoscope,
   TriangleAlert,
-} from "lucide-react";
+} from "@/components/ui/icons";
 
 import type { Diagnostic, DiagnosticSeverity, SymbolInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";

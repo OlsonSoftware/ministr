@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight } from "@/components/ui/icons";
 import type { ActivityEvent } from "../../../lib/types";
 import {
   type FileBucket,

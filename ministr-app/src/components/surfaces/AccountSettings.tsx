@@ -15,7 +15,7 @@
  */
 import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Cloud, SlidersHorizontal, X } from "lucide-react";
+import { Cloud, SlidersHorizontal, X } from "@/components/ui/icons";
 
 import type { DaemonStatus } from "../../lib/types";
 import { useDialog } from "../../hooks/useDialog";

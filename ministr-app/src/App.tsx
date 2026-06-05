@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { AlertTriangle, RotateCw, FileText } from "lucide-react";
+import { AlertTriangle, RotateCw, FileText } from "@/components/ui/icons";
 import { Button } from "./components/ui/button";
 import { AnimatePresence, motion } from "motion/react";
 import { useDaemonStatus } from "./hooks/useDaemonStatus";

@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { popIn } from "../../../lib/motion";
 import { glassPanel } from "../../../lib/ui-tokens";
 import { cn } from "../../../lib/utils";
-import { BrutalPin } from "../../ui/brutal-icons";
+import { Pin } from "@/components/ui/icons";
 import type { SectionDetailOut } from "./internals";
 
 interface Props {
@@ -173,7 +173,7 @@ export function AskCitation({
                     : "border border-info bg-surface text-info hover:bg-info hover:text-[var(--color-accent-fg-on)]",
                 )}
               >
-                <BrutalPin className="h-3 w-3" />
+                <Pin className="h-3 w-3" />
                 {pinned ? "Pinned" : "Pin answer"}
               </button>
             )}

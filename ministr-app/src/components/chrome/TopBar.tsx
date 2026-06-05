@@ -1,4 +1,5 @@
-import { Search } from "lucide-react";
+import { Search } from "@/components/ui/icons";
+import { Wordmark } from "../ui/logo";
 import type { CorpusInfo, DaemonStatus } from "../../lib/types";
 import { useSessions } from "../../hooks/useSessions";
 import { ProjectPicker } from "./ProjectPicker";
@@ -47,7 +48,7 @@ export function TopBar({
       className="flex items-center gap-3 border-b border-border bg-surface px-3 h-12 shrink-0"
       role="banner"
     >
-      <div className="ministr-wordmark shrink-0 select-none">ministr</div>
+      <Wordmark className="shrink-0" />
 
       <div className="h-5 w-px bg-border shrink-0" aria-hidden />
 

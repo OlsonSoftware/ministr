@@ -33,7 +33,7 @@ import {
   Sparkles,
   SunMoon,
   type LucideIcon,
-} from "lucide-react";
+} from "@/components/ui/icons";
 import { AnimatePresence, motion } from "motion/react";
 
 import type { CorpusInfo } from "../../lib/types";

@@ -1,4 +1,4 @@
-import { ChevronRight } from "lucide-react";
+import { ChevronRight } from "@/components/ui/icons";
 import { cn } from "../../lib/utils";
 
 interface Props {

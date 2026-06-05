@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { LucideIcon } from "lucide-react";
+import type { LucideIcon } from "@/components/ui/icons";
 import { cn } from "../../lib/utils";
 import { H1 } from "./heading";
 

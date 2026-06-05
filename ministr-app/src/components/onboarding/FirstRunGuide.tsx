@@ -24,7 +24,7 @@ import {
   Loader2,
   Search,
   Sparkles,
-} from "lucide-react";
+} from "@/components/ui/icons";
 
 import type { CorpusInfo, DaemonStatus, DetectedProject } from "../../lib/types";
 import { corpusLabel } from "../../lib/corpus";

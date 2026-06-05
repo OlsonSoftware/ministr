@@ -1,4 +1,4 @@
-import { Keyboard, X } from "lucide-react";
+import { Keyboard, X } from "@/components/ui/icons";
 import { shortcutGroups } from "../lib/shortcuts";
 import { useDialog } from "../hooks/useDialog";
 import { overlayScrim, glassPanel } from "../lib/ui-tokens";

@@ -30,7 +30,7 @@ import {
   Shrink,
   TrendingDown,
   Zap,
-} from "lucide-react";
+} from "@/components/ui/icons";
 import { motion } from "motion/react";
 
 import type { ActivityEvent, CorpusInfo, SessionDetail } from "../../lib/types";

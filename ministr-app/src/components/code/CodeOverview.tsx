@@ -22,7 +22,7 @@ import {
   Layers,
   ShieldCheck,
   Trash2,
-} from "lucide-react";
+} from "@/components/ui/icons";
 
 import type { CorpusInfo, FileInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";

@@ -25,7 +25,7 @@ import {
   Unplug,
   Workflow,
   Zap,
-} from "lucide-react";
+} from "@/components/ui/icons";
 
 import type { SolidFinding, SolidSymbolRef } from "../../lib/types";
 import type { SymbolInfo } from "../../lib/types";

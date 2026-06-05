@@ -9,7 +9,7 @@ import {
   Play,
   RefreshCw,
   ScrollText,
-} from "lucide-react";
+} from "@/components/ui/icons";
 import { Button } from "./ui/button";
 import { H1 } from "./ui/heading";
 import { cn } from "../lib/utils";

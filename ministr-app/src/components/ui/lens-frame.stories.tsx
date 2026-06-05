@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Cable, Sparkles, Stethoscope } from "lucide-react";
+import { Cable, Sparkles, Stethoscope } from "@/components/ui/icons";
 import { LensHeader, LensLoading, LensEmpty, LensRerunButton } from "./lens-frame";
 
 /**

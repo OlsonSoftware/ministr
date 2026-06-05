@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { AlertOctagon } from "lucide-react";
+import { AlertOctagon } from "@/components/ui/icons";
 import type { Entity } from "../../../hooks/useEntityPanel";
 import { useEntityPanel } from "../../../hooks/useEntityPanel";
 import { useWorkspaceOptional } from "../../workspace/WorkspaceContext";

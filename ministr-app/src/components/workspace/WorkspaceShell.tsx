@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "motion/react";
-import { CircleUser, Search } from "lucide-react";
+import { CircleUser, Search } from "@/components/ui/icons";
 import type { DaemonStatus, SessionDetail } from "../../lib/types";
 import { fade } from "../../lib/motion";
 import { cn } from "../../lib/utils";

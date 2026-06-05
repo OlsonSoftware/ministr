@@ -7,7 +7,7 @@ import {
   useState,
 } from "react";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
-import { AlertTriangle, CheckCircle2, Info, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Info, X } from "@/components/ui/icons";
 import { spring } from "../../lib/motion";
 import { cn } from "../../lib/utils";
 import { focusRing, glassPanel } from "../../lib/ui-tokens";

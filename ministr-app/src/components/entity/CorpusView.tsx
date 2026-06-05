@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Boxes } from "lucide-react";
+import { Boxes } from "@/components/ui/icons";
 import { useEntityPanel, type Entity } from "../../hooks/useEntityPanel";
 import { useSessions } from "../../hooks/useSessions";
 import { EntityRow } from "./EntityRow";

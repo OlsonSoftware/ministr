@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Activity, Compass, MessageSquare, Sprout } from "lucide-react";
+import { Activity, Compass, MessageSquare, Sprout } from "@/components/ui/icons";
 import { FacetHeader } from "./facet-header";
 import { Badge } from "./badge";
 import { Button } from "./button";

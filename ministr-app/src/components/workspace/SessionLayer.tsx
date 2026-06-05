@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Zap } from "lucide-react";
+import { Zap } from "@/components/ui/icons";
 import { AnimatePresence, motion } from "motion/react";
 import { popIn } from "../../lib/motion";
 import { cn } from "../../lib/utils";

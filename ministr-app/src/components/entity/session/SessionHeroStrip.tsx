@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy } from "@/components/ui/icons";
 import { motion } from "motion/react";
 import type { SessionDetail } from "../../../lib/types";
 import { fadeRise } from "../../../lib/motion";

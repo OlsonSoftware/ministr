@@ -25,6 +25,12 @@ export default defineConfig({
     }),
     tailwindcss(),
   ],
+  // Mirror the tsconfig `@/* → ./src/*` path alias at the bundler layer so
+  // runtime imports (app build + Storybook, which reuses this config) resolve
+  // it too — not just tsc.
+  resolve: {
+    alias: { "@": path.resolve(dirname, "src") },
+  },
   clearScreen: false,
   server: {
     port: 5173,

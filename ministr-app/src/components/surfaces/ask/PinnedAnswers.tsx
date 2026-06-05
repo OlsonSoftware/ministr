@@ -1,6 +1,6 @@
-import { X, Zap } from "lucide-react";
+import { X, Zap } from "@/components/ui/icons";
 import { cn } from "../../../lib/utils";
-import { BrutalPin } from "../../ui/brutal-icons";
+import { Pin } from "@/components/ui/icons";
 import { formatDuration, type RecentEntry } from "./internals";
 
 interface Props {
@@ -33,7 +33,7 @@ export function PinnedAnswers({
   return (
     <div className="flex flex-col gap-2 min-h-0">
       <div className="flex items-center gap-2 shrink-0">
-        <BrutalPin className="h-3 w-3 text-text-dim" />
+        <Pin className="h-3 w-3 text-text-dim" />
         <span className="font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
           Pinned
         </span>

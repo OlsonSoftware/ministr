@@ -23,7 +23,7 @@ import {
   useState,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ChevronRight, ChevronDown, File as FileIcon } from "lucide-react";
+import { ChevronRight, ChevronDown, File as FileIcon } from "@/components/ui/icons";
 import { cn } from "../../lib/utils";
 import type { FileInfo } from "../../lib/types";
 import { commonDirPrefix, stripPrefix } from "./paths";

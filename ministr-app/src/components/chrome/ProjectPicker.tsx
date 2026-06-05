@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Plus } from "lucide-react";
+import { Check, ChevronDown, Plus } from "@/components/ui/icons";
 import { AnimatePresence, motion } from "motion/react";
 import { popIn } from "../../lib/motion";
 import { cn } from "../../lib/utils";

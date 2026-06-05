@@ -1,4 +1,5 @@
-import { AlertTriangle, Boxes } from "lucide-react";
+import { AlertTriangle } from "@/components/ui/icons";
+import { Logo } from "../ui/logo";
 import { StatusDot } from "../ui/status-dot";
 import { cn } from "../../lib/utils";
 
@@ -31,7 +32,9 @@ export function ConnectingState({ error }: ConnectingStateProps) {
               : "border-accent/50 text-accent shadow-[var(--glow-soft)]",
           )}
         >
-          <Boxes className="h-7 w-7" strokeWidth={1.75} />
+          {/* The real brand mark — full-colour while connecting; mono so it
+              tones with the danger medallion when the daemon is unreachable. */}
+          <Logo className="h-7 w-7" gradient={!failed} />
         </span>
 
         <div className="flex flex-col items-center gap-2.5">

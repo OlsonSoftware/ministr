@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Cpu } from "lucide-react";
+import { Cpu } from "@/components/ui/icons";
 import { LabeledCard } from "./labeled-card";
 import { LabeledRow } from "./labeled-row";
 import { ContentTray } from "./content-tray";

@@ -1,5 +1,5 @@
-import { Activity, Compass, MessageSquare, Sprout } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { Activity, Compass, MessageSquare, Sprout } from "@/components/ui/icons";
+import type { LucideIcon } from "@/components/ui/icons";
 import type { FacetId } from "./WorkspaceContext";
 
 /**

@@ -22,8 +22,8 @@ import {
   Copy,
   FileCode2,
   Hash,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+} from "@/components/ui/icons";
+import type { LucideIcon } from "@/components/ui/icons";
 import type { FileContent, Occurrence, SymbolSpan } from "../../lib/types";
 import { buildOccurrenceDecorations, buildSymbolDecorations } from "./decorations";
 import { useHighlightedHtml } from "./useHighlighter";

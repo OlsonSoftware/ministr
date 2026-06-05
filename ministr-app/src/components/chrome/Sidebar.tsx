@@ -1,4 +1,4 @@
-import { MessageSquare, FolderOpen, Activity, Cloud, Terminal, Settings as SettingsIcon } from "lucide-react";
+import { MessageSquare, FolderOpen, Activity, Cloud, Terminal, Settings as SettingsIcon } from "@/components/ui/icons";
 import { motion } from "motion/react";
 import { spring } from "../../lib/motion";
 import { cn } from "../../lib/utils";
