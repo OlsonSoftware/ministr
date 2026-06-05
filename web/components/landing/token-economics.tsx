@@ -1,69 +1,73 @@
 /**
- * TokenEconomics — the "90% fewer tokens" claim, proven.
+ * TokenEconomics — the "fewer tokens" claim, measured.
  *
- * The Why section asserts the headline number; this shows the measured shape
- * behind it. ministr returns the same targeted slice every time (a constant 68
- * tokens), while the grep + read workflow's cost scales with how many candidate
- * files the agent has to read to be sure. The grep bars grow; ministr's
- * baseline stays flat.
+ * Not illustrative, not a flat constant. These are the real end-to-end numbers
+ * from web/content/docs/benchmarks.mdx (produced by
+ * ministr-mcp/tests/token_economics_e2e.rs): index a real multi-language corpus,
+ * run real `ministr_survey` calls through the MCP interface, and count the
+ * literal response bytes against a grep + read of the candidate files. Across 26
+ * real queries a ministr lookup averaged 518 tokens vs 1,548 for grep + read —
+ * 66% fewer, and cheaper on 23 of the 26. A lookup is bounded, not free; the
+ * advantage widens as a repo grows (see the docs for the scaling model).
  *
- * Numbers are the real benchmark from web/content/docs/benchmarks.mdx (counted
- * with ministr's own tokenizer) — not illustrative. Static, in the page's v2
- * language (warm ink, single amber, sharp corners, hairline, mono).
+ * Static, in the page's v2 language (warm ink, single amber, hairline, mono).
  */
 import Link from 'next/link';
 
-const MINISTR_TOKENS = 68;
+const GREP_TOKENS = 1_548;
+const MINISTR_TOKENS = 518;
+// Floor, not round — never round a savings claim up (66.5% measured → 66%).
+const REDUCTION = Math.floor((1 - MINISTR_TOKENS / GREP_TOKENS) * 100); // 66
 
 interface Row {
-  files: number;
-  grep: number;
-  reduction: string;
+  label: string;
+  tokens: number;
+  cut?: string;
 }
 
-// web/content/docs/benchmarks.mdx — grep+read tokens vs the flat 68-token slice.
+// Mean tokens per lookup, measured. The track is scaled to grep+read = 100%.
 const ROWS: Row[] = [
-  { files: 5, grep: 1_215, reduction: '94.4%' },
-  { files: 20, grep: 4_860, reduction: '98.6%' },
-  { files: 50, grep: 12_150, reduction: '99.4%' },
-  { files: 100, grep: 24_300, reduction: '99.7%' },
+  { label: 'grep+read', tokens: GREP_TOKENS },
+  { label: 'ministr', tokens: MINISTR_TOKENS, cut: `−${REDUCTION}%` },
 ];
 
-const MAX = Math.max(...ROWS.map((r) => r.grep));
+const MAX = Math.max(...ROWS.map((r) => r.tokens));
 
 export function TokenEconomics() {
   return (
     <figure
       className="v2-tok"
-      aria-label={`Token cost per lookup, measured. ministr returns a constant ${MINISTR_TOKENS} tokens; the grep-and-read workflow grows from ${ROWS[0].grep.toLocaleString()} tokens across 5 candidate files to ${ROWS[ROWS.length - 1].grep.toLocaleString()} across 100 — a ${ROWS[ROWS.length - 1].reduction} reduction at the high end.`}
+      aria-label={`Mean tokens per lookup, measured across 26 real queries on a real multi-language codebase. A ministr_survey lookup averages ${MINISTR_TOKENS} tokens; reading the candidate files grep surfaces averages ${GREP_TOKENS.toLocaleString()} — a ${REDUCTION}% reduction, with ministr cheaper on 23 of the 26 queries.`}
     >
       <div className="v2-tok-head">
         <span className="v2-tok-eyebrow">Tokens per lookup · measured</span>
         <span className="v2-tok-flat">
-          ministr: a flat <b>{MINISTR_TOKENS}</b> tokens, every time
+          <b>{REDUCTION}%</b> fewer, on 23 of 26 real queries
         </span>
       </div>
 
       <ul className="v2-tok-rows">
         {ROWS.map((r) => (
-          <li key={r.files} className="v2-tok-row">
-            <span className="v2-tok-label">{r.files} files</span>
+          <li key={r.label} className="v2-tok-row">
+            <span className="v2-tok-label">{r.label}</span>
             <span className="v2-tok-track">
               <span
                 className="v2-tok-fill"
-                style={{ width: `${(r.grep / MAX) * 100}%` }}
+                style={{ width: `${(r.tokens / MAX) * 100}%` }}
               >
-                <span className="v2-tok-count">{r.grep.toLocaleString()}</span>
+                <span className="v2-tok-count">{r.tokens.toLocaleString()}</span>
               </span>
             </span>
-            <span className="v2-tok-cut">−{r.reduction}</span>
+            <span className="v2-tok-cut">{r.cut ?? ''}</span>
           </li>
         ))}
       </ul>
 
       <figcaption className="v2-tok-cap">
-        grep + read grows with every candidate file the agent must scan; the
-        targeted slice stays flat. Same tokenizer ministr uses internally.{' '}
+        Measured end-to-end: a real corpus indexed, real <code>ministr_survey</code>{' '}
+        calls run, the literal response counted against reading the files grep
+        surfaces — same tokenizer ministr uses internally. A lookup is bounded,
+        not free, and the gap widens with repo size.{' '}
         <Link href="/docs/benchmarks" className="v2-tok-link">
           See the benchmark →
         </Link>

@@ -1,10 +1,19 @@
-//! Reproducible token-economics report.
+//! Illustrative token-economics *scaling model* (synthetic).
 //!
 //! Deterministic, dependency-free companion to `benches/token_economics.rs`
 //! (which measures *latency*, not the savings figures). This test computes
-//! the actual token counts for a naive "read every candidate file" workflow
-//! versus a ministr-style targeted extract, prints a Markdown table, and
-//! asserts the published claim so it can't silently drift.
+//! token counts for a naive "read every candidate file" workflow versus a
+//! single ministr-style targeted extract across growing codebase sizes, prints
+//! a Markdown table, and asserts the *shape* (the gap widens with size).
+//!
+//! It is NOT the published headline figure — that is a real end-to-end
+//! measurement in `ministr-mcp/tests/token_economics_e2e.rs` (index a real
+//! corpus, run real `ministr_survey` calls, count the literal response bytes).
+//! This model just isolates *why* the advantage grows with repo size: a
+//! targeted lookup is bounded while "read every candidate" scales with the
+//! file count. Treat the percentages as an illustrative upper bound, not a
+//! measurement of a real lookup (a real survey returns the top-k slices, ~500
+//! tokens here, not a single 68-token extract).
 //!
 //! Reproduce:  `cargo test -p ministr-core --test token_economics_report -- --nocapture`
 //!
@@ -92,12 +101,14 @@ fn token_economics_report() {
     }
     println!();
 
-    // Guards the published headline figure: at 100 candidate files the
-    // targeted extract is well under 10% of the naive read.
+    // Guards the illustrative model's shape (NOT the published headline — that
+    // is the real e2e measurement): a single targeted extract is well under
+    // 10% of a 100-file naive read. This is an upper bound on the savings, not
+    // the real per-lookup cost.
     let ratio_100 = 1.0 - (targeted as f64 / raw_cat_tokens(100) as f64);
     assert!(
         ratio_100 >= 0.90,
-        "expected >=90% reduction at 100 files, got {:.1}%",
+        "expected >=90% reduction at 100 files (illustrative model), got {:.1}%",
         ratio_100 * 100.0
     );
 

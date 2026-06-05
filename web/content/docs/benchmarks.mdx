@@ -1,38 +1,57 @@
 ---
 title: Benchmarks
-description: A reproducible synthetic micro-benchmark for the retrieval-token savings, and how to run it yourself.
+description: A real end-to-end measurement of ministr's retrieval-token savings on a real codebase, plus the scaling model behind it — and how to run both yourself.
 ---
 
-The landing page says ministr returns the slice that answers the question instead of the files it lives in. This page makes that concrete with a **reproducible synthetic micro-benchmark**, and tells you exactly how to run it.
+The landing page says ministr returns the slice that answers the question instead of the files it lives in. This page makes that concrete with a **real end-to-end measurement** — actual indexing, actual retrieval, actual response bytes — and tells you exactly how to run it.
 
 ## What this measures (and what it doesn't)
 
-It isolates one thing: the **retrieval cost** — how many tokens cross the context window to answer a question — for a naive "find candidates, read every file" workflow versus a ministr-style targeted extract.
+It isolates one thing: the **retrieval cost** — how many tokens cross the context window to answer a question — for a naive "find candidates, read every file" workflow versus a real `ministr_survey` lookup.
 
-It is deliberately synthetic: one relevant function inside a codebase of otherwise-irrelevant, similarly-shaped files. That isolates the variable (how much irrelevant text the agent pays for) and makes the result deterministic. It is **not** an end-to-end measure of agent quality, latency, or answer correctness — only the token economics of retrieval.
+It is **not** an end-to-end measure of agent quality, latency, or answer correctness — only the token economics of retrieval. Token counts use the same `cl100k` tokenizer ministr meters with internally.
 
-## Result
+## Result — real measurement
 
-Token counts use the same tokenizer ministr uses internally. The targeted extract is a constant 68 tokens; the naive workflow grows with the number of candidate files it reads.
+The benchmark indexes a real, committed multi-language corpus (`eval/corpus-code`: Rust, Python, Go, TypeScript, Java, C++ — 6 files, ~3,100 tokens) through ministr's real ingestion pipeline, then for each of 26 real natural-language queries it measures:
 
-| candidate files | grep + read tokens | ministr tokens | reduction |
+- **ministr** — the *literal bytes* a `ministr_survey` call returns through the MCP tool interface (ranked top-k slices plus the condensed envelope). This is exactly what the agent receives, not a hand-picked extract.
+- **grep + read** — every corpus file that shares a salient term with the query, read whole (the "grep for the terms, then read each candidate file to be sure" workflow), over the same real files.
+
+| | grep + read | ministr | reduction |
+|---|---|---|---|
+| **Aggregate (26 queries)** | 40,256 tokens | 13,477 tokens | **66.5% fewer** |
+| **Mean per lookup** | 1,548 tokens | 518 tokens | 66.5% fewer |
+
+A ministr lookup is **not** a fixed cost — a survey returns the top-k ranked slices, averaging ~518 tokens here. It came out cheaper on **23 of 26** queries. On the other 3, the query matched a single small file, so reading that one file beat a 5-result survey. That's the honest shape: the savings are real and grow with how much irrelevant code grep would otherwise drag in, but a targeted lookup is bounded, not free.
+
+## How the gap scales (illustrative model)
+
+The measured corpus is small. The reason the advantage *widens* on real codebases is structural: a targeted lookup's cost is bounded by the result budget regardless of repo size, while "read every candidate file" grows with the number of files a keyword surfaces. A deterministic synthetic model isolates that scaling — one relevant function in a codebase of otherwise-irrelevant, similarly-shaped files:
+
+| candidate files | grep + read tokens | ministr (one extract) | reduction |
 |---|---|---|---|
 | 5   | 1,215  | 68 | 94.4% |
 | 20  | 4,860  | 68 | 98.6% |
 | 50  | 12,150 | 68 | 99.4% |
 | 100 | 24,300 | 68 | 99.7% |
 
-The point isn't the exact percentage — it's the shape: the naive cost scales with how much irrelevant code the agent has to read to be sure, while the targeted cost stays flat. On a real codebase the relevant slice is rarely the whole file, so the gap is directionally the same.
+These are an **illustrative upper bound**, not a measurement: they assume the relevant slice is a single small extract and every candidate file is read whole. The real measurement above is the honest figure; this model just shows why the gap grows with scale.
 
 ## Reproduce it
 
-The figures above are produced by a deterministic test (no network, no model download):
+Both are deterministic (no network, no model download — a hash embedder keeps token *volume*, which is what's measured, independent of embedding quality):
 
 ```sh
+# Real end-to-end measurement (the table above): index a real corpus,
+# run real ministr_survey calls, count the literal response tokens.
+cargo test -p ministr-mcp --test token_economics_e2e report_real_token_economics -- --nocapture
+
+# Illustrative scaling model.
 cargo test -p ministr-core --test token_economics_report -- --nocapture
 ```
 
-It prints the table and asserts the relationship holds (reduction increases with codebase size; ≥ 90% at 100 files), so the published claim can't silently drift.
+The e2e test also asserts the relationship holds (a survey stays well under the token budget; aggregate grep+read exceeds aggregate ministr; ministr wins a majority of queries), so the published claim can't silently drift.
 
 A companion **latency** benchmark (Criterion) times the tokenizer and retrieval-shaping path rather than counting tokens:
 
@@ -42,6 +61,6 @@ cargo bench -p ministr-core --bench token_economics
 
 ## Honest caveats
 
-- Synthetic inputs. Real files vary; treat the percentages as illustrative of the *shape*, not a guarantee for your repo.
 - Retrieval cost only. It doesn't credit ministr for code-intelligence quality (symbols, references, cross-language bridges) or charge it for index build time.
+- A lookup is bounded, not flat. The per-call cost varies with `top_k` and how much each result carries; on a tiny corpus a broad survey can occasionally cost as much as a tight grep.
 - Single-turn. Session efficiency (not re-sending what the agent already has) compounds this over a conversation but is measured separately.
