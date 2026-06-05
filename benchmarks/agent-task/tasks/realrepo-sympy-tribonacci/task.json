@@ -1,5 +1,6 @@
 {
   "id": "realrepo-sympy-tribonacci",
+  "display": "sympy 1.13.3 (~1,590 files)",
   "kind": "realrepo",
   "difficulty": "real",
   "language": "python",

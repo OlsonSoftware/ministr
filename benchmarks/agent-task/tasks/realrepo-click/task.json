@@ -1,5 +1,6 @@
 {
   "id": "realrepo-click",
+  "display": "click 8.1.7 (~70 files)",
   "kind": "realrepo",
   "difficulty": "real",
   "language": "python",

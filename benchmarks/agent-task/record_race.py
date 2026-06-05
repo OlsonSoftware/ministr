@@ -60,8 +60,12 @@ def stream_arm(cmd, cwd, env, timeout):
             if etype == "assistant":
                 for c in (msg.get("content") or []):
                     if isinstance(c, dict) and c.get("type") == "tool_use":
+                        inp = c.get("input") or {}
+                        detail = (inp.get("command") or inp.get("query")
+                                  or inp.get("file_path") or inp.get("pattern") or "")
                         events.append({"t": t, "kind": "tool",
                                        "name": tool_label(c.get("name", "?")),
+                                       "detail": str(detail)[:80],
                                        "out": cum_out})
             elif etype == "result":
                 u = e.get("usage") or {}
@@ -98,7 +102,19 @@ def record_arm(task, base, arm_key, model, budget):
         mcp = {"mcpServers": {"ministr": {"command": "ministr", "args": ["serve", "--corpus", repo]}}}
         path = os.path.join(base["work"], "ministr-mcp.json")
         json.dump(mcp, open(path, "w"))
-        cmd += ["--mcp-config", path]
+        # Mirror real-world ministr deployments (`ministr hooks` / CLAUDE.md
+        # steering): the agent is told to discover code via ministr, and shell
+        # grep is closed off (the Grep TOOL is already excluded, but Bash would
+        # otherwise allow `grep` as a shell-out — a leak this run made visible).
+        cmd += ["--mcp-config", path,
+                "--append-system-prompt",
+                "This repository is indexed by ministr. For ALL code search and "
+                "discovery use the ministr MCP tools (ministr_survey for natural-"
+                "language search, ministr_symbols to find symbols, "
+                "ministr_definition/ministr_read for source). Do not use shell "
+                "grep/rg/find for searching.",
+                "--disallowedTools",
+                "Bash(grep*) Bash(rg*) Bash(egrep*) Bash(fgrep*) Bash(ag*) Bash(ack*) Bash(find*)"]
     events, final = stream_arm(cmd, repo, env, timeout=2400)
     passed, _ = R.validate(task, repo)
     return {
@@ -138,7 +154,7 @@ def main():
 
     out = {
         "task": task["id"],
-        "repo": task.get("summary", "").split(":")[0][:60] or task["id"],
+        "repo": task.get("display") or os.path.basename(task.get("repo", task["id"])),
         "model": args.model,
         "index_secs": base.get("index_secs"),
         "arms": arms,
