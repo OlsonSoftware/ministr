@@ -2468,7 +2468,15 @@ impl MinistrServer {
         async {
             let session_id = self.effective_session_id();
             match self.exec.run(params, session_id).await {
-                Ok(response) => structured_result(&response),
+                Ok((response, ingest)) => {
+                    // Run-log intelligence: index the finished run's report
+                    // so ministr_survey can answer "what failed last time?".
+                    // Best-effort — never fails the run response.
+                    if let Some(ingest) = ingest {
+                        self.ingest_finished_run(ingest).await;
+                    }
+                    structured_result(&response)
+                }
                 Err(message) => Ok(soft_error("exec_failed", message)),
             }
         }

@@ -1062,6 +1062,41 @@ impl IngestionPipeline {
         })
     }
 
+    /// Remove a runtime-ingested document: its vectors (including the D4
+    /// `indexed_vectors` source-of-truth rows), the storage record, and
+    /// the file-hash row (so a later re-ingest of identical content is
+    /// not skipped as unchanged).
+    ///
+    /// The deletion counterpart of
+    /// [`Self::ingest_content_with_embeddings`] — used by retention
+    /// policies over runtime-ingested content (e.g. `exec-runs/` run
+    /// reports).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IngestionError`] if vector or storage deletion fails.
+    pub async fn remove_document_with_embeddings<S, I>(
+        &self,
+        doc_id: &crate::types::ContentId,
+        storage: &S,
+        index: &I,
+    ) -> Result<usize, IngestionError>
+    where
+        S: Storage + ?Sized,
+        I: VectorIndex + ?Sized,
+    {
+        let deleted = super::embedding::delete_document_vectors(doc_id, storage, index).await?;
+        storage
+            .delete_document(doc_id)
+            .await
+            .map_err(IngestionError::from)?;
+        storage
+            .delete_file_hash(&doc_id.0)
+            .await
+            .map_err(IngestionError::from)?;
+        Ok(deleted)
+    }
+
     // ── Entry point 4: directory with embeddings ─────────────────────────
 
     #[allow(clippy::too_many_lines)]

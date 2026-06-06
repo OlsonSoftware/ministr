@@ -436,6 +436,26 @@ impl MinistrServer {
         self.exec.set_db_path(path);
     }
 
+    /// Override how many `exec-runs/` run reports the corpus keeps
+    /// (default 50). Older reports are swept after each ingest.
+    pub fn set_exec_run_retention(&self, cap: usize) {
+        self.exec.set_retention(cap);
+    }
+
+    /// Wire the embedder + index needed for runtime ingestion (run-log
+    /// intelligence) without enabling a web or git fetcher. The fetcher
+    /// builders set the same fields; this is the fetcher-free path.
+    #[must_use]
+    pub fn with_runtime_ingest(
+        mut self,
+        embedder: Arc<dyn Embedder>,
+        index: Arc<dyn VectorIndex>,
+    ) -> Self {
+        self.embedder = Some(embedder);
+        self.index = Some(index);
+        self
+    }
+
     /// Call this once after constructing the server, before the MCP handshake.
     pub fn prune_tools(&mut self, corpus_paths: &[std::path::PathBuf]) {
         // Exec policy piggybacks on the one post-construction hook that

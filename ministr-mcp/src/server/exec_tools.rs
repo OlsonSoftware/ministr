@@ -25,6 +25,10 @@ use crate::run_digest::{RunDigest, digest, next_span};
 const MAX_TIMEOUT_SECS: u64 = 3600;
 /// Default page size for `ministr_run_logs`.
 const DEFAULT_LOG_PAGE_BYTES: usize = 16 * 1024;
+/// How many `exec-runs/` run reports the corpus keeps by default.
+const DEFAULT_RUN_RETENTION: usize = 50;
+/// Source-path prefix identifying ingested run reports in the corpus.
+pub(crate) const RUN_REPORT_PREFIX: &str = "exec-runs/";
 
 /// Shared state behind the `ministr_run` tool family.
 #[derive(Clone, Default)]
@@ -38,6 +42,8 @@ pub(crate) struct ExecState {
     /// Explicit run-store path; defaults to `~/.ministr/exec_runs.db`.
     /// Must be set before the first run (the engine is created once).
     db_path: Arc<std::sync::Mutex<Option<PathBuf>>>,
+    /// Run-report retention override; `None` = [`DEFAULT_RUN_RETENTION`].
+    retention: Arc<std::sync::Mutex<Option<usize>>>,
 }
 
 /// [`RootsProvider`] over the shared, late-bound roots list.
@@ -100,11 +106,15 @@ impl ExecState {
     }
 
     /// Execute (or start) a run; the `ministr_run` body.
+    ///
+    /// Finished foreground runs also yield a [`RunIngest`] report so the
+    /// caller can index the run into the corpus (run-log intelligence);
+    /// background starts yield `None`.
     pub(crate) async fn run(
         &self,
         params: RunParams,
         session_id: String,
-    ) -> Result<RunResponse, String> {
+    ) -> Result<(RunResponse, Option<RunIngest>), String> {
         let engine = self.engine()?;
         let cwd = match params.cwd {
             Some(c) if !c.is_empty() => PathBuf::from(c),
@@ -124,26 +134,51 @@ impl ExecState {
         };
         if params.background.unwrap_or(false) {
             let run_id = engine.start(request).map_err(|e| e.to_string())?;
-            return Ok(RunResponse {
-                run_id,
-                status: "running".to_string(),
-                exit_code: None,
-                duration_ms: None,
-                bytes_total: 0,
-                capture_truncated: false,
-                digest: None,
-            });
+            return Ok((
+                RunResponse {
+                    run_id,
+                    status: "running".to_string(),
+                    exit_code: None,
+                    duration_ms: None,
+                    bytes_total: 0,
+                    capture_truncated: false,
+                    digest: None,
+                },
+                None,
+            ));
         }
         let record = engine.run(request).await.map_err(|e| e.to_string())?;
-        Ok(RunResponse {
-            digest: Some(digest(&record.log)),
-            duration_ms: duration_ms(&record),
-            run_id: record.run_id,
-            status: record.status.as_str().to_string(),
-            exit_code: record.exit_code,
-            bytes_total: record.bytes_total,
-            capture_truncated: record.truncated,
-        })
+        let report = digest(&record.log);
+        let ingest = run_report(&record, &report);
+        Ok((
+            RunResponse {
+                digest: Some(report),
+                duration_ms: duration_ms(&record),
+                run_id: record.run_id,
+                status: record.status.as_str().to_string(),
+                exit_code: record.exit_code,
+                bytes_total: record.bytes_total,
+                capture_truncated: record.truncated,
+            },
+            Some(ingest),
+        ))
+    }
+
+    /// Effective run-report retention cap (how many `exec-runs/` reports
+    /// the corpus keeps).
+    pub(crate) fn retention(&self) -> usize {
+        self.retention
+            .lock()
+            .ok()
+            .and_then(|r| *r)
+            .unwrap_or(DEFAULT_RUN_RETENTION)
+    }
+
+    /// Override the run-report retention cap (hosts/tests).
+    pub(crate) fn set_retention(&self, cap: usize) {
+        if let Ok(mut guard) = self.retention.lock() {
+            *guard = Some(cap);
+        }
     }
 
     /// Page or search a run's captured log; the `ministr_run_logs` body.
@@ -232,6 +267,131 @@ fn duration_ms(record: &RunRecord) -> Option<i64> {
     record
         .finished_at_ms
         .map(|end| end.saturating_sub(record.started_at_ms))
+}
+
+/// A finished run rendered for corpus ingestion (run-log intelligence).
+pub(crate) struct RunIngest {
+    /// Synthetic source path (`exec-runs/<run_id>.md`) — doubles as the
+    /// document id and the retention-sweep ordering key (run ids embed
+    /// their spawn timestamp).
+    pub source_path: String,
+    /// The run report as markdown: identity heading, deduped diagnostics
+    /// (the digest's `N× line` collapse), and the head/tail window.
+    pub markdown: String,
+}
+
+/// Render a finished run as a small markdown report.
+///
+/// The DIGEST is what gets indexed, not the raw log: diagnostics are
+/// already deduped with occurrence counts and the window is bounded, so
+/// a pathological run can never bloat the corpus. The heading carries
+/// command + status so "what failed last time we ran X?" surveys rank it.
+fn run_report(record: &RunRecord, digest: &RunDigest) -> RunIngest {
+    use std::fmt::Write as _;
+    let mut md = String::new();
+    let status = record.status.as_str();
+    let exit = record
+        .exit_code
+        .map_or_else(|| "none".to_string(), |c| c.to_string());
+    let _ = writeln!(md, "# Run {status} (exit {exit}): {}", record.command);
+    let _ = writeln!(md);
+    let _ = writeln!(
+        md,
+        "Recorded shell run `{}` in `{}` (session {}). {} lines, {} bytes total.",
+        record.run_id,
+        record.cwd,
+        record.session_id.as_deref().unwrap_or("unknown"),
+        digest.lines_total,
+        record.bytes_total,
+    );
+    if !digest.diagnostics.is_empty() {
+        let _ = writeln!(md);
+        let _ = writeln!(md, "## Diagnostics");
+        let _ = writeln!(md);
+        for line in &digest.diagnostics {
+            let _ = writeln!(md, "- {line}");
+        }
+    }
+    if !digest.window.is_empty() {
+        let _ = writeln!(md);
+        let _ = writeln!(md, "## Output");
+        let _ = writeln!(md);
+        let _ = writeln!(md, "```text");
+        let _ = writeln!(md, "{}", digest.window);
+        let _ = writeln!(md, "```");
+    }
+    RunIngest {
+        source_path: format!("{RUN_REPORT_PREFIX}{}.md", record.run_id),
+        markdown: md,
+    }
+}
+
+impl crate::server::MinistrServer {
+    /// Index a finished run's report into the corpus, then sweep old run
+    /// reports past the retention cap.
+    ///
+    /// Best-effort by design: this runs on the `ministr_run` response
+    /// path and must NEVER fail the run result — a missing storage /
+    /// embedder / index (daemon-forward mode, or no `with_runtime_ingest`
+    /// wiring) just skips, and ingest/sweep errors are logged.
+    pub(crate) async fn ingest_finished_run(&self, ingest: RunIngest) {
+        use ministr_core::storage::Storage as _;
+        let (Some(storage), Some(embedder), Some(index)) =
+            (&self.storage, &self.embedder, &self.index)
+        else {
+            tracing::debug!(
+                source = %ingest.source_path,
+                "run-report ingest skipped: no local storage/embedder/index"
+            );
+            return;
+        };
+
+        if let Err(e) = self
+            .ingestion_pipeline
+            .ingest_content_with_embeddings(
+                &ingest.source_path,
+                &ingest.markdown,
+                ministr_core::parser::ParserKind::Markdown,
+                storage.as_ref(),
+                embedder.as_ref(),
+                index.as_ref(),
+            )
+            .await
+        {
+            tracing::warn!(source = %ingest.source_path, error = %e, "run-report ingest failed");
+            return;
+        }
+
+        // Retention sweep: keep only the newest N run reports. Run ids
+        // embed their spawn timestamp, so lexicographic source_path order
+        // is chronological.
+        let cap = self.exec.retention();
+        let docs = match storage.as_ref().list_documents().await {
+            Ok(docs) => docs,
+            Err(e) => {
+                tracing::warn!(error = %e, "run-report retention sweep: list failed");
+                return;
+            }
+        };
+        let mut run_docs: Vec<_> = docs
+            .into_iter()
+            .filter(|d| d.source_path.starts_with(RUN_REPORT_PREFIX))
+            .collect();
+        if run_docs.len() <= cap {
+            return;
+        }
+        run_docs.sort_by(|a, b| a.source_path.cmp(&b.source_path));
+        let excess = run_docs.len() - cap;
+        for doc in run_docs.into_iter().take(excess) {
+            if let Err(e) = self
+                .ingestion_pipeline
+                .remove_document_with_embeddings(&doc.id, storage.as_ref(), index.as_ref())
+                .await
+            {
+                tracing::warn!(doc_id = %doc.id, error = %e, "run-report retention sweep: remove failed");
+            }
+        }
+    }
 }
 
 /// Parameters for `ministr_run`.
