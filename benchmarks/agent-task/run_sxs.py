@@ -38,6 +38,12 @@ import os
 import shutil
 import subprocess
 import sys
+
+# Line-buffer stdout so progress streams when piped/nohup'd (not block-buffered).
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
 import tempfile
 import time
 
