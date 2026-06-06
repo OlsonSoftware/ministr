@@ -124,6 +124,13 @@ enum Command {
         /// exactly what will be written, then confirm before scaffolding.
         #[arg(long, short)]
         interactive: bool,
+
+        /// Opt in to exec-only steering: the scaffolded `PreToolUse` hook
+        /// denies the raw Bash tool and redirects the agent to the
+        /// recorded `ministr_run` MCP tool family. Reversible — delete
+        /// `.claude/hooks/ministr-exec-only` to turn it off.
+        #[arg(long)]
+        exec_only: bool,
     },
 
     /// Export the corpus index to a portable `.ministr-index` bundle.
@@ -294,6 +301,24 @@ async fn main() -> Result<()> {
     dispatch(command, rc).await
 }
 
+/// `ministr init` dispatch: scaffold, then apply the exec-only opt-in.
+fn dispatch_init(
+    cwd: &std::path::Path,
+    force: bool,
+    interactive: bool,
+    exec_only: bool,
+) -> Result<()> {
+    if interactive {
+        commands::cmd_init_interactive(cwd, force)?;
+    } else {
+        commands::cmd_init(cwd, force)?;
+    }
+    if exec_only {
+        commands::cmd_enable_exec_only(cwd)?;
+    }
+    Ok(())
+}
+
 async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
     match command {
         Command::Serve {
@@ -371,13 +396,11 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
         Command::Search { query, top_k } => {
             commands::cmd_daemon_search(&rc.corpus_paths, &query, top_k).await
         }
-        Command::Init { force, interactive } => {
-            if interactive {
-                commands::cmd_init_interactive(&rc.cwd, force)
-            } else {
-                commands::cmd_init(&rc.cwd, force)
-            }
-        }
+        Command::Init {
+            force,
+            interactive,
+            exec_only,
+        } => dispatch_init(&rc.cwd, force, interactive, exec_only),
         Command::Export { output } => {
             commands::cmd_export(
                 &rc.corpus_paths,

@@ -1405,6 +1405,26 @@ pub fn cmd_init(root: &Path, force: bool) -> Result<()> {
     Ok(())
 }
 
+/// `ministr init --exec-only` — opt in to exec-only steering.
+///
+/// Writes the marker file the scaffolded `steer-to-ministr.sh` hook
+/// checks; while it exists, raw Bash is denied and the agent is steered
+/// to the recorded `ministr_run` tool family. The marker's contents
+/// document the honest limits (steering, not a security boundary).
+pub fn cmd_enable_exec_only(root: &Path) -> Result<()> {
+    let marker = ministr_core::scaffold::enable_exec_only(root)
+        .into_diagnostic()
+        .wrap_err("failed to write the exec-only marker")?;
+    eprintln!();
+    eprintln!("Exec-only steering is ON:");
+    eprintln!("  ✓ {}", marker.display());
+    eprintln!("  Raw Bash is denied for Claude Code sessions in this project;");
+    eprintln!("  shell work routes through ministr_run (recorded + digested).");
+    eprintln!("  Note: steering, not a security boundary — see the marker file.");
+    eprintln!("  Turn off by deleting the marker file.");
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // ministr init --interactive
 // ---------------------------------------------------------------------------

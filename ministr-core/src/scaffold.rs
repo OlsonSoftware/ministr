@@ -269,7 +269,7 @@ fn write_files(dir: &Path, files: &[(&str, &str)], heal: bool) -> ScaffoldResult
 /// anywhere in the launch path from reverting good hooks to its own old
 /// (bad) template — autoheal converges to the newest state, not "this
 /// binary's state".
-const HOOK_TEMPLATE_VERSION: u64 = 2;
+const HOOK_TEMPLATE_VERSION: u64 = 3;
 
 /// Write `.claude/settings.json` with `PreToolUse` hooks that steer
 /// Grep/Glob/Bash-search to ministr.
@@ -382,6 +382,46 @@ fn write_claude_hooks(project_root: &Path, heal: bool) -> ScaffoldResult {
 /// Relative path of the steering script the hooks delegate to.
 const STEER_SCRIPT_REL: &str = ".claude/hooks/steer-to-ministr.sh";
 
+/// Relative path of the exec-only opt-in marker. When present, the
+/// steering script denies raw Bash and redirects to `ministr_run`.
+pub const EXEC_ONLY_MARKER_REL: &str = ".claude/hooks/ministr-exec-only";
+
+/// Contents written into the exec-only marker file — doubles as the
+/// honest documentation of what the mode does and does not guarantee.
+const EXEC_ONLY_MARKER_CONTENTS: &str = "\
+ministr exec-only mode is ON for this project (written by `ministr init --exec-only`).
+
+While this file exists, the steer-to-ministr.sh PreToolUse hook denies the
+raw Bash tool and redirects the agent to the ministr_run MCP tool family,
+so every shell command is recorded (persistent run records, token-lean
+digests, retrievable logs). Delete this file to turn exec-only off.
+
+HONEST LIMITS — this is steering, not a security boundary:
+- PreToolUse hooks have documented bypass gaps: compound/obfuscated
+  commands can evade matchers, and Task-subagent tool calls have been
+  observed to bypass PreToolUse denies (claude-code GH#26923).
+- Other agents (Cursor, Windsurf, Copilot) get prose guidance only;
+  they have no equivalent deny hook for built-in shell tools.
+The actual security boundary is the daemon exec policy: ministr_run only
+executes with a cwd inside an indexed corpus root, and every run is
+audited in ~/.ministr/exec_runs.db regardless of how it was initiated.
+";
+
+/// Enable exec-only steering for a project: write the marker file the
+/// scaffolded steering script checks. Idempotent.
+///
+/// # Errors
+///
+/// Returns the underlying IO error if the marker cannot be written.
+pub fn enable_exec_only(project_root: &Path) -> std::io::Result<std::path::PathBuf> {
+    let marker = project_root.join(EXEC_ONLY_MARKER_REL);
+    if let Some(parent) = marker.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&marker, EXEC_ONLY_MARKER_CONTENTS)?;
+    Ok(marker)
+}
+
 /// Build the hooks JSON value for `.claude/settings.json`.
 ///
 /// Design (deliberately *not* a hard wall — see [`STEER_SCRIPT`]):
@@ -407,6 +447,15 @@ fn build_claude_hooks() -> serde_json::Value {
     // normal workflow, not code exploration. The previous `Bash(*|*grep *)`
     // rules blocked `cargo test | grep` and (via an apostrophe in the
     // reason) crashed unrelated commands like `git commit`.
+
+    // Exec-only steering (exec-epic): fires for EVERY Bash call, but the
+    // script is a strict no-op (exit 0, no output) unless the user opted
+    // in via `ministr init --exec-only` (which writes the
+    // `.claude/hooks/ministr-exec-only` marker). With the marker present
+    // it denies raw Bash and redirects to `mcp__ministr__ministr_run`.
+    // Crucially the no-marker path emits NO decision — a blanket "allow"
+    // here would silently bypass the user's own permission prompts.
+    bash_hooks.push(steer_hook("", "exec"));
 
     serde_json::json!({
         "hooks": {
@@ -502,13 +551,27 @@ const STEER_SCRIPT: &str = r#"#!/usr/bin/env bash
 # decision. Here the reason is a shell variable, ASCII-only, never
 # interpolated into a quoted literal, so that class of bug is impossible.
 #
-# Usage: steer-to-ministr.sh <category>   where category in grep|find|tool
+# Usage: steer-to-ministr.sh <category>   where category in grep|find|tool|exec
 
 set -eu
 
 category="${1:-grep}"
 
 case "$category" in
+  exec)
+    # Exec-only mode (opt-in via `ministr init --exec-only`). When the
+    # marker file exists, raw Bash is denied and the agent is steered to
+    # the recorded ministr_run tool family. Without the marker this
+    # branch MUST stay silent (exit, no output): printing an allow here
+    # would override the user's own permission prompts for every shell
+    # command. Delete the marker file to turn exec-only off.
+    marker="$(dirname "$0")/ministr-exec-only"
+    if [ ! -f "$marker" ]; then
+      exit 0
+    fi
+    decision="deny"
+    reason="This repo routes shell execution through ministr (exec-only mode). Use mcp__ministr__ministr_run(command) instead - it returns the exit code plus a token-lean digest with every error line, and the full log stays retrievable via mcp__ministr__ministr_run_logs(run_id). Background runs: background true, then mcp__ministr__ministr_run_status / mcp__ministr__ministr_run_kill. To disable exec-only, delete .claude/hooks/ministr-exec-only."
+    ;;
   tool)
     decision="deny"
     reason="This repo dogfoods ministr for code exploration. Use mcp__ministr__ministr_survey(query) for semantic/content search, mcp__ministr__ministr_symbols(query) for symbols, or mcp__ministr__ministr_toc for project structure. ministr is a code intelligence server: semantic search, symbol navigation, references, and cross-language bridges. See .claude/rules/ministr-scope.md."
@@ -631,6 +694,15 @@ restrict normal shell work.
 3. `ministr_definition` / `ministr_read` → get full source
 4. `ministr_references` → check impact before modifying
 5. Only then: Read → Edit
+
+## Shell execution
+
+Prefer `ministr_run(command)` over a raw shell when available: it
+returns the exit code plus a token-lean digest (every error line kept)
+and the full log stays retrievable via `ministr_run_logs(run_id)`.
+This is prose guidance only — this editor has no hook that can deny
+its built-in shell, so the recorded-shell guarantee holds only for
+commands actually routed through `ministr_run`.
 "#;
 
 /// Continue.dev rules (`.continue/rules/ministr.md`).
@@ -688,6 +760,24 @@ Explicitly **not** steered at all (run normally):
 4. **`ministr_references` before modifying shared code** — find callers.
 5. **`ministr_bridge` before modifying any cross-language boundary**.
 6. **`ministr_toc`** — structural overview / project layout.
+
+## Shell execution (`ministr_run`) — optional exec-only mode
+
+ministr also ships a recorded shell: `ministr_run(command)` executes via
+the ministr daemon and returns the exit code plus a token-lean digest
+(every error line preserved); the full log stays retrievable with
+`ministr_run_logs(run_id)` (delta paging — never re-sends what you have
+seen) and `query:` substring search. Long commands: `background: true`,
+then `ministr_run_status` / `ministr_run_kill`.
+
+When **exec-only mode** is on (`ministr init --exec-only`, marker file
+`.claude/hooks/ministr-exec-only`), the PreToolUse hook denies the raw
+Bash tool and steers here. Honest limits: this is *steering, not a
+security boundary* — compound-command matcher gaps and the Task-subagent
+bypass (claude-code GH#26923) are documented; the enforced boundary is
+the daemon policy (runs only execute with a cwd inside an indexed corpus
+root, and every run is audited in `~/.ministr/exec_runs.db`). Delete the
+marker file to turn the mode off.
 
 See `ministr-playbook.md` for detailed decision trees and chaining patterns.
 "#;
@@ -1133,6 +1223,13 @@ normal shell work.
 ## Workflow
 
 `ministr_survey` → `ministr_symbols` → `ministr_definition` / `ministr_read` → `ministr_references` / `ministr_bridge`
+
+## Shell execution
+
+Prefer `ministr_run(command)` over the built-in shell when available:
+exit code + token-lean digest (every error line kept), full log via
+`ministr_run_logs(run_id)`. Prose guidance only — Cursor has no hook
+that can deny its built-in shell.
 "#;
 
 // ---------------------------------------------------------------------------
@@ -1242,6 +1339,108 @@ ministr is automatically configured via `.mcp.json` (Claude Code), `.vscode/mcp.
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// The exec category is wired end-to-end: a catch-all Bash hook
+    /// exists (no `if` pattern, category `exec`), the script has the
+    /// branch, and the reason text obeys the ASCII crash-proof invariant.
+    #[test]
+    fn exec_steering_is_wired_and_ascii_safe() {
+        let hooks = build_claude_hooks();
+        let bash_hooks = hooks["hooks"]["PreToolUse"][1]["hooks"]
+            .as_array()
+            .expect("bash hooks array");
+        let catch_all = bash_hooks
+            .iter()
+            .find(|h| h.get("if").is_none())
+            .expect("a catch-all Bash hook must exist for exec steering");
+        assert!(
+            catch_all["command"]
+                .as_str()
+                .expect("command")
+                .ends_with(" exec"),
+            "the catch-all hook must carry the exec category"
+        );
+
+        assert!(STEER_SCRIPT.contains("exec)"), "script has the exec branch");
+        assert!(STEER_SCRIPT.contains("ministr-exec-only"));
+        // Crash-proof invariant: no reason may contain an apostrophe,
+        // backslash, or embedded double-quote — the characters that can
+        // close the surrounding shell quoting and crash the hook. (The
+        // legacy grep/find reasons contain an em-dash, so the invariant
+        // is quote-safety, not strict ASCII; the exec reason is held to
+        // the stricter full-ASCII bar.)
+        for line in STEER_SCRIPT.lines() {
+            if let Some(reason) = line.trim().strip_prefix("reason=\"") {
+                let body = reason.trim_end_matches('"');
+                assert!(
+                    !body.contains('\'') && !body.contains('\\') && !body.contains('"'),
+                    "reason must not contain quote/backslash: {body}"
+                );
+                if body.contains("ministr_run") {
+                    assert!(body.is_ascii(), "exec reason must be pure ASCII: {body}");
+                }
+            }
+        }
+    }
+
+    /// Behavioral check of the actual generated script (unix only):
+    /// without the marker the exec branch is a strict no-op (exit 0, NO
+    /// output — printing an allow would bypass the user's permission
+    /// prompts); with the marker it denies and steers to ministr_run.
+    #[cfg(unix)]
+    #[test]
+    fn exec_branch_is_silent_without_marker_and_denies_with_it() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        scaffold_agent_config(root);
+        let script = root.join(STEER_SCRIPT_REL);
+
+        let run = |arg: &str| {
+            std::process::Command::new("bash")
+                .arg(&script)
+                .arg(arg)
+                .output()
+                .expect("run steer script")
+        };
+
+        let silent = run("exec");
+        assert!(silent.status.success(), "no-marker exec must exit 0");
+        assert!(
+            silent.stdout.is_empty(),
+            "no-marker exec must print NOTHING (no blanket allow): {}",
+            String::from_utf8_lossy(&silent.stdout)
+        );
+
+        enable_exec_only(root).expect("enable exec-only");
+        assert!(root.join(EXEC_ONLY_MARKER_REL).exists());
+
+        let deny = run("exec");
+        assert!(deny.status.success(), "marker exec must still exit 0");
+        let out = String::from_utf8_lossy(&deny.stdout);
+        assert!(out.contains("\"permissionDecision\":\"deny\""), "{out}");
+        assert!(out.contains("ministr_run"), "{out}");
+        // The emitted JSON must parse — the crash-proof contract.
+        let parsed: serde_json::Value =
+            serde_json::from_str(&out).expect("hook output must be valid JSON");
+        assert_eq!(parsed["hookSpecificOutput"]["permissionDecision"], "deny");
+
+        // Other categories are unaffected by the marker.
+        let grep = run("grep");
+        let grep_out = String::from_utf8_lossy(&grep.stdout);
+        assert!(grep_out.contains("\"permissionDecision\":\"allow\""));
+    }
+
+    /// `enable_exec_only` is idempotent and self-documenting.
+    #[test]
+    fn enable_exec_only_is_idempotent() {
+        let tmp = TempDir::new().unwrap();
+        let first = enable_exec_only(tmp.path()).expect("first");
+        let second = enable_exec_only(tmp.path()).expect("second");
+        assert_eq!(first, second);
+        let contents = std::fs::read_to_string(&first).expect("marker contents");
+        assert!(contents.contains("steering, not a security boundary"));
+        assert!(contents.contains("GH#26923"));
+    }
 
     #[test]
     fn scaffold_creates_all_files() {
