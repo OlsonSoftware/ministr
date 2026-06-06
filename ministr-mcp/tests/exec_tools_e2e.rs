@@ -14,7 +14,7 @@ use ministr_core::error::IndexError;
 use ministr_core::index::HnswIndex;
 use ministr_core::service::QueryService;
 use ministr_core::session::UsageConfig;
-use ministr_core::storage::SqliteStorage;
+use ministr_core::storage::{SqliteStorage, Storage as _};
 use ministr_mcp::server::MinistrServer;
 use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, CallToolResult, Content};
@@ -323,7 +323,6 @@ async fn failing_run_is_retrievable_via_survey_by_its_error_text() {
     assert_eq!(run["exit_code"], 3);
 
     // The run report landed in the corpus under exec-runs/.
-    use ministr_core::storage::Storage as _;
     let docs = storage.list_documents().await.expect("list");
     assert!(
         docs.iter()
@@ -370,7 +369,6 @@ async fn repeated_diagnostics_dedup_with_occurrence_counts_in_the_corpus() {
     );
 
     // …and the INGESTED document carries the same collapsed form.
-    use ministr_core::storage::Storage as _;
     let docs = storage.list_documents().await.expect("list");
     let doc = docs
         .iter()
@@ -404,7 +402,6 @@ async fn retention_sweep_keeps_only_the_newest_reports() {
         assert_eq!(run["exit_code"], 0, "soak run {i} must succeed");
     }
 
-    use ministr_core::storage::Storage as _;
     let docs = storage.list_documents().await.expect("list");
     let mut run_docs: Vec<_> = docs
         .iter()
