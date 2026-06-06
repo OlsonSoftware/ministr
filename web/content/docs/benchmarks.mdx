@@ -69,31 +69,32 @@ headless coding agent on the *same* task twice, changing only the discovery tool
 open-source repos (with the repo's own failing→passing tests as a deterministic
 validator), and across models.
 
-Measured so far (`2026-06-05`, headless Claude Code). **These are early,
-small-sample numbers — read the trial counts and treat them as directional, not
-a headline.** Correctness was a tie everywhere (both arms solved every task), so
-the comparison is **cost** at equal correctness:
+**We publish this benchmark's negative results too.** Auditing tool usage
+(recording every tool call each agent actually made) forced a methodology
+revision, and the honest current picture is mixed:
 
-| task (repo size) | the task | model | trials | both solved? | ministr | grep | head-to-head |
-|---|---|---|:--:|:--:|--:|--:|--|
-| sympy (~1,590 files) | symptom only, no test named | **sonnet** | 2 | ✅ | **$0.198** | $0.334 | **ministr 41% cheaper** |
-| sympy (~1,590 files) | symptom only, no test named | haiku | 2 | ✅ | $0.260 | $0.253 | ~even |
-| click (~70 files) | names the failing test | sonnet | 1 | ✅ | $0.083 | $0.082 | ~even |
-| minicsv (9 files, synthetic) | names the failing test | sonnet | 1 | ✅ | $0.090 | $0.082 | ~even |
+- **v1 runs (unaudited) are retracted as evidence.** Early runs showed ministr
+  "41% cheaper" on a large repo — but input-level auditing later revealed the
+  "ministr" arm sometimes never called a ministr tool (it shelled out to grep
+  via Bash, or used Python introspection). Those numbers measured *an agent
+  with ministr available*, not *an agent using ministr*. We no longer cite
+  them.
+- **v2 (deployment-faithful, audited, hardened):** the ministr arm now gets the
+  steering a real install ships (CLAUDE.md + hooks blocking shell grep), the
+  validator rejects test-file edits, and the task is a Rust repo with a
+  behavioral symptom (no runtime-introspection shortcut). Result on
+  pulldown-cmark (~49 files), sonnet, **n=5 per arm**: **grep solved 5/5 at
+  $0.53 total; steered ministr solved 4/5 at $1.64 total** — grep was decisively
+  better end-to-end on this task.
 
-The pattern, stated honestly:
-
-- **Both levers have to be present.** ministr's cost edge shows up only when the
-  codebase is **large** *and* the task forces **discovery** (a symptom with no
-  pointer to the failing test/function). On the huge sympy repo with a
-  symptom-only task, a capable model with ministr found the fix using ~half the
-  search-related tokens and fewer turns. On small repos, or when the task names
-  the test, `grep` ties — there's nothing to discover.
-- **A weaker model benefits less** (haiku ~even) — it spends turns scanning
-  regardless, so a better search tool helps it less.
-- **Sample sizes are tiny** (1–2 trials/cell). The sympy/sonnet effect is large
-  and directionally consistent, but this is an early signal, not a published
-  guarantee. More trials and more repos are the obvious next step.
+What we take from that, honestly: the per-lookup token savings above are real
+and measured, but on small/medium repos with a capable model, **grep plus a
+strong model is a hard end-to-end baseline to beat** — per-turn MCP overhead
+and extra discovery turns can outweigh per-lookup savings. Closing that gap
+(cheaper tool loading, better symptom→mechanism retrieval, fewer turns to
+first-relevant-result) is active work, and this harness is how we'll know when
+it's closed. Large-repo regimes (1,500+ files) under v2 methodology haven't
+been re-measured yet.
 
 Run it yourself (it calls a real model, so it is opt-in):
 
