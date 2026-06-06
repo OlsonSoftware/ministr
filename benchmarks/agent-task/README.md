@@ -30,6 +30,32 @@ Arm A pre-indexes the fixture with `ministr index --corpus .` (run from the
 fixture dir — a cwd `.ministr.toml` would otherwise override `--corpus`); the
 throwaway corpus is keyed by the tmp path and never touches your real corpora.
 
+### Methodology v2 — deployment-faithful arms (2026-grounded)
+
+Recording tool *inputs* (`record_race.py`) exposed three leaks in the naive
+setup, each fixed:
+
+1. **Arm A's agent was never told ministr exists.** Bare, unadvertised MCP
+   tools (deferred in headless runs) meant the agent often grepped via Bash or
+   skipped discovery entirely — measuring "agent + unadvertised plugin," not
+   the product as installed. Arm A now gets a **ministr-init-style `CLAUDE.md`**
+   written into the repo (the steering a real ministr setup ships), and
+   `Bash(grep*/rg*/find*)` is **disallowed**, mirroring ministr's hooks. Arm B
+   is the stock agent.
+2. **Runtime introspection bypassed search.** On Python repos a public-API
+   repro is a locator (`inspect.getsourcefile`) — neither arm needs search.
+   Real-repo tasks should prefer **compiled languages** (Rust here; Multi-SWE-
+   bench treats Rust/C/C++ as standard) and **behavioral symptoms whose
+   vocabulary differs from the code's identifiers** (CAIN 2026's benchmark-
+   mutation approach to realistic, contamination-free tasks).
+3. **Validators can be gamed** (Berkeley RDI 2026: pytest hooks, parser
+   overwrites). A real-repo pass now also requires `git diff` to touch nothing
+   under `tests/`.
+
+Caveats that stay true regardless (state them when citing results): single
+runs are noise — report n≥5 aggregates with spread; and a test-suite pass is
+not a merge-quality judgment (METR 2026-03).
+
 ## The tasks (difficulty ladder)
 
 Each task lives in `tasks/<id>/` and is fully self-contained:
