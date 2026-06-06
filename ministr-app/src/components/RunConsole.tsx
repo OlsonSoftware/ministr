@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Terminal } from "@/components/ui/icons";
 import { StatusDot } from "./ui/status-dot";
+import { RunTimeline } from "./surfaces/RunTimeline";
 import type { Tone } from "../lib/status";
 import { cn } from "../lib/utils";
 
@@ -172,6 +173,12 @@ export function RunConsole({ now }: { now?: number }) {
           ? "No runs active"
           : `${activeCount} run${activeCount === 1 ? "" : "s"} active`}
       </p>
+
+      {/* Temporal shape of the session — duration bars on a time axis.
+          Needs at least two runs to be a timeline rather than a bar. */}
+      {list.length >= 2 && (
+        <RunTimeline runs={list} now={clock} className="shrink-0" />
+      )}
 
       {/* Run board */}
       <div className="relative flex-1 overflow-y-auto rounded-lg border border-border-soft bg-surface-sunken">

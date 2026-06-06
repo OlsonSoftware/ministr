@@ -137,13 +137,21 @@ export const LiveRun: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(await canvas.findByText("1 live")).toBeInTheDocument();
-    await expect(canvas.getByText("just validate")).toBeInTheDocument();
+    // "just validate" appears twice by design (timeline gutter + board
+    // row) — target the board row via its button role.
+    const row = await canvas.findByRole("button", {
+      name: /just validate/,
+    });
     // The live run expands into the honest "appears when finished" note,
     // not a fake tail.
-    await userEvent.click(canvas.getByText("just validate"));
+    await userEvent.click(row);
     await expect(
       await canvas.findByText(/appears\s+here when the command finishes/),
     ).toBeInTheDocument();
+    // The timeline rides along once the board has 2+ runs.
+    await expect(
+      canvasElement.querySelector("svg[role='img']"),
+    ).toBeTruthy();
   },
 };
 
