@@ -491,6 +491,40 @@ pub async fn read_logs(lines: Option<usize>) -> Result<Vec<String>, CommandError
     Ok(all_lines[start..].to_vec())
 }
 
+/// List recorded exec runs (the `ministr_run` audit trail) for the
+/// Run Console surface, newest first.
+///
+/// Reads `~/.ministr/exec_runs.db` — the store the MCP server's run
+/// engine writes — directly via [`ministr_daemon::exec::RunEngine`]
+/// (`SQLite` handles the cross-process read). Read-only from this
+/// process: the engine instance here owns no running children, so it
+/// can list and fetch but never spawn or cancel.
+#[tauri::command]
+pub async fn list_exec_runs(
+    limit: Option<usize>,
+    session_id: Option<String>,
+) -> Result<Vec<ministr_daemon::exec::RunRecord>, CommandError> {
+    let runs = tauri::async_runtime::spawn_blocking(move || {
+        let engine = ministr_daemon::exec::RunEngine::new(
+            ministr_api::daemon_data_dir().join("exec_runs.db"),
+            std::sync::Arc::new(ministr_daemon::exec::StaticRoots(Vec::new())),
+            ministr_daemon::exec::RunEngineConfig::default(),
+        )
+        .map_err(|e| e.to_string())?;
+        engine
+            .list(&ministr_daemon::exec::RunsFilter {
+                session_id,
+                limit: Some(limit.unwrap_or(50)),
+                ..Default::default()
+            })
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| CommandError::from(e.to_string()))?
+    .map_err(CommandError::from)?;
+    Ok(runs)
+}
+
 /// Check if first-run onboarding should be shown.
 #[tauri::command]
 pub async fn should_show_onboarding() -> Result<bool, CommandError> {

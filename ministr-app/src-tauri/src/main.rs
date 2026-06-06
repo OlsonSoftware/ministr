@@ -115,6 +115,7 @@ fn main() {
             commands::repair_agent_config,
             commands::set_autostart,
             commands::read_logs,
+            commands::list_exec_runs,
             commands::should_show_onboarding,
             commands::dismiss_onboarding,
             commands::reset_onboarding,
