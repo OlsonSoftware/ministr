@@ -25,8 +25,8 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use parking_lot::Mutex;
@@ -299,9 +299,7 @@ impl RunEngine {
             // final DB update, so absent-from-map ⇒ the record is final.
             let active = self.running.lock().contains_key(&run_id);
             if !active {
-                return self
-                    .get(&run_id)?
-                    .ok_or_else(|| RunError::NotFound(run_id));
+                return self.get(&run_id)?.ok_or_else(|| RunError::NotFound(run_id));
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
@@ -479,9 +477,7 @@ fn now_ms() -> i64 {
 /// Short fingerprint of the current process environment (the environment
 /// child runs inherit): SHA-256 over sorted `k=v` pairs, first 16 hex.
 fn env_fingerprint() -> String {
-    let mut pairs: Vec<String> = std::env::vars()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect();
+    let mut pairs: Vec<String> = std::env::vars().map(|(k, v)| format!("{k}={v}")).collect();
     pairs.sort();
     let mut hasher = Sha256::new();
     for p in &pairs {
@@ -645,10 +641,7 @@ mod store {
         Ok(())
     }
 
-    pub(super) fn finish(
-        conn: &rusqlite::Connection,
-        f: &Finish,
-    ) -> Result<(), rusqlite::Error> {
+    pub(super) fn finish(conn: &rusqlite::Connection, f: &Finish) -> Result<(), rusqlite::Error> {
         conn.execute(
             "UPDATE exec_runs SET
                 finished_at_ms = ?2, exit_code = ?3, status = ?4,
@@ -721,8 +714,7 @@ mod store {
         let _ = write!(sql, " LIMIT ?{}", params.len());
 
         let mut stmt = conn.prepare(&sql)?;
-        let refs: Vec<&dyn rusqlite::types::ToSql> =
-            params.iter().map(AsRef::as_ref).collect();
+        let refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(AsRef::as_ref).collect();
         let rows = stmt.query_map(refs.as_slice(), row_to_record)?;
         rows.collect()
     }

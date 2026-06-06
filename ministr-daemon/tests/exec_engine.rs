@@ -84,10 +84,7 @@ async fn cancel_kills_the_whole_process_group() {
     let pidfile = tmp.path().join("grandchild.pid");
 
     // The command forks a grandchild and records its pid, then waits.
-    let cmd = format!(
-        "sleep 30 & echo $! > {} && wait",
-        pidfile.display()
-    );
+    let cmd = format!("sleep 30 & echo $! > {} && wait", pidfile.display());
     let run_id = engine.start(request(tmp.path(), &cmd)).expect("start");
 
     // Wait for the grandchild pid to land on disk.
@@ -154,7 +151,11 @@ async fn output_guard_caps_volume_without_losing_head_or_exit_code() {
         .expect("run");
 
     assert_eq!(record.status, RunStatus::Exited);
-    assert_eq!(record.exit_code, Some(0), "exit code must survive the guard");
+    assert_eq!(
+        record.exit_code,
+        Some(0),
+        "exit code must survive the guard"
+    );
     assert!(record.truncated, "2 MB through 8 KB caps must truncate");
     assert!(
         record.bytes_total >= 2_000_000,

@@ -4,6 +4,7 @@ import { TokenEconomics } from '../../components/landing/token-economics';
 import { CrossLanguageBridge } from '../../components/landing/cross-language-bridge';
 import { FourThingsGrid } from '../../components/landing/four-things-grid';
 import { PipelineFigure } from '../../components/landing/pipeline-figure';
+import { AgentRace } from '../../components/landing/agent-race';
 
 export default function HomePage() {
   return (
@@ -50,13 +51,22 @@ export default function HomePage() {
       <section className="v2-section">
         <h2 className="v2-h2" style={{ maxWidth: "20ch" }}>Why ministr.</h2>
         <p className="v2-why-stat">
-          Up to <em className="v2-num">90%</em> fewer tokens per task, with answers
-          that are <em className="v2-num">structurally correct</em> instead of
+          <em className="v2-num">66%</em> fewer tokens per lookup — measured, not
+          modelled — with answers that are{' '}
+          <em className="v2-num">structurally correct</em> instead of
           grep-approximated.
         </p>
 
         {/* The headline number, proven with the real benchmark. */}
         <TokenEconomics />
+      </section>
+
+      <hr className="v2-rule" />
+
+      {/* ── The race: a real run, replayed ───────────────── */}
+      <section className="v2-section">
+        <h2 className="v2-h2" style={{ maxWidth: "22ch" }}>Same agent. Same bug. One has ministr.</h2>
+        <AgentRace />
       </section>
 
       <hr className="v2-rule" />

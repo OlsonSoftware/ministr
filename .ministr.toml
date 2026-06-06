@@ -14,7 +14,3 @@ ignore = [
     "*.snap",
     "*.pdf",
 ]
-
-[[linked]]
-path = "/Users/alrik/Code/semble"
-label = "semble"
