@@ -62,6 +62,9 @@ futures-core = "0.3"
 # Percent-decoding for activity-event path summaries
 percent-encoding = "2"
 
+# Non-poisoning mutex for the exec engine's capture buffer + run map
+parking_lot = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

@@ -4801,6 +4801,7 @@ dependencies = [
  "http-body-util",
  "ministr-api",
  "ministr-core",
+ "parking_lot",
  "percent-encoding",
  "reqwest 0.13.2",
  "rusqlite",
