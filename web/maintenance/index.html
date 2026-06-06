@@ -44,6 +44,8 @@
       border-bottom: 1px solid var(--rule);
     }
     .eyebrow b { color: var(--amber); font-weight: 600; }
+    .brand { display: flex; align-items: center; gap: 18px; }
+    .logo { width: 44px; height: 44px; flex: none; display: block; }
     .wordmark {
       font-size: 40px;
       font-weight: 600;
@@ -81,10 +83,20 @@
 <body>
   <main class="panel" role="main" aria-label="ministr — under construction">
     <p class="eyebrow"><b>●</b>&nbsp; under construction</p>
-    <h1 class="wordmark">ministr<span class="dot">.</span><span class="cursor">_</span></h1>
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 926 926" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <linearGradient id="ministrLogoA" x1="1098.5" y1="-174" x2="-173.5" y2="1092" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#F8AC18"/>
+            <stop offset="1" stop-color="#FF9900"/>
+          </linearGradient>
+        </defs>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M926 926H0V0H926V926ZM241 241V685H685V241H241Z" fill="url(#ministrLogoA)"/>
+      </svg>
+      <h1 class="wordmark">ministr<span class="dot">.</span><span class="cursor">_</span></h1>
+    </div>
     <p class="line">
-      Real codebase understanding for AI coding agents.
-      We're measuring before we claim — back soon.
+      Something new is on the way. Back soon.
     </p>
     <p class="foot">ministr.ai · coming soon</p>
   </main>
