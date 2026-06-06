@@ -220,8 +220,12 @@ export function RunConsole({ now }: { now?: number }) {
       </div>
 
       {/* Vitals footer */}
-      <footer className="flex items-center justify-between gap-3 border-t border-border bg-surface-overlay px-3 py-1 shrink-0 font-mono text-xs uppercase tracking-[0.08em] text-text-dim">
-        <span>{list.length} RUNS</span>
+      {/* text-mono-mini, not text-xs: the app's xs computes to 10.5px,
+          below the 11px legibility floor the scrutiny probe enforces. */}
+      <footer className="flex items-center justify-between gap-3 border-t border-border bg-surface-overlay px-3 py-1 shrink-0 font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
+        <span>
+          {list.length} {list.length === 1 ? "RUN" : "RUNS"}
+        </span>
         <span className="flex items-center gap-3">
           <span className="inline-flex items-center gap-1.5">
             <StatusDot tone="accent" pulse={isLive ? "live" : "off"} />
@@ -331,10 +335,22 @@ function RunRow({
               ))}
             </pre>
           )}
-          <div className="mt-2 flex flex-wrap items-center gap-3 font-mono text-mono-micro uppercase tracking-[0.06em] text-text-dim">
-            <span>cwd {run.cwd}</span>
-            {run.truncated && <span>output guard trimmed the middle</span>}
-            <span>env {run.env_fingerprint}</span>
+          {/* Values stay verbatim (paths + fingerprints are case-sensitive
+              data) — only the eyebrow labels get the uppercase treatment. */}
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-mono-micro text-text-dim">
+            <span>
+              <span className="uppercase tracking-[0.06em]">cwd</span>{" "}
+              <span className="text-text-muted">{run.cwd}</span>
+            </span>
+            <span>
+              <span className="uppercase tracking-[0.06em]">env</span>{" "}
+              <span className="text-text-muted">{run.env_fingerprint}</span>
+            </span>
+            {run.truncated && (
+              <span className="uppercase tracking-[0.06em]">
+                output guard trimmed the middle
+              </span>
+            )}
           </div>
         </div>
       )}

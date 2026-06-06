@@ -466,7 +466,9 @@ export function LogViewer() {
       </div>
 
       {/* Footer */}
-      <footer className="flex items-center justify-between gap-3 border-t border-border bg-surface-overlay px-3 py-1 shrink-0 font-mono text-xs uppercase tracking-[0.08em] text-text-dim">
+      {/* text-mono-mini, not text-xs: the app's xs computes to 10.5px,
+          below the 11px legibility floor the scrutiny probe enforces. */}
+      <footer className="flex items-center justify-between gap-3 border-t border-border bg-surface-overlay px-3 py-1 shrink-0 font-mono text-mono-mini uppercase tracking-[0.08em] text-text-dim">
         <span>
           TAIL · {filtered.length}/{logs.length} LINES
         </span>
