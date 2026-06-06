@@ -120,8 +120,9 @@ const STOPWORDS: &[&str] = &[
     "the", "and", "for", "with", "that", "over", "into", "from", "when", "whether", "should",
     "right", "now", "must", "before", "next", "instead", "are", "its", "this", "than", "then",
     "once", "how", "long", "run", "per", "they", "keep", "after", "each", "until", "while", "two",
-    "one", "out", "off", "not", "but", "has", "have", "was", "were", "been", "their", "them", "all",
-    "any", "can", "may", "will", "would", "could", "about", "your", "you", "use", "using", "via",
+    "one", "out", "off", "not", "but", "has", "have", "was", "were", "been", "their", "them",
+    "all", "any", "can", "may", "will", "would", "could", "about", "your", "you", "use", "using",
+    "via",
 ];
 
 /// Salient query terms: alphanumeric words of length >= 4 that are not common
@@ -295,8 +296,7 @@ async fn report_real_token_economics() {
         if matched == 0 {
             continue;
         }
-        let ministr_tokens =
-            ministr_survey_cost(&storage, &index, &embedder, q, top_k).await;
+        let ministr_tokens = ministr_survey_cost(&storage, &index, &embedder, q, top_k).await;
 
         total_grep += grep_tokens;
         total_ministr += ministr_tokens;
@@ -314,7 +314,10 @@ async fn report_real_token_economics() {
         eprintln!("{short:<58} {matched:>5} {grep_tokens:>9} {ministr_tokens:>9} {saved:>7.0}%");
     }
 
-    assert!(measured > 0, "no queries matched any file — corpus/query mismatch");
+    assert!(
+        measured > 0,
+        "no queries matched any file — corpus/query mismatch"
+    );
 
     let agg_saved = 100.0 * (1.0 - total_ministr as f64 / total_grep as f64);
     let avg_grep = total_grep / measured;

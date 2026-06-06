@@ -656,10 +656,15 @@ fn extract_signature_generic(node: &tree_sitter::Node, source: &[u8]) -> String 
         }
     }
 
-    // No body — use full text, truncated
+    // No body — use full text, truncated (on a char boundary: byte 500 may
+    // fall inside a multi-byte character, e.g. CJK text in a string literal).
     let full = text.trim_end();
     if full.len() > 500 {
-        full[..500].to_string()
+        let mut end = 500;
+        while !full.is_char_boundary(end) {
+            end -= 1;
+        }
+        full[..end].to_string()
     } else {
         full.to_string()
     }
@@ -822,6 +827,26 @@ fn doc_comment_start_byte_generic(node: &tree_sitter::Node, source: &[u8]) -> Op
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "lang-javascript")]
+    #[test]
+    fn signature_truncation_respects_char_boundaries() {
+        // Regression: a >500-byte body-less node whose byte 500 falls inside
+        // a multi-byte character must not panic (seen on a CJK string fixture
+        // in napi-rs/node-rs's jieba package).
+        let cjk = "在".repeat(300); // 900 bytes of 3-byte chars
+        // 12-byte ASCII prefix → byte 500 lands mid-character.
+        let source = format!("const p = `a{cjk}`\n");
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_javascript::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(source.as_bytes(), None).unwrap();
+        let node = tree.root_node().child(0).unwrap();
+        let sig = extract_signature_generic(&node, source.as_bytes());
+        assert!(!sig.is_empty());
+        assert!(sig.len() <= 500);
+    }
 
     #[test]
     fn classify_function_kinds() {

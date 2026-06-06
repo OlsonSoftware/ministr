@@ -71,6 +71,8 @@ search and discovery:
   handled?" question.
 - `ministr_symbols(query)` — find functions/structs/types by name.
 - `ministr_definition(id)` / `ministr_read(id)` — full source of a hit.
+- `ministr_bridge(query)` — cross-language bridge links (napi/Tauri/PyO3/FFI);
+  use before changing anything that crosses a language boundary.
 
 Shell `grep`/`rg`/`find` are blocked by hooks here — do not attempt them.
 Use Bash only to build and run tests.
@@ -120,6 +122,34 @@ def _subst(argv, venv):
     return [a.replace("{venv}", venv) for a in argv]
 
 
+def task_validators(task):
+    """The task's validator argv list. `validate_all` (a list of argvs, run in
+    sequence, ALL must pass) supports dual-side validation for cross-language
+    tasks (e.g. native rebuild + JS suite); `validate` is the single-argv form."""
+    return task.get("validate_all") or [task["validate"]]
+
+
+def task_uses_venv(task):
+    """Whether any install/validate argv references the {venv} placeholder.
+    Non-Python tasks (e.g. napi-rs Rust+JS repos) don't get a venv built."""
+    cmds = [task.get("install", [])] + task_validators(task)
+    return any("{venv}" in a for cmd in cmds for a in cmd)
+
+
+def clone_repo(task, dest):
+    """Clone repo at task['ref']. A branch/tag clones shallow; `ref_is_sha`
+    true does a full clone + checkout (GitHub can't shallow-clone a bare SHA)."""
+    if task.get("ref_is_sha"):
+        code, _o, err = sh(["git", "clone", "--quiet", task["repo"], dest], timeout=900)
+        if code == 0:
+            code, _o, err = sh(["git", "checkout", "--quiet", task["ref"]],
+                               cwd=dest, timeout=120)
+        return code, err
+    code, _o, err = sh(["git", "clone", "--quiet", "--branch", task["ref"],
+                        "--depth", "1", task["repo"], dest], timeout=900)
+    return code, err
+
+
 def prepare_fixture(task, tag):
     work = tempfile.mkdtemp(prefix=f"sxs-{tag}-")
     dst = os.path.join(work, "fixture")
@@ -128,14 +158,18 @@ def prepare_fixture(task, tag):
 
 
 def apply_bug(task, workdir):
-    """Apply the planted bug via a whitespace-robust find/replace (not a patch).
-    Returns (ok, error)."""
-    spec = task["bug_replace"]
-    path = os.path.join(workdir, spec["file"])
-    src = open(path).read()
-    if spec["find"] not in src:
-        return False, f"bug anchor not found in {spec['file']}"
-    open(path, "w").write(src.replace(spec["find"], spec["replace"], 1))
+    """Apply the planted bug via whitespace-robust find/replace (not a patch).
+    `bug_replace` is one {file, find, replace} spec or a list of them (a
+    cross-language plant may touch several files). Returns (ok, error)."""
+    specs = task["bug_replace"]
+    if isinstance(specs, dict):
+        specs = [specs]
+    for spec in specs:
+        path = os.path.join(workdir, spec["file"])
+        src = open(path).read()
+        if spec["find"] not in src:
+            return False, f"bug anchor not found in {spec['file']}"
+        open(path, "w").write(src.replace(spec["find"], spec["replace"], 1))
     return True, None
 
 
@@ -145,14 +179,14 @@ def prepare_realrepo(task, tag, apply_bug_now=True):
     work = tempfile.mkdtemp(prefix=f"sxs-{tag}-")
     repo = os.path.join(work, "repo")
     venv = os.path.join(work, "venv")
-    code, _o, err = sh(["git", "clone", "--quiet", "--branch", task["ref"],
-                        "--depth", "1", task["repo"], repo], timeout=600)
+    code, err = clone_repo(task, repo)
     if code != 0:
         return None, f"clone failed: {err[-300:]}"
-    code, _o, err = sh(["python3", "-m", "venv", venv], timeout=120)
-    if code != 0:
-        return None, f"venv failed: {err[-300:]}"
-    code, _o, err = sh(_subst(task["install"], venv), cwd=repo, timeout=900)
+    if task_uses_venv(task):
+        code, _o, err = sh(["python3", "-m", "venv", venv], timeout=120)
+        if code != 0:
+            return None, f"venv failed: {err[-300:]}"
+    code, _o, err = sh(_subst(task["install"], venv), cwd=repo, timeout=1800)
     if code != 0:
         return None, f"install failed: {err[-400:]}"
     if apply_bug_now:
@@ -169,23 +203,47 @@ def prepare_workdir(task, tag, apply_bug_now=True):
     return prepare_fixture(task, tag)
 
 
+TEST_DIR_MARKERS = ("tests/", "__test__/", "__tests__/")
+
+
+def _is_protected_path(path, extra_prefixes):
+    """True if a repo-relative path is a test file (any conventional test dir)
+    or under a manifest-declared protected prefix."""
+    if any(path.startswith(m) or f"/{m}" in path for m in TEST_DIR_MARKERS):
+        return True
+    return any(path.startswith(p) for p in extra_prefixes)
+
+
 def validate(task, workdir):
-    """Run the task's validator. Returns (passed, summary).
+    """Run the task's validator(s) in sequence — ALL must pass (dual-side
+    validation for cross-language tasks). Returns (passed, summary).
 
     Hardening (agents have been shown to game validators — Berkeley RDI 2026):
-    for real-repo tasks a pass additionally requires that NOTHING under a
-    tests/ directory was modified (git diff), so "fix the tests" can't pass.
+    for real-repo tasks a pass additionally requires that NOTHING under a test
+    directory (tests/, __test__/, __tests__/) or a manifest `protect` prefix
+    was modified (git diff), so "fix the tests" can't pass.
     """
-    code, out, err = sh(_subst(task["validate"], venv_of(workdir)), cwd=workdir, timeout=600)
-    tail = (err or out).strip().splitlines()
-    summary = tail[-1] if tail else f"exit {code}"
+    code, summary = 0, "ok"
+    for argv in task_validators(task):
+        code, out, err = sh(_subst(argv, venv_of(workdir)), cwd=workdir, timeout=900)
+        tail = (err or out).strip().splitlines()
+        summary = tail[-1] if tail else f"exit {code}"
+        if code != 0:
+            break
     if code == 0 and task.get("kind") == "realrepo":
-        dcode, dout, _e = sh(["git", "diff", "--name-only"], cwd=workdir, timeout=60)
+        # Diff against the recorded planted commit when available (catches
+        # agent edits even if the agent committed them); plain worktree diff
+        # otherwise (selftest flow).
+        ref = []
+        sha_file = os.path.join(os.path.dirname(workdir), "planted_sha")
+        if os.path.isfile(sha_file):
+            ref = [open(sha_file).read().strip()]
+        dcode, dout, _e = sh(["git", "diff", "--name-only"] + ref, cwd=workdir, timeout=60)
         if dcode == 0:
-            touched_tests = [p for p in dout.splitlines()
-                             if "/tests/" in p or p.startswith("tests/")]
-            if touched_tests:
-                return False, f"tests modified ({touched_tests[0]}) — validator hardening"
+            touched = [p for p in dout.splitlines()
+                       if _is_protected_path(p, task.get("protect", []))]
+            if touched:
+                return False, f"protected file modified ({touched[0]}) — validator hardening"
     return code == 0, summary
 
 
@@ -280,7 +338,7 @@ def run_one(task, arm_key, model, budget, keep, dry_run):
             steps.append("ministr index --corpus . (whole repo)")
         steps.append(f"claude -p <{task['id']} task.md> --model {model} --allowedTools \"{allowed}\""
                      + (" --mcp-config … --strict-mcp-config" if uses_ministr else ""))
-        steps.append(f"validate: {' '.join(task['validate'])}")
+        steps.append("validate: " + "  &&  ".join(" ".join(v) for v in task_validators(task)))
         print(f"  [{task['id']}/{model}/{label}] " + "  |  ".join(steps))
         res["dry_run"] = True
         return res
@@ -296,7 +354,7 @@ def run_one(task, arm_key, model, budget, keep, dry_run):
     # BOTH arms' agents can run the repo's tests (fair: the venv is the runtime,
     # not ministr). The validator itself uses the explicit {venv} path.
     run_env = None
-    if kind == "realrepo":
+    if kind == "realrepo" and os.path.isdir(venv_of(workdir)):
         run_env = dict(os.environ)
         run_env["PATH"] = os.path.join(venv_of(workdir), "bin") + os.pathsep + run_env.get("PATH", "")
 
@@ -355,6 +413,20 @@ def run_one(task, arm_key, model, budget, keep, dry_run):
 # Real-repo: clone + index ONCE, run the whole matrix against the shared index
 # --------------------------------------------------------------------------
 
+def commit_planted_state(repo):
+    """Fold the planted bug into the tip commit (amend) so the agent cannot
+    recover it via `git diff` / `git log -p` — the working tree starts clean
+    and the plant is buried inside the upstream release commit. Returns the
+    planted commit SHA for the validator's protected-path diff."""
+    env = dict(os.environ)
+    env.update({"GIT_AUTHOR_NAME": "sxs", "GIT_AUTHOR_EMAIL": "sxs@bench",
+                "GIT_COMMITTER_NAME": "sxs", "GIT_COMMITTER_EMAIL": "sxs@bench"})
+    sh(["git", "commit", "--quiet", "-a", "--amend", "--no-edit", "--no-verify"],
+       cwd=repo, timeout=60, env=env)
+    _c, out, _e = sh(["git", "rev-parse", "HEAD"], cwd=repo, timeout=60)
+    return out.strip()
+
+
 def prepare_realrepo_base(task, need_index):
     """Clone+install the repo once and (once) build the ministr index. The agent
     works in `repo` directly; reset_realrepo_base() restores the buggy state
@@ -363,19 +435,22 @@ def prepare_realrepo_base(task, need_index):
     work = tempfile.mkdtemp(prefix=f"sxs-base-{task['id']}-")
     repo = os.path.join(work, "repo")
     venv = os.path.join(work, "venv")
-    code, _o, err = sh(["git", "clone", "--quiet", "--branch", task["ref"],
-                        "--depth", "1", task["repo"], repo], timeout=900)
+    code, err = clone_repo(task, repo)
     if code != 0:
         return {"work": work, "error": f"clone failed: {err[-300:]}"}
-    code, _o, err = sh(["python3", "-m", "venv", venv], timeout=120)
-    if code != 0:
-        return {"work": work, "error": f"venv failed: {err[-300:]}"}
-    code, _o, err = sh(_subst(task["install"], venv), cwd=repo, timeout=1200)
+    if task_uses_venv(task):
+        code, _o, err = sh(["python3", "-m", "venv", venv], timeout=120)
+        if code != 0:
+            return {"work": work, "error": f"venv failed: {err[-300:]}"}
+    code, _o, err = sh(_subst(task["install"], venv), cwd=repo, timeout=1800)
     if code != 0:
         return {"work": work, "error": f"install failed: {err[-400:]}"}
     ok, berr = apply_bug(task, repo)
     if not ok:
         return {"work": work, "error": berr}
+    planted_sha = commit_planted_state(repo)
+    with open(os.path.join(work, "planted_sha"), "w") as fh:
+        fh.write(planted_sha)
     base = {"work": work, "repo": repo, "index_secs": None}
     if need_index:
         t0 = time.time()
@@ -389,10 +464,19 @@ def prepare_realrepo_base(task, need_index):
 def reset_realrepo_base(task, repo):
     """Restore the pristine buggy state so the next run starts identical (keeping
     the prebuilt index valid — same content it was built on)."""
-    sh(["git", "checkout", "--", "."], cwd=repo, timeout=120)
-    # -e target keeps Rust/cargo build caches so runs use incremental builds.
-    sh(["git", "clean", "-fdq", "-e", "target"], cwd=repo, timeout=120)
-    apply_bug(task, repo)
+    sha_file = os.path.join(os.path.dirname(repo), "planted_sha")
+    if os.path.isfile(sha_file):
+        # The plant is committed (amended into HEAD); hard-reset survives even
+        # an agent that made commits of its own.
+        sh(["git", "reset", "--hard", "--quiet", open(sha_file).read().strip()],
+           cwd=repo, timeout=120)
+    else:
+        sh(["git", "checkout", "--", "."], cwd=repo, timeout=120)
+        apply_bug(task, repo)
+    # Keep build/install caches so runs use incremental builds: cargo target,
+    # node_modules + .yarn (yarn 4 install state) for napi-rs repos.
+    sh(["git", "clean", "-fdq", "-e", "target", "-e", "node_modules", "-e", ".yarn"],
+       cwd=repo, timeout=120)
 
 
 def run_in_base(task, base, arm_key, model, budget):
@@ -409,7 +493,8 @@ def run_in_base(task, base, arm_key, model, budget):
         open(os.path.join(repo, "CLAUDE.md"), "w").write(MINISTR_CLAUDE_MD)
     prompt = open(os.path.join(task["_dir"], "task.md")).read()
     run_env = dict(os.environ)
-    run_env["PATH"] = os.path.join(venv_of(repo), "bin") + os.pathsep + run_env.get("PATH", "")
+    if os.path.isdir(venv_of(repo)):
+        run_env["PATH"] = os.path.join(venv_of(repo), "bin") + os.pathsep + run_env.get("PATH", "")
     mcp_config_path = None
     if uses_ministr:
         mcp = {"mcpServers": {"ministr": {"command": "ministr", "args": ["serve", "--corpus", repo]}}}

@@ -1,0 +1,29 @@
+{
+  "id": "realrepo-crosslang-jwt",
+  "display": "node-rs (Rust+TS napi monorepo)",
+  "kind": "realrepo",
+  "difficulty": "real",
+  "language": "rust+typescript",
+  "summary": "REAL cross-language repo: napi-rs/node-rs (7 npm packages bound to Rust crates via napi-rs). A Rust-side rename breaks @node-rs/jsonwebtoken's TS test suite ACROSS the napi boundary: the failing JS name (verifySync) is a napi case-TRANSFORM of the Rust name (verify_sync), so no literal string crosses the boundary — grep for the failing JS name finds nothing in Rust, and snake_case guesses hit decoy packages (argon2 and bcrypt export their own verify_sync). Validator is dual-side: rebuild the native module, then the repo's own ava spec. The '!*buffer*' match excludes one test broken upstream at the pinned SHA (__dirname under ESM loader), unrelated to the plant.",
+  "repo": "https://github.com/napi-rs/node-rs",
+  "ref": "b1fd4ff21397645ab789564aaa7f4d9491bb56d9",
+  "ref_is_sha": true,
+  "install": ["bash", "-lc", "yarn install && yarn workspace @node-rs/jsonwebtoken build:debug"],
+  "bug_replace": [
+    {
+      "file": "packages/jsonwebtoken/src/verify.rs",
+      "find": "pub fn verify_sync(",
+      "replace": "pub fn verify_blocking("
+    },
+    {
+      "file": "packages/jsonwebtoken/src/lib.rs",
+      "find": "pub use verify::{verify, verify_sync};",
+      "replace": "pub use verify::{verify, verify_blocking};"
+    }
+  ],
+  "protect": ["packages/jsonwebtoken/__tests__/"],
+  "validate_all": [
+    ["bash", "-lc", "yarn workspace @node-rs/jsonwebtoken build:debug"],
+    ["bash", "-lc", "npx ava packages/jsonwebtoken/__tests__/jsonwebtoken.spec.ts --match '!*buffer*'"]
+  ]
+}

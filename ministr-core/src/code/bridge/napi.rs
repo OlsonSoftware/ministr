@@ -252,10 +252,32 @@ fn walk_js_napi_imports(
 }
 
 /// Check if a module path looks like a napi-rs native module.
+///
+/// Besides explicit native indicators (`.node`, `@napi-rs/`, …), a *relative*
+/// import of an `index` module (`'../index'`, `'./index.js'`, `'..'`, `'.'`)
+/// counts as a candidate: the napi-rs CLI's standard layout has consumers
+/// (tests, benchmarks) importing the generated `index.js` binding loader.
+/// A false candidate is harmless — the linker only produces a bridge link
+/// when a native-side export with the case-transformed name exists.
 fn is_napi_module_path(path: &str) -> bool {
-    NAPI_MODULE_INDICATORS
+    if NAPI_MODULE_INDICATORS
         .iter()
         .any(|indicator| path.contains(indicator))
+    {
+        return true;
+    }
+    if !(path.starts_with("./") || path.starts_with("../") || path == "." || path == "..") {
+        return false;
+    }
+    let base = path
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(path);
+    matches!(
+        base,
+        "index" | "index.js" | "index.cjs" | "index.mjs" | "." | ".."
+    )
 }
 
 /// Collect named import specifiers from an import statement.
@@ -624,5 +646,69 @@ const result = add(1, 2);
         assert_eq!(links[0].export.binding_key, "add");
         assert_eq!(links[0].export.language, "rust");
         assert_eq!(links[0].import.language, "javascript");
+    }
+
+    // -- Relative index-loader imports (the napi-rs CLI's standard layout) --
+
+    #[test]
+    fn napi_module_path_accepts_relative_index_loader() {
+        // Consumers of a napi-rs package import the generated index.js loader.
+        assert!(is_napi_module_path("../index"));
+        assert!(is_napi_module_path("../index.js"));
+        assert!(is_napi_module_path("./index.cjs"));
+        assert!(is_napi_module_path(".."));
+        assert!(is_napi_module_path("."));
+        // Non-index relative modules and bare package names stay rejected.
+        assert!(!is_napi_module_path("../utils"));
+        assert!(!is_napi_module_path("./helpers.js"));
+        assert!(!is_napi_module_path("lodash"));
+        assert!(!is_napi_module_path("node:fs"));
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn napi_case_transformed_link_via_index_loader() {
+        // The exact node-rs/package-template shape: a TS test imports the
+        // camelCase name from '../index'; the Rust export is snake_case.
+        // grep finds no textual overlap — the case-transform link must.
+        use super::super::linker::{BridgeLinker, SourceFile};
+
+        let rust_source = r"
+#[napi]
+pub fn verify_sync(token: String) -> bool { true }
+";
+        let ts_source = r"
+import { verifySync } from '../index.js'
+verifySync('t')
+";
+        let rust_tree = parse_rust(rust_source);
+        let ts_tree = parse_ts(ts_source);
+
+        let mut linker = BridgeLinker::new();
+        linker.register(Box::new(NapiExtractor));
+
+        let files = [
+            SourceFile {
+                file_path: "src/lib.rs",
+                language: "rust",
+                tree: &rust_tree,
+                source: rust_source.as_bytes(),
+            },
+            SourceFile {
+                file_path: "__test__/index.spec.ts",
+                language: "typescript",
+                tree: &ts_tree,
+                source: ts_source.as_bytes(),
+            },
+        ];
+
+        let links = linker.extract_and_link(&files);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].export.binding_key, "verify_sync");
+        assert_eq!(links[0].export.language, "rust");
+        // The linker normalizes the matched import's binding key to the
+        // export's; the typescript side is identified by file/language.
+        assert_eq!(links[0].import.language, "typescript");
+        assert_eq!(links[0].import.file_path, "__test__/index.spec.ts");
     }
 }
