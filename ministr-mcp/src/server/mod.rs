@@ -12,6 +12,7 @@
 mod builders;
 mod coerce;
 mod condense;
+mod exec_tools;
 mod helpers;
 mod prefetch;
 mod progress;
@@ -759,6 +760,11 @@ pub struct MinistrServer {
     /// agree on what's indexed (F1.2 sub-bullet 3). `None` for stdio /
     /// proxy transports where the daemon REST router is not mounted.
     pub(crate) corpus_registry: Option<Arc<ministr_daemon::registry::CorpusRegistry>>,
+    /// State behind the `ministr_run` exec tool family (exec-mcp-tools):
+    /// lazily-created run engine, allowed cwd roots, never-resend log
+    /// cursors. One `Clone`-shared bundle so forked connections see the
+    /// same engine and cursors.
+    pub(crate) exec: exec_tools::ExecState,
 }
 
 #[tool_handler]
@@ -2437,6 +2443,103 @@ impl MinistrServer {
                         params.task_id
                     ),
                 )),
+            }
+        }
+        .instrument(span)
+        .await
+    }
+
+    /// Execute a shell command through the daemon run engine.
+    ///
+    /// Returns a token-lean digest (exit code, every error/warning line,
+    /// head+tail window, exact totals) instead of the raw dump; the full
+    /// log is persisted and pageable via `ministr_run_logs`.
+    #[tool(
+        name = "ministr_run",
+        description = "Run a shell command (recorded + captured). Returns exit code + a token-lean digest with every error line; full log via ministr_run_logs. background:true returns a run_id immediately.",
+        output_schema = tool_output_schema::<exec_tools::RunResponse>(),
+        annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = false, open_world_hint = true)
+    )]
+    async fn exec_run(
+        &self,
+        Parameters(params): Parameters<exec_tools::RunParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let span = info_span!("ministr_run");
+        async {
+            let session_id = self.effective_session_id();
+            match self.exec.run(params, session_id).await {
+                Ok(response) => structured_result(&response),
+                Err(message) => Ok(soft_error("exec_failed", message)),
+            }
+        }
+        .instrument(span)
+        .await
+    }
+
+    /// Page or search a run's captured log.
+    ///
+    /// Without `query`, returns the next undelivered span for this session
+    /// (never re-sends). With `query`, returns matching lines.
+    #[tool(
+        name = "ministr_run_logs",
+        description = "Page a run's captured log (delta: only what you haven't seen) or filter it with query=substring.",
+        output_schema = tool_output_schema::<exec_tools::RunLogsResponse>(),
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
+    )]
+    async fn exec_run_logs(
+        &self,
+        Parameters(params): Parameters<exec_tools::RunLogsParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let span = info_span!("ministr_run_logs", run_id = %params.run_id);
+        async {
+            let session_id = self.effective_session_id();
+            match self.exec.logs(params, &session_id) {
+                Ok(response) => structured_result(&response),
+                Err(message) => Ok(soft_error("exec_logs_failed", message)),
+            }
+        }
+        .instrument(span)
+        .await
+    }
+
+    /// Poll a (background) run's status.
+    #[tool(
+        name = "ministr_run_status",
+        description = "Poll a run's status (running/exited/killed/timed_out, exit code, duration, bytes).",
+        output_schema = tool_output_schema::<exec_tools::RunStatusResponse>(),
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn exec_run_status(
+        &self,
+        Parameters(params): Parameters<exec_tools::RunIdParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let span = info_span!("ministr_run_status", run_id = %params.run_id);
+        async {
+            match self.exec.status(&params.run_id) {
+                Ok(response) => structured_result(&response),
+                Err(message) => Ok(soft_error("exec_status_failed", message)),
+            }
+        }
+        .instrument(span)
+        .await
+    }
+
+    /// Cancel a running run (kills the whole process group on unix).
+    #[tool(
+        name = "ministr_run_kill",
+        description = "Cancel a running run; kills the whole process group.",
+        output_schema = tool_output_schema::<exec_tools::RunKillResponse>(),
+        annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn exec_run_kill(
+        &self,
+        Parameters(params): Parameters<exec_tools::RunIdParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let span = info_span!("ministr_run_kill", run_id = %params.run_id);
+        async {
+            match self.exec.kill(&params.run_id) {
+                Ok(response) => structured_result(&response),
+                Err(message) => Ok(soft_error("exec_kill_failed", message)),
             }
         }
         .instrument(span)

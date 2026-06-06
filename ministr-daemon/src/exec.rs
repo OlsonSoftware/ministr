@@ -75,7 +75,9 @@ pub enum RunStatus {
 }
 
 impl RunStatus {
-    fn as_str(self) -> &'static str {
+    /// Stable wire form (matches the serde `snake_case` rename).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Running => "running",
             Self::Exited => "exited",

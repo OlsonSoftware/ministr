@@ -82,6 +82,7 @@ impl MinistrServer {
             tenant_id_hint: Arc::new(std::sync::Mutex::new(None)),
             session_id_override: Arc::new(std::sync::Mutex::new(None)),
             corpus_registry: None,
+            exec: super::exec_tools::ExecState::default(),
         }
     }
 
@@ -153,6 +154,7 @@ impl MinistrServer {
             tenant_id_hint: Arc::new(std::sync::Mutex::new(None)),
             session_id_override: Arc::new(std::sync::Mutex::new(None)),
             corpus_registry: None,
+            exec: super::exec_tools::ExecState::default(),
         }
     }
 
@@ -252,6 +254,7 @@ impl MinistrServer {
             tenant_id_hint: Arc::new(std::sync::Mutex::new(None)),
             session_id_override: Arc::new(std::sync::Mutex::new(None)),
             corpus_registry: None,
+            exec: super::exec_tools::ExecState::default(),
         }
     }
 
@@ -416,8 +419,30 @@ impl MinistrServer {
     /// decide which tools to expose. Hidden tools are removed from the router
     /// so they don't appear in `tools/list`, saving agent schema tokens.
     ///
+    /// Set the allowed cwd roots for the `ministr_run` exec tools.
+    ///
+    /// A run's working directory must canonicalize under one of these
+    /// (the daemon engine enforces it). [`Self::prune_tools`] calls this
+    /// with the corpus paths automatically; hosts and tests can call it
+    /// directly for custom wiring.
+    pub fn set_exec_roots(&self, roots: Vec<std::path::PathBuf>) {
+        self.exec.set_roots(roots);
+    }
+
+    /// Override where exec run records are stored (default
+    /// `~/.ministr/exec_runs.db`). Must be called before the first
+    /// `ministr_run` — the engine is created once, lazily.
+    pub fn set_exec_db_path(&self, path: std::path::PathBuf) {
+        self.exec.set_db_path(path);
+    }
+
     /// Call this once after constructing the server, before the MCP handshake.
     pub fn prune_tools(&mut self, corpus_paths: &[std::path::PathBuf]) {
+        // Exec policy piggybacks on the one post-construction hook that
+        // receives the corpus paths in every serve mode: a run's cwd is
+        // allowed exactly where the corpus is indexed.
+        self.set_exec_roots(corpus_paths.to_vec());
+
         let mut pruned = Vec::new();
 
         // Web tools: hide if no web fetcher configured

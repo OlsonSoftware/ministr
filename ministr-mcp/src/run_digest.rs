@@ -1,4 +1,4 @@
-//! run_digest — token-lean rendering of exec run logs (exec-mcp-tools).
+//! `run_digest` — token-lean rendering of exec run logs (exec-mcp-tools).
 //!
 //! Pure functions that turn a captured run log into what an agent
 //! actually needs: the exit code, every error/warning line, a small
@@ -8,6 +8,8 @@
 //! demand with a never-resend cursor.
 
 use serde::Serialize;
+#[cfg(test)]
+use std::fmt::Write as _;
 
 /// Cap on preserved diagnostic (error/warning) lines in a digest.
 const MAX_DIAGNOSTIC_LINES: usize = 200;
@@ -89,11 +91,7 @@ pub fn digest(log: &str) -> RunDigest {
     let lines: Vec<&str> = log.lines().collect();
     let lines_total = lines.len();
 
-    let diag_lines: Vec<&str> = lines
-        .iter()
-        .copied()
-        .filter(|l| is_diagnostic(l))
-        .collect();
+    let diag_lines: Vec<&str> = lines.iter().copied().filter(|l| is_diagnostic(l)).collect();
     let collapsed_diags = collapse_repeats(diag_lines.into_iter());
     let diagnostics_truncated = collapsed_diags.len() > MAX_DIAGNOSTIC_LINES;
     let mut diagnostics = collapsed_diags;
@@ -103,8 +101,7 @@ pub fn digest(log: &str) -> RunDigest {
         collapse_repeats(lines.iter().copied()).join("\n")
     } else {
         let head = collapse_repeats(lines[..WINDOW_HEAD_LINES].iter().copied());
-        let tail =
-            collapse_repeats(lines[lines_total - WINDOW_TAIL_LINES..].iter().copied());
+        let tail = collapse_repeats(lines[lines_total - WINDOW_TAIL_LINES..].iter().copied());
         let elided = lines_total - WINDOW_HEAD_LINES - WINDOW_TAIL_LINES;
         format!(
             "{}\n…[{elided} lines elided — ministr_run_logs for the rest]…\n{}",
@@ -164,10 +161,11 @@ mod tests {
         let mut log = String::new();
         let mut errors = Vec::new();
         for i in 0..3000 {
-            log.push_str(&format!(
-                "   Compiling crate-{i} v0.1.{} (/work/deps/crate-{i})\n",
+            let _ = writeln!(
+                log,
+                "   Compiling crate-{i} v0.1.{} (/work/deps/crate-{i})",
                 i % 10
-            ));
+            );
             if i % 700 == 350 {
                 let err = format!("error[E0308]: mismatched types in crate-{i}");
                 log.push_str(&err);
@@ -175,10 +173,10 @@ mod tests {
                 errors.push(err);
             }
         }
-        log.push_str("error: could not compile `app` (bin \"app\") due to 4 previous errors\n");
-        errors.push(
-            "error: could not compile `app` (bin \"app\") due to 4 previous errors".to_string(),
-        );
+        let final_err = "error: could not compile `app` due to 4 previous errors";
+        log.push_str(final_err);
+        log.push('\n');
+        errors.push(final_err.to_string());
         (log, errors)
     }
 
@@ -223,7 +221,10 @@ mod tests {
 
     #[test]
     fn digest_window_keeps_head_and_tail_and_elides_middle() {
-        let log: String = (0..200).map(|i| format!("line-{i}\n")).collect();
+        let log = (0..200).fold(String::new(), |mut acc, i| {
+            let _ = writeln!(acc, "line-{i}");
+            acc
+        });
         let d = digest(&log);
         assert!(d.window.contains("line-0"), "head preserved");
         assert!(d.window.contains("line-199"), "tail preserved");
@@ -233,7 +234,10 @@ mod tests {
 
     #[test]
     fn next_span_never_resends_and_never_splits_lines() {
-        let log: String = (0..100).map(|i| format!("entry-{i:03}\n")).collect();
+        let log = (0..100).fold(String::new(), |mut acc, i| {
+            let _ = writeln!(acc, "entry-{i:03}");
+            acc
+        });
         let (first, cursor1) = next_span(&log, 0, 64);
         assert!(first.ends_with('\n'), "span ends at a line boundary");
         let (second, cursor2) = next_span(&log, cursor1, 64);
