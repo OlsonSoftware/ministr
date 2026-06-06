@@ -52,10 +52,13 @@ jobs:
         run: npm run build
 
       - name: Maintenance mode
-        # When web/MAINTENANCE exists, publish ONLY the coming-soon page —
-        # every route (404.html fallback included) shows it. Flip the site
-        # back by deleting the flag file.
-        if: ${{ hashFiles('web/MAINTENANCE') != '' }}
+        # When web/.maintenance exists (non-empty — hashFiles() returns ''
+        # for zero-byte files), publish ONLY the coming-soon page — every
+        # route (404.html fallback included) shows it. Delete the flag file
+        # to bring the full site back. NB: named .maintenance because
+        # web/MAINTENANCE collides with web/maintenance/ on case-insensitive
+        # macOS filesystems.
+        if: ${{ hashFiles('web/.maintenance') != '' }}
         run: |
           rm -rf out
           mkdir out
