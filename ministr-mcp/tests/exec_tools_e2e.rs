@@ -13,21 +13,42 @@ use ministr_core::embedding::Embedder;
 use ministr_core::error::IndexError;
 use ministr_core::index::HnswIndex;
 use ministr_core::service::QueryService;
+use ministr_core::session::UsageConfig;
 use ministr_core::storage::SqliteStorage;
 use ministr_mcp::server::MinistrServer;
 use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, CallToolResult, Content};
 use serde_json::json;
 
+/// Deterministic, text-sensitive mock embedder (byte-distribution
+/// vectors) — distinct texts get distinct directions, so survey ranking
+/// over ingested run reports is meaningful.
 struct MockEmbedder;
+
+const MOCK_DIM: usize = 16;
 
 impl Embedder for MockEmbedder {
     fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, IndexError> {
-        Ok(texts.iter().map(|_| vec![0.5f32; 4]).collect())
+        Ok(texts
+            .iter()
+            .map(|t| {
+                let mut v = vec![0.0f32; MOCK_DIM];
+                for (i, b) in t.bytes().enumerate() {
+                    v[i % MOCK_DIM] += f32::from(b) / 255.0;
+                }
+                let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+                if norm > 0.0 {
+                    for x in &mut v {
+                        *x /= norm;
+                    }
+                }
+                v
+            })
+            .collect())
     }
 
     fn dimension(&self) -> usize {
-        4
+        MOCK_DIM
     }
 }
 
@@ -37,13 +58,39 @@ type McpServerHandle = rmcp::service::RunningService<rmcp::RoleServer, MinistrSe
 /// Minimal server with the exec tools wired to a temp workspace + store.
 fn setup_exec_server(workdir: &std::path::Path) -> MinistrServer {
     let storage = SqliteStorage::open_in_memory().expect("storage");
-    let index = Arc::new(HnswIndex::new(4, 100).expect("index"));
+    let index = Arc::new(HnswIndex::new(MOCK_DIM, 100).expect("index"));
     let embedder = Arc::new(MockEmbedder) as Arc<dyn Embedder>;
     let service = Arc::new(QueryService::new(storage, embedder, index));
     let server = MinistrServer::new(service);
     server.set_exec_roots(vec![workdir.to_path_buf()]);
     server.set_exec_db_path(workdir.join("exec_runs.db"));
     server
+}
+
+/// Server with run-log intelligence wired: persistent-session storage +
+/// runtime ingest (embedder + index shared with the query service), so
+/// finished runs become searchable corpus documents. Returns the storage
+/// handle for direct corpus assertions.
+async fn setup_intel_server(workdir: &std::path::Path) -> (MinistrServer, Arc<SqliteStorage>) {
+    let storage = Arc::new(SqliteStorage::open_in_memory().expect("storage"));
+    let index = Arc::new(HnswIndex::new(MOCK_DIM, 1000).expect("index"));
+    let embedder = Arc::new(MockEmbedder) as Arc<dyn Embedder>;
+    let service = Arc::new(QueryService::new(
+        (*storage).clone(),
+        Arc::clone(&embedder),
+        Arc::clone(&index) as Arc<dyn ministr_core::index::VectorIndex>,
+    ));
+    let server = MinistrServer::with_persistence(
+        service,
+        UsageConfig::default(),
+        Arc::clone(&storage),
+        None,
+    )
+    .await
+    .with_runtime_ingest(embedder, index);
+    server.set_exec_roots(vec![workdir.to_path_buf()]);
+    server.set_exec_db_path(workdir.join("exec_runs.db"));
+    (server, storage)
 }
 
 async fn wrap_as_client(server: MinistrServer) -> (McpClient, McpServerHandle) {
@@ -253,5 +300,144 @@ async fn run_outside_roots_is_policy_denied() {
     assert!(
         rendered.contains("exec policy") || rendered.contains("exec_failed"),
         "out-of-root cwd must be denied: {rendered}"
+    );
+}
+
+// ─── RUN-LOG INTELLIGENCE (exec-log-intelligence) ───────────────────────────
+
+#[tokio::test]
+async fn failing_run_is_retrievable_via_survey_by_its_error_text() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (server, storage) = setup_intel_server(tmp.path()).await;
+    let (client, _server) = wrap_as_client(server).await;
+
+    // Plant a failing run with a distinctive error token.
+    let run = tool_result(
+        &call_tool(
+            &client,
+            "ministr_run",
+            json!({"command": "echo 'error: frobnicator_zx81 panicked at widget.rs:42' 1>&2; exit 3"}),
+        )
+        .await,
+    );
+    assert_eq!(run["exit_code"], 3);
+
+    // The run report landed in the corpus under exec-runs/.
+    use ministr_core::storage::Storage as _;
+    let docs = storage.list_documents().await.expect("list");
+    assert!(
+        docs.iter()
+            .any(|d| d.source_path.starts_with("exec-runs/run-")),
+        "run report must be ingested: {:?}",
+        docs.iter().map(|d| &d.source_path).collect::<Vec<_>>()
+    );
+
+    // And ministr_survey retrieves it by the error text.
+    let survey = call_tool(
+        &client,
+        "ministr_survey",
+        json!({"query": "frobnicator_zx81 panicked"}),
+    )
+    .await;
+    let rendered = extract_text(&survey.content);
+    assert!(
+        rendered.contains("exec-runs/run-") && rendered.contains("frobnicator_zx81"),
+        "survey must surface the run report for its own error text: {rendered}"
+    );
+}
+
+#[tokio::test]
+async fn repeated_diagnostics_dedup_with_occurrence_counts_in_the_corpus() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (server, storage) = setup_intel_server(tmp.path()).await;
+    let (client, _server) = wrap_as_client(server).await;
+
+    let run = tool_result(
+        &call_tool(
+            &client,
+            "ministr_run",
+            json!({"command": "i=0; while [ $i -lt 30 ]; do echo 'error: quux gasket misaligned' 1>&2; i=$((i+1)); done; exit 1"}),
+        )
+        .await,
+    );
+    // The digest already collapses the repeats…
+    let diags = run["digest"]["diagnostics"].as_array().unwrap();
+    assert!(
+        diags
+            .iter()
+            .any(|l| l.as_str().unwrap().starts_with("30× error: quux gasket")),
+        "digest must collapse 30 identical lines to one counted line: {diags:?}"
+    );
+
+    // …and the INGESTED document carries the same collapsed form.
+    use ministr_core::storage::Storage as _;
+    let docs = storage.list_documents().await.expect("list");
+    let doc = docs
+        .iter()
+        .find(|d| d.source_path.starts_with("exec-runs/run-"))
+        .expect("ingested run report");
+    let sections = storage.list_sections(&doc.id).await.expect("sections");
+    assert!(
+        sections
+            .iter()
+            .any(|s| s.text.contains("30× error: quux gasket")),
+        "corpus section must keep the deduped count, not 30 raw lines"
+    );
+}
+
+#[tokio::test]
+async fn retention_sweep_keeps_only_the_newest_reports() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (server, storage) = setup_intel_server(tmp.path()).await;
+    server.set_exec_run_retention(3);
+    let (client, _server) = wrap_as_client(server).await;
+
+    for i in 0..6 {
+        let run = tool_result(
+            &call_tool(
+                &client,
+                "ministr_run",
+                json!({"command": format!("echo soak-run-{i}")}),
+            )
+            .await,
+        );
+        assert_eq!(run["exit_code"], 0, "soak run {i} must succeed");
+    }
+
+    use ministr_core::storage::Storage as _;
+    let docs = storage.list_documents().await.expect("list");
+    let mut run_docs: Vec<_> = docs
+        .iter()
+        .filter(|d| d.source_path.starts_with("exec-runs/run-"))
+        .map(|d| d.source_path.clone())
+        .collect();
+    run_docs.sort();
+    assert_eq!(
+        run_docs.len(),
+        3,
+        "retention cap of 3 must hold after 6 runs: {run_docs:?}"
+    );
+
+    // The survivors are the NEWEST three (run ids embed spawn timestamps,
+    // so lexicographic order is chronological).
+    let all_sections_text: String = {
+        let mut out = String::new();
+        for d in docs
+            .iter()
+            .filter(|d| d.source_path.starts_with("exec-runs/"))
+        {
+            for s in storage.list_sections(&d.id).await.expect("sections") {
+                out.push_str(&s.text);
+            }
+        }
+        out
+    };
+    assert!(
+        all_sections_text.contains("soak-run-5"),
+        "newest run must survive the sweep"
+    );
+    assert!(
+        !all_sections_text.contains("soak-run-0"),
+        "oldest run must be swept"
     );
 }
