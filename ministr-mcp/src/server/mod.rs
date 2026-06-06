@@ -5956,6 +5956,9 @@ mod tests {
     }
 
     /// Verify `open_world_hint`: fetch/refresh/clone are open, others closed.
+    /// `ministr_run` is also open-world — an arbitrary shell command can
+    /// reach the network (curl, git push); its sibling run tools only read
+    /// or cancel local run records.
     #[tokio::test]
     async fn open_world_tools_have_correct_hint() {
         let server = setup_server().await;
@@ -5963,7 +5966,12 @@ mod tests {
 
         let tools = client.list_all_tools().await.unwrap();
 
-        let open_world = ["ministr_fetch", "ministr_refresh", "ministr_clone"];
+        let open_world = [
+            "ministr_fetch",
+            "ministr_refresh",
+            "ministr_clone",
+            "ministr_run",
+        ];
 
         for tool in &tools {
             let name = tool.name.as_ref();

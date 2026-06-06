@@ -35,7 +35,7 @@ type McpClient = rmcp::service::RunningService<rmcp::RoleClient, ()>;
 type McpServerHandle = rmcp::service::RunningService<rmcp::RoleServer, MinistrServer>;
 
 /// Minimal server with the exec tools wired to a temp workspace + store.
-async fn setup_exec_server(workdir: &std::path::Path) -> MinistrServer {
+fn setup_exec_server(workdir: &std::path::Path) -> MinistrServer {
     let storage = SqliteStorage::open_in_memory().expect("storage");
     let index = Arc::new(HnswIndex::new(4, 100).expect("index"));
     let embedder = Arc::new(MockEmbedder) as Arc<dyn Embedder>;
@@ -82,7 +82,7 @@ fn tool_result(result: &CallToolResult) -> serde_json::Value {
 #[tokio::test]
 async fn run_executes_and_returns_digest_with_error_lines() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let (client, _server) = wrap_as_client(setup_exec_server(tmp.path()).await).await;
+    let (client, _server) = wrap_as_client(setup_exec_server(tmp.path())).await;
 
     let result = call_tool(
         &client,
@@ -114,7 +114,7 @@ async fn run_executes_and_returns_digest_with_error_lines() {
 #[tokio::test]
 async fn run_logs_delta_never_resends_already_delivered_spans() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let (client, _server) = wrap_as_client(setup_exec_server(tmp.path()).await).await;
+    let (client, _server) = wrap_as_client(setup_exec_server(tmp.path())).await;
 
     let run = call_tool(
         &client,
@@ -167,7 +167,7 @@ async fn run_logs_delta_never_resends_already_delivered_spans() {
 #[tokio::test]
 async fn background_lifecycle_start_status_kill() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let (client, _server) = wrap_as_client(setup_exec_server(tmp.path()).await).await;
+    let (client, _server) = wrap_as_client(setup_exec_server(tmp.path())).await;
 
     let started = tool_result(
         &call_tool(
@@ -205,7 +205,7 @@ async fn background_lifecycle_start_status_kill() {
 #[tokio::test]
 async fn exec_tool_schemas_stay_inside_the_token_budget() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let (client, _server) = wrap_as_client(setup_exec_server(tmp.path()).await).await;
+    let (client, _server) = wrap_as_client(setup_exec_server(tmp.path())).await;
 
     let tools = client.peer().list_all_tools().await.expect("list tools");
     let exec_tools: Vec<_> = tools
@@ -241,7 +241,7 @@ async fn exec_tool_schemas_stay_inside_the_token_budget() {
 async fn run_outside_roots_is_policy_denied() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let outside = tempfile::tempdir().expect("outside");
-    let (client, _server) = wrap_as_client(setup_exec_server(tmp.path()).await).await;
+    let (client, _server) = wrap_as_client(setup_exec_server(tmp.path())).await;
 
     let result = call_tool(
         &client,
