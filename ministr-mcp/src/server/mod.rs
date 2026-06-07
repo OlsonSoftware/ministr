@@ -2467,6 +2467,15 @@ impl MinistrServer {
         let span = info_span!("ministr_run");
         async {
             let session_id = self.effective_session_id();
+            // Daemon-backend mode: forward to the ONE daemon-hosted engine
+            // so the app's Run Console sees this run live + can kill it.
+            // Stdio/local keeps the in-process engine (+ run-log ingest).
+            if let Some(client) = self.daemon_exec_client() {
+                return match exec_tools::forward_run(client, params, session_id).await {
+                    Ok(response) => structured_result(&response),
+                    Err(message) => Ok(soft_error("exec_failed", message)),
+                };
+            }
             match self.exec.run(params, session_id).await {
                 Ok((response, ingest)) => {
                     // Run-log intelligence: index the finished run's report
@@ -2500,6 +2509,12 @@ impl MinistrServer {
     ) -> Result<CallToolResult, McpError> {
         let span = info_span!("ministr_run_logs", run_id = %params.run_id);
         async {
+            if let Some(client) = self.daemon_exec_client() {
+                return match exec_tools::forward_logs(client, params).await {
+                    Ok(response) => structured_result(&response),
+                    Err(message) => Ok(soft_error("exec_logs_failed", message)),
+                };
+            }
             let session_id = self.effective_session_id();
             match self.exec.logs(params, &session_id) {
                 Ok(response) => structured_result(&response),
@@ -2523,6 +2538,12 @@ impl MinistrServer {
     ) -> Result<CallToolResult, McpError> {
         let span = info_span!("ministr_run_status", run_id = %params.run_id);
         async {
+            if let Some(client) = self.daemon_exec_client() {
+                return match exec_tools::forward_status(client, &params.run_id).await {
+                    Ok(response) => structured_result(&response),
+                    Err(message) => Ok(soft_error("exec_status_failed", message)),
+                };
+            }
             match self.exec.status(&params.run_id) {
                 Ok(response) => structured_result(&response),
                 Err(message) => Ok(soft_error("exec_status_failed", message)),
@@ -2545,6 +2566,12 @@ impl MinistrServer {
     ) -> Result<CallToolResult, McpError> {
         let span = info_span!("ministr_run_kill", run_id = %params.run_id);
         async {
+            if let Some(client) = self.daemon_exec_client() {
+                return match exec_tools::forward_kill(client, &params.run_id).await {
+                    Ok(response) => structured_result(&response),
+                    Err(message) => Ok(soft_error("exec_kill_failed", message)),
+                };
+            }
             match self.exec.kill(&params.run_id) {
                 Ok(response) => structured_result(&response),
                 Err(message) => Ok(soft_error("exec_kill_failed", message)),

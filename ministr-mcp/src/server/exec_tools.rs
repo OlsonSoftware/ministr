@@ -327,6 +327,22 @@ fn run_report(record: &RunRecord, digest: &RunDigest) -> RunIngest {
 }
 
 impl crate::server::MinistrServer {
+    /// The daemon client to forward exec tool calls through, when this
+    /// server runs in single-corpus daemon-backend mode.
+    ///
+    /// `Some` only for [`crate::backend::Backend::Daemon`] — the
+    /// exec engine is machine-wide (one per daemon), so forwarding makes
+    /// the app's Run Console see agent runs live and able to kill them.
+    /// Local / daemon-multi / cloud keep the in-process engine.
+    pub(crate) fn daemon_exec_client(
+        &self,
+    ) -> Option<&std::sync::Arc<ministr_api::client::DaemonClient>> {
+        match &self.backend {
+            crate::backend::Backend::Daemon(b) => Some(b.client()),
+            _ => None,
+        }
+    }
+
     /// Index a finished run's report into the corpus, then sweep old run
     /// reports past the retention cap.
     ///
@@ -392,6 +408,126 @@ impl crate::server::MinistrServer {
             }
         }
     }
+}
+
+// ── Daemon-forward bodies (exec-mcp-daemon-forward) ─────────────────────────
+//
+// In daemon-backend mode the tool handlers route here so every run lands
+// in the ONE daemon-hosted engine — the shared engine the Tauri app's
+// Run Console reads and can kill. The digest is still shaped client-side
+// (run_digest over the forwarded record's log), so the agent-facing
+// response is identical to the local path. Run-log intelligence ingest
+// stays local-only (the daemon owns its own storage).
+
+/// Map a forwarded `ExecRun` to the `ministr_run` digest response.
+fn wire_to_response(run: ministr_api::exec::ExecRun) -> RunResponse {
+    let digest = (run.status != "running").then(|| digest(&run.log));
+    let duration_ms = run
+        .finished_at_ms
+        .map(|end| end.saturating_sub(run.started_at_ms));
+    RunResponse {
+        digest,
+        duration_ms,
+        run_id: run.run_id,
+        status: run.status,
+        exit_code: run.exit_code,
+        bytes_total: run.bytes_total,
+        capture_truncated: run.truncated,
+    }
+}
+
+/// `ministr_run` over a daemon backend.
+pub(crate) async fn forward_run(
+    client: &ministr_api::client::DaemonClient,
+    params: RunParams,
+    session_id: String,
+) -> Result<RunResponse, String> {
+    let req = ministr_api::exec::StartExecRun {
+        command: params.command,
+        cwd: params.cwd.filter(|c| !c.is_empty()),
+        session_id: Some(session_id),
+        timeout_secs: params.timeout_secs.map(|s| s.min(MAX_TIMEOUT_SECS)),
+        background: params.background.unwrap_or(false),
+    };
+    client
+        .exec_start(&req)
+        .await
+        .map(wire_to_response)
+        .map_err(|e| e.to_string())
+}
+
+/// `ministr_run_logs` over a daemon backend.
+///
+/// The daemon serves the live snapshot for running runs and the
+/// persisted log otherwise; cursor-based delta paging stays a local-mode
+/// nicety (forwarded logs return the whole available chunk).
+pub(crate) async fn forward_logs(
+    client: &ministr_api::client::DaemonClient,
+    params: RunLogsParams,
+) -> Result<RunLogsResponse, String> {
+    if let Some(query) = params.query.filter(|q| !q.is_empty()) {
+        let logs = client
+            .exec_run_logs(&params.run_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        let needle = query.to_lowercase();
+        let matches: Vec<&str> = logs
+            .log
+            .lines()
+            .filter(|l| l.to_lowercase().contains(&needle))
+            .take(200)
+            .collect();
+        return Ok(RunLogsResponse {
+            run_id: logs.run_id,
+            status: logs.status,
+            chunk: matches.join("\n"),
+            next_offset: None,
+            remaining_bytes: 0,
+            matched_lines: Some(matches.len()),
+        });
+    }
+    let logs = client
+        .exec_run_logs(&params.run_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(RunLogsResponse {
+        run_id: logs.run_id,
+        status: logs.status,
+        chunk: logs.log,
+        next_offset: None,
+        remaining_bytes: 0,
+        matched_lines: None,
+    })
+}
+
+/// `ministr_run_status` over a daemon backend.
+pub(crate) async fn forward_status(
+    client: &ministr_api::client::DaemonClient,
+    run_id: &str,
+) -> Result<RunStatusResponse, String> {
+    let run = client.exec_run(run_id).await.map_err(|e| e.to_string())?;
+    let duration_ms = run
+        .finished_at_ms
+        .map(|end| end.saturating_sub(run.started_at_ms));
+    Ok(RunStatusResponse {
+        run_id: run.run_id,
+        status: run.status,
+        exit_code: run.exit_code,
+        duration_ms,
+        bytes_total: run.bytes_total,
+    })
+}
+
+/// `ministr_run_kill` over a daemon backend.
+pub(crate) async fn forward_kill(
+    client: &ministr_api::client::DaemonClient,
+    run_id: &str,
+) -> Result<RunKillResponse, String> {
+    let resp = client.exec_kill(run_id).await.map_err(|e| e.to_string())?;
+    Ok(RunKillResponse {
+        run_id: resp.run_id,
+        killed: resp.killed,
+    })
 }
 
 /// Parameters for `ministr_run`.
@@ -501,4 +637,65 @@ pub struct RunKillResponse {
     pub run_id: String,
     /// True when the run was still active and cancellation was requested.
     pub killed: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wire(status: &str, exit: Option<i32>, log: &str) -> ministr_api::exec::ExecRun {
+        ministr_api::exec::ExecRun {
+            run_id: "run-1-0".to_string(),
+            command: "cargo test".to_string(),
+            cwd: "/work".to_string(),
+            session_id: Some("s".to_string()),
+            corpus_id: None,
+            env_fingerprint: "abc".to_string(),
+            started_at_ms: 1_000,
+            finished_at_ms: if status == "running" {
+                None
+            } else {
+                Some(1_900)
+            },
+            exit_code: exit,
+            status: status.to_string(),
+            log: log.to_string(),
+            truncated: false,
+            bytes_total: log.len() as u64,
+        }
+    }
+
+    /// A finished forwarded run yields a digest + duration; the digest
+    /// carries the same diagnostics the local path would (run_digest is
+    /// the shared shaper, so daemon mode is response-identical).
+    #[test]
+    fn wire_to_response_shapes_a_finished_run_with_digest() {
+        let r = wire_to_response(wire(
+            "exited",
+            Some(1),
+            "compiling\nerror[E0308]: mismatched types\n",
+        ));
+        assert_eq!(r.status, "exited");
+        assert_eq!(r.exit_code, Some(1));
+        assert_eq!(r.duration_ms, Some(900));
+        let digest = r.digest.expect("finished run carries a digest");
+        assert!(
+            digest
+                .diagnostics
+                .iter()
+                .any(|l| l.contains("error[E0308]")),
+            "the forwarded log must digest like the local path"
+        );
+    }
+
+    /// A still-running forwarded run yields NO digest + no duration — the
+    /// daemon's persisted log is empty mid-run; the live tail comes from
+    /// ministr_run_logs, not the run response.
+    #[test]
+    fn wire_to_response_omits_digest_for_a_running_run() {
+        let r = wire_to_response(wire("running", None, ""));
+        assert_eq!(r.status, "running");
+        assert!(r.digest.is_none());
+        assert!(r.duration_ms.is_none());
+    }
 }
