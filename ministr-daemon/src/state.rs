@@ -93,6 +93,12 @@ pub struct AppState {
     /// `audit_events` carries the `corpus.created` / `corpus.cloned` /
     /// `corpus.deleted` row. `None` on self-hosted serve.
     pub audit_sink: Option<Arc<dyn AuditSink>>,
+    /// The daemon-hosted exec run engine (exec-epic). ONE engine per
+    /// daemon so cross-process kill and live log tails work: the exec
+    /// routes spawn through it, and any client (MCP forward, Tauri app)
+    /// reaches the same cancel tokens + live capture buffers. Lazy —
+    /// the engine opens its run store on first use.
+    pub exec: Arc<crate::exec::EngineCell>,
 }
 
 impl AppState {
@@ -120,6 +126,7 @@ impl AppState {
             index_job_sink: None,
             corpus_visibility: None,
             audit_sink: None,
+            exec: Arc::new(crate::exec::EngineCell::default()),
         }
     }
 
@@ -145,6 +152,7 @@ impl AppState {
             index_job_sink: None,
             corpus_visibility: None,
             audit_sink: None,
+            exec: Arc::new(crate::exec::EngineCell::default()),
         }
     }
 

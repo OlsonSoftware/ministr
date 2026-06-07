@@ -21,6 +21,7 @@ pub mod corpora_repo;
 pub mod corpus;
 pub mod corpus_restorer;
 pub mod drops_ledger;
+pub mod exec;
 pub mod github_app;
 pub mod index_job_sink;
 pub mod iso8601;

@@ -147,6 +147,22 @@ pub fn observability_router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// Recorded-shell exec routes — spawn/list/inspect/kill runs through the
+/// daemon-hosted engine (one engine per daemon, so kills and live log
+/// tails work across processes).
+///
+/// Gate behind `ministr:write` on public deployments: these execute
+/// arbitrary shell commands (cwd-restricted to indexed corpus roots) and
+/// leak command lines + output. Local-UDS only by default.
+pub fn exec_router(state: AppState) -> Router {
+    Router::new()
+        .route("/exec/runs", post(exec_start).get(exec_list))
+        .route("/exec/runs/{id}", get(exec_get))
+        .route("/exec/runs/{id}/logs", get(exec_logs))
+        .route("/exec/runs/{id}/kill", post(exec_kill))
+        .with_state(state)
+}
+
 /// Build the daemon API router.
 ///
 /// Composes every sub-router (read, write, bundle, ask, observability) and
@@ -159,6 +175,7 @@ pub fn router(state: AppState) -> Router {
         .merge(corpora_bundle_router(state.clone()))
         .merge(corpora_ask_router(state.clone()))
         .merge(observability_router(state.clone()))
+        .merge(exec_router(state.clone()))
         .layer(middleware::from_fn_with_state(state, record_activity))
 }
 
@@ -204,6 +221,204 @@ async fn recent_coherence_events(
         events,
         buffer_capacity: COHERENCE_BUFFER_CAPACITY,
     })
+}
+
+// ── Exec (recorded shell) handlers ──────────────────────────────────────
+
+/// Convert an engine record into the API wire shape.
+fn exec_run_to_wire(r: crate::exec::RunRecord) -> ministr_api::exec::ExecRun {
+    ministr_api::exec::ExecRun {
+        run_id: r.run_id,
+        command: r.command,
+        cwd: r.cwd,
+        session_id: r.session_id,
+        corpus_id: r.corpus_id,
+        env_fingerprint: r.env_fingerprint,
+        started_at_ms: r.started_at_ms,
+        finished_at_ms: r.finished_at_ms,
+        exit_code: r.exit_code,
+        status: r.status.as_str().to_string(),
+        log: r.log,
+        truncated: r.truncated,
+        bytes_total: r.bytes_total,
+    }
+}
+
+/// Refresh the engine's allowed cwd roots from the corpus registry, then
+/// hand back the engine. Called before each spawn so the policy always
+/// reflects the corpora registered RIGHT NOW (register/unregister are
+/// rare; reading per-spawn is cheap and avoids a stale snapshot).
+///
+/// UNIONs the registry roots with any roots already configured on the
+/// cell. Production sets none explicitly, so the union equals the
+/// registry; a host/test that pre-set roots (no registry) keeps them.
+async fn exec_engine_with_fresh_roots(
+    state: &AppState,
+) -> Result<std::sync::Arc<crate::exec::RunEngine>, crate::exec::RunError> {
+    let mut roots: Vec<std::path::PathBuf> = state.exec.roots();
+    let corpora = state.registry.corpora().read().await;
+    let handles: Vec<_> = corpora.values().map(std::sync::Arc::clone).collect();
+    drop(corpora);
+    for handle in handles {
+        let info = handle.info.read().await;
+        for p in &info.paths {
+            let path = std::path::PathBuf::from(p);
+            if !roots.contains(&path) {
+                roots.push(path);
+            }
+        }
+    }
+    state.exec.set_roots(roots);
+    state.exec.engine()
+}
+
+fn exec_error_response(e: &crate::exec::RunError) -> (StatusCode, Json<serde_json::Value>) {
+    let status = match e {
+        crate::exec::RunError::PolicyDenied(_) => StatusCode::FORBIDDEN,
+        crate::exec::RunError::NotFound(_) => StatusCode::NOT_FOUND,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (status, Json(serde_json::json!({ "error": e.to_string() })))
+}
+
+/// `POST /exec/runs` — execute (or start) a shell run.
+async fn exec_start(
+    State(state): State<AppState>,
+    Json(req): Json<ministr_api::exec::StartExecRun>,
+) -> axum::response::Response {
+    let engine = match exec_engine_with_fresh_roots(&state).await {
+        Ok(engine) => engine,
+        Err(e) => return exec_error_response(&e).into_response(),
+    };
+    let cwd = match req.cwd {
+        Some(c) if !c.is_empty() => std::path::PathBuf::from(c),
+        _ => match state.exec.roots().first().cloned() {
+            Some(root) => root,
+            None => {
+                return exec_error_response(&crate::exec::RunError::PolicyDenied(
+                    "no corpora registered - nothing is an allowed cwd".to_string(),
+                ))
+                .into_response();
+            }
+        },
+    };
+    let request = crate::exec::RunRequest {
+        command: req.command,
+        cwd,
+        session_id: req.session_id,
+        corpus_id: None,
+        timeout: req.timeout_secs.map(std::time::Duration::from_secs),
+    };
+    if req.background {
+        match engine.start(request) {
+            Ok(run_id) => match engine.get(&run_id) {
+                Ok(Some(record)) => Json(exec_run_to_wire(record)).into_response(),
+                Ok(None) => {
+                    exec_error_response(&crate::exec::RunError::NotFound(run_id)).into_response()
+                }
+                Err(e) => exec_error_response(&e).into_response(),
+            },
+            Err(e) => exec_error_response(&e).into_response(),
+        }
+    } else {
+        match engine.run(request).await {
+            Ok(record) => Json(exec_run_to_wire(record)).into_response(),
+            Err(e) => exec_error_response(&e).into_response(),
+        }
+    }
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct ExecListQuery {
+    limit: Option<usize>,
+    session_id: Option<String>,
+}
+
+/// `GET /exec/runs?limit&session_id` — recorded runs, newest first.
+async fn exec_list(
+    State(state): State<AppState>,
+    Query(q): Query<ExecListQuery>,
+) -> axum::response::Response {
+    let engine = match state.exec.engine() {
+        Ok(engine) => engine,
+        Err(e) => return exec_error_response(&e).into_response(),
+    };
+    match engine.list(&crate::exec::RunsFilter {
+        session_id: q.session_id,
+        limit: Some(q.limit.unwrap_or(50)),
+        ..Default::default()
+    }) {
+        Ok(runs) => {
+            Json(runs.into_iter().map(exec_run_to_wire).collect::<Vec<_>>()).into_response()
+        }
+        Err(e) => exec_error_response(&e).into_response(),
+    }
+}
+
+/// `GET /exec/runs/{id}` — one recorded run.
+async fn exec_get(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    let engine = match state.exec.engine() {
+        Ok(engine) => engine,
+        Err(e) => return exec_error_response(&e).into_response(),
+    };
+    match engine.get(&id) {
+        Ok(Some(record)) => Json(exec_run_to_wire(record)).into_response(),
+        Ok(None) => exec_error_response(&crate::exec::RunError::NotFound(id)).into_response(),
+        Err(e) => exec_error_response(&e).into_response(),
+    }
+}
+
+/// `GET /exec/runs/{id}/logs` — the persisted log for finished runs, or
+/// a LIVE mid-run snapshot for running ones (the cross-process tail).
+async fn exec_logs(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    let engine = match state.exec.engine() {
+        Ok(engine) => engine,
+        Err(e) => return exec_error_response(&e).into_response(),
+    };
+    // Live first: a running run's persisted row carries an empty log.
+    if let Some(snapshot) = engine.live_snapshot(&id) {
+        return Json(ministr_api::exec::ExecLogs {
+            run_id: id,
+            status: "running".to_string(),
+            log: snapshot.log,
+            truncated: snapshot.truncated,
+            bytes_total: snapshot.bytes_total,
+            live: true,
+        })
+        .into_response();
+    }
+    match engine.get(&id) {
+        Ok(Some(record)) => Json(ministr_api::exec::ExecLogs {
+            run_id: record.run_id,
+            status: record.status.as_str().to_string(),
+            log: record.log,
+            truncated: record.truncated,
+            bytes_total: record.bytes_total,
+            live: false,
+        })
+        .into_response(),
+        Ok(None) => exec_error_response(&crate::exec::RunError::NotFound(id)).into_response(),
+        Err(e) => exec_error_response(&e).into_response(),
+    }
+}
+
+/// `POST /exec/runs/{id}/kill` — cancel a running run (group kill).
+async fn exec_kill(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    let engine = match state.exec.engine() {
+        Ok(engine) => engine,
+        Err(e) => return exec_error_response(&e).into_response(),
+    };
+    let killed = engine.cancel(&id);
+    Json(ministr_api::exec::ExecKill { run_id: id, killed }).into_response()
 }
 
 /// Start the daemon listener on the platform-native IPC endpoint.
@@ -2988,6 +3203,13 @@ mod tests {
             ("POST", "/api/v1/corpora/import", "bundle: import"),
             ("GET", "/activity", "observability: activity"),
             ("GET", "/coherence-events", "observability: coherence"),
+            // GET list (200 empty) + POST kill (200 killed:false) don't
+            // return a handler-404 on an unknown id — `unrouted` counts
+            // 404 as a routing miss, so probing /{id}/logs would
+            // false-trip on a legit not-found. Same router, so coverage
+            // of the /{id} paths holds transitively.
+            ("GET", "/exec/runs", "exec: list"),
+            ("POST", "/exec/runs/x/kill", "exec: kill"),
         ] {
             let s = status_of(&app, method, path).await;
             assert!(
@@ -2995,5 +3217,147 @@ mod tests {
                 "composed router missing {label} ({method} {path}) — got {s}"
             );
         }
+    }
+
+    /// Exec routes end-to-end against the real router (unix: `sh`).
+    /// One test covers the whole lifecycle so the temp db + roots wiring
+    /// is set up once: spawn-and-finish, list, persisted logs, live
+    /// snapshot for a running run, and cross-handler kill.
+    #[cfg(unix)]
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // one test covers the whole lifecycle
+    async fn exec_routes_run_logs_live_snapshot_and_kill() {
+        use http_body_util::BodyExt as _;
+
+        // JSON call helper (declared first — items-after-statements lint).
+        async fn call(
+            app: &Router,
+            method: &str,
+            uri: &str,
+            body: serde_json::Value,
+        ) -> (StatusCode, serde_json::Value) {
+            let req = http::Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap();
+            let resp = app.clone().oneshot(req).await.unwrap();
+            let status = resp.status();
+            let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+            (status, json)
+        }
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = test_state();
+        state.exec.set_db_path(tmp.path().join("exec_runs.db"));
+        // No corpora registered in test_state — allow the tempdir.
+        state.exec.set_roots(vec![tmp.path().to_path_buf()]);
+        let app = exec_router(state.clone());
+
+        // Foreground run: finishes, persists, lists.
+        let cwd = tmp.path().to_string_lossy().to_string();
+        let (status, run) = call(
+            &app,
+            "POST",
+            "/exec/runs",
+            serde_json::json!({"command": "echo route-hello", "cwd": cwd}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{run}");
+        assert_eq!(run["status"], "exited");
+        assert_eq!(run["exit_code"], 0);
+        let run_id = run["run_id"].as_str().unwrap().to_string();
+
+        let (status, logs) = call(
+            &app,
+            "GET",
+            &format!("/exec/runs/{run_id}/logs"),
+            serde_json::Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(logs["live"], false);
+        assert!(logs["log"].as_str().unwrap().contains("route-hello"));
+
+        let (status, list) = call(&app, "GET", "/exec/runs", serde_json::Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(!list.as_array().unwrap().is_empty());
+
+        // Background run: live snapshot mid-flight, then kill via the route.
+        let (status, bg) = call(
+            &app,
+            "POST",
+            "/exec/runs",
+            serde_json::json!({
+                "command": "echo live-marker; sleep 30",
+                "cwd": cwd,
+                "background": true
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{bg}");
+        assert_eq!(bg["status"], "running");
+        let bg_id = bg["run_id"].as_str().unwrap().to_string();
+
+        // The live snapshot serves output BEFORE the run finishes.
+        let mut live_log = String::new();
+        for _ in 0..200 {
+            let (_, logs) = call(
+                &app,
+                "GET",
+                &format!("/exec/runs/{bg_id}/logs"),
+                serde_json::Value::Null,
+            )
+            .await;
+            if logs["live"] == true && logs["log"].as_str().unwrap().contains("live-marker") {
+                live_log = logs["log"].as_str().unwrap().to_string();
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        assert!(
+            live_log.contains("live-marker"),
+            "live snapshot must serve mid-run output"
+        );
+
+        let (status, kill) = call(
+            &app,
+            "POST",
+            &format!("/exec/runs/{bg_id}/kill"),
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(kill["killed"], true);
+
+        // The record finalizes as killed.
+        let mut final_status = String::new();
+        for _ in 0..200 {
+            let (_, rec) = call(
+                &app,
+                "GET",
+                &format!("/exec/runs/{bg_id}"),
+                serde_json::Value::Null,
+            )
+            .await;
+            if rec["status"] != "running" {
+                final_status = rec["status"].as_str().unwrap_or("").to_string();
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        assert_eq!(final_status, "killed");
+
+        // Policy: a cwd outside the allowed roots is FORBIDDEN.
+        let (status, _) = call(
+            &app,
+            "POST",
+            "/exec/runs",
+            serde_json::json!({"command": "echo never", "cwd": "/"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
     }
 }

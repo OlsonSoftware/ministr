@@ -1094,6 +1094,78 @@ impl DaemonClient {
         self.get(&path).await
     }
 
+    // -- Exec (recorded shell) --
+
+    /// Execute (or start) a shell run through the daemon's exec engine.
+    ///
+    /// With `background: false` this resolves to the finished record;
+    /// with `background: true` it returns immediately with the running
+    /// record (poll via [`Self::exec_run`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn exec_start(
+        &self,
+        req: &crate::exec::StartExecRun,
+    ) -> Result<crate::exec::ExecRun, ClientError> {
+        self.post("/exec/runs", req).await
+    }
+
+    /// List recorded runs, newest first.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn exec_runs(
+        &self,
+        limit: Option<usize>,
+        session_id: Option<&str>,
+    ) -> Result<Vec<crate::exec::ExecRun>, ClientError> {
+        use std::fmt::Write as _;
+        let mut path = String::from("/exec/runs");
+        let mut sep = '?';
+        if let Some(limit) = limit {
+            path.push(sep);
+            let _ = write!(path, "limit={limit}");
+            sep = '&';
+        }
+        if let Some(session) = session_id {
+            path.push(sep);
+            let _ = write!(path, "session_id={session}");
+        }
+        self.get(&path).await
+    }
+
+    /// Fetch one recorded run by id.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn exec_run(&self, run_id: &str) -> Result<crate::exec::ExecRun, ClientError> {
+        self.get(&format!("/exec/runs/{run_id}")).await
+    }
+
+    /// Fetch a run's log — the persisted log for finished runs, or a
+    /// LIVE mid-run snapshot for running ones.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn exec_run_logs(&self, run_id: &str) -> Result<crate::exec::ExecLogs, ClientError> {
+        self.get(&format!("/exec/runs/{run_id}/logs")).await
+    }
+
+    /// Cancel a running run (kills its whole process group on unix).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn exec_kill(&self, run_id: &str) -> Result<crate::exec::ExecKill, ClientError> {
+        self.post(&format!("/exec/runs/{run_id}/kill"), &serde_json::json!({}))
+            .await
+    }
+
     // -- Admin --
 
     /// Get daemon status.

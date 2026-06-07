@@ -250,6 +250,19 @@ impl Default for RunEngineConfig {
 
 struct RunningEntry {
     cancel: CancellationToken,
+    /// Live view of the run's captured output (shared with the readers).
+    capture: Arc<Mutex<CaptureBuf>>,
+}
+
+/// A mid-run view of a running run's output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveSnapshot {
+    /// Output captured so far (head + tail when over the caps).
+    pub log: String,
+    /// True when the middle has already been dropped by the guard.
+    pub truncated: bool,
+    /// Exact bytes produced so far.
+    pub bytes_total: u64,
 }
 
 /// The daemon-side run engine: spawn + capture + persist + cancel.
@@ -345,17 +358,20 @@ impl RunEngine {
         }
 
         let cancel = CancellationToken::new();
-        self.running.lock().insert(
-            run_id.clone(),
-            RunningEntry {
-                cancel: cancel.clone(),
-            },
-        );
-
         let capture = Arc::new(Mutex::new(CaptureBuf::new(
             self.config.head_cap,
             self.config.tail_cap,
         )));
+        // The capture handle lives in the running map so callers can
+        // render a LIVE snapshot of a run's output mid-flight.
+        self.running.lock().insert(
+            run_id.clone(),
+            RunningEntry {
+                cancel: cancel.clone(),
+                capture: Arc::clone(&capture),
+            },
+        );
+
         let mut readers = tokio::task::JoinSet::new();
         if let Some(stdout) = child.stdout.take() {
             readers.spawn(read_into(stdout, Arc::clone(&capture)));
@@ -429,6 +445,24 @@ impl RunEngine {
             // so `run()`'s absent-from-map check is a completion barrier.
             running.lock().remove(&run_id);
         });
+    }
+
+    /// Render a live snapshot of a RUNNING run's output.
+    ///
+    /// Returns `None` once the run has finished (the supervisor removes
+    /// the entry after the final DB write — read the persisted record
+    /// via [`Self::get`] instead).
+    #[must_use]
+    pub fn live_snapshot(&self, run_id: &str) -> Option<LiveSnapshot> {
+        let map = self.running.lock();
+        let entry = map.get(run_id)?;
+        let buf = entry.capture.lock();
+        let (log, truncated) = buf.render();
+        Some(LiveSnapshot {
+            log,
+            truncated,
+            bytes_total: buf.total,
+        })
     }
 
     /// Request cancellation of a running run.
@@ -579,6 +613,74 @@ async fn kill_group(child: &mut tokio::process::Child, pgid: Option<i32>) {
     }
     let _ = child.kill().await;
     let _ = child.wait().await;
+}
+
+/// Lazily-initialized engine holder for hosts (the daemon's `AppState`).
+///
+/// Bundles the engine slot, a late-bound shared roots list (refreshed
+/// from the corpus registry by the exec route handlers before each
+/// spawn), and an optional db-path override (tests / custom data dirs).
+/// One `Default` construction per host; `Clone`-shared via `Arc`.
+#[derive(Default)]
+pub struct EngineCell {
+    engine: Mutex<Option<Arc<RunEngine>>>,
+    roots: Arc<Mutex<Vec<PathBuf>>>,
+    db_path: Mutex<Option<PathBuf>>,
+}
+
+impl EngineCell {
+    /// Replace the allowed cwd roots the engine validates against.
+    pub fn set_roots(&self, roots: Vec<PathBuf>) {
+        *self.roots.lock() = roots;
+    }
+
+    /// Current allowed roots (the first doubles as the default cwd).
+    #[must_use]
+    pub fn roots(&self) -> Vec<PathBuf> {
+        self.roots.lock().clone()
+    }
+
+    /// Override the run-store path (before the first engine use).
+    pub fn set_db_path(&self, path: PathBuf) {
+        *self.db_path.lock() = Some(path);
+    }
+
+    /// The engine, created on first use (db defaults to
+    /// `~/.ministr/exec_runs.db`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RunError::Storage`] if the run store cannot be opened.
+    pub fn engine(&self) -> Result<Arc<RunEngine>, RunError> {
+        let mut guard = self.engine.lock();
+        if let Some(engine) = guard.as_ref() {
+            return Ok(Arc::clone(engine));
+        }
+        let db_path = self
+            .db_path
+            .lock()
+            .clone()
+            .unwrap_or_else(|| ministr_api::daemon_data_dir().join("exec_runs.db"));
+        if let Some(parent) = db_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let engine = Arc::new(RunEngine::new(
+            db_path,
+            Arc::new(SharedRootsList(Arc::clone(&self.roots))),
+            RunEngineConfig::default(),
+        )?);
+        *guard = Some(Arc::clone(&engine));
+        Ok(engine)
+    }
+}
+
+/// [`RootsProvider`] over the cell's late-bound roots list.
+struct SharedRootsList(Arc<Mutex<Vec<PathBuf>>>);
+
+impl RootsProvider for SharedRootsList {
+    fn allowed_roots(&self) -> Vec<PathBuf> {
+        self.0.lock().clone()
+    }
 }
 
 /// Persistence for run records (mirrors [`crate::persistence`]'s shape).
