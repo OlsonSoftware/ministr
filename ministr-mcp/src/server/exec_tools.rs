@@ -666,7 +666,7 @@ mod tests {
     }
 
     /// A finished forwarded run yields a digest + duration; the digest
-    /// carries the same diagnostics the local path would (run_digest is
+    /// carries the same diagnostics the local path would (`run_digest` is
     /// the shared shaper, so daemon mode is response-identical).
     #[test]
     fn wire_to_response_shapes_a_finished_run_with_digest() {
@@ -690,7 +690,7 @@ mod tests {
 
     /// A still-running forwarded run yields NO digest + no duration — the
     /// daemon's persisted log is empty mid-run; the live tail comes from
-    /// ministr_run_logs, not the run response.
+    /// `ministr_run_logs`, not the run response.
     #[test]
     fn wire_to_response_omits_digest_for_a_running_run() {
         let r = wire_to_response(wire("running", None, ""));
