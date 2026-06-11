@@ -85,6 +85,7 @@ pub(crate) async fn run_body(registry: &CorpusRegistry, corpus_id: &str, paths: 
         dimension,
         parser,
         min_section_tokens,
+        ignore_patterns,
         index,
         data_dir,
         index_dir,
@@ -101,6 +102,7 @@ pub(crate) async fn run_body(registry: &CorpusRegistry, corpus_id: &str, paths: 
             handle.dimension,
             handle.parser,
             handle.min_section_tokens,
+            handle.ignore.clone(),
             Arc::clone(&handle.index),
             handle.data_dir.clone(),
             handle.data_dir.join("index"),
@@ -190,6 +192,7 @@ pub(crate) async fn run_body(registry: &CorpusRegistry, corpus_id: &str, paths: 
         .with_progress(Arc::clone(&progress))
         .with_parser_override(parser)
         .with_min_section_tokens(min_section_tokens)
+        .with_ignore_patterns(ignore_patterns)
         .with_embedding_service(service);
 
     match pipeline

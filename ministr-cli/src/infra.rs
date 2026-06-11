@@ -32,6 +32,10 @@ pub(crate) struct InfrastructureContext {
     /// Per-corpus minimum standalone-section token count resolved from `meta.toml`
     /// (parity-meta-toml-load; default 50). Applied to the ingestion pipeline.
     pub(crate) min_section_tokens: usize,
+    /// User ignore patterns from the repo `.ministr.toml` `[corpus] ignore`
+    /// (corpus-ignore-enforcement-gap). Applied to the ingestion pipeline so
+    /// the one-shot CLI surface enforces them exactly as the daemon does.
+    pub(crate) ignore: Vec<String>,
 }
 
 /// Initialize shared infrastructure: storage, embedder, and vector index.
@@ -198,11 +202,24 @@ pub(crate) async fn init_infrastructure(
     // parity-meta-toml-load: resolve this corpus's per-corpus `meta.toml` knobs
     // (parser + min_section_tokens) through the shared seam so `ministr index`
     // honors them exactly as the daemon registry does. Absent/unparseable
-    // meta.toml → defaults (None / 50). parser + min_section_tokens live only in
-    // `meta.toml`, so a `None` repo config here is correct.
+    // meta.toml → defaults (None / 50). The repo `.ministr.toml` is discovered
+    // from the first local corpus path (best-effort, like the daemon registry)
+    // so repo-only knobs — `[corpus] ignore` — are honored here too.
     let meta = ministr_core::config::CorpusConfig::load(&corpus_dir.join("meta.toml")).ok();
-    let effective =
-        ministr_core::config::resolve_effective_corpus_config(None, meta.as_ref(), config);
+    let repo_cfg = corpus_paths.first().and_then(|p| {
+        let path = std::path::Path::new(p);
+        let dir = if path.is_dir() {
+            Some(path)
+        } else {
+            path.parent()
+        };
+        dir.and_then(|d| ministr_core::config::RepoConfig::discover(d).ok().flatten())
+    });
+    let effective = ministr_core::config::resolve_effective_corpus_config(
+        repo_cfg.as_ref().map(|(_, rc)| rc),
+        meta.as_ref(),
+        config,
+    );
 
     Ok(InfrastructureContext {
         corpus_dir,
@@ -214,6 +231,7 @@ pub(crate) async fn init_infrastructure(
         rerank_depth: rerank_depth.unwrap_or(100),
         parser: effective.parser,
         min_section_tokens: effective.min_section_tokens,
+        ignore: effective.ignore,
     })
 }
 

@@ -99,6 +99,17 @@ const MATRIX: &[Row] = &[
         cli_one_shot: Honored::NotYet("parity-claim-extraction-mode"),
         daemon_registry: Honored::NotYet("parity-claim-extraction-mode"),
     },
+    // ignore — repo `[corpus] ignore` (corpus-ignore-enforcement-gap: the
+    // field was parse-only for its whole life until this row). Both surfaces
+    // now thread it into `IngestionPipeline::with_ignore_patterns` (CLI
+    // `init_infrastructure` discovers the repo config from the first corpus
+    // path, like the registry always has), and the daemon's freshness sweep
+    // walks with the same patterns so ignored files never read as "new".
+    Row {
+        knob: "ignore",
+        cli_one_shot: Honored::Yes,
+        daemon_registry: Honored::Yes,
+    },
 ];
 
 /// The canonical per-corpus knob names, mirroring both the
@@ -111,6 +122,7 @@ const KNOBS: &[&str] = &[
     "parser",
     "min_section_tokens",
     "claim_extraction",
+    "ignore",
 ];
 
 fn row(knob: &str) -> &'static Row {
@@ -133,6 +145,7 @@ fn matrix_covers_every_effective_knob_exhaustively() {
         parser,
         min_section_tokens,
         claim_extraction,
+        ignore,
     } = resolve_effective_corpus_config(None, None, &MinistrConfig::default());
     // Touch every binding so a removed knob is a compile error here too.
     let _ = (
@@ -142,6 +155,7 @@ fn matrix_covers_every_effective_knob_exhaustively() {
         &parser,
         &min_section_tokens,
         &claim_extraction,
+        &ignore,
     );
 
     // `KNOBS` (module scope) is the runtime mirror of the destructure above.
@@ -192,9 +206,11 @@ fn model_is_honored_end_to_end_via_the_shared_seam() {
 fn known_registry_gaps_are_tracked_never_silent() {
     // The registry now applies the per-corpus MODEL (embedder pool,
     // parity-seam-registry-routing), the Matryoshka DIMENSION + RERANK_DEPTH
-    // (parity-registry-knobs), AND the `meta.toml` PARSER + MIN_SECTION_TOKENS
-    // (parity-meta-toml-load). The only remaining gap is `claim_extraction`,
-    // which needs a `ModelAssisted` extractor (parity-claim-extraction-mode).
+    // (parity-registry-knobs), the `meta.toml` PARSER + MIN_SECTION_TOKENS
+    // (parity-meta-toml-load), AND the repo IGNORE patterns
+    // (corpus-ignore-enforcement-gap). The only remaining gap is
+    // `claim_extraction`, which needs a `ModelAssisted` extractor
+    // (parity-claim-extraction-mode).
     // Every still-ungated registry cell MUST be `NotYet(non-empty tracking ref)`
     // — a regression that flips one to `Yes` without the wiring, or drops the
     // tracking ref, fails here; and a regression that drops one of the applied
@@ -202,7 +218,7 @@ fn known_registry_gaps_are_tracked_never_silent() {
     for r in MATRIX {
         if matches!(
             r.knob,
-            "model" | "dimension" | "rerank_depth" | "parser" | "min_section_tokens"
+            "model" | "dimension" | "rerank_depth" | "parser" | "min_section_tokens" | "ignore"
         ) {
             assert_eq!(
                 r.daemon_registry,

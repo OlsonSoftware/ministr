@@ -450,6 +450,31 @@ mod tests {
 
     // --- Full pipeline integration tests ---
 
+    // corpus-ignore-enforcement-gap: the acceptance proof — a `[corpus] ignore`
+    // glob handed to the pipeline keeps the file out of the index entirely.
+    #[tokio::test]
+    async fn pipeline_ignore_patterns_exclude_files_from_indexing() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("keep.md"), "# Keep\n\nIndexed content.").unwrap();
+        std::fs::write(tmp.path().join("skip.md"), "# Skip\n\nMust not be indexed.").unwrap();
+
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let stats = IngestionPipeline::new()
+            .with_ignore_patterns(vec!["skip.md".to_owned()])
+            .ingest_directory(tmp.path(), &storage)
+            .await
+            .unwrap();
+        assert_eq!(stats.files_discovered, 1, "only keep.md discovered");
+
+        let docs = storage.list_documents().await.unwrap();
+        assert!(
+            !docs.iter().any(|d| d.id.0.contains("skip.md")),
+            "skip.md must not be in the index: {:?}",
+            docs.iter().map(|d| &d.id).collect::<Vec<_>>()
+        );
+        assert!(docs.iter().any(|d| d.id.0.contains("keep.md")));
+    }
+
     #[tokio::test]
     async fn ingest_single_file() {
         let tmp = tempfile::tempdir().unwrap();

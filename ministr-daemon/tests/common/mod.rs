@@ -331,6 +331,7 @@ fn build_corpus_handle(
         rerank_depth: None,
         parser: None,
         min_section_tokens: 50,
+        ignore: Vec::new(),
         sessions: Arc::new(tokio::sync::Mutex::new(SessionRegistry::new(
             UsageConfig::default(),
         ))),

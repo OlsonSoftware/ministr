@@ -28,7 +28,7 @@ use crate::parser::{
 use crate::storage::traits::{FileHashRecord, Storage, SymbolFilter};
 use crate::types::{CorpusRoot, RootKind, VectorId};
 
-use super::discovery::{discover_files, discover_paths, is_in_ignored_dir};
+use super::discovery::is_in_ignored_dir;
 use super::embedding::{batch_embed_and_insert, collect_document_embeddings, embed_document};
 use super::process::{ProcessOptions, store_enriched_document};
 use super::roots::{
@@ -539,6 +539,11 @@ impl Default for BatchIngestionConfig {
 pub struct IngestionPipeline {
     parser_override: Option<ParserKind>,
     min_section_tokens: usize,
+    /// User ignore patterns from `.ministr.toml` `[corpus] ignore`
+    /// (gitignore-style globs), applied to every directory walk this
+    /// pipeline performs — discovery AND the stat-merkle fingerprint,
+    /// through the same walker, so they cannot drift.
+    ignore_patterns: Vec<String>,
     claim_extractor: HeuristicClaimExtractor,
     summary_generator: ExtractiveSummaryGenerator,
     relationship_detector: HeuristicRelationshipDetector,
@@ -593,6 +598,7 @@ impl IngestionPipeline {
         Self {
             parser_override: None,
             min_section_tokens: 50,
+            ignore_patterns: Vec::new(),
             claim_extractor: HeuristicClaimExtractor::new(),
             summary_generator: ExtractiveSummaryGenerator::new(),
             relationship_detector: HeuristicRelationshipDetector::new(),
@@ -712,6 +718,16 @@ impl IngestionPipeline {
         self
     }
 
+    /// Set user ignore patterns (`.ministr.toml` `[corpus] ignore`) for every
+    /// directory walk this pipeline performs. Gitignore-style globs relative
+    /// to each walked root; applied on top of `.gitignore` and the built-in
+    /// always-ignore lists.
+    #[must_use]
+    pub fn with_ignore_patterns(mut self, patterns: Vec<String>) -> Self {
+        self.ignore_patterns = patterns;
+        self
+    }
+
     #[must_use]
     pub fn with_package_graph(mut self, graph: PackageGraph) -> Self {
         self.package_graph = Some(graph);
@@ -742,7 +758,7 @@ impl IngestionPipeline {
         dir: &Path,
         storage: &S,
     ) -> Result<IngestionStats, IngestionError> {
-        let files = discover_files(dir)?;
+        let files = super::discovery::discover_files_with_ignores(dir, &self.ignore_patterns)?;
         let mut stats = IngestionStats::new(files.len());
 
         if files.is_empty() {
@@ -1142,7 +1158,7 @@ impl IngestionPipeline {
 
         // Discover stage: walk once, producing the file list and (when rooted)
         // a stat-merkle so an unchanged corpus can short-circuit the reindex.
-        let (root_hash, files) = Self::discover_files_and_hash(dir, root_id)?;
+        let (root_hash, files) = self.discover_files_and_hash(dir, root_id)?;
 
         if let Some(stats) =
             Self::corpus_merkle_short_circuit(storage, root_id, root_hash.as_deref(), files.len())
@@ -1264,14 +1280,21 @@ impl IngestionPipeline {
     /// key to remember a fingerprint under, so they take the legacy
     /// `discover_files` path with no hash.
     fn discover_files_and_hash(
+        &self,
         dir: &Path,
         root_id: Option<&str>,
     ) -> Result<(Option<String>, Vec<PathBuf>), IngestionError> {
         if root_id.is_some() {
-            let (h, f) = super::discovery::compute_corpus_stat_merkle(dir)?;
+            let (h, f) = super::discovery::compute_corpus_stat_merkle_with_ignores(
+                dir,
+                &self.ignore_patterns,
+            )?;
             Ok((Some(h), f))
         } else {
-            Ok((None, discover_files(dir)?))
+            Ok((
+                None,
+                super::discovery::discover_files_with_ignores(dir, &self.ignore_patterns)?,
+            ))
         }
     }
 
@@ -1563,7 +1586,7 @@ impl IngestionPipeline {
             progress.set_phase(IngestionPhase::Discovering);
         }
 
-        let files = discover_paths(paths)?;
+        let files = super::discovery::discover_paths_with_ignores(paths, &self.ignore_patterns)?;
         let mut stats = IngestionStats::new(files.len());
 
         if files.is_empty() {

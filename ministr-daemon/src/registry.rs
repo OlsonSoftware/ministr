@@ -175,6 +175,11 @@ pub struct CorpusHandle {
     /// (parity-meta-toml-load) — its `meta.toml` `min_section_tokens`
     /// (default 50). `indexer::run` applies this to the `IngestionPipeline`.
     pub min_section_tokens: usize,
+    /// User ignore patterns from the repo `.ministr.toml` `[corpus] ignore`
+    /// (corpus-ignore-enforcement-gap). `indexer::run` applies them to the
+    /// `IngestionPipeline`; the freshness sweep applies them to its walk so
+    /// ignored files never surface as "new" in the trust display.
+    pub ignore: Vec<String>,
     /// `Arc` so `list()` (and any read-mostly status path) can clone the
     /// handle out and drop the corpora-map guard *before* awaiting the
     /// session lock. Accessors are unchanged — `Arc` derefs to the
@@ -1575,6 +1580,7 @@ impl CorpusRegistry {
             rerank_depth: cfg.rerank_depth,
             parser: cfg.parser,
             min_section_tokens: cfg.min_section_tokens,
+            ignore: cfg.ignore.clone(),
             sessions: Arc::new(tokio::sync::Mutex::new(SessionRegistry::new(
                 UsageConfig::default(),
             ))),

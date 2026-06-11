@@ -1817,8 +1817,9 @@ async fn cached_freshness(
             | ministr_api::corpus::IndexingStatus::Queued
     );
 
+    let ignore_patterns = handle.ignore.clone();
     let entries = tokio::task::spawn_blocking(move || {
-        ministr_core::freshness::compute_freshness(&roots, &records)
+        ministr_core::freshness::compute_freshness(&roots, &records, &ignore_patterns)
     })
     .await
     .map_err(|e| e.to_string())?

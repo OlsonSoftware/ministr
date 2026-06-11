@@ -68,7 +68,8 @@ pub(crate) async fn run_corpus_ingestion(
     let mut pipeline = ministr_core::ingestion::IngestionPipeline::new()
         .with_progress(Arc::clone(progress))
         .with_parser_override(ctx.parser)
-        .with_min_section_tokens(ctx.min_section_tokens);
+        .with_min_section_tokens(ctx.min_section_tokens)
+        .with_ignore_patterns(ctx.ignore.clone());
     if let Some(n) = streaming_persist_every {
         pipeline = pipeline
             .with_corpus_dir(ctx.index_dir.clone())

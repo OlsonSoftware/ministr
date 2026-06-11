@@ -21,7 +21,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::IngestionError;
-use crate::ingestion::{compute_content_hash, compute_root_id, discover_files, namespace_path};
+use crate::ingestion::{
+    compute_content_hash, compute_root_id, discover_files_with_ignores, namespace_path,
+};
 use crate::storage::FileHashRecord;
 
 /// One file's hash-verified trust state.
@@ -62,6 +64,7 @@ pub struct FileFreshness {
 pub fn compute_freshness(
     roots: &[PathBuf],
     records: &[FileHashRecord],
+    ignore_patterns: &[String],
 ) -> Result<Vec<FileFreshness>, IngestionError> {
     let multi_root = roots.len() > 1;
     let mut by_path: HashMap<&str, &FileHashRecord> =
@@ -70,7 +73,7 @@ pub fn compute_freshness(
     let mut out = Vec::new();
     for root in roots {
         let root_id = compute_root_id(root);
-        for file in discover_files(root)? {
+        for file in discover_files_with_ignores(root, ignore_patterns)? {
             let Ok(rel) = file.strip_prefix(root) else {
                 continue;
             };
@@ -167,7 +170,7 @@ mod tests {
             rec("src/deleted.rs", "fn gone() {}"),
         ];
 
-        let report = compute_freshness(&[root.to_path_buf()], &records).unwrap();
+        let report = compute_freshness(&[root.to_path_buf()], &records, &[]).unwrap();
         assert_eq!(state_of(&report, "src/same.rs"), &FreshnessState::Current);
         assert_eq!(state_of(&report, "src/changed.rs"), &FreshnessState::Stale);
         assert_eq!(state_of(&report, "src/brand_new.rs"), &FreshnessState::New);
@@ -186,7 +189,7 @@ mod tests {
         write(root, "a.rs", "fn v2() {}");
         let mut record = rec("a.rs", "fn v1() {}");
         record.mtime_ns = Some(0); // irrelevant by design
-        let report = compute_freshness(&[root.to_path_buf()], &[record]).unwrap();
+        let report = compute_freshness(&[root.to_path_buf()], &[record], &[]).unwrap();
         assert_eq!(state_of(&report, "a.rs"), &FreshnessState::Stale);
     }
 
@@ -197,7 +200,7 @@ mod tests {
         write(&root, "lib.rs", "pub fn x() {}");
         let root_id = compute_root_id(&root);
         let records = vec![rec(&namespace_path(&root_id, "lib.rs"), "pub fn x() {}")];
-        let report = compute_freshness(std::slice::from_ref(&root), &records).unwrap();
+        let report = compute_freshness(std::slice::from_ref(&root), &records, &[]).unwrap();
         assert_eq!(
             state_of(&report, &namespace_path(&root_id, "lib.rs")),
             &FreshnessState::Current
@@ -214,8 +217,40 @@ mod tests {
         let root = dir.path();
         write(root, "node_modules/dep/index.js", "hidden");
         write(root, "seen.rs", "fn seen() {}");
-        let report = compute_freshness(&[root.to_path_buf()], &[]).unwrap();
+        let report = compute_freshness(&[root.to_path_buf()], &[], &[]).unwrap();
         assert!(report.iter().all(|f| !f.path.contains("node_modules")));
         assert_eq!(state_of(&report, "seen.rs"), &FreshnessState::New);
+    }
+
+    // corpus-ignore-enforcement-gap: the freshness sweep honors user ignore
+    // patterns — an ignored on-disk file is invisible (no "new" noise), and a
+    // file that was indexed and then ignored reports Missing.
+    #[test]
+    fn ignored_files_are_invisible_to_the_sweep() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        std::fs::write(root.join("keep.rs"), "fn main() {}").unwrap();
+        std::fs::write(root.join("skipme.md"), "# snapshot").unwrap();
+
+        let report =
+            compute_freshness(std::slice::from_ref(&root), &[], &["*me.md".to_owned()]).unwrap();
+        let paths: Vec<&str> = report.iter().map(|f| f.path.as_str()).collect();
+        assert!(paths.contains(&"keep.rs"), "got {paths:?}");
+        assert!(
+            !paths.iter().any(|p| p.contains("skipme.md")),
+            "ignored file must not appear in the sweep: {paths:?}"
+        );
+
+        // Indexed before, ignored now → Missing (the index still remembers it).
+        let record = FileHashRecord {
+            path: "skipme.md".to_owned(),
+            content_hash: "deadbeef".to_owned(),
+            mtime_ns: Some(0),
+            extractor_version: 0,
+            resolver_version: 0,
+        };
+        let report = compute_freshness(&[root], &[record], &["*me.md".to_owned()]).unwrap();
+        let snap = report.iter().find(|f| f.path == "skipme.md").unwrap();
+        assert_eq!(snap.state, FreshnessState::Missing);
     }
 }

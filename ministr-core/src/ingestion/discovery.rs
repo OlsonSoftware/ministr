@@ -203,7 +203,7 @@ fn dir_name_is_ignored(name: &str) -> bool {
 /// apart. Applies, in order: `.gitignore`/global/exclude rules, the
 /// always-ignore file-glob overrides, the always-ignore directory-glob
 /// overrides, and an exact+glob directory-name `filter_entry` prune.
-fn ignored_walk(dir: &Path) -> Result<ignore::Walk, IngestionError> {
+fn ignored_walk(dir: &Path, extra_ignores: &[String]) -> Result<ignore::Walk, IngestionError> {
     use ignore::WalkBuilder;
     use ignore::overrides::OverrideBuilder;
 
@@ -213,6 +213,15 @@ fn ignored_walk(dir: &Path) -> Result<ignore::Walk, IngestionError> {
     }
     for pattern in ALWAYS_IGNORE_DIR_GLOBS {
         let _ = overrides.add(&format!("!**/{pattern}"));
+    }
+    // User patterns from `.ministr.toml` `[corpus] ignore` — gitignore-style
+    // globs relative to the walked root (a pattern without `/` matches at any
+    // depth; a trailing `/` matches directories only). An invalid pattern is
+    // skipped with a warning rather than failing the whole walk.
+    for pattern in extra_ignores {
+        if overrides.add(&format!("!{pattern}")).is_err() {
+            tracing::warn!(pattern, "invalid [corpus] ignore pattern — skipped");
+        }
     }
     let overrides = overrides.build().map_err(|e| IngestionError::Io {
         path: dir.to_path_buf(),
@@ -270,10 +279,27 @@ pub(super) fn is_in_ignored_dir(root: Option<&Path>, file_path: &Path) -> bool {
 /// Discover all supported files in a directory recursively.
 ///
 /// Respects `.gitignore` rules and skips well-known junk directories and file patterns.
-#[must_use = "returns discovered files"]
+///
+/// # Errors
+///
+/// Returns [`IngestionError`] when the directory walk fails.
 pub fn discover_files(dir: &Path) -> Result<Vec<PathBuf>, IngestionError> {
+    discover_files_with_ignores(dir, &[])
+}
+
+/// [`discover_files`] plus user ignore patterns from `.ministr.toml`
+/// `[corpus] ignore`, enforced through the same walker the change-detection
+/// merkle uses so the file set and the fingerprint can never drift.
+///
+/// # Errors
+///
+/// Returns [`IngestionError`] when the directory walk fails.
+pub fn discover_files_with_ignores(
+    dir: &Path,
+    extra_ignores: &[String],
+) -> Result<Vec<PathBuf>, IngestionError> {
     let mut files = Vec::new();
-    for result in ignored_walk(dir)? {
+    for result in ignored_walk(dir, extra_ignores)? {
         let entry = result.map_err(|e| IngestionError::Io {
             path: dir.to_path_buf(),
             source: std::io::Error::other(format!("walk error: {e}")),
@@ -305,6 +331,21 @@ pub fn discover_files(dir: &Path) -> Result<Vec<PathBuf>, IngestionError> {
 /// ```
 #[must_use = "returns discovered files"]
 pub fn discover_paths(paths: &[PathBuf]) -> Result<Vec<PathBuf>, IngestionError> {
+    discover_paths_with_ignores(paths, &[])
+}
+
+/// [`discover_paths`] plus user ignore patterns from `.ministr.toml`
+/// `[corpus] ignore`. Patterns apply when walking directories; a file
+/// listed explicitly (or matched by an explicit glob) is kept — naming a
+/// file directly is a stronger signal than an ignore pattern.
+///
+/// # Errors
+///
+/// Returns [`IngestionError`] when a walk or glob expansion fails.
+pub fn discover_paths_with_ignores(
+    paths: &[PathBuf],
+    extra_ignores: &[String],
+) -> Result<Vec<PathBuf>, IngestionError> {
     use std::collections::HashSet;
 
     let mut all_files = Vec::new();
@@ -324,10 +365,10 @@ pub fn discover_paths(paths: &[PathBuf]) -> Result<Vec<PathBuf>, IngestionError>
                     path: path.clone(),
                     source: std::io::Error::other(e.to_string()),
                 })?;
-                collect_path_entry(&entry_path, &mut all_files, &mut seen)?;
+                collect_path_entry(&entry_path, extra_ignores, &mut all_files, &mut seen)?;
             }
         } else {
-            collect_path_entry(path, &mut all_files, &mut seen)?;
+            collect_path_entry(path, extra_ignores, &mut all_files, &mut seen)?;
         }
     }
 
@@ -337,11 +378,12 @@ pub fn discover_paths(paths: &[PathBuf]) -> Result<Vec<PathBuf>, IngestionError>
 
 fn collect_path_entry(
     path: &Path,
+    extra_ignores: &[String],
     files: &mut Vec<PathBuf>,
     seen: &mut std::collections::HashSet<PathBuf>,
 ) -> Result<(), IngestionError> {
     if path.is_dir() {
-        let dir_files = discover_files(path)?;
+        let dir_files = discover_files_with_ignores(path, extra_ignores)?;
         for f in dir_files {
             let canonical = f.canonicalize().unwrap_or_else(|_| f.clone());
             if seen.insert(canonical) {
@@ -444,7 +486,23 @@ pub fn is_unreal_corpus(root: &Path) -> bool {
 /// metadata cannot be read.
 #[must_use = "returns (root_hash, files)"]
 pub fn compute_corpus_stat_merkle(dir: &Path) -> Result<(String, Vec<PathBuf>), IngestionError> {
-    let walk = ignored_walk(dir)?;
+    compute_corpus_stat_merkle_with_ignores(dir, &[])
+}
+
+/// [`compute_corpus_stat_merkle`] plus user ignore patterns — the same
+/// patterns MUST be passed here and to [`discover_files_with_ignores`]
+/// or the indexed file set and the fingerprint drift apart.
+///
+/// # Errors
+///
+/// Returns [`IngestionError`] when the walk fails or file metadata
+/// cannot be read.
+#[must_use = "returns (root_hash, files)"]
+pub fn compute_corpus_stat_merkle_with_ignores(
+    dir: &Path,
+    extra_ignores: &[String],
+) -> Result<(String, Vec<PathBuf>), IngestionError> {
+    let walk = ignored_walk(dir, extra_ignores)?;
 
     // Collect (rel_path, abs_path, mtime_ns, size) tuples; we need both
     // the relative form (for the fingerprint, so absolute paths don't
@@ -507,6 +565,87 @@ mod tests {
     fn write(path: &Path, body: &str) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, body).unwrap();
+    }
+
+    // corpus-ignore-enforcement-gap: `[corpus] ignore` patterns must actually
+    // exclude files — for the indexed set AND the merkle fingerprint.
+    #[test]
+    fn user_ignore_patterns_exclude_files_and_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(&tmp.path().join("keep.rs"), "fn main() {}");
+        write(&tmp.path().join("skipme.md"), "# skip");
+        write(&tmp.path().join("Binaries/junk.rs"), "fn junk() {}");
+        write(&tmp.path().join("nested/alsome.md"), "# skip too");
+
+        // A file glob (matching at any depth, gitignore-style) + a dir pattern.
+        let ignores = vec!["*me.md".to_owned(), "Binaries/".to_owned()];
+        let files = discover_files_with_ignores(tmp.path(), &ignores).unwrap();
+        let names: Vec<String> = files
+            .iter()
+            .map(|f| {
+                f.strip_prefix(tmp.path())
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(names, vec!["keep.rs"], "got {names:?}");
+
+        // No patterns → everything supported is discovered (regression guard).
+        let all = discover_files(tmp.path()).unwrap();
+        assert_eq!(all.len(), 4, "got {all:?}");
+    }
+
+    #[test]
+    fn user_ignore_patterns_keep_walk_and_merkle_in_lockstep() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(&tmp.path().join("keep.rs"), "fn main() {}");
+        write(&tmp.path().join("skip.md"), "# snapshot v1");
+
+        let ignores = vec!["skip.md".to_owned()];
+        let (h1, files1) = compute_corpus_stat_merkle_with_ignores(tmp.path(), &ignores).unwrap();
+        assert_eq!(
+            files1,
+            discover_files_with_ignores(tmp.path(), &ignores).unwrap(),
+            "merkle and discovery must agree on the file set"
+        );
+
+        // Changing an IGNORED file must not change the fingerprint.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        write(
+            &tmp.path().join("skip.md"),
+            "# snapshot v2 — much longer body",
+        );
+        let (h2, _) = compute_corpus_stat_merkle_with_ignores(tmp.path(), &ignores).unwrap();
+        assert_eq!(h1, h2, "an ignored file's change must not dirty the merkle");
+
+        // Changing a KEPT file must still change it.
+        write(&tmp.path().join("keep.rs"), "fn main() { println!(); }");
+        let (h3, _) = compute_corpus_stat_merkle_with_ignores(tmp.path(), &ignores).unwrap();
+        assert_ne!(h1, h3, "a kept file's change must dirty the merkle");
+    }
+
+    #[test]
+    fn explicitly_listed_file_wins_over_ignore_pattern() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(&tmp.path().join("notes.md"), "# notes");
+        let ignores = vec!["*.md".to_owned()];
+        let files = discover_paths_with_ignores(&[tmp.path().join("notes.md")], &ignores).unwrap();
+        assert_eq!(
+            files.len(),
+            1,
+            "naming a file directly beats an ignore pattern"
+        );
+    }
+
+    #[test]
+    fn invalid_ignore_pattern_is_skipped_not_fatal() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(&tmp.path().join("keep.rs"), "fn main() {}");
+        // "**.rs**" style garbage that the override parser rejects.
+        let ignores = vec!["[".to_owned()];
+        let files = discover_files_with_ignores(tmp.path(), &ignores).unwrap();
+        assert_eq!(files.len(), 1, "invalid pattern must not fail the walk");
     }
 
     #[test]

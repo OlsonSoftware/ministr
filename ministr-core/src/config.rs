@@ -544,6 +544,9 @@ pub struct EffectiveCorpusConfig {
     pub min_section_tokens: usize,
     /// Claim-extraction mode (per-corpus `meta.toml`; defaults to heuristic).
     pub claim_extraction: ClaimExtractionMode,
+    /// User ignore patterns (repo `[corpus] ignore`; gitignore-style globs,
+    /// applied on top of `.gitignore` + the built-in always-ignore lists).
+    pub ignore: Vec<String>,
 }
 
 /// Resolve every per-corpus knob into one [`EffectiveCorpusConfig`].
@@ -583,6 +586,10 @@ pub fn resolve_effective_corpus_config(
             .map_or(DEFAULT_MIN_SECTION_TOKENS, |c| c.min_section_tokens),
         claim_extraction: corpus_config
             .map_or(ClaimExtractionMode::Heuristic, |c| c.claim_extraction),
+        // ignore currently lives only in the repo `[corpus]` table.
+        ignore: repo_config
+            .map(|r| r.corpus.ignore.clone())
+            .unwrap_or_default(),
     }
 }
 
