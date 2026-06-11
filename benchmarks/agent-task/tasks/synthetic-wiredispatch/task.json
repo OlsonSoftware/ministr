@@ -1,0 +1,17 @@
+{
+ "id": "synthetic-wiredispatch",
+ "difficulty": "hard",
+ "language": "rust",
+ "summary": "Synthetic ~20-file Rust wire-protocol crate (relaykit). Two conformance tests fail with numeric-only symptoms (op codes + reply kinds). Op codes are assigned AT BUILD TIME from ops/registry.list line order and exist nowhere in the source tree \u2014 grepping every symptom token cannot reach the fix file. Decoys: framing TAG_* constants, a retired string-route table. The grep-resistant moat task (probe-verified).",
+ "validate": [
+  "cargo",
+  "test",
+  "--quiet"
+ ],
+ "golden": {
+  "ops/registry.list": "golden/registry_fixed.list"
+ },
+ "protect": [
+  "tests/"
+ ]
+}

@@ -1,0 +1,13 @@
+# relaykit operation registry.
+    #
+    # ORDER IS WIRE-SIGNIFICANT: the build assigns each entry its
+    # operation code from line position (top entry = 1).
+    # Append new operations at the end; never reorder released entries.
+session::open_link
+presence::announce
+beacon::emit_pulse
+ledger::post_entry
+mirror::reflect_state
+quota::check_balance
+journal::append_record
+digest::fold_window

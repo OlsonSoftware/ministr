@@ -279,3 +279,28 @@ arm A: install the real PreToolUse hooks a ministr deployment ships (deny
 shell grep/Grep), keep the validity gate, and design tasks whose symptom
 text shares no literal with the fix site. Until then, no arm-comparison
 numbers from this suite should be cited.
+
+## The grep-resistant task (`synthetic-wiredispatch`)
+
+The moat task the earlier runs showed was missing: a ~20-file synthetic Rust
+wire-protocol crate (`relaykit`, zero deps, post-cutoff by construction) where
+**operation codes exist nowhere in the source tree** — `build.rs` assigns them
+from the line ORDER of `ops/registry.list` and generates the dispatch table
+into `OUT_DIR`. The planted bug swaps two adjacent registry lines, so two ops
+dispatch to each other's handlers and the conformance suite fails with
+numeric-only symptoms (`op 0x0006 reply kind: left 7, right 6`). Test names
+are neutral (`op_0006_conformance`), assert messages carry no handler words,
+and decoys exist (framing `TAG_*` constants; a retired v0.3 string-route
+table).
+
+**The task validates itself**: `tasks/synthetic-wiredispatch/grep_probe.py`
+runs the validator, tokenizes everything an agent can observe (failing output
++ prompt), greps every token, and FAILS the task if any small (≤5-file,
+i.e. localizing) match-set reaches the fix file. Building this gate caught
+three real leaks before it passed: compiler warnings printing handler file
+paths, common-English collisions in the registry comment, and the prompt
+accidentally punning a handler name ("codes *mirror* the client libraries").
+What grep CAN reach is published by the probe (codec, transport, tests,
+docs, `build.rs`) — so a grep-arm agent can still win by *reading* the build
+system; the task is literal-shortcut-proof, not impossible. That is the
+intended bar.
