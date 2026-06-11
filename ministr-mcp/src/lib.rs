@@ -14,6 +14,7 @@ pub mod backend;
 pub mod bundle_routes;
 pub mod elicitation;
 pub mod error;
+pub mod pg_tls;
 pub mod run_digest;
 pub mod sampling;
 pub mod server;

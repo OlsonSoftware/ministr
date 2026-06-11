@@ -25,7 +25,6 @@
 use std::str::FromStr;
 
 use deadpool_postgres::{Config, ManagerConfig, Pool, RecyclingMethod, Runtime};
-use rustls::ClientConfig;
 use tokio_postgres::Row;
 use tokio_postgres_rustls::MakeRustlsConnect;
 use tracing::debug;
@@ -75,28 +74,9 @@ impl PostgresStorage {
 
 #[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector in F1.2
 fn make_rustls_connector() -> MakeRustlsConnect {
-    // Mozilla CA bundle. Sufficient for Azure Postgres Flex, AWS RDS,
-    // Google Cloud SQL, and self-managed servers with a publicly-trusted
-    // certificate chain. Providers with a PRIVATE per-cluster CA
-    // (DigitalOcean managed Postgres) additionally inject the cluster's
-    // CA via `MINISTR_PG_CA_CERT` (PEM contents in the env — container
-    // platforms deliver secrets as env vars, not files).
-    let mut roots = rustls::RootCertStore::empty();
-    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    if let Ok(pem) = std::env::var("MINISTR_PG_CA_CERT") {
-        let certs = rustls_pemfile::certs(&mut pem.as_bytes())
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap_or_default();
-        let (added, _ignored) = roots.add_parsable_certificates(certs);
-        tracing::info!(
-            added,
-            "added MINISTR_PG_CA_CERT root(s) to the pg TLS trust store"
-        );
-    }
-    let config = ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-    MakeRustlsConnect::new(config)
+    // Workspace-standard trust policy (Mozilla roots + optional
+    // MINISTR_PG_CA_CERT) — see `crate::pg_tls`.
+    crate::pg_tls::make_rustls_connector()
 }
 
 /// Best-effort host extraction for log messages — never includes the

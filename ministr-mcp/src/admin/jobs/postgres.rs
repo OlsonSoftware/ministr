@@ -19,7 +19,6 @@
 use std::str::FromStr;
 
 use deadpool_postgres::{Config, ManagerConfig, Pool, RecyclingMethod, Runtime};
-use rustls::ClientConfig;
 use tokio_postgres_rustls::MakeRustlsConnect;
 use tracing::debug;
 
@@ -155,14 +154,11 @@ impl PostgresJobQueue {
 
 #[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector in F1.2
 fn make_rustls_connector() -> MakeRustlsConnect {
-    // Mozilla root bundle. See `auth/storage/postgres.rs` for the
-    // rationale on always-on TLS — Azure Postgres Flex requires it.
-    let mut roots = rustls::RootCertStore::empty();
-    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let config = ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-    MakeRustlsConnect::new(config)
+    // Workspace-standard trust policy (Mozilla roots + optional
+    // MINISTR_PG_CA_CERT) — see `crate::pg_tls`. The original local
+    // copy here lacked the CA hook and silently disabled the cloud
+    // WorkerLoop on DO (exodus-workerloop-pg-ca).
+    crate::pg_tls::make_rustls_connector()
 }
 
 #[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector in F1.2
