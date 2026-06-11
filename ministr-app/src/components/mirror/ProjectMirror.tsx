@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { corpusFreshness, triggerReindex } from "../../lib/ipc";
+import { corpusFreshness, recentActivity, triggerReindex } from "../../lib/ipc";
 import type { CorpusInfo } from "../../lib/ipc";
 import { usePoll } from "../../lib/usePoll";
 import { buildTree, leafNote, summarize } from "../../lib/trustSummary";
@@ -10,6 +10,8 @@ import { TreeRow } from "../ui/TreeRow";
 import { TrustMark } from "../ui/TrustMark";
 import { RailRow, RailSection } from "../ui/Rail";
 import { FileDrillin } from "./FileDrillin";
+import { derivePresence } from "../../lib/presence";
+import { LiveDot } from "../ui/LiveDot";
 
 /**
  * Project Mirror (UX-BLUEPRINT §3.2) — what your AI sees. The tree IS
@@ -29,6 +31,8 @@ export function ProjectMirror({
     () => corpusFreshness(corpus.id),
     4_000,
   );
+  const { data: activity } = usePoll(() => recentActivity(30), 4_000);
+  const presence = derivePresence(activity ?? [], corpus.id, Date.now());
 
   const summary = fresh ? summarize(corpus.display_name, fresh) : null;
   const tree = useMemo(() => (fresh ? buildTree(fresh.files) : []), [fresh]);
@@ -124,6 +128,15 @@ export function ProjectMirror({
         </aside>
       </div>
       )}
+      {presence?.kind === "live" ? (
+        <footer aria-label="live presence">
+          <LiveDot label={presence.sentence} />
+        </footer>
+      ) : presence?.kind === "recent" ? (
+        <footer aria-label="recent presence">
+          <p className="text-sm text-dim">{presence.sentence}</p>
+        </footer>
+      ) : null}
     </div>
   );
 }

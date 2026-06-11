@@ -57,6 +57,24 @@ export const AllCurrent: Story = {
   render: (args) => <ProjectMirror {...args} onBack={() => {}} />,
 };
 
+export const LivePresence: Story = {
+  args: { corpus: CORPUS, onBack: () => {} },
+  decorators: [
+    withTauriMock({
+      corpus_freshness: FRESHNESS,
+      recent_activity: () => [
+        {
+          timestamp_ms: Date.now() - 2_000,
+          tool: "ministr_read",
+          corpus_id: "corpus-bbbb",
+          summary: "src/components/LoginForm.tsx",
+          cache_hit: false,
+        },
+      ],
+    }),
+  ],
+};
+
 export const Updating: Story = {
   args: { corpus: CORPUS, onBack: () => {} },
   decorators: [
