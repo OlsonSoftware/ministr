@@ -1,20 +1,22 @@
-import { Keel } from "./components/Keel";
+import { useState } from "react";
+import { TrustPanel } from "./components/home/TrustPanel";
+import { ProjectMirror } from "./components/mirror/ProjectMirror";
+import type { CorpusInfo } from "./lib/ipc";
 
 /**
- * App shell — clean slate (gui-rw-archive-scaffold).
- *
- * The previous app (facet workspace) is archived verbatim on the
- * `archive/app-v1` branch. This shell is intentionally bare: the rewrite
- * lands screen by screen per ministr-app/UX-BLUEPRINT.md v4
- * (Home Trust Panel → Project Mirror → Proof Feed → connect flow).
+ * App shell — hub-and-spoke, two levels (UX-BLUEPRINT navigation):
+ * Home (Trust Panel) ⇄ Project Mirror. No tabs, no router.
  */
 export default function App() {
+  const [open, setOpen] = useState<CorpusInfo | null>(null);
+
   return (
-    <main className="min-h-screen bg-bg text-ink grid place-items-center">
-      <Keel
-        title="ministr"
-        line="rebuilding from the keel — UX-BLUEPRINT v4"
-      />
-    </main>
+    <div className="min-h-screen bg-bg text-ink">
+      {open ? (
+        <ProjectMirror corpus={open} onBack={() => setOpen(null)} />
+      ) : (
+        <TrustPanel onOpenProject={setOpen} />
+      )}
+    </div>
   );
 }

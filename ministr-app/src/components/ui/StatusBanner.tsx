@@ -32,7 +32,7 @@ export function StatusBanner({
           {sub ? <p className="mt-1 text-sm text-dim">{sub}</p> : null}
         </div>
       </div>
-      {action ? <div className="shrink-0">{action}</div> : null}
+      {action ? <div className="relative z-10 shrink-0">{action}</div> : null}
     </section>
   );
 }

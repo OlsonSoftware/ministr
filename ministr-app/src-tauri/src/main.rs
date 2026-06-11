@@ -104,6 +104,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_corpora,
+            commands::corpus_freshness,
             commands::register_corpus,
             commands::unregister_corpus,
             commands::daemon_status,

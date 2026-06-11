@@ -347,6 +347,20 @@ impl DaemonClient {
         Ok(resp.corpora)
     }
 
+    /// Per-file hash-verified freshness states for a corpus (the GUI's
+    /// "tree never lies" display; gui-rw-backend-freshness).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] if the corpus doesn't exist or the sweep fails.
+    pub async fn corpus_freshness(
+        &self,
+        corpus_id: &str,
+    ) -> Result<crate::corpus::FreshnessResponse, ClientError> {
+        self.get(&format!("/api/v1/corpora/{corpus_id}/freshness"))
+            .await
+    }
+
     /// List a corpus's indexed files with content hashes + section counts.
     ///
     /// # Errors
