@@ -11,13 +11,23 @@ enclosing symbol.
 This is the agentic verify step: structured compiler/lint feedback as data,
 never raw build logs. Language-agnostic.
 
+{/* @generated tool-docs start — do not edit; run `npm run docs:gen` */}
+
+> Run the project's own toolchain(s) (cargo/tsc/eslint/ruff/go vet/…, plus any SARIF-emitting tool) and return bounded STRUCTURED diagnostics (file, range, severity, code, message), errors first, each cross-linked to the enclosing symbol. The agentic verify step — structured compiler/lint feedback as data, never raw build logs. Language-agnostic.
+
 ## Parameters
 
-| Parameter | Type | Default | Description |
+| Parameter | Type | Required | Description |
 |---|---|---|---|
-| `languages` | string[] | — | Optional languages to run (e.g. `rust`, `typescript`, `python`, `go`). Omit to run every detected toolchain. |
-| `limit` | number | `100` | Maximum number of diagnostics to return, capped at 500. |
-| `project` | string | — | Linked-project label from `.ministr.toml` `[[linked]]`. Omit for the primary corpus. |
+| `languages` | array of string | no | Restrict to these toolchain languages (e.g. 'rust','typescript','python','go'). Omit to run every detected toolchain. |
+| `limit` | integer | no | Maximum diagnostics to return. Default 100, capped at 500. |
+| `project` | string | no | Optional linked-project label. Omit for primary corpus. |
+
+Annotations: read-only · idempotent.
+
+<small>This block is generated from the live tool schema — the same definition agents receive.</small>
+
+{/* @generated tool-docs end */}
 
 ## Returns
 

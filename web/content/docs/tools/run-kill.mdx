@@ -6,11 +6,21 @@ description: Cancel a running run; kills the whole process group.
 Cancels a running run. On Unix the whole process group is killed, so child
 processes spawned by the command are terminated as well.
 
+{/* @generated tool-docs start — do not edit; run `npm run docs:gen` */}
+
+> Cancel a running run; kills the whole process group.
+
 ## Parameters
 
-| Parameter | Type | Default | Description |
+| Parameter | Type | Required | Description |
 |---|---|---|---|
-| `run_id` | string | — | The run to cancel. |
+| `run_id` | string | yes | Run id from ministr_run |
+
+Annotations: destructive · idempotent.
+
+<small>This block is generated from the live tool schema — the same definition agents receive.</small>
+
+{/* @generated tool-docs end */}
 
 ## Returns
 

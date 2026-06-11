@@ -7,11 +7,21 @@ Checks cached web and git sources for staleness and re-fetches any content that
 has changed. Pass a single URL to check one source, or omit `url` to check all
 cached sources.
 
+{/* @generated tool-docs start — do not edit; run `npm run docs:gen` */}
+
+> Check cached web and git sources for staleness and re-fetch changed content.
+
 ## Parameters
 
-| Parameter | Type | Default | Description |
+| Parameter | Type | Required | Description |
 |---|---|---|---|
-| `url` | string (optional) | — | A single web URL or git repo URL to check. Omit to check all cached sources. |
+| `url` | string | no | Optional URL (web) or repo URL (git) to check for staleness. If omitted, checks all cached sources. |
+
+Annotations: idempotent · open-world.
+
+<small>This block is generated from the live tool schema — the same definition agents receive.</small>
+
+{/* @generated tool-docs end */}
 
 ## Returns
 

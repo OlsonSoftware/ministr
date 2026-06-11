@@ -10,14 +10,24 @@ log is available via `ministr_run_logs`.
 With `background: true` the tool returns a `run_id` immediately instead of
 waiting for the command to finish.
 
+{/* @generated tool-docs start — do not edit; run `npm run docs:gen` */}
+
+> Run a shell command (recorded + captured). Returns exit code + a token-lean digest with every error line; full log via ministr_run_logs. background:true returns a run_id immediately.
+
 ## Parameters
 
-| Parameter | Type | Default | Description |
+| Parameter | Type | Required | Description |
 |---|---|---|---|
-| `command` | string | — | The shell command to run. Required. |
-| `cwd` | string (optional) | first corpus root | Working directory; must be inside an indexed corpus root. |
-| `timeout_secs` | number (optional) | `600` | Timeout in seconds. Maximum 3600. |
-| `background` | bool (optional) | — | When true, returns a `run_id` immediately. |
+| `background` | boolean | no | Run in background; poll with ministr_run_status |
+| `command` | string | yes | Shell command line to execute |
+| `cwd` | string | no | Working directory; defaults to the first corpus root |
+| `timeout_secs` | integer | no | Timeout seconds (default 600, max 3600) |
+
+Annotations: destructive · open-world.
+
+<small>This block is generated from the live tool schema — the same definition agents receive.</small>
+
+{/* @generated tool-docs end */}
 
 ## Returns
 

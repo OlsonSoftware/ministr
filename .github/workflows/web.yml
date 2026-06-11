@@ -46,6 +46,12 @@ jobs:
       - name: Type-check
         run: npm run types:check
 
+      - name: Docs parity gate
+        # Tool-reference pages + internal links must match the committed
+        # tool manifest (regenerated from ministr-mcp by cargo test's
+        # tool_manifest_parity gate). See web/scripts/gen-tool-docs.mjs.
+        run: npm run docs:check
+
       - name: Build static export
         # Site now serves at https://ministr.ai/ via the CNAME in
         # web/public/CNAME — no sub-path prefix needed.

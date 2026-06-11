@@ -8,15 +8,25 @@ filters out `pub` symbols, entry points, and trivial helpers. Double-check
 with `ministr_references` before deleting, since dynamic dispatch isn't
 tracked.
 
+{/* @generated tool-docs start — do not edit; run `npm run docs:gen` */}
+
+> Find symbols with zero references — candidates for safe deletion. Filters out `pub` symbols, entry points, and trivial helpers. Double-check with `ministr_references` before deleting since dynamic dispatch isn't tracked.
+
 ## Parameters
 
-| Parameter | Type | Default | Description |
+| Parameter | Type | Required | Description |
 |---|---|---|---|
-| `kind` | string | — | Optional symbol kind filter. |
-| `module` | string | — | Optional module filter. |
-| `min_lines` | number | `1` | Minimum symbol size in lines. |
-| `limit` | number | `50` | Maximum number of symbols to return, capped at 500. |
-| `project` | string | — | Linked-project label from `.ministr.toml` `[[linked]]`. Omit for the primary corpus. |
+| `kind` | string | no | Optional symbol kind filter (e.g. 'function', 'struct') |
+| `limit` | integer | no | Maximum results to return. Default 50, capped at 500. |
+| `min_lines` | integer | no | Skip symbols whose body is shorter than this many lines. Default 1. |
+| `module` | string | no | Optional module path prefix filter |
+| `project` | string | no | Optional linked-project label. Omit for primary corpus. |
+
+Annotations: read-only · idempotent.
+
+<small>This block is generated from the live tool schema — the same definition agents receive.</small>
+
+{/* @generated tool-docs end */}
 
 ## Returns
 

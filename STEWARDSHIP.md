@@ -63,13 +63,10 @@ closed is how the cloud and enterprise products fund the open core.
 
 - **Forks are welcome.** MIT explicitly permits commercial use, modification,
   and redistribution. We ask only that the copyright notice is preserved.
-- **The MCP tool surface is open.** All 20 tools — `ministr_survey`,
-  `ministr_symbols`, `ministr_definition`, `ministr_references`,
-  `ministr_read`, `ministr_extract`, `ministr_toc`, `ministr_bridge`,
-  `ministr_compress`, `ministr_usage`, `ministr_dropped`, `ministr_solid`,
-  `ministr_impact`, `ministr_dead`, `ministr_related`, `ministr_clone`,
-  `ministr_fetch`, `ministr_refresh`, `ministr_task`, `ministr_projects`
-  — are MIT.
+- **The MCP tool surface is open.** All 25 tools — the full surface in
+  [`web/content/tools-manifest.json`](web/content/tools-manifest.json),
+  from `ministr_survey` and `ministr_symbols` through the
+  `ministr_run` recorded-execution family — are MIT.
 - **Self-host is fully featured.** Running ministr on your own box gives you
   the same indexing, the same parsers, the same SOLID detector, the same
   bridge graph, and the same agent primitives that the cloud uses. The cloud

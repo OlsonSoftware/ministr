@@ -7,11 +7,21 @@ Polls the status of a run started with `ministr_run`. Reports whether the run
 is running, exited, killed, or timed out, along with its exit code, duration,
 and total captured bytes.
 
+{/* @generated tool-docs start — do not edit; run `npm run docs:gen` */}
+
+> Poll a run's status (running/exited/killed/timed_out, exit code, duration, bytes).
+
 ## Parameters
 
-| Parameter | Type | Default | Description |
+| Parameter | Type | Required | Description |
 |---|---|---|---|
-| `run_id` | string | — | The run to poll. |
+| `run_id` | string | yes | Run id from ministr_run |
+
+Annotations: read-only · idempotent.
+
+<small>This block is generated from the live tool schema — the same definition agents receive.</small>
+
+{/* @generated tool-docs end */}
 
 ## Returns
 

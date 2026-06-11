@@ -5,13 +5,23 @@ description: Atomic claims from a section, optionally filtered by query.
 
 `ministr_extract` returns the atomic claims of a section, optionally filtered by a relevance query. It's cheaper than `ministr_read` when your agent doesn't need the full prose — for example, when checking a specific fact inside a long section.
 
+{/* @generated tool-docs start — do not edit; run `npm run docs:gen` */}
+
+> Atomic claims from a section, optionally query-filtered. Cheaper than ministr_read when you don't need full prose.
+
 ## Parameters
 
-| Parameter | Type | Default | Description |
+| Parameter | Type | Required | Description |
 |---|---|---|---|
-| `section_id` | string | required | Section ID to extract claims from. |
-| `query` | string | — | Relevance filter; only claims relevant to the query are returned. |
-| `project` | string | — | Linked-project label from `.ministr.toml` `[[linked]]`. Omit for the primary corpus. |
+| `project` | string | no | Optional linked-project label. Omit for primary corpus. |
+| `query` | string | no | Optional query to filter claims by relevance |
+| `section_id` | string | no | Section ID to extract claims from |
+
+Annotations: read-only · idempotent.
+
+<small>This block is generated from the live tool schema — the same definition agents receive.</small>
+
+{/* @generated tool-docs end */}
 
 ## Returns
 

@@ -10,16 +10,26 @@ authorship of the symbol's lines.
 Symbols can be addressed either by `symbol_id` or by position (`file` +
 `line` + `col`), resolved via the occurrence index, LSP-style.
 
+{/* @generated tool-docs start — do not edit; run `npm run docs:gen` */}
+
+> Full source of a code symbol by ID. Call ministr_references first if you intend to modify or delete the symbol. Pass blame=true for git authorship of the symbol's lines.
+
 ## Parameters
 
-| Parameter | Type | Default | Description |
+| Parameter | Type | Required | Description |
 |---|---|---|---|
-| `symbol_id` | string | — | The symbol ID to resolve. Alternative to position addressing. |
-| `file` | string | — | Position addressing: file path (use with `line` and `col`). |
-| `line` | number | — | Position addressing: 1-based line number. |
-| `col` | number | — | Position addressing: 0-based byte column. |
-| `blame` | boolean | — | Include git blame: per-author line counts plus the last commit. Degrades gracefully to no blame when unavailable. |
-| `project` | string | — | Linked-project label from `.ministr.toml` `[[linked]]`. Omit for the primary corpus. |
+| `blame` | boolean | no | When true, attach git blame metadata (per-author line counts + last commit) for the symbol's line range. Omitted when not a git repo. |
+| `col` | integer | no | 0-based byte column for position-addressed lookup (requires file+line) |
+| `file` | string | no | Position-addressed alternative to symbol_id: file path (with line+col) to resolve the symbol under the cursor |
+| `line` | integer | no | 1-based line for position-addressed lookup (requires file+col) |
+| `project` | string | no | Optional linked-project label. Omit for primary corpus. |
+| `symbol_id` | string | no | Symbol ID to get the definition for (from ministr_symbols results) |
+
+Annotations: read-only · idempotent.
+
+<small>This block is generated from the live tool schema — the same definition agents receive.</small>
+
+{/* @generated tool-docs end */}
 
 ## Returns
 

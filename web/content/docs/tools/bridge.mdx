@@ -7,15 +7,25 @@ List cross-language bridge links (Tauri commands, NAPI exports, PyO3
 functions, FFI, HTTP routes, etc.). Call this before modifying any IPC or FFI
 boundary so you see every cross-language call site.
 
+{/* @generated tool-docs start — do not edit; run `npm run docs:gen` */}
+
+> Cross-language bridge links (Tauri commands, NAPI exports, PyO3 functions, FFI, HTTP routes, etc.). Call before modifying any IPC or FFI boundary so you see every cross-language call site.
+
 ## Parameters
 
-| Parameter | Type | Default | Description |
+| Parameter | Type | Required | Description |
 |---|---|---|---|
-| `query` | string | — | Optional substring match on the binding key or symbol name. |
-| `bridge_kind` | string | — | Optional kind filter: `tauri_command`, `tauri_event`, `napi`, `wasm_bindgen`, `pyo3`, `http_route`, `ffi`, `cgo`, `jni`, `uni_ffi`, `grpc`, `flutter_channel`, `electron_ipc`. |
-| `language` | string | — | Optional language filter. |
-| `file_path` | string | — | Optional file path; matches either endpoint of a link. |
-| `project` | string | — | Linked-project label from `.ministr.toml` `[[linked]]`. Omit for the primary corpus. |
+| `bridge_kind` | string | no | Filter by bridge kind: 'tauri_command', 'tauri_event', 'napi', 'wasm_bindgen', 'pyo3', 'http_route', 'ffi', 'cgo', 'jni', 'uni_ffi', 'grpc', 'flutter_channel', 'electron_ipc' |
+| `file_path` | string | no | Filter links where either endpoint is in this file path |
+| `language` | string | no | Filter links involving this language (e.g. 'rust', 'typescript', 'javascript', 'python') |
+| `project` | string | no | Optional linked-project label. Omit for primary corpus. |
+| `query` | string | no | Search query to filter by binding key or symbol name (case-insensitive substring match) |
+
+Annotations: read-only · idempotent.
+
+<small>This block is generated from the live tool schema — the same definition agents receive.</small>
+
+{/* @generated tool-docs end */}
 
 ## Returns
 

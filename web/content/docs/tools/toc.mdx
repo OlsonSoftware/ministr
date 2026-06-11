@@ -5,14 +5,24 @@ description: Structural overview (table of contents) of the indexed corpus.
 
 `ministr_toc` returns a structural overview — a table of contents — of the indexed corpus. Use it to orient your agent on an unfamiliar codebase before drilling in, or to list the sections of a single document.
 
+{/* @generated tool-docs start — do not edit; run `npm run docs:gen` */}
+
+> Structural overview (table of contents) of the indexed corpus. Use to orient on an unfamiliar codebase before drilling in.
+
 ## Parameters
 
-| Parameter | Type | Default | Description |
+| Parameter | Type | Required | Description |
 |---|---|---|---|
-| `document_id` | string | — | Filter the listing to one document. |
-| `offset` | usize | 0 | Pagination offset into the entries. |
-| `limit` | usize | 100 | Maximum entries to return. |
-| `project` | string | — | Linked-project label from `.ministr.toml` `[[linked]]`. Omit for the primary corpus. |
+| `document_id` | string | no | Optional document ID to filter the table of contents to a single document |
+| `limit` | integer | no | Maximum number of entries to return (default: 100) |
+| `offset` | integer | no | Number of entries to skip (default: 0) |
+| `project` | string | no | Optional linked-project label. Omit for primary corpus. |
+
+Annotations: read-only · idempotent.
+
+<small>This block is generated from the live tool schema — the same definition agents receive.</small>
+
+{/* @generated tool-docs end */}
 
 ## Returns
 

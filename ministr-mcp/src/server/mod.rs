@@ -14,6 +14,7 @@ mod coerce;
 mod condense;
 mod exec_tools;
 mod helpers;
+pub mod manifest;
 mod prefetch;
 mod progress;
 mod refresh;

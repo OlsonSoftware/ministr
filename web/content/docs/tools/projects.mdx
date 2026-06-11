@@ -5,9 +5,19 @@ description: List the current project and any linked projects queryable in this 
 
 `ministr_projects` lists the current project plus any linked projects your agent can query in this session. Pass a returned `label` as the `project` argument to other tools; omit `project` to query the current one.
 
+{/* @generated tool-docs start — do not edit; run `npm run docs:gen` */}
+
+> List the current project plus any linked projects you can query in this session. Pass a returned `label` as the `project` argument to other tools; omit `project` for the current one. Linked projects come from `.ministr.toml` `[[linked]]` entries (or `ministr_clone` results).
+
 ## Parameters
 
 None.
+
+Annotations: read-only · idempotent.
+
+<small>This block is generated from the live tool schema — the same definition agents receive.</small>
+
+{/* @generated tool-docs end */}
 
 ## Returns
 

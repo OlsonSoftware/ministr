@@ -5,12 +5,22 @@ description: Full content of a section by ID, with deduplication and delta deliv
 
 `ministr_read` returns the full content of a section by ID. Reach for it after `ministr_survey` points your agent at a section it needs in full. If you only need atomic claims, call `ministr_extract` instead — it's cheaper.
 
+{/* @generated tool-docs start — do not edit; run `npm run docs:gen` */}
+
+> Full content of a section by ID. Call ministr_extract instead if you only need atomic claims.
+
 ## Parameters
 
-| Parameter | Type | Default | Description |
+| Parameter | Type | Required | Description |
 |---|---|---|---|
-| `section_id` | string | required | Section ID, e.g. `docs/auth.md#error-handling`. |
-| `project` | string | — | Linked-project label from `.ministr.toml` `[[linked]]`. Omit for the primary corpus. |
+| `project` | string | no | Optional linked-project label. Omit for primary corpus. |
+| `section_id` | string | no | Section ID to read (e.g. 'docs/auth.md#error-handling') |
+
+Annotations: read-only · idempotent.
+
+<small>This block is generated from the live tool schema — the same definition agents receive.</small>
+
+{/* @generated tool-docs end */}
 
 ## Returns
 

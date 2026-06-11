@@ -5,11 +5,21 @@ description: Tell ministr which previously delivered content you dropped from co
 
 `ministr_dropped` tells ministr that your agent has dropped previously delivered content from its context. Call it immediately after dropping content you received. This keeps ministr's view of what you still hold accurate — without it, future `ministr_read` calls on the dropped IDs return short "already delivered" stubs instead of the full text.
 
+{/* @generated tool-docs start — do not edit; run `npm run docs:gen` */}
+
+> Call immediately after dropping content you previously received. Keeps ministr's view of what you still have accurate; without this, future ministr_read calls on dropped IDs return short 'already delivered' stubs instead of the full text.
+
 ## Parameters
 
-| Parameter | Type | Default | Description |
+| Parameter | Type | Required | Description |
 |---|---|---|---|
-| `content_ids` | string[] | required | IDs of the content that was dropped from context. |
+| `content_ids` | array of string | no | Content IDs the agent has dropped from its context |
+
+Annotations: idempotent.
+
+<small>This block is generated from the live tool schema — the same definition agents receive.</small>
+
+{/* @generated tool-docs end */}
 
 ## Returns
 

@@ -7,14 +7,24 @@ Pages a run's captured log. In delta mode it returns only what you haven't seen
 yet, tracked by a per-session cursor. With `query` it instead returns lines
 matching a substring, without advancing the cursor.
 
+{/* @generated tool-docs start — do not edit; run `npm run docs:gen` */}
+
+> Page a run's captured log (delta: only what you haven't seen) or filter it with query=substring.
+
 ## Parameters
 
-| Parameter | Type | Default | Description |
+| Parameter | Type | Required | Description |
 |---|---|---|---|
-| `run_id` | string | — | The run to read logs from. Required. |
-| `query` | string (optional) | — | Substring filter; returns matching lines (up to 200) and does not advance the cursor. |
-| `max_bytes` | number (optional) | `16384` | Maximum bytes to return per call. |
-| `from_offset` | number (optional) | — | Overrides the per-session cursor. |
+| `from_offset` | integer | no | Explicit byte offset (overrides the session cursor) |
+| `max_bytes` | integer | no | Max bytes per page (default 16384) |
+| `query` | string | no | Substring filter: return matching lines instead of paging |
+| `run_id` | string | yes | Run id from ministr_run |
+
+Annotations: read-only.
+
+<small>This block is generated from the live tool schema — the same definition agents receive.</small>
+
+{/* @generated tool-docs end */}
 
 ## Returns
 

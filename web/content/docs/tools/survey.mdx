@@ -5,15 +5,25 @@ description: Search the indexed corpus by natural-language query.
 
 `ministr_survey` searches the indexed corpus with a natural-language query. Start here for any vague question your agent has about the codebase or docs, then follow up with `ministr_read` (full text) or `ministr_extract` (atomic claims) on the top results.
 
+{/* @generated tool-docs start — do not edit; run `npm run docs:gen` */}
+
+> Search the indexed corpus by natural-language query. Start here for any vague question; follow up with ministr_read (full text) or ministr_extract (atomic claims) on top results.
+
 ## Parameters
 
-| Parameter | Type | Default | Description |
+| Parameter | Type | Required | Description |
 |---|---|---|---|
-| `query` | string | required | Natural-language search query. |
-| `top_k` | usize | 10 | Maximum number of results to return. |
-| `project` | string | — | Linked-project label from `.ministr.toml` `[[linked]]`. Omit for the primary corpus. |
-| `corpus_ids` | string[] | — | Cross-corpus fan-out across your own corpora or Atlas slugs. Hits are tagged with `source_corpus` and merged by score. When both are set, `corpus_ids` wins over `project`. |
-| `corpus_boost` | map\<corpus_id, f32\> | — | Per-corpus score multipliers. Absent entries default to 1.0; values are clamped to [0, 10]. Only consulted when `corpus_ids` is set. |
+| `corpus_boost` | object | no | Optional per-corpus score multipliers for cross-corpus ranking. Map\<corpus_id, multiplier\>; absent corpora default to 1.0; clamped to [0, 10]. Use 2.0 to float your own repo above Atlas hits, 0.0 to suppress a corpus. |
+| `corpus_ids` | array of string | no | Optional cross-corpus list. When set and non-empty, fans the query out across each corpus_id (own corpora or Atlas slugs), tags hits with source_corpus, and merges results by score. Omit to query a single corpus. |
+| `project` | string | no | Optional linked-project label (from .ministr.toml [[linked]]). Omit for the session's primary corpus. Call ministr_projects to list labels. |
+| `query` | string | no | Natural language query to search the corpus |
+| `top_k` | integer | no | Maximum number of results to return |
+
+Annotations: read-only · idempotent.
+
+<small>This block is generated from the live tool schema — the same definition agents receive.</small>
+
+{/* @generated tool-docs end */}
 
 ## Returns
 

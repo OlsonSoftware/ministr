@@ -10,16 +10,24 @@ With `depth` greater than 0 it follows same-domain links, optionally constrained
 to a path prefix via `path_filter`. The tool can also be invoked as an MCP Task
 (task support is optional).
 
+{/* @generated tool-docs start — do not edit; run `npm run docs:gen` */}
+
+> Fetch a URL from the web and index its content. Tries llms.txt first, falls back to direct page fetch.
+
 ## Parameters
 
-| Parameter | Type | Default | Description |
+| Parameter | Type | Required | Description |
 |---|---|---|---|
-| `url` | string | — | The URL to fetch and index. |
-| `depth` | u32 (optional) | `0` | `0` fetches a single page; `1+` follows same-domain links. |
-| `max_pages` | number (optional) | `50` | Maximum number of pages to fetch. |
-| `path_filter` | string (optional) | — | Path prefix to restrict crawling, e.g. `/docs/`. |
+| `depth` | integer | no | Crawl depth for following links (default: 0 = single page only) |
+| `max_pages` | integer | no | Maximum number of pages to fetch when crawling (default: 50) |
+| `path_filter` | string | no | Only fetch URLs whose path starts with this prefix (e.g. '/docs/') |
+| `url` | string | no | URL to fetch content from (e.g. 'https://docs.example.com/') |
 
-There is no `project` parameter.
+Annotations: open-world.
+
+<small>This block is generated from the live tool schema — the same definition agents receive.</small>
+
+{/* @generated tool-docs end */}
 
 ## Returns
 

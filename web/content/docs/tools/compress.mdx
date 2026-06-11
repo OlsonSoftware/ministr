@@ -5,12 +5,20 @@ description: Extractive summaries of delivered sections to keep them referenceab
 
 `ministr_compress` produces extractive TF-IDF summaries — roughly 60-80% shorter than the originals — for sections your agent wants to keep referenceable without holding their full text. Pair it with `ministr_dropped` after dropping the originals from context.
 
+{/* @generated tool-docs start — do not edit; run `npm run docs:gen` */}
+
+> Extractive TF-IDF summaries (roughly 60-80% shorter) for sections you want to keep referenceable without their full text. Pair with ministr_dropped after dropping the originals.
+
 ## Parameters
 
-| Parameter | Type | Default | Description |
+| Parameter | Type | Required | Description |
 |---|---|---|---|
-| `content_ids` | string[] | required | IDs of the content to summarize. |
-| `project` | string | — | Linked-project label from `.ministr.toml` `[[linked]]`. Omit for the primary corpus. |
+| `content_ids` | array of string | no | Content IDs (section IDs) to generate compressed summaries for |
+| `project` | string | no | Optional linked-project label. Omit for primary corpus. |
+
+<small>This block is generated from the live tool schema — the same definition agents receive.</small>
+
+{/* @generated tool-docs end */}
 
 ## Returns
 
