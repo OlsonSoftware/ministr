@@ -33,6 +33,24 @@ web-typecheck:
 web-deps:
     cd web && npm install
 
+# ── Desktop app (Tauri frontend at ministr-app/) ─────────────────────
+
+# Storybook dev server (port 6006) — the GUI-rewrite visual-iteration loop.
+storybook:
+    cd ministr-app && pnpm storybook
+
+# Static Storybook build (storybook-static/) — what CI/scrutiny consumes.
+storybook-build:
+    cd ministr-app && pnpm build-storybook
+
+# Frontend test gate: vitest unit + every story in real Chromium with axe,
+# light AND dark.
+app-test:
+    cd ministr-app && pnpm test
+
+app-dev:
+    cd ministr-app && pnpm dev
+
 # ── Quality gates ────────────────────────────────────────────────────
 
 # Desktop-app frontend gate — the CANONICAL pnpm path (ministr-app uses pnpm;
