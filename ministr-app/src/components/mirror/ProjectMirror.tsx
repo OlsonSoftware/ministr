@@ -55,6 +55,29 @@ export function ProjectMirror({
   );
   const [openFile, setOpenFile] = useState<TreeNode | null>(null);
 
+  // Escape closes the drill-in and restores focus to the row that
+  // opened it (gui-rw-keyboard-flow); App's Escape handler only fires
+  // when nothing here consumed the key (defaultPrevented).
+  useEffect(() => {
+    if (!openFile) return;
+    const path = openFile.path;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      setOpenFile(null);
+      requestAnimationFrame(() => {
+        document
+          .querySelector<HTMLElement>(`[data-tree-path="${CSS.escape(path)}"]`)
+          ?.focus();
+      });
+    };
+    // Capture phase: keydown targets the focused element, so this
+    // fires on the way DOWN — before App's bubble-phase Escape handler
+    // ever sees the event, guaranteeing the drill-in consumes it first.
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [openFile]);
+
   return (
     <div className="mx-auto flex min-h-screen max-w-5xl flex-col gap-4 p-8">
       <header className="flex items-center gap-3">
@@ -100,6 +123,7 @@ export function ProjectMirror({
         <section
           aria-label="files as your AI sees them"
           className="min-w-0 flex-1 rounded-lg border border-line bg-surface p-1"
+          onKeyDown={treeKeyNav}
         >
           {tree.map((node) => (
             <TreeBranch key={node.path} node={node} level={0} onOpenFile={setOpenFile} />
@@ -174,6 +198,8 @@ function TreeBranch({
     return (
       <button
         type="button"
+        data-tree-row
+        data-tree-path={node.path}
         onClick={() => onOpenFile?.(node)}
         className="w-full rounded-md text-left focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand"
       >
@@ -190,6 +216,8 @@ function TreeBranch({
     <div>
       <button
         type="button"
+        data-tree-row
+        data-tree-dir
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         className="w-full rounded-md text-left focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand"
@@ -213,4 +241,42 @@ function TreeBranch({
         : null}
     </div>
   );
+}
+
+/** Roving arrow-key navigation over the rendered tree rows
+ *  (gui-rw-keyboard-flow). Deliberately NOT role=tree: the rendered
+ *  structure can't satisfy the ARIA tree pattern's required children,
+ *  and bad ARIA is worse than honest buttons with aria-expanded. */
+function treeKeyNav(e: React.KeyboardEvent<HTMLElement>) {
+  const keys = ["ArrowDown", "ArrowUp", "Home", "End", "ArrowRight", "ArrowLeft"];
+  if (!keys.includes(e.key)) return;
+  const rows = [
+    ...e.currentTarget.querySelectorAll<HTMLButtonElement>("[data-tree-row]"),
+  ];
+  const current = document.activeElement as HTMLButtonElement | null;
+  const idx = current ? rows.indexOf(current) : -1;
+  if (idx === -1) return;
+
+  const isDir = current!.hasAttribute("data-tree-dir");
+  const expanded = current!.getAttribute("aria-expanded") === "true";
+
+  if (e.key === "ArrowRight") {
+    e.preventDefault();
+    if (isDir && !expanded) current!.click();
+    else rows[idx + 1]?.focus();
+    return;
+  }
+  if (e.key === "ArrowLeft") {
+    e.preventDefault();
+    if (isDir && expanded) current!.click();
+    return;
+  }
+  e.preventDefault();
+  const next =
+    e.key === "Home"
+      ? rows[0]
+      : e.key === "End"
+        ? rows[rows.length - 1]
+        : rows[idx + (e.key === "ArrowDown" ? 1 : -1)];
+  next?.focus();
 }

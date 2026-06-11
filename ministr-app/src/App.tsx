@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { TrustPanel } from "./components/home/TrustPanel";
 import { ProjectMirror } from "./components/mirror/ProjectMirror";
 import { ProofFeed } from "./components/feed/ProofFeed";
@@ -18,6 +18,24 @@ type View =
  */
 export default function App() {
   const [view, setView] = useState<View>({ kind: "home" });
+
+  // Escape walks back one level (gui-rw-keyboard-flow). Screens that
+  // consume Escape themselves (the Mirror's drill-in) preventDefault
+  // first, so this only fires for top-level navigation.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      setView((v) =>
+        v.kind === "feed"
+          ? { kind: "mirror", corpus: v.corpus }
+          : v.kind === "mirror" || v.kind === "connect"
+            ? { kind: "home" }
+            : v,
+      );
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
     <div className="min-h-screen bg-bg text-ink">
