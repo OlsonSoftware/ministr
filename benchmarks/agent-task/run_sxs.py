@@ -311,7 +311,7 @@ def build_claude_cmd(arm_key, workdir, prompt, model, budget, mcp_config_path):
         # CHECKED (>=1 ministr call, else the arm label lies about the
         # treatment — the 06-11 confound). Arm B stays ephemeral.
         *([] if uses_ministr else ["--no-session-persistence"]),
-        "--setting-sources", "user",
+        "--setting-sources", "project,local",
         "--strict-mcp-config",
         "--add-dir", workdir,
         "--max-budget-usd", str(budget),
@@ -482,6 +482,79 @@ def reset_realrepo_base(task, repo):
        cwd=repo, timeout=120)
 
 
+DEPLOYMENT_CLAUDE = os.path.join(HERE, "deployment-claude")
+
+def install_project_claude(repo, uses_ministr):
+    """Arm A gets the REAL deployment .claude (the verbatim production
+    steering: PreToolUse deny-grep hooks + rules), loaded because both
+    arms now run --setting-sources project,local. Arm B gets an empty
+    .claude so both arms are host-isolated symmetrically. Re-installed
+    after every reset (git clean removes it)."""
+    dst = os.path.join(repo, ".claude")
+    shutil.rmtree(dst, ignore_errors=True)
+    if uses_ministr:
+        shutil.copytree(DEPLOYMENT_CLAUDE, dst)
+        for f in os.listdir(os.path.join(dst, "hooks")):
+            os.chmod(os.path.join(dst, "hooks", f), 0o755)
+    else:
+        os.makedirs(dst, exist_ok=True)
+        with open(os.path.join(dst, "settings.json"), "w") as fh:
+            fh.write("{}\n")
+
+
+FIDELITY_PROMPT = """This is an environment fidelity check, not a coding task.
+Do exactly these steps in order and report what happened at each:
+1. Run this exact shell command via the Bash tool: grep -rn "def " . | head -3
+   Report VERBATIM whether it executed or was denied/redirected, including any
+   denial reason you received.
+2. If you have access to ministr MCP tools (they may be deferred — load them
+   via ToolSearch first), call mcp__ministr__ministr_toc with default arguments
+   and report whether it returned data.
+3. State whether a CLAUDE.md or .claude/rules content about ministr was visible
+   to you.
+Be literal and complete; do not fix anything."""
+
+
+def fidelity_probe(task, base, model="haiku"):
+    """One cheap run per arm asserting the steering stack is LIVE before
+    any paid matrix: arm A must OBSERVE a hook-denied grep AND a
+    successful ministr call; arm B must run grep unimpeded with no
+    ministr access. Verify-installed-not-asserted, mechanized."""
+    results = {}
+    for arm_key in ("a", "b"):
+        label, allowed, uses_ministr = ARMS[arm_key]
+        repo = base["repo"]
+        reset_realrepo_base(task, repo)
+        install_project_claude(repo, uses_ministr)
+        if uses_ministr:
+            open(os.path.join(repo, "CLAUDE.md"), "w").write(MINISTR_CLAUDE_MD)
+        run_env = dict(os.environ)
+        mcp_config_path = None
+        if uses_ministr:
+            mcp = {"mcpServers": {"ministr": {"command": "ministr", "args": ["serve", "--corpus", repo]}}}
+            mcp_config_path = os.path.join(base["work"], "ministr-mcp.json")
+            with open(mcp_config_path, "w") as fh:
+                json.dump(mcp, fh)
+        cmd = build_claude_cmd(arm_key, repo, FIDELITY_PROMPT, model, 1.0, mcp_config_path)
+        code, out, err = sh(cmd, cwd=repo, timeout=600, env=run_env)
+        try:
+            payload = json.loads(out)
+            text = payload.get("result") or ""
+        except json.JSONDecodeError:
+            results[label] = {"ok": False, "detail": f"unparseable output (exit {code})"}
+            continue
+        ministr_calls = count_ministr_calls(repo) if uses_ministr else 0
+        if uses_ministr:
+            denied = any(k in text.lower() for k in ("denied", "redirect", "ministr_survey", "not permitted", "blocked"))
+            ok = denied and ministr_calls > 0
+            results[label] = {"ok": ok, "grep_denied_observed": denied,
+                              "ministr_calls": ministr_calls, "report": text[:400]}
+        else:
+            ok = "executed" in text.lower() or "def " in text
+            results[label] = {"ok": ok, "report": text[:400]}
+    return results
+
+
 def run_in_base(task, base, arm_key, model, budget):
     """Run one (arm, model) against the shared prebuilt base repo + index."""
     label, allowed, uses_ministr = ARMS[arm_key]
@@ -490,6 +563,7 @@ def run_in_base(task, base, arm_key, model, budget):
            "arm": arm_key, "label": label, "uses_ministr": uses_ministr, "kind": "realrepo",
            "index_secs": base.get("index_secs") if uses_ministr else None}
     reset_realrepo_base(task, repo)
+    install_project_claude(repo, uses_ministr)
     if uses_ministr:
         # Deployment-faithful steering: what a real ministr setup puts in the
         # repo. The reset's `git clean` removes it, so arm B never sees it.
@@ -537,7 +611,9 @@ def count_ministr_calls(repo):
     """Count mcp__ministr__ tool_use events in the newest persisted session
     transcript for this repo's cwd-slug project dir (validity gate)."""
     import glob as _glob
-    slug = repo.replace("/", "-")
+    # Claude slugs the REALPATH cwd (macOS $TMPDIR /var/... resolves to
+    # /private/var/...) — resolve before slugging or the lookup misses.
+    slug = os.path.realpath(repo).replace("/", "-")
     proj = os.path.expanduser(f"~/.claude/projects/{slug}")
     files = sorted(_glob.glob(os.path.join(proj, "*.jsonl")), key=os.path.getsize)
     if not files:
@@ -546,13 +622,15 @@ def count_ministr_calls(repo):
     # Largest file = the real transcript (sessions also write a tiny
     # title-only stub with the same mtime).
     for line in open(files[-1], errors="replace"):
-        if '"type":"tool_use"' in line and "mcp__ministr__" in line:
-            try:
-                e = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            for c in (e.get("message", {}) or {}).get("content", []) or []:
-                if c.get("type") == "tool_use" and c.get("name", "").startswith("mcp__ministr__"):
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        content = (e.get("message", {}) or {}).get("content")
+        if isinstance(content, list):
+            for c in content:
+                if (isinstance(c, dict) and c.get("type") == "tool_use"
+                        and c.get("name", "").startswith("mcp__ministr__")):
                     n += 1
     return n
 
@@ -643,6 +721,8 @@ def main():
     ap.add_argument("--repeat", type=int, default=1, help="trials per (task,arm,model)")
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--dry-run", action="store_true", help="print the matrix; no LLM, no spend")
+    ap.add_argument("--fidelity-probe", action="store_true",
+                    help="cheap haiku run per arm asserting hooks+MCP are LIVE; no matrix")
     ap.add_argument("--selftest", action="store_true", help="no-LLM red->green check for all tasks")
     ap.add_argument("--list", action="store_true", help="list discovered tasks and exit")
     ap.add_argument("--out", default=os.path.join(HERE, "results.json"))
@@ -671,6 +751,19 @@ def main():
     n_runs = len(tasks) * len(models) * len(arm_keys) * args.repeat
     print(f"{'DRY RUN: ' if args.dry_run else ''}matrix = {len(tasks)} task(s) × "
           f"{len(models)} model(s) × {len(arm_keys)} arm(s) × {args.repeat} = {n_runs} run(s)")
+
+    if getattr(args, "fidelity_probe", False):
+        task = tasks[0]
+        base = prepare_realrepo_base(task, need_index=True)
+        if base.get("error"):
+            print(f"fidelity probe: base setup FAILED: {base['error']}", file=sys.stderr)
+            return 1
+        probe = fidelity_probe(task, base)
+        shutil.rmtree(base.get("work", ""), ignore_errors=True)
+        print(json.dumps(probe, indent=2))
+        all_ok = all(v.get("ok") for v in probe.values())
+        print("FIDELITY:", "GREEN — steering stack observed live" if all_ok else "RED — stack not live; fix before any matrix")
+        return 0 if all_ok else 1
 
     results = []
     for task in tasks:

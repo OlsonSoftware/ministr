@@ -1,0 +1,61 @@
+{
+  "_ministrHooksVersion": 2,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/steer-to-ministr.sh\" tool",
+            "type": "command"
+          }
+        ],
+        "matcher": "Grep|Glob"
+      },
+      {
+        "hooks": [
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/steer-to-ministr.sh\" grep",
+            "if": "Bash(grep *)",
+            "type": "command"
+          },
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/steer-to-ministr.sh\" grep",
+            "if": "Bash(egrep *)",
+            "type": "command"
+          },
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/steer-to-ministr.sh\" grep",
+            "if": "Bash(fgrep *)",
+            "type": "command"
+          },
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/steer-to-ministr.sh\" grep",
+            "if": "Bash(rg *)",
+            "type": "command"
+          },
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/steer-to-ministr.sh\" grep",
+            "if": "Bash(ag *)",
+            "type": "command"
+          },
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/steer-to-ministr.sh\" grep",
+            "if": "Bash(ack *)",
+            "type": "command"
+          },
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/steer-to-ministr.sh\" find",
+            "if": "Bash(find *)",
+            "type": "command"
+          },
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/steer-to-ministr.sh\" find",
+            "if": "Bash(fd *)",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
+      }
+    ]
+  }
+}
