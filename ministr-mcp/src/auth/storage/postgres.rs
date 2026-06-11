@@ -77,11 +77,22 @@ impl PostgresStorage {
 fn make_rustls_connector() -> MakeRustlsConnect {
     // Mozilla CA bundle. Sufficient for Azure Postgres Flex, AWS RDS,
     // Google Cloud SQL, and self-managed servers with a publicly-trusted
-    // certificate chain. Self-signed dev servers must inject their own
-    // root via a future `open_with_tls(url, tls)` overload (not needed
-    // until G.2 pen-testing introduces a stricter test harness).
+    // certificate chain. Providers with a PRIVATE per-cluster CA
+    // (DigitalOcean managed Postgres) additionally inject the cluster's
+    // CA via `MINISTR_PG_CA_CERT` (PEM contents in the env — container
+    // platforms deliver secrets as env vars, not files).
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    if let Ok(pem) = std::env::var("MINISTR_PG_CA_CERT") {
+        let certs = rustls_pemfile::certs(&mut pem.as_bytes())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap_or_default();
+        let (added, _ignored) = roots.add_parsable_certificates(certs);
+        tracing::info!(
+            added,
+            "added MINISTR_PG_CA_CERT root(s) to the pg TLS trust store"
+        );
+    }
     let config = ClientConfig::builder()
         .with_root_certificates(roots)
         .with_no_client_auth();
