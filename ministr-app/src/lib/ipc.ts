@@ -77,3 +77,16 @@ export function recentActivity(limit?: number): Promise<ActivityEvent[]> {
 export function corpusOutcomes(corpusId: string): Promise<OutcomesResponse> {
   return invoke<OutcomesResponse>("corpus_outcomes", { corpusId });
 }
+
+export interface RegisterCorpusResponse {
+  corpus_id: string;
+  indexing_started: boolean;
+}
+
+export function pickProjectFolder(): Promise<string | null> {
+  return invoke<string | null>("pick_project_folder");
+}
+
+export function registerCorpus(paths: string[]): Promise<RegisterCorpusResponse> {
+  return invoke<RegisterCorpusResponse>("register_corpus", { paths });
+}

@@ -15,6 +15,21 @@ use crate::error::{CommandError, ErrorKind};
 ///
 /// gd2: routed over UDS to the headless daemon — the canonical registry —
 /// rather than the GUI's in-process `AppState`.
+/// Native folder picker for the connect flow (first-run). Returns the
+/// chosen directory or None on cancel. Runs the blocking dialog off the
+/// async runtime (same pattern as the CSV save dialog).
+#[tauri::command]
+pub async fn pick_project_folder(app: AppHandle) -> Result<Option<String>, CommandError> {
+    use tauri_plugin_dialog::DialogExt;
+    let app2 = app.clone();
+    let picked = tokio::task::spawn_blocking(move || {
+        app2.dialog().file().blocking_pick_folder()
+    })
+    .await
+    .map_err(|e| CommandError::from(format!("dialog task: {e}")))?;
+    Ok(picked.map(|p| p.to_string()))
+}
+
 /// Read→edit outcome joins for a corpus (Proof Feed receipts).
 #[tauri::command]
 pub async fn corpus_outcomes(

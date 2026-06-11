@@ -13,8 +13,10 @@ import { Brand } from "../ui/Brand";
  */
 export function TrustPanel({
   onOpenProject,
+  onAddProject,
 }: {
   onOpenProject: (corpus: CorpusInfo) => void;
+  onAddProject?: () => void;
 }) {
   const { data: corpora, error } = usePoll(fetchAll, 5_000);
 
@@ -72,9 +74,21 @@ export function TrustPanel({
           </div>
         ))}
         {corpora && rows.length === 0 ? (
-          <p className="py-12 text-center text-sm text-dim">
-            No projects yet — add a folder and your AI can start reading it.
-          </p>
+          <div className="space-y-3 py-12 text-center">
+            <p className="text-sm text-dim">
+              No projects yet — add a folder and your AI can start reading it.
+            </p>
+            {onAddProject ? (
+              <ActionChip variant="primary" onClick={onAddProject}>
+                Add a project
+              </ActionChip>
+            ) : null}
+          </div>
+        ) : null}
+        {corpora && rows.length > 0 && onAddProject ? (
+          <div className="pt-2">
+            <ActionChip onClick={onAddProject}>+ Add a project</ActionChip>
+          </div>
         ) : null}
       </main>
     </div>

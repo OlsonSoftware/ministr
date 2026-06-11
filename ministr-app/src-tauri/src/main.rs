@@ -106,6 +106,7 @@ fn main() {
             commands::list_corpora,
             commands::corpus_freshness,
             commands::corpus_outcomes,
+            commands::pick_project_folder,
             commands::register_corpus,
             commands::unregister_corpus,
             commands::daemon_status,
