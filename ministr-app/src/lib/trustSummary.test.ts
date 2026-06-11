@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTree, summarize, summarizeCounts } from "./trustSummary";
+import { buildTree, leafNote, summarize, summarizeCounts } from "./trustSummary";
 import type { FreshnessResponse } from "./ipc";
 
 const fresh = (states: [string, "current" | "stale" | "new" | "missing"][]): FreshnessResponse => ({
@@ -69,5 +69,39 @@ describe("summarizeCounts (Home's cheap path)", () => {
     expect(
       summarizeCounts("app", { stale: 0, new: 0, indexing: true }).state,
     ).toBe("updating");
+  });
+});
+
+describe("per-file updating during reindex (consistency-pass)", () => {
+  const files = [
+    { path: "src/old.ts", state: "stale" as const },
+    { path: "src/brand-new.ts", state: "new" as const },
+    { path: "src/gone.ts", state: "missing" as const },
+    { path: "src/fine.ts", state: "current" as const },
+  ];
+
+  it("idle: behind files are stale, current is ok", () => {
+    const tree = buildTree(files)[0];
+    const states = Object.fromEntries(
+      tree.children.map((c) => [c.name, c.state]),
+    );
+    expect(states["old.ts"]).toBe("stale");
+    expect(states["fine.ts"]).toBe("ok");
+  });
+
+  it("indexing: stale/new flip to updating, missing stays behind, current stays ok", () => {
+    const tree = buildTree(files, true)[0];
+    const states = Object.fromEntries(
+      tree.children.map((c) => [c.name, c.state]),
+    );
+    expect(states["old.ts"]).toBe("updating");
+    expect(states["brand-new.ts"]).toBe("updating");
+    expect(states["gone.ts"]).toBe("stale");
+    expect(states["fine.ts"]).toBe("ok");
+  });
+
+  it("leafNote follows the live state", () => {
+    expect(leafNote("stale", true)).toBe("being brought up to date right now");
+    expect(leafNote("stale", false)).toBe("your AI sees an older version");
   });
 });

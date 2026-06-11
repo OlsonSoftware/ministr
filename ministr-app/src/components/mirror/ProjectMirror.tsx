@@ -49,7 +49,10 @@ export function ProjectMirror({
         indexing: fresh.indexing || pendingAt !== null,
       })
     : null;
-  const tree = useMemo(() => (fresh ? buildTree(fresh.files) : []), [fresh]);
+  const tree = useMemo(
+    () => (fresh ? buildTree(fresh.files, fresh.indexing) : []),
+    [fresh],
+  );
   const [openFile, setOpenFile] = useState<TreeNode | null>(null);
 
   return (
@@ -178,7 +181,7 @@ function TreeBranch({
           name={node.name}
           state={node.state}
           level={level}
-          note={leafNote(node.raw)}
+          note={leafNote(node.raw, node.state === "updating")}
         />
       </button>
     );

@@ -109,7 +109,7 @@ export function TrustPanel({
               headline={summary.headline}
               sub={`${info.display_name} · ${summary.sub}${
                 info.active_sessions > 0
-                  ? ` · ${info.active_sessions} agent${info.active_sessions === 1 ? "" : "s"} reading`
+                  ? ` · ${info.active_sessions} agent${info.active_sessions === 1 ? "" : "s"} connected`
                   : ""
               }`}
               action={

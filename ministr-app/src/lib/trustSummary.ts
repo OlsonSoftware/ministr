@@ -90,9 +90,17 @@ const SEVERITY: Record<string, number> = {
   stale: 2,
 };
 
-function toTrust(state: FileFreshness["state"]): TrustState {
+function toTrust(
+  state: FileFreshness["state"],
+  indexing: boolean,
+): TrustState {
+  if (state === "current") return "ok";
+  // While a reindex runs, the behind files are exactly what it's
+  // consuming — they're updating, not merely stale (per-file ⟳;
+  // gui-rw-consistency-pass). Deleted files stay behind either way.
+  if (indexing && (state === "stale" || state === "new")) return "updating";
   // `new` and `missing` both read as "behind your changes" to the user.
-  return state === "current" ? "ok" : "stale";
+  return "stale";
 }
 
 function worst(a: TrustState, b: TrustState): TrustState {
@@ -100,7 +108,10 @@ function worst(a: TrustState, b: TrustState): TrustState {
 }
 
 /** Build a nested tree with worst-state-wins directory roll-ups. */
-export function buildTree(files: FileFreshness[]): TreeNode[] {
+export function buildTree(
+  files: FileFreshness[],
+  indexing = false,
+): TreeNode[] {
   const root: TreeNode = { name: "", path: "", state: "ok", children: [], isFile: false };
   for (const f of files) {
     const parts = f.path.split("/");
@@ -116,7 +127,7 @@ export function buildTree(files: FileFreshness[]): TreeNode[] {
       }
       node = child;
     }
-    node.state = toTrust(f.state);
+    node.state = toTrust(f.state, indexing);
     node.raw = f.state;
   }
   rollUp(root);
@@ -141,7 +152,13 @@ function sortTree(node: TreeNode) {
 }
 
 /** The plain-words note for a leaf, honest per raw verdict (DESIGN §2.5). */
-export function leafNote(raw: FileFreshness["state"] | undefined): string | undefined {
+export function leafNote(
+  raw: FileFreshness["state"] | undefined,
+  updating = false,
+): string | undefined {
+  if (updating && (raw === "stale" || raw === "new")) {
+    return "being brought up to date right now";
+  }
   switch (raw) {
     case "stale":
       return "your AI sees an older version";

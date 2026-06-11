@@ -1,6 +1,6 @@
 # ministr GUI — UX Blueprint
 
-**Version:** v4 · 2026-06-11 · **Status:** ACCEPTED (v4, 2026-06-11)
+**Version:** v4.1 · 2026-06-11 · **Status:** ACCEPTED (v4, 2026-06-11; v4.1 amendment below)
 **This is a STRUCTURAL SKETCH, not visual design.** Boxes are object
 placements, not pixels. No colors, no type, no tokens here.
 
@@ -60,7 +60,7 @@ One line per project. The whole app at a glance; nothing technical.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ ministr                                          ⌘K · ● ok   │
+│ ministr                                               ● ok   │
 ├──────────────────────────────────────────────────────────────┤
 │  my-app                                                      │
 │  ● YOUR AI SEES YOUR CODE — UP TO DATE                       │
@@ -236,7 +236,7 @@ restart) is one quiet tile on Home, expanding in place.
    roll-up states per directory (worst-state-wins propagation).
 5. **The old facets' power-user value** (Ask, Explore-as-search,
    constellation viz) is deliberately demoted or cut at top level; experts
-   may miss it — mitigated by ⌘K and expert disclosures, but it's a bet.
+   may miss it — mitigated by expert disclosures, but it's a bet.
 
 ## 7 · Rejected directions
 
@@ -276,3 +276,11 @@ re-qualify it, per user, on their own repo. New domain object:
 - **Value claims = counts only** (user decision): the Proof Feed restates
   measured event counts; no latency-fact lines, no comparative time-saved
   claims anywhere (invariant 3 hardened accordingly).
+
+**v4 → v4.1 (post-implementation consistency pass, 2026-06-11):**
+- **⌘K is DROPPED entirely** (implementation decision, gui-rw-consistency-pass):
+  v4 kept ⌘K "navigation-only", but the built app is hub-and-spoke with at
+  most two levels of depth and a handful of projects — a command palette is
+  incumbent-app muscle memory, not a need, and it contradicts the calm-
+  instrument thesis. Real keyboard navigation (Escape-back, arrow-key tree,
+  focus restoration) is owned by the keyboard-flow work instead.
