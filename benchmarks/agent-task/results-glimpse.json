@@ -1,0 +1,57 @@
+{
+  "models": [
+    "sonnet"
+  ],
+  "max_budget_usd": 4.0,
+  "arms": [
+    "a",
+    "b"
+  ],
+  "repeat": 1,
+  "results": [
+    {
+      "task": "realrepo-crosslang-jwt",
+      "difficulty": "real",
+      "model": "sonnet",
+      "arm": "a",
+      "label": "ministr",
+      "uses_ministr": true,
+      "kind": "realrepo",
+      "index_secs": 1.2,
+      "wall_secs": 123.6,
+      "is_error": false,
+      "num_turns": 22,
+      "total_cost_usd": 0.47331025,
+      "input_tokens": 18,
+      "output_tokens": 5436,
+      "cache_read_tokens": 519582,
+      "cache_creation_tokens": 28978,
+      "result_text": "All 5 tests pass. The fix was a single rename: `verify_blocking` \u2192 `verify_sync` in `src/verify.rs` and `src/lib.rs`. The napi-rs framework converts `verify_blocking` to `verifyBlocking` in the JS exp",
+      "validator_passed": true,
+      "validator_summary": "  5 tests passed",
+      "ministr_calls": 0,
+      "error": " VALIDITY: arm A made zero mcp__ministr__ calls (treatment not received)"
+    },
+    {
+      "task": "realrepo-crosslang-jwt",
+      "difficulty": "real",
+      "model": "sonnet",
+      "arm": "b",
+      "label": "grep",
+      "uses_ministr": false,
+      "kind": "realrepo",
+      "index_secs": null,
+      "wall_secs": 116.6,
+      "is_error": false,
+      "num_turns": 14,
+      "total_cost_usd": 0.4520397500000001,
+      "input_tokens": 16,
+      "output_tokens": 2999,
+      "cache_read_tokens": 470777,
+      "cache_creation_tokens": 26579,
+      "result_text": "All 5 tests pass.\n\n**Root cause:** The Rust function was named `verify_blocking`, which NAPI-RS exports as `verifyBlocking`. But the tests (and intended public API) expect `verifySync`. The fix was a ",
+      "validator_passed": true,
+      "validator_summary": "  5 tests passed"
+    }
+  ]
+}

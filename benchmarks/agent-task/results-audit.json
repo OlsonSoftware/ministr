@@ -1,0 +1,55 @@
+{
+  "models": [
+    "sonnet"
+  ],
+  "max_budget_usd": 4.0,
+  "arms": [
+    "a",
+    "b"
+  ],
+  "repeat": 1,
+  "results": [
+    {
+      "task": "realrepo-crosslang-jwt",
+      "difficulty": "real",
+      "model": "sonnet",
+      "arm": "a",
+      "label": "ministr",
+      "uses_ministr": true,
+      "kind": "realrepo",
+      "index_secs": 2.8,
+      "wall_secs": 168.6,
+      "is_error": false,
+      "num_turns": 20,
+      "total_cost_usd": 0.4875279999999999,
+      "input_tokens": 15,
+      "output_tokens": 6290,
+      "cache_read_tokens": 564330,
+      "cache_creation_tokens": 37190,
+      "result_text": "All 5 tests pass. Here's a summary of the two fixes:\n\n**Bug 1 (`verify.rs`):** The function `verify_blocking` was named incorrectly \u2014 NAPI-RS converts snake_case to camelCase, so it was being exported",
+      "validator_passed": true,
+      "validator_summary": "  5 tests passed"
+    },
+    {
+      "task": "realrepo-crosslang-jwt",
+      "difficulty": "real",
+      "model": "sonnet",
+      "arm": "b",
+      "label": "grep",
+      "uses_ministr": false,
+      "kind": "realrepo",
+      "index_secs": null,
+      "wall_secs": 171.1,
+      "is_error": false,
+      "num_turns": 14,
+      "total_cost_usd": 0.44612000000000007,
+      "input_tokens": 15,
+      "output_tokens": 3194,
+      "cache_read_tokens": 437649,
+      "cache_creation_tokens": 27182,
+      "result_text": "All 5 tests pass. The root cause was that the Rust sync verification function was named `verify_blocking` (\u2192 `verifyBlocking` in JS), but the tests and public API contract expected `verifySync`. I ren",
+      "validator_passed": true,
+      "validator_summary": "  5 tests passed"
+    }
+  ]
+}

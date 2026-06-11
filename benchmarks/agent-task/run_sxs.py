@@ -52,7 +52,7 @@ TASKS_DIR = os.path.join(HERE, "tasks")
 
 ARMS = {
     # arm key -> (label, allowed tools, uses_ministr)
-    "a": ("ministr", "Read Edit Write Bash mcp__ministr__*", True),
+    "a": ("ministr", "Read Edit Write Bash ToolSearch mcp__ministr__*", True),
     "b": ("grep", "Read Edit Write Bash Grep Glob", False),
 }
 
@@ -307,7 +307,10 @@ def build_claude_cmd(arm_key, workdir, prompt, model, budget, mcp_config_path):
         "--output-format", "json",
         "--model", model,
         "--permission-mode", "bypassPermissions",
-        "--no-session-persistence",
+        # Arm A keeps its session transcript so the run can be VALIDITY-
+        # CHECKED (>=1 ministr call, else the arm label lies about the
+        # treatment — the 06-11 confound). Arm B stays ephemeral.
+        *([] if uses_ministr else ["--no-session-persistence"]),
         "--setting-sources", "user",
         "--strict-mcp-config",
         "--add-dir", workdir,
@@ -522,7 +525,36 @@ def run_in_base(task, base, arm_key, model, budget):
     passed, summary = validate(task, repo)
     res["validator_passed"] = passed
     res["validator_summary"] = summary
+    if res.get("uses_ministr"):
+        res["ministr_calls"] = count_ministr_calls(repo)
+        if not res["ministr_calls"]:
+            res["error"] = (res.get("error") or "") + \
+                " VALIDITY: arm A made zero mcp__ministr__ calls (treatment not received)"
     return res
+
+
+def count_ministr_calls(repo):
+    """Count mcp__ministr__ tool_use events in the newest persisted session
+    transcript for this repo's cwd-slug project dir (validity gate)."""
+    import glob as _glob
+    slug = repo.replace("/", "-")
+    proj = os.path.expanduser(f"~/.claude/projects/{slug}")
+    files = sorted(_glob.glob(os.path.join(proj, "*.jsonl")), key=os.path.getsize)
+    if not files:
+        return 0
+    n = 0
+    # Largest file = the real transcript (sessions also write a tiny
+    # title-only stub with the same mtime).
+    for line in open(files[-1], errors="replace"):
+        if '"type":"tool_use"' in line and "mcp__ministr__" in line:
+            try:
+                e = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            for c in (e.get("message", {}) or {}).get("content", []) or []:
+                if c.get("type") == "tool_use" and c.get("name", "").startswith("mcp__ministr__"):
+                    n += 1
+    return n
 
 
 # --------------------------------------------------------------------------
