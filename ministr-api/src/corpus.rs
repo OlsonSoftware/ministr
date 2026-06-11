@@ -222,6 +222,23 @@ pub struct OutcomesResponse {
     pub stats: Vec<SessionOutcomeInfo>,
 }
 
+/// Counts-only freshness summary — the Home trust panel's poll target
+/// (gui-rw-freshness-summary): no per-file list on the hot path.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FreshnessSummaryResponse {
+    /// Files whose stored hash matches the working tree.
+    pub current: usize,
+    /// Files edited since last indexed.
+    pub stale: usize,
+    /// Working-tree files never indexed.
+    #[serde(rename = "new")]
+    pub new_files: usize,
+    /// Indexed files deleted from the working tree.
+    pub missing: usize,
+    /// Whether an (re)index run is active or queued.
+    pub indexing: bool,
+}
+
 /// One stored section as the retrieval layer serves it (the drill-in's
 /// "as your AI sees it" view; gui-rw-file-drillin).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

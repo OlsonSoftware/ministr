@@ -108,6 +108,7 @@ fn main() {
             commands::corpus_outcomes,
             commands::pick_project_folder,
             commands::indexed_file,
+            commands::corpus_freshness_summary,
             commands::register_corpus,
             commands::unregister_corpus,
             commands::daemon_status,

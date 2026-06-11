@@ -116,3 +116,17 @@ export function indexedFile(
 export function readFile(corpusId: string, path: string): Promise<FileContent> {
   return invoke<FileContent>("read_file", { corpusId, path });
 }
+
+export interface FreshnessSummary {
+  current: number;
+  stale: number;
+  new: number;
+  missing: number;
+  indexing: boolean;
+}
+
+export function corpusFreshnessSummary(
+  corpusId: string,
+): Promise<FreshnessSummary> {
+  return invoke<FreshnessSummary>("corpus_freshness_summary", { corpusId });
+}

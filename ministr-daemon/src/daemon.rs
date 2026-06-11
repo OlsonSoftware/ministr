@@ -62,6 +62,10 @@ pub fn corpora_read_router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/diagnostics", post(diagnostics))
         .route("/api/v1/corpora/{id}/files", get(list_files))
         .route("/api/v1/corpora/{id}/freshness", get(corpus_freshness))
+        .route(
+            "/api/v1/corpora/{id}/freshness-summary",
+            get(corpus_freshness_summary),
+        )
         .route("/api/v1/corpora/{id}/outcomes", get(corpus_outcomes))
         .route("/api/v1/corpora/{id}/indexed-file", post(indexed_file))
         .route("/api/v1/corpora/{id}/file", post(file_content))
@@ -1337,6 +1341,10 @@ async fn reindex_corpus(
         .into_response();
     }
 
+    // The next freshness poll must see the post-reindex state, not a
+    // pre-reindex cached sweep (gui-rw-freshness-summary).
+    FRESHNESS_CACHE.invalidate(&id);
+
     // Capture paths + data dir from the live handle before tearing it down.
     let (paths, data_dir) = match state.registry.get(&id).await {
         Ok(h) => (h.info.read().await.paths.clone(), h.data_dir.clone()),
@@ -1777,21 +1785,30 @@ async fn list_files(State(state): State<AppState>, Path(id): Path<String>) -> im
     Json(ministr_api::corpus::ListFilesResponse { files }).into_response()
 }
 
-/// `GET /api/v1/corpora/{id}/freshness` — per-file hash-verified trust
-/// states (gui-rw-backend-freshness, the Mirror tree's "tree never lies"
-/// invariant). Re-hashes the working tree with the indexer's own walker
-/// and hash fn, then diffs against `file_hashes`; CPU/IO-heavy, so the
-/// sweep runs on the blocking pool.
-async fn corpus_freshness(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
-    let handle = get_corpus!(&state, &id);
+/// Process-wide freshness sweep dedupe (gui-rw-freshness-summary): the
+/// Home (5s × N corpora) and Mirror (4s) polls share one hash-verified
+/// sweep per corpus per TTL window instead of multiplying full sweeps.
+static FRESHNESS_CACHE: std::sync::LazyLock<crate::freshness_cache::FreshnessCache> =
+    std::sync::LazyLock::new(crate::freshness_cache::FreshnessCache::default);
 
-    let records = match handle.storage.list_file_hashes().await {
-        Ok(h) => h,
-        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
-    };
+/// One full hash-verified freshness sweep for `handle`, deduped through
+/// [`FRESHNESS_CACHE`]. There is deliberately NO stat/mtime shortcut —
+/// every result a caller sees was produced by hashing the working tree
+/// (the `mtime_is_never_trusted` invariant); the cache only collapses
+/// overlapping polls onto the same verified result.
+async fn cached_freshness(
+    handle: &crate::registry::CorpusHandle,
+    id: &str,
+) -> Result<ministr_api::corpus::FreshnessResponse, String> {
+    if let Some(hit) = FRESHNESS_CACHE.get(id, crate::freshness_cache::FRESHNESS_TTL) {
+        return Ok(hit);
+    }
+
+    let records = handle
+        .storage
+        .list_file_hashes()
+        .await
+        .map_err(|e| e.to_string())?;
     let info = handle.info.read().await.clone();
     let roots: Vec<std::path::PathBuf> = info.paths.iter().map(std::path::PathBuf::from).collect();
     let indexing = matches!(
@@ -1800,32 +1817,77 @@ async fn corpus_freshness(
             | ministr_api::corpus::IndexingStatus::Queued
     );
 
-    let report = tokio::task::spawn_blocking(move || {
+    let entries = tokio::task::spawn_blocking(move || {
         ministr_core::freshness::compute_freshness(&roots, &records)
     })
-    .await;
-    let files = match report {
-        Ok(Ok(entries)) => entries
-            .into_iter()
-            .map(|f| ministr_api::corpus::FileFreshnessInfo {
-                path: f.path,
-                state: match f.state {
-                    ministr_core::freshness::FreshnessState::Current => "current".to_owned(),
-                    ministr_core::freshness::FreshnessState::Stale => "stale".to_owned(),
-                    ministr_core::freshness::FreshnessState::New => "new".to_owned(),
-                    ministr_core::freshness::FreshnessState::Missing => "missing".to_owned(),
-                },
-            })
-            .collect(),
-        Ok(Err(e)) => {
-            return err(StatusCode::INTERNAL_SERVER_ERROR, "freshness_failed", e).into_response();
-        }
-        Err(e) => {
-            return err(StatusCode::INTERNAL_SERVER_ERROR, "freshness_failed", e).into_response();
-        }
-    };
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
 
-    Json(ministr_api::corpus::FreshnessResponse { files, indexing }).into_response()
+    let files = entries
+        .into_iter()
+        .map(|f| ministr_api::corpus::FileFreshnessInfo {
+            path: f.path,
+            state: match f.state {
+                ministr_core::freshness::FreshnessState::Current => "current".to_owned(),
+                ministr_core::freshness::FreshnessState::Stale => "stale".to_owned(),
+                ministr_core::freshness::FreshnessState::New => "new".to_owned(),
+                ministr_core::freshness::FreshnessState::Missing => "missing".to_owned(),
+            },
+        })
+        .collect();
+
+    let resp = ministr_api::corpus::FreshnessResponse { files, indexing };
+    FRESHNESS_CACHE.put(id, resp.clone());
+    Ok(resp)
+}
+
+/// `GET /api/v1/corpora/{id}/freshness` — per-file hash-verified trust
+/// states (gui-rw-backend-freshness, the Mirror tree's "tree never lies"
+/// invariant). Re-hashes the working tree with the indexer's own walker
+/// and hash fn, then diffs against `file_hashes`; CPU/IO-heavy, so the
+/// sweep runs on the blocking pool and overlapping polls are deduped.
+async fn corpus_freshness(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let handle = get_corpus!(&state, &id);
+    match cached_freshness(&handle, &id).await {
+        Ok(resp) => Json(resp).into_response(),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "freshness_failed", e).into_response(),
+    }
+}
+
+/// `GET /api/v1/corpora/{id}/freshness-summary` — counts-only freshness
+/// (the Home trust panel's poll target): same hash-verified sweep via
+/// the dedupe cache, no per-file list on the wire.
+async fn corpus_freshness_summary(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let handle = get_corpus!(&state, &id);
+    match cached_freshness(&handle, &id).await {
+        Ok(resp) => {
+            let mut summary = ministr_api::corpus::FreshnessSummaryResponse {
+                current: 0,
+                stale: 0,
+                new_files: 0,
+                missing: 0,
+                indexing: resp.indexing,
+            };
+            for f in &resp.files {
+                match f.state.as_str() {
+                    "current" => summary.current += 1,
+                    "stale" => summary.stale += 1,
+                    "new" => summary.new_files += 1,
+                    "missing" => summary.missing += 1,
+                    _ => {}
+                }
+            }
+            Json(summary).into_response()
+        }
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "freshness_failed", e).into_response(),
+    }
 }
 
 /// `GET /api/v1/corpora/{id}/outcomes` — read→edit joins + per-session

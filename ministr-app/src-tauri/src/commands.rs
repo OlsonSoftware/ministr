@@ -28,6 +28,17 @@ pub async fn pick_project_folder(app: AppHandle) -> Result<Option<String>, Comma
     Ok(picked.map(|p| p.to_string()))
 }
 
+/// Counts-only freshness summary (Home's poll target).
+#[tauri::command]
+pub async fn corpus_freshness_summary(
+    corpus_id: String,
+) -> Result<ministr_api::corpus::FreshnessSummaryResponse, CommandError> {
+    ministr_api::client::DaemonClient::new()
+        .corpus_freshness_summary(&corpus_id)
+        .await
+        .map_err(Into::into)
+}
+
 /// Indexed (stored-sections) view of one file — the drill-in's
 /// "as your AI sees it" pane.
 #[tauri::command]

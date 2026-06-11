@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTree, summarize } from "./trustSummary";
+import { buildTree, summarize, summarizeCounts } from "./trustSummary";
 import type { FreshnessResponse } from "./ipc";
 
 const fresh = (states: [string, "current" | "stale" | "new" | "missing"][]): FreshnessResponse => ({
@@ -55,5 +55,19 @@ describe("buildTree", () => {
     ]);
     expect(tree[0].name).toBe("aa");
     expect(tree[1].name).toBe("zz.ts");
+  });
+});
+
+describe("summarizeCounts (Home's cheap path)", () => {
+  it("matches the full-path math for the same counts", () => {
+    const s = summarizeCounts("app", { stale: 1, new: 1, indexing: false });
+    expect(s.state).toBe("stale");
+    expect(s.headline).toBe("Your AI is 2 files behind");
+    expect(
+      summarizeCounts("app", { stale: 0, new: 0, indexing: false }).state,
+    ).toBe("ok");
+    expect(
+      summarizeCounts("app", { stale: 0, new: 0, indexing: true }).state,
+    ).toBe("updating");
   });
 });

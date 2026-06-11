@@ -375,6 +375,19 @@ impl DaemonClient {
             .await
     }
 
+    /// Counts-only freshness summary (the Home panel's cheap poll).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] if the corpus doesn't exist.
+    pub async fn corpus_freshness_summary(
+        &self,
+        corpus_id: &str,
+    ) -> Result<crate::corpus::FreshnessSummaryResponse, ClientError> {
+        self.get(&format!("/api/v1/corpora/{corpus_id}/freshness-summary"))
+            .await
+    }
+
     /// The indexed (stored-sections) view of one file — what retrieval
     /// actually serves (gui-rw-file-drillin).
     ///

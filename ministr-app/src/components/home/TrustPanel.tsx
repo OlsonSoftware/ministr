@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { corpusFreshness, listCorpora } from "../../lib/ipc";
-import type { CorpusInfo, FreshnessResponse } from "../../lib/ipc";
+import { corpusFreshnessSummary, listCorpora } from "../../lib/ipc";
+import type { CorpusInfo, FreshnessSummary } from "../../lib/ipc";
 import { usePoll } from "../../lib/usePoll";
-import { summarize } from "../../lib/trustSummary";
+import { summarizeCounts } from "../../lib/trustSummary";
 import { StatusBanner } from "../ui/StatusBanner";
 import { ActionChip } from "../ui/ActionChip";
 import { CatchUp } from "../ui/CatchUp";
@@ -45,16 +45,14 @@ export function TrustPanel({
 
   const rows = useMemo(() => {
     if (!corpora) return [];
-    const summarized = corpora.map(({ info, fresh }) => {
-      const optimistic = Boolean(pending[info.id]) && !fresh.indexing;
-      return {
-        info,
-        summary: summarize(info.display_name, {
-          ...fresh,
-          indexing: fresh.indexing || Boolean(optimistic),
-        }),
-      };
-    });
+    const summarized = corpora.map(({ info, fresh }) => ({
+      info,
+      summary: summarizeCounts(info.display_name, {
+        stale: fresh.stale,
+        new: fresh.new,
+        indexing: fresh.indexing || Boolean(pending[info.id]),
+      }),
+    }));
     // Worst first: behind > updating > ok (mission-control exception order).
     const rank = { stale: 0, updating: 1, hidden: 2, ok: 3 } as const;
     return summarized.sort((a, b) => rank[a.summary.state] - rank[b.summary.state]);
@@ -122,14 +120,20 @@ export function TrustPanel({
 }
 
 async function fetchAll(): Promise<
-  { info: CorpusInfo; fresh: FreshnessResponse }[]
+  { info: CorpusInfo; fresh: FreshnessSummary }[]
 > {
   const corpora = await listCorpora();
   return Promise.all(
     corpora.map(async (info) => ({
       info,
-      fresh: await corpusFreshness(info.id).catch(
-        (): FreshnessResponse => ({ files: [], indexing: false }),
+      fresh: await corpusFreshnessSummary(info.id).catch(
+        (): FreshnessSummary => ({
+          current: 0,
+          stale: 0,
+          new: 0,
+          missing: 0,
+          indexing: false,
+        }),
       ),
     })),
   );

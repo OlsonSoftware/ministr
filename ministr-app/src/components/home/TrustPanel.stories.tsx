@@ -24,15 +24,8 @@ const CORPORA = [
 ];
 
 const FRESHNESS: Record<string, unknown> = {
-  "corpus-aaaa": { files: [{ path: "src/a.ts", state: "current" }], indexing: false },
-  "corpus-bbbb": {
-    files: [
-      { path: "src/login.tsx", state: "stale" },
-      { path: "src/new-page.tsx", state: "new" },
-      { path: "src/ok.ts", state: "current" },
-    ],
-    indexing: false,
-  },
+  "corpus-aaaa": { current: 1, stale: 0, new: 0, missing: 0, indexing: false },
+  "corpus-bbbb": { current: 1, stale: 1, new: 1, missing: 0, indexing: false },
 };
 
 const meta = {
@@ -41,7 +34,7 @@ const meta = {
   decorators: [
     withTauriMock({
       list_corpora: CORPORA,
-      corpus_freshness: (args: Record<string, unknown>) =>
+      corpus_freshness_summary: (args: Record<string, unknown>) =>
         FRESHNESS[String(args.corpusId)],
     }),
   ],

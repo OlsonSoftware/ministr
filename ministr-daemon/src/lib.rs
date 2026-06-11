@@ -14,6 +14,7 @@ pub mod coordinator;
 pub mod daemon;
 pub mod embedder_pool;
 pub mod exec;
+pub mod freshness_cache;
 pub mod indexer;
 pub mod inference;
 pub mod persistence;

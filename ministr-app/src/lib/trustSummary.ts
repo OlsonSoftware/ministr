@@ -15,12 +15,32 @@ export interface TrustSummary {
   behindCount: number;
 }
 
+/** Counts-only input — what the cheap summary endpoint serves. */
+export interface FreshnessCounts {
+  stale: number;
+  new: number;
+  indexing: boolean;
+}
+
 export function summarize(name: string, fresh: FreshnessResponse): TrustSummary {
-  const stale = fresh.files.filter((f) => f.state === "stale").length;
-  const added = fresh.files.filter((f) => f.state === "new").length;
+  return summarizeCounts(name, {
+    stale: fresh.files.filter((f) => f.state === "stale").length,
+    new: fresh.files.filter((f) => f.state === "new").length,
+    indexing: fresh.indexing,
+  });
+}
+
+/** The headline math, shared by the full (Mirror) and counts-only
+ *  (Home) freshness paths so the two screens can never disagree. */
+export function summarizeCounts(
+  name: string,
+  counts: FreshnessCounts,
+): TrustSummary {
+  const stale = counts.stale;
+  const added = counts.new;
   const behind = stale + added;
 
-  if (fresh.indexing) {
+  if (counts.indexing) {
     return {
       state: "updating",
       headline: "Catching up…",
