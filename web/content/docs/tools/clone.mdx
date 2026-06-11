@@ -1,51 +1,40 @@
 ---
 title: ministr_clone
-description: Clone a git repository and index it into the corpus.
+description: Clone a git repository and index its content.
 ---
+
+Clones a git repository and indexes its content. Sparse checkout is supported
+via `paths`, and cached clones are reused. The tool can also be invoked as an
+MCP Task.
 
 ## Parameters
 
-| Parameter | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `repo` | string | yes | — | Git repository URL (HTTPS or SSH) |
-| `branch` | string | no | default branch | Branch to clone |
-| `paths` | list of strings | no | — | Sparse-checkout paths (only check out + index these directories) |
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `repo` | string | — | Repository URL (HTTPS or SSH). |
+| `paths` | string[] (optional) | — | Paths for a sparse checkout. |
+| `branch` | string (optional) | repo default branch | Branch to clone. |
 
-## Response
+## Returns
 
-Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+In local mode, a `CloneResponse` with:
 
-```json
-{
-  "coherence_alerts": [ /* only when content changed; see envelope */ ],
-  "result": {
-    "files_discovered": 312,
-    "files_indexed": 298,
-    "sections_extracted": 1204,
-    "clone_time_ms": 2740,
-    "index_time_ms": 8190,
-    "from_cache": false,
-    "dependency_refs_linked": 46
-  }
-}
-```
+- `files_discovered`
+- `files_indexed`
+- `sections_extracted`
+- `clone_time_ms`
+- `index_time_ms`
+- `from_cache`
+- `dependency_refs_linked`
 
-### `result` fields
+In daemon-backend mode, the response is the daemon's shape instead:
+`{corpus_id, label, linked_toml_updated, ...}`.
 
-| Field | Description |
-|---|---|
-| `files_discovered` | Number of files discovered in the clone checkout |
-| `files_indexed` | Number of files parsed and stored |
-| `sections_extracted` | Total sections extracted across all indexed files |
-| `clone_time_ms` | Time spent cloning the repository, in milliseconds |
-| `index_time_ms` | Time spent running the ingestion pipeline, in milliseconds |
-| `from_cache` | `true` if the clone was served from a previous cached checkout |
-| `dependency_refs_linked` | Number of cross-references linked from local code to this cloned dependency |
+## Notes
 
-## Behavior
-
-- Clones into the ministr data directory (`~/.ministr/clones/<hash>`)
-- Sparse checkout dramatically reduces disk and index time for large monorepos
-- Subsequent calls with the same URL are idempotent — the cache is reused if the ref hasn't changed
-- Use `ministr_refresh` to pull updates after upstream changes
-- Cloned content is treated as a separate corpus root alongside local paths
+- Cached clones are reused.
+- In daemon-backend mode the tool delegates to the daemon's clone endpoint,
+  which clones the repo, registers a new corpus, and appends a `[[linked]]`
+  entry to the parent's `.ministr.toml`. The cloned repo becomes a linked
+  project that you query with `project: <label>`.
+- Invocable as an MCP Task.

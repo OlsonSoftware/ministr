@@ -1,78 +1,38 @@
 ---
 title: ministr_impact
-description: Transitive blast radius of changing a symbol — every caller N levels deep, plus distinct files, distinct test files, and a risk score.
+description: Transitive blast radius of changing a symbol or a git revision range.
 ---
 
-`ministr_impact` walks the call graph upward from a target symbol, collecting every transitive caller up to a bounded depth, then summarises the affected surface and assigns a `low` / `medium` / `high` risk score. Use this before recommending a non-trivial refactor — the score tells the agent whether the change is a one-file edit or a fan-out across the codebase.
+Compute the transitive blast radius of changing a symbol. Returns every
+caller / implementor / importer N levels deep, plus distinct files, distinct
+test files, and a low/medium/high risk score. Use before recommending a
+non-trivial refactor.
+
+With `range`, the tool runs in diff-aware mode: it resolves the diff's changed
+symbols and unions their blast radius.
 
 ## Parameters
 
-| Parameter | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `symbol_id` | string | yes | — | Symbol ID from `ministr_symbols` |
-| `max_depth` | integer | no | 3 | BFS depth cap (1–10) |
-| `project` | string | no | — | Linked-project label. Omit for the session's primary corpus. |
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `symbol_id` | string | — | The symbol whose blast radius to compute. |
+| `range` | string | — | Optional git revision range (e.g. `main..HEAD`). Diff-aware mode: resolves the diff's changed symbols and unions their blast radius. Overrides `symbol_id`. |
+| `repo_path` | string | server cwd | Work tree for `range` queries. |
+| `max_depth` | number | `3` | Traversal depth, clamped to 1–10. |
+| `direction` | string | `incoming` | `incoming` (callers, default) or `outgoing` (callees). |
+| `tests_only` | boolean | — | With `incoming`, answers "which tests transitively exercise this symbol". |
+| `project` | string | — | Linked-project label from `.ministr.toml` `[[linked]]`. Omit for the primary corpus. |
 
-## Response
+## Returns
 
-Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+An `ImpactResponse` with `impact` and an optional `changed` field. `changed`
+appears only for range queries and carries `range`, `changed_files`, and
+`changed_symbols` (capped at 200).
 
-```json
-{
-  "result": {
-    "impact": {
-      "target_symbol_id": "sym-src/auth.rs::auth::validate_token",
-      "depth": 3,
-      "symbols": 12,
-      "files": 5,
-      "tests": 2,
-      "risk": "medium",
-      "callers": [
-        {
-          "symbol_id": "sym-src/handlers.rs::handlers::login_handler",
-          "name": "login_handler",
-          "kind": "function",
-          "file": "src/handlers.rs",
-          "line": 28,
-          "depth": 1
-        },
-        {
-          "symbol_id": "sym-tests/auth_test.rs::tests::rejects_expired",
-          "name": "rejects_expired",
-          "kind": "function",
-          "file": "tests/auth_test.rs",
-          "line": 15,
-          "depth": 1
-        }
-      ]
-    }
-  }
-}
-```
+## Notes
 
-### Risk score
-
-The score is derived from the breadth of the impact, not the semantic difficulty of the change:
-
-- **`low`** — few callers, ≤3 files, no widely-used tests touched.
-- **`medium`** — moderate fan-out, 3–10 files, or 15+ total transitive callers.
-- **`high`** — broad impact: 10+ files or 50+ transitive callers.
-
-A high-risk change isn't necessarily a bad change — it just means the agent should break the work into smaller, independently-reviewable steps and surface the breadth in any PR description.
-
-### Caller ordering
-
-`callers` is sorted by `depth` ascending (direct callers first), then by `file` and `name` for stability across runs.
-
-## When to use it
-
-- **Before recommending a non-trivial refactor** — does this fix touch 3 files or 30?
-- **When triaging a bug report** — what else depends on the broken function?
-- **For PR scoping** — the symbol/file/test counts map directly to review effort.
-- **Pair with `ministr_references`** to inspect each direct caller in detail.
-
-## Limits
-
-- Walks `ref_kind = 'calls'` edges only. Trait dispatch via dynamic objects is not captured — `ministr_bridge` covers cross-language edges that the call graph misses.
-- BFS depth is capped at 10. Even at depth 3 the result on a fan-out hub can be large; consider tightening `max_depth` for survey-level questions.
-- The static reference graph cannot see runtime-dispatched calls (function pointers, registry-driven dispatch); for those, `ministr_survey` against the registry / dispatch table is the better starting point.
+- Risk heuristic: `score = symbols + 2×files + 3×tests`. High if score > 50 or
+  files > 10; Medium if score > 15 or files > 3.
+- Responses are wrapped in `ToolResponse<T>`, carrying `coherence_alerts`,
+  `indexing_in_progress`, and `next_actions`.
+- Soft errors (`ok: false`) never cancel sibling parallel calls.

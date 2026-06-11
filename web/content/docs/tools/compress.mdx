@@ -1,56 +1,23 @@
 ---
 title: ministr_compress
-description: Generate compact extractive summaries of sections the agent wants to keep referenceable without their full text. Returns short summaries with token counts.
+description: Extractive summaries of delivered sections to keep them referenceable at lower cost.
 ---
+
+`ministr_compress` produces extractive TF-IDF summaries — roughly 60-80% shorter than the originals — for sections your agent wants to keep referenceable without holding their full text. Pair it with `ministr_dropped` after dropping the originals from context.
 
 ## Parameters
 
-| Parameter | Type | Required | Description |
+| Parameter | Type | Default | Description |
 |---|---|---|---|
-| `content_ids` | list of strings | yes | Section IDs to generate compressed summaries for |
-| `project` | string | no | Linked-project label. Omit for the session's primary corpus. |
+| `content_ids` | string[] | required | IDs of the content to summarize. |
+| `project` | string | — | Linked-project label from `.ministr.toml` `[[linked]]`. Omit for the primary corpus. |
 
-## Response
+## Returns
 
-Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+A `CompressResponse` with `summaries`, `total_original_tokens`, `total_compressed_tokens`, and `compression_ratio` (lower is better).
 
-```json
-{
-  "coherence_alerts": [ /* only when content changed; see envelope */ ],
-  "result": {
-    "summaries": [
-      {
-        "original_id": "docs/auth.md#jwt-validation",
-        "summary": "JWT validation uses RS256 signing with 1-hour expiry. Tokens are verified against the public key from the JWKS endpoint.",
-        "original_tokens": 847,
-        "compressed_tokens": 95,
-        "method": "extractive"
-      }
-    ],
-    "total_original_tokens": 847,
-    "total_compressed_tokens": 95,
-    "compression_ratio": 0.112
-  }
-}
-```
+## Notes
 
-### `result` fields
-
-| Field | Description |
-|---|---|
-| `summaries` | List of compressed summaries |
-| `summaries[].original_id` | The section or symbol ID that was compressed |
-| `summaries[].summary` | Short summary preserving key information |
-| `summaries[].original_tokens` | Token count of the original content |
-| `summaries[].compressed_tokens` | Token count of the compressed summary |
-| `summaries[].method` | Compression method — `"extractive"` (TF-IDF sentence selection, always available), `"abstractive"` (LLM-assisted via MCP sampling, with automatic fallback to extractive on failure), or `"symbol_stub"` (signature + doc comment for code symbols) |
-| `total_original_tokens` | Sum of `original_tokens` across all compressed items |
-| `total_compressed_tokens` | Sum of `compressed_tokens` across all compressed items |
-| `compression_ratio` | Aggregate ratio (`total_compressed / total_original`); lower is better |
-
-## Behavior
-
-- Compression is extractive: selects the most information-dense sentences from the section
-- Typically achieves 60-80% token reduction
-- Unknown content IDs are silently skipped (not included in the response)
-- Use this before dropping content — keep the compact summary in context in place of the full section to preserve the gist while freeing space
+- Summarization is always extractive TF-IDF — no MCP sampling capability is required from the client.
+- Typical flow: compress sections you've finished reading, drop the originals, then report the drop via `ministr_dropped`.
+- The response is wrapped in the standard envelope: `coherence_alerts`, `indexing_in_progress`/`indexing_message`, and `next_actions`. Logical failures return soft errors (`ok: false`, `error_kind`, `message`) and never cancel sibling parallel tool calls.

@@ -230,7 +230,7 @@ export function InstallClient() {
             <h3>Wire it up</h3>
             <p>
               Run <code>ministr init</code> in your project.{' '}
-              <Link className="install-link" href="/docs/getting-started">
+              <Link className="install-link" href="/docs/quickstart">
                 Getting started →
               </Link>
             </p>
@@ -242,11 +242,11 @@ export function InstallClient() {
                 Tool reference
               </Link>
               {' · '}
-              <Link className="install-link" href="/docs/architecture">
+              <Link className="install-link" href="/docs/concepts/architecture">
                 Architecture
               </Link>
               {' · '}
-              <Link className="install-link" href="/docs/configuration">
+              <Link className="install-link" href="/docs/guides/configuration">
                 Config
               </Link>
             </p>

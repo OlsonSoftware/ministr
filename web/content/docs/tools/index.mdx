@@ -1,90 +1,65 @@
 ---
-title: Tool Reference
-description: All MCP tools ministr exposes — semantic search, code navigation, cross-language bridges, session efficiency, and multi-source corpus ingestion.
+title: Tool reference
+description: All 25 MCP tools ministr ships, grouped by job.
 ---
 
-ministr exposes MCP tools that give the agent code intelligence and explicit control over retrieval. The tools cover semantic search, code navigation, cross-language bridges, session efficiency, and multi-source corpus ingestion.
+This is the complete tool surface as registered by the server. Tools that can't work in a given setup are pruned from `tools/list` automatically (no web fetcher → no `ministr_fetch`; a prose-only corpus → no symbol tools), so an agent never sees a tool it can't use.
+
+Every response shares a common envelope worth knowing: `coherence_alerts` (content you received has changed — re-read it), `indexing_in_progress` (results may be incomplete), and `next_actions` (concrete suggested follow-up calls). Logical failures come back as soft errors that never cancel a parallel batch.
 
 ## Search & retrieval
 
-| Tool | Purpose | Typical Token Cost |
-|---|---|---|
-| [`ministr_survey`](/docs/tools/survey) | Semantic search across docs and code | 100-300 |
-| [`ministr_read`](/docs/tools/read) | Read a section in full | 200-2000 |
-| [`ministr_extract`](/docs/tools/extract) | Pull specific claims | 50-500 |
-| [`ministr_related`](/docs/tools/related) | Follow claim relationships | 50-300 |
-| [`ministr_toc`](/docs/tools/toc) | Structural overview of the corpus | 100-500 |
-| `ministr_projects` | List available linked projects for the `project` param | minimal |
+| Tool | Job |
+|---|---|
+| [ministr_survey](/docs/tools/survey) | hybrid semantic search — the starting point for any vague question |
+| [ministr_read](/docs/tools/read) | full text of a section, dedup/delta-aware |
+| [ministr_extract](/docs/tools/extract) | atomic claims from a section — cheaper than full text |
+| [ministr_related](/docs/tools/related) | follow claim relationship edges |
+| [ministr_toc](/docs/tools/toc) | structural overview of the corpus |
 
 ## Code navigation
 
-| Tool | Purpose | Typical Token Cost |
-|---|---|---|
-| [`ministr_symbols`](/docs/tools/symbols) | Find structs, functions, traits, enums | 50-300 |
-| [`ministr_definition`](/docs/tools/definition) | Get full source of a symbol | 100-2000 |
-| [`ministr_references`](/docs/tools/references) | Find callers, implementors, importers | 50-300 |
-| [`ministr_impact`](/docs/tools/impact) | Transitive blast radius with risk scoring | 100-500 |
-| [`ministr_dead`](/docs/tools/dead) | Symbols with zero references | 100-500 |
-| [`ministr_solid`](/docs/tools/solid) | Deterministic SOLID-violation candidates | 200-1000 |
-| [`ministr_bridge`](/docs/tools/bridge) | Query cross-language bindings | 50-200 |
+| Tool | Job |
+|---|---|
+| [ministr_symbols](/docs/tools/symbols) | find symbols by name / kind / module / visibility |
+| [ministr_definition](/docs/tools/definition) | full source of a symbol (or by file:line:col), optional git blame |
+| [ministr_references](/docs/tools/references) | every caller, implementor, importer — call before modifying |
+| [ministr_bridge](/docs/tools/bridge) | cross-language bridge links — call before touching IPC/FFI |
 
-## Session efficiency
+## Code analysis
 
-| Tool | Purpose | Typical Token Cost |
-|---|---|---|
-| [`ministr_usage`](/docs/tools/usage) | Advisory token-usage estimate | minimal |
-| [`ministr_compress`](/docs/tools/compress) | Get compact summaries of sections | 50-200 |
-| [`ministr_dropped`](/docs/tools/dropped) | Signal content dropped from context | minimal |
+| Tool | Job |
+|---|---|
+| [ministr_impact](/docs/tools/impact) | transitive blast radius + risk score; diff-aware with `range` |
+| [ministr_dead](/docs/tools/dead) | zero-reference symbols — deletion candidates |
+| [ministr_diagnostics](/docs/tools/diagnostics) | the project's own compilers/linters as structured data |
+| [ministr_solid](/docs/tools/solid) | deterministic SOLID-violation signals |
 
-## Multi-source corpora
+## Recorded execution
 
-| Tool | Purpose | Typical Token Cost | Latency |
-|---|---|---|---|
-| [`ministr_fetch`](/docs/tools/fetch) | Fetch web content into the corpus | 50-200 | seconds (network) |
-| [`ministr_clone`](/docs/tools/clone) | Clone and index a git repo | 50-200 | seconds to minutes |
-| [`ministr_refresh`](/docs/tools/refresh) | Re-fetch changed sources | 50-200 | seconds (network) |
-| `ministr_task` | Check status of a running clone/fetch task | minimal | — |
+| Tool | Job |
+|---|---|
+| [ministr_run](/docs/tools/run) | run a shell command, recorded + bounded |
+| [ministr_run_logs](/docs/tools/run-logs) | page the captured log (delta) |
+| [ministr_run_status](/docs/tools/run-status) | poll a run |
+| [ministr_run_kill](/docs/tools/run-kill) | cancel a run (process-group kill) |
 
-## Response envelope
+See [recorded execution](/docs/guides/recorded-execution) for the model.
 
-Every MCP tool wraps its answer in a small envelope. The tool-specific payload is always under `result`; the other fields appear only when they apply and carry actionable signals the agent can use without re-querying.
+## Ingestion
 
-```json
-{
-  "coherence_alerts": [ /* present only when underlying content changed */ ],
-  "indexing_in_progress": true,            /* present only while indexing */
-  "indexing_message": "Checking 12/42 files",
-  "next_actions": [ /* present only when ministr has concrete suggestions */ ],
-  "result": {
-    /* tool-specific payload — shape varies per tool */
-  }
-}
-```
+| Tool | Job |
+|---|---|
+| [ministr_fetch](/docs/tools/fetch) | fetch + index a web URL (llms.txt-aware) |
+| [ministr_clone](/docs/tools/clone) | clone + index a git repo (becomes a linked project) |
+| [ministr_refresh](/docs/tools/refresh) | re-check cached web/git sources for staleness |
+| [ministr_task](/docs/tools/task) | poll a background task (deprecated in favor of MCP tasks) |
 
-| Wrapper field | When present | Description |
-|---|---|---|
-| `result` | always | Tool-specific payload — see each tool's reference page for its shape |
-| `coherence_alerts` | only when non-empty | Sections whose underlying content changed since they were last delivered |
-| `indexing_in_progress` | only when `true` | Background indexing is still running, so results may be partial |
-| `indexing_message` | only when present | Human-readable indexing status (e.g. `"Checking 12/42 files"`) |
-| `next_actions` | only when non-empty | Concrete suggested follow-up calls (e.g. re-read a changed section) |
+## Session housekeeping
 
-ministr does not inject token-usage figures into tool responses; if you want an advisory estimate, call [`ministr_usage`](/docs/tools/usage) explicitly.
-
-## Typical workflow
-
-Code intelligence first; the prose tools and session aids fall in around it.
-
-```text
-survey ──▶ symbols ──▶ definition ──▶ references ──▶ bridge
-   │                                                   (cross-language)
-   └──▶ read ──▶ extract ──▶ related        (docs & prose)
-```
-
-1. **Survey** to orient — find the relevant area by meaning
-2. **Symbols / Definition** — jump to the exact function, type, or trait
-3. **References** — see real callers, implementors, importers
-4. **Bridge** — follow a call across a language boundary
-5. **Read / Extract / Related** — pull prose sections, atomic claims, and follow links
-
-`compress` and `dropped` are optional session-efficiency aids — they help ministr keep delivery lean and are never required to get an answer.
+| Tool | Job |
+|---|---|
+| [ministr_projects](/docs/tools/projects) | list the primary + linked projects and their labels |
+| [ministr_usage](/docs/tools/usage) | advisory delivery accounting |
+| [ministr_compress](/docs/tools/compress) | extractive summaries for content you want to keep referenceable |
+| [ministr_dropped](/docs/tools/dropped) | tell ministr what you dropped from context |

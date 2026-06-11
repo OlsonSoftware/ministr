@@ -1,56 +1,31 @@
 ---
 title: ministr_refresh
-description: Re-fetch changed web sources and pull updates for cloned git repositories.
+description: Check cached web and git sources for staleness and re-fetch changed content.
 ---
+
+Checks cached web and git sources for staleness and re-fetches any content that
+has changed. Pass a single URL to check one source, or omit `url` to check all
+cached sources.
 
 ## Parameters
 
-| Parameter | Type | Required | Description |
+| Parameter | Type | Default | Description |
 |---|---|---|---|
-| `url` | string | no | URL (web) or repo URL (git) to check for staleness |
+| `url` | string (optional) | — | A single web URL or git repo URL to check. Omit to check all cached sources. |
 
-If omitted, checks all cached web and git sources.
+## Returns
 
-## Response
+A `RefreshResponse` with:
 
-Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+- `urls_checked`, `urls_refreshed`, `urls_unchanged`, `urls_failed`
+- `details` — a list of `{url, status}` entries
+- `git_repos_checked`, `git_repos_refreshed`, `git_repos_unchanged`, `git_repos_failed`
+- `git_details` — a list of `{repo_url, status}` entries
 
-```json
-{
-  "coherence_alerts": [ /* only when content changed; see envelope */ ],
-  "result": {
-    "urls_checked": 2,
-    "urls_refreshed": 1,
-    "urls_unchanged": 1,
-    "urls_failed": 0,
-    "details": [
-      { "url": "https://example.com/docs/guide", "status": "updated" },
-      { "url": "https://example.com/docs/api", "status": "unchanged" }
-    ],
-    "git_repos_checked": 1,
-    "git_repos_refreshed": 0,
-    "git_repos_unchanged": 1,
-    "git_repos_failed": 0,
-    "git_details": [
-      { "repo_url": "https://github.com/serde-rs/serde.git", "status": "unchanged" }
-    ]
-  }
-}
-```
+Status values are `"unchanged"`, `"updated"`, or `"failed: <reason>"`.
 
-### `result` fields
+## Notes
 
-| Field | Description |
-|---|---|
-| `urls_checked` / `urls_refreshed` / `urls_unchanged` / `urls_failed` | Counts for web sources |
-| `details[]` | Per-URL `{url, status}` entries; `status` is `"unchanged"`, `"updated"`, or `"failed: <reason>"` |
-| `git_repos_checked` / `git_repos_refreshed` / `git_repos_unchanged` / `git_repos_failed` | Counts for cached git clones (omitted when zero) |
-| `git_details[]` | Per-repo `{repo_url, status}` entries (omitted when empty) |
-
-## Behavior
-
-- Web sources are re-fetched only if ETag or Last-Modified indicates change
-- Git clones run `git fetch` and compare HEAD against the indexed commit SHA
-- Only changed sections are re-embedded; unchanged content retains existing vectors
-- Call periodically to keep external content synced with upstream
-- Local file sources are handled automatically by the coherence engine — you don't need `ministr_refresh` for local files
+- Git-related fields are omitted from the response when their counts are zero.
+- Omitting `url` performs a staleness check across every cached web and git
+  source.

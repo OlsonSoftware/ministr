@@ -1,85 +1,36 @@
 ---
 title: ministr_references
-description: Find all references to a symbol — callers, implementors, importers, and cross-language binding sites.
+description: All callers, implementors, and importers of a code symbol.
 ---
+
+Find all callers, implementors, and importers of a code symbol. Call this
+before deleting or significantly modifying any non-trivial public symbol —
+zero references means safe to delete.
 
 ## Parameters
 
-| Parameter | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `symbol_id` | string | yes | — | Symbol ID from `ministr_symbols` |
-| `ref_kind` | string | no | — | Filter by reference kind: `calls`, `implements`, `imports`, `uses`, `bridge` |
-| `offset` | integer | no | 0 | Number of entries to skip |
-| `limit` | integer | no | 100 | Maximum number of entries to return |
-| `project` | string | no | — | Linked-project label. Omit for the session's primary corpus. |
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `symbol_id` | string | — | The symbol ID to look up. Alternative to position addressing. |
+| `file` | string | — | Position addressing: file path (use with `line` and `col`). |
+| `line` | number | — | Position addressing: 1-based line number. |
+| `col` | number | — | Position addressing: 0-based byte column. |
+| `ref_kind` | string | — | Optional reference kind filter: `calls`, `implements`, `imports`, `uses`, `bridge`. |
+| `through_implementors` | boolean | `false` | Also include callers of the same-named method on co-implementor types (references-including-overrides; bounded). |
+| `offset` | number | `0` | Pagination offset. |
+| `limit` | number | `100` | Maximum number of references to return. |
+| `project` | string | — | Linked-project label from `.ministr.toml` `[[linked]]`. Omit for the primary corpus. |
 
-## Response
+## Returns
 
-Wrapped in the [standard response envelope](/docs/tools#response-envelope). Each reference is a directed edge: `from_*` is the symbol making the reference, `to_*` is the symbol being referenced. The `result` payload:
+A `ReferencesResponse` with `references`, `total`, and `offset`.
 
-```json
-{
-  "coherence_alerts": [ /* only when content changed; see envelope */ ],
-  "result": {
-    "references": [
-      {
-        "from_symbol_id": "sym-src/handlers.rs::handlers::login_handler",
-        "from_name": "login_handler",
-        "from_file": "src/handlers.rs",
-        "from_line": 28,
-        "to_symbol_id": "sym-src/auth.rs::auth::validate_token",
-        "to_name": "validate_token",
-        "to_file": "src/auth.rs",
-        "to_line": 42,
-        "ref_kind": "calls"
-      },
-      {
-        "from_symbol_id": "sym-tests/auth_test.rs::tests::rejects_expired",
-        "from_name": "rejects_expired",
-        "from_file": "tests/auth_test.rs",
-        "from_line": 15,
-        "to_symbol_id": "sym-src/auth.rs::auth::validate_token",
-        "to_name": "validate_token",
-        "to_file": "src/auth.rs",
-        "to_line": 42,
-        "ref_kind": "calls"
-      }
-    ],
-    "total": 2,
-    "offset": 0
-  }
-}
-```
+## Notes
 
-### `result` fields
-
-| Field | Description |
-|---|---|
-| `references[].from_symbol_id` | Symbol making the reference |
-| `references[].from_name` | Its declared name |
-| `references[].from_file` | File containing the reference |
-| `references[].from_line` | Line of the reference (1-based) |
-| `references[].to_symbol_id` | Symbol being referenced |
-| `references[].to_name` | Its declared name |
-| `references[].to_file` | File containing the referenced symbol |
-| `references[].to_line` | Line where the referenced symbol is defined |
-| `references[].ref_kind` | How it's referenced — see table below |
-| `total` | Total references before pagination |
-| `offset` | Offset of the first returned entry within the full result list |
-
-### Reference Kinds
-
-| Kind | Description |
-|---|---|
-| `calls` | Function/method call site |
-| `implements` | Trait implementation |
-| `imports` | `use` or `import` statement |
-| `uses` | Type reference in signatures or annotations |
-| `bridge` | Cross-language binding site (Tauri `invoke`, napi import, PyO3 call, etc.) |
-
-## Behavior
-
-- Includes cross-crate references within the same workspace
-- Includes cross-language bridges when applicable (e.g., a Rust `#[tauri::command]` referenced by `invoke()` in TypeScript)
-- For finding cross-language bindings explicitly, use `ministr_bridge`
-- Use this before modifying or deleting shared code to understand blast radius
+- Symbols can be addressed by `symbol_id` or by position (`file` + `line` +
+  `col`).
+- `through_implementors` widens the result to callers of the same-named method
+  on co-implementor types; the expansion is bounded.
+- Responses are wrapped in `ToolResponse<T>`, carrying `coherence_alerts`,
+  `indexing_in_progress`, and `next_actions`.
+- Soft errors (`ok: false`) never cancel sibling parallel calls.

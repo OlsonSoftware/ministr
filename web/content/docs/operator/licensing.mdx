@@ -1,0 +1,36 @@
+---
+title: Enterprise licensing
+description: How license validation works on your deployment — boot modes, env vars, and revocation.
+---
+
+This page is for operators **running** a licensed deployment. (License *minting* is done by the vendor; the validator described here is deliberately public-key-only, so you can audit exactly how your deployment checks its license — there is no signing code in the binary you run.)
+
+## Boot modes
+
+| Mode | Trigger | Behavior |
+|---|---|---|
+| Community | `MINISTR_LICENSE_KEY` and `MINISTR_LICENSE_PUBLIC_KEY` unset | unrestricted; the default |
+| Enterprise | both set | the license JWT is validated (RS256, against the public key) at every boot; invalid, expired, or partially-configured licenses refuse to boot with a clear error |
+
+The license is a signed JWT carrying `enterprise_id` (echoed in the boot log), `seat_count` (enforced on org invites), `exp`, and `enabled_features` (empty = the default Enterprise set).
+
+## Revocation
+
+Your deployment can enforce a revocation list published by the vendor:
+
+| Env var | Effect |
+|---|---|
+| `MINISTR_LICENSE_REVOCATIONS` | path to a local JSONL revocation file |
+| `MINISTR_LICENSE_REVOCATIONS_URL` | HTTP source for the list (takes precedence over the file) |
+| `MINISTR_LICENSE_REVOCATIONS_CACHE_PATH` | cache location for the fetched list (default `/tmp/ministr-revocations-cache.jsonl`) |
+| `MINISTR_LICENSE_REVOCATIONS_GRACE_SECS` | how long a stale cache stays acceptable when the URL is unreachable (default 24h) |
+
+The list is refreshed in the background, and a revocation is enforced mid-flight: a running process whose license appears on the list exits rather than continuing to serve. The hosted revocation feed lives at `https://mcp.ministr.ai/api/v1/license-revocations.jsonl`.
+
+Entries reference licenses by a JWT hash (first 16 hex of its SHA-256) — no bearer material appears in the list or in audit logs.
+
+## Operational notes
+
+- Set both env vars via your container platform's secret mechanism; the public key is not sensitive but versioning it with your deployment config keeps rotations explicit.
+- Key rotation is vendor-coordinated: you receive a new public key + re-minted license and update both vars together.
+- Licensing applies to the **cloud binary's** Enterprise overlay. The MIT binary has no license machinery at all — see [self-hosting](/docs/operator/self-hosting).

@@ -2,7 +2,7 @@
  * TokenEconomics — the "fewer tokens" claim, measured.
  *
  * Not illustrative, not a flat constant. These are the real end-to-end numbers
- * from web/content/docs/benchmarks.mdx (produced by
+ * from web/content/docs.mdx (produced by
  * ministr-mcp/tests/token_economics_e2e.rs): index a real multi-language corpus,
  * run real `ministr_survey` calls through the MCP interface, and count the
  * literal response bytes against a grep + read of the candidate files. Across 26
@@ -68,7 +68,7 @@ export function TokenEconomics() {
         calls run, the literal response counted against reading the files grep
         surfaces — same tokenizer ministr uses internally. A lookup is bounded,
         not free, and the gap widens with repo size.{' '}
-        <Link href="/docs/benchmarks" className="v2-tok-link">
+        <Link href="/docs" className="v2-tok-link">
           See the benchmark →
         </Link>
       </figcaption>

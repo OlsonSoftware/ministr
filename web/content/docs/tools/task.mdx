@@ -1,0 +1,31 @@
+---
+title: ministr_task
+description: Poll a background task status. Deprecated — prefer MCP tasks/get.
+---
+
+Polls the status of a background task by id.
+
+This tool is deprecated: prefer the standard MCP `tasks/get` mechanism instead.
+
+## Parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `task_id` | string | — | The id of the background task to poll. |
+
+## Returns
+
+An MCP Task shape (camelCase fields):
+
+- `taskId`
+- `status` — one of `working`, `completed`, `failed`, `cancelled`,
+  `input_required`
+- `statusMessage` (optional)
+- `createdAt`, `lastUpdatedAt`
+- `ttl` (optional)
+- `pollInterval` (optional)
+
+## Notes
+
+- Deprecated; use MCP `tasks/get` where available.
+- Tasks expire 5 minutes after completion.

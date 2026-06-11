@@ -1,0 +1,26 @@
+---
+title: ministr_run_kill
+description: Cancel a running run; kills the whole process group.
+---
+
+Cancels a running run. On Unix the whole process group is killed, so child
+processes spawned by the command are terminated as well.
+
+## Parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `run_id` | string | — | The run to cancel. |
+
+## Returns
+
+A `RunKillResponse` with:
+
+- `run_id`
+- `killed` — true when the run was still active and cancellation was requested
+
+## Notes
+
+- On Unix the whole process group is killed.
+- On Windows only the direct child process is killed (a documented gap).
+- Marked destructive.

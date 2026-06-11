@@ -1,59 +1,23 @@
 ---
 title: ministr_related
-description: Follow dependency chains between claims — references, contradictions, dependencies, updates.
+description: Follow relationship edges from a claim to related claims.
 ---
+
+`ministr_related` follows relationship edges — `references`, `contradicts`, `depends_on`, `updates` — from a claim to other claims. Use it when one claim's truth depends on another and your agent needs to trace that dependency.
 
 ## Parameters
 
-| Parameter | Type | Required | Description |
+| Parameter | Type | Default | Description |
 |---|---|---|---|
-| `claim_id` | string | yes | Claim ID to find related claims for |
-| `relation_types` | list of strings | no | Filter by relation type |
-| `project` | string | no | Linked-project label. Omit for the session's primary corpus. |
+| `claim_id` | string | required | Claim ID to start from. |
+| `relation_types` | string[] | — | Filter to edge types: `references`, `contradicts`, `depends_on`, `updates`. |
+| `project` | string | — | Linked-project label from `.ministr.toml` `[[linked]]`. Omit for the primary corpus. |
 
-### Relation Types
+## Returns
 
-| Type | Description |
-|---|---|
-| `"references"` | The related claim references or cites this claim |
-| `"contradicts"` | The related claim conflicts with this claim |
-| `"depends_on"` | The related claim depends on this claim being true |
-| `"updates"` | The related claim is a newer version of this claim |
+A `RelatedResponse` with `related: Vec<RelatedClaimResult>`.
 
-## Response
+## Notes
 
-Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
-
-```json
-{
-  "coherence_alerts": [ /* only when content changed; see envelope */ ],
-  "result": {
-    "related": [
-      {
-        "claim_id": "docs/auth.md#refresh-tokens:c3",
-        "text": "Refresh tokens have a 30-day expiry.",
-        "relation_type": "references",
-        "source_section": "docs/auth.md#refresh-tokens",
-        "confidence": 0.82
-      }
-    ]
-  }
-}
-```
-
-### `result` fields
-
-| Field | Description |
-|---|---|
-| `related` | List of related claims |
-| `related[].claim_id` | The related claim's ID |
-| `related[].text` | The related claim's text |
-| `related[].relation_type` | How this claim relates to the queried claim |
-| `related[].source_section` | Section containing the related claim |
-| `related[].confidence` | Detector confidence score (0.0-1.0). Values below ~0.7 are fuzzy matches worth verifying. |
-
-## Behavior
-
-- Enables tracing reasoning chains across documents
-- When `relation_types` is omitted, all relation types are returned
-- Related claims are discovered via the claim relationship index built during ingestion
+- Claim IDs come from `ministr_extract` results or survey hits with `resolution: claim`.
+- The response is wrapped in the standard envelope: `coherence_alerts`, `indexing_in_progress`/`indexing_message`, and `next_actions`. Logical failures return soft errors (`ok: false`, `error_kind`, `message`) and never cancel sibling parallel tool calls.

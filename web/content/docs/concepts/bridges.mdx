@@ -1,24 +1,37 @@
 ---
 title: Cross-language bridges
-description: How ministr follows a call across a language boundary — the thing text search fundamentally cannot do.
+description: How ministr links a call across language boundaries — 13 binding kinds, two linking passes, and a semantic fallback.
 ---
 
-Modern codebases call across languages: a Rust function exposed to Python, a Tauri command invoked from TypeScript, a gRPC service consumed by a generated client. The two sides live in different files, in different languages, often with no shared identifier — so the [reference graph](/docs/concepts/references) within one language can't connect them.
+A grep dies at a language boundary: a Rust `#[tauri::command] fn save_file` and the TypeScript `invoke("save_file")` that calls it share nothing a text search can connect — and with napi-rs's snake_case→camelCase transform (`verify_sync` → `verifySync`), not even the name survives. Bridges are ministr's answer: indexed, queryable links across these boundaries, served by [ministr_bridge](/docs/tools/bridge).
 
-A **bridge** is that connection: an export on one side linked to the calls that reach it from another. This is ministr's sharpest differentiator — grep cannot do it even in principle, because nothing textual ties the two sides together.
+## The 13 binding kinds
 
-## What it links
+| Kind | Boundary |
+|---|---|
+| `tauri_command` | `#[tauri::command]` ↔ `invoke("name")` |
+| `tauri_event` | `emit` ↔ `listen` |
+| `napi` | napi-rs `#[napi]` ↔ JS/TS (case-transformed names handled) |
+| `wasm_bindgen` | `#[wasm_bindgen]` ↔ JS imports from the generated pkg |
+| `pyo3` | `#[pyfunction]` / `#[pyclass]` / `#[pymethods]` ↔ Python |
+| `http_route` | route definitions ↔ client fetch/request calls |
+| `ffi` | `extern "C"` ↔ ctypes and friends |
+| `cgo` | Go `C.func(...)` ↔ C definitions |
+| `jni` | Java/Kotlin `native`/`external` ↔ `Java_*` exports |
+| `uni_ffi` | `#[uniffi::export]` ↔ Swift/Kotlin/Python |
+| `grpc` | `.proto` services ↔ generated client stubs |
+| `flutter_channel` | Dart `MethodChannel("name")` ↔ native handlers |
+| `electron_ipc` | `ipcRenderer.invoke/send` ↔ `ipcMain.handle/on` |
 
-ministr recognizes **13 kinds** of cross-language boundary, including:
+## How linking works
 
-- Tauri commands and events (Rust ↔ JS/TS)
-- PyO3 (Rust ↔ Python)
-- napi-rs and wasm-bindgen (Rust ↔ JS)
-- HTTP routes (handler ↔ client call)
-- gRPC services, JNI, UniFFI, Electron IPC, Flutter channels, and raw FFI
+1. **Extraction** — one extractor per kind scans only the files in its applicable languages, emitting export and import *endpoints*, each with a binding key and a confidence.
+2. **Exact linking** — endpoints are grouped by `(kind, binding_key)`; exports pair with imports.
+3. **Case-transformed linking** — a second pass with case-normalized keys catches snake_case ↔ camelCase conventions (napi, serde renames), at a distinct, lower confidence level.
+4. **Semantic fallback** — still-unmatched endpoints are embedded and paired by name similarity above a cosine threshold.
 
-For each, it finds the export sites and the call sites and matches them, with a confidence on every link.
+A stored link's confidence is the minimum of its two endpoints' — links never claim more certainty than their weakest side.
 
-## Why it matters for an agent
+## Why it matters in practice
 
-Ask "what calls `create_user`?" in a polyglot app and the honest answer crosses a language boundary. `ministr_bridge` gives the agent that answer directly, so it can reason about — and safely change — code that spans the stack instead of treating each language as an island.
+The server's own instructions tell agents: **before changing any IPC or FFI boundary, call `ministr_bridge` first** — so every cross-language call site is on the table before the signature changes underneath it. [ministr_references](/docs/tools/references) also surfaces bridge edges via `ref_kind: "bridge"`.

@@ -3,54 +3,31 @@ title: ministr_dead
 description: Find symbols with zero references — candidates for safe deletion.
 ---
 
-`ministr_dead` returns symbols that have no references in the reference graph and don't look like entry points. It's the first step of a "what can I delete?" pass — every result is a *candidate*, not a guarantee. The static reference graph cannot see runtime-dispatched calls (function pointers, trait objects, registry-driven dispatch), so always confirm with `ministr_references` before deleting.
+Find symbols with zero references — candidates for safe deletion. The tool
+filters out `pub` symbols, entry points, and trivial helpers. Double-check
+with `ministr_references` before deleting, since dynamic dispatch isn't
+tracked.
 
 ## Parameters
 
-| Parameter | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `kind` | string | no | — | Filter by symbol kind (`function`, `struct`, `enum`, `trait`, …) |
-| `module` | string | no | — | Filter by module path prefix |
-| `min_lines` | integer | no | 1 | Skip symbols whose body is shorter than this |
-| `limit` | integer | no | 50 | Maximum results (capped at 500) |
-| `project` | string | no | — | Linked-project label. Omit for the session's primary corpus. |
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `kind` | string | — | Optional symbol kind filter. |
+| `module` | string | — | Optional module filter. |
+| `min_lines` | number | `1` | Minimum symbol size in lines. |
+| `limit` | number | `50` | Maximum number of symbols to return, capped at 500. |
+| `project` | string | — | Linked-project label from `.ministr.toml` `[[linked]]`. Omit for the primary corpus. |
 
-## Response
+## Returns
 
-Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+A `DeadCodeResponse` with `symbols` and `total`.
 
-```json
-{
-  "result": {
-    "symbols": [
-      {
-        "symbol_id": "sym-src/util.rs::util::parse_legacy_header",
-        "name": "parse_legacy_header",
-        "kind": "function",
-        "visibility": "pub(crate)",
-        "file": "src/util.rs",
-        "line": 142,
-        "lines": 18
-      }
-    ],
-    "total": 1
-  }
-}
-```
+## Notes
 
-## Filters applied automatically
-
-- `pub` symbols are excluded (external callers in dependent crates aren't visible to the local reference graph).
-- Entry points are excluded by name: `main`, `_main`, `_start`.
-- Symbols shorter than `min_lines` are skipped — set `min_lines: 5` to suppress trivial helpers.
-
-## When to use it
-
-- **Pre-cleanup sweep** — quick list of plausibly-unused symbols to inspect.
-- **Module migration** — see what's left behind after moving call sites elsewhere.
-- **Pair with `ministr_references`** before any deletion to catch references via dynamic dispatch.
-
-## Limits
-
-- Static reference graph only. Trait objects, function pointers, dispatch tables, and macro-generated references are not captured.
-- `pub` items are excluded by default. If you want to find unused public items at crate boundaries, you'll need ecosystem-level information ministr doesn't index.
+- Entry points are filtered out: `main`, `_main`, `_start`.
+- `pub` symbols and trivial helpers are excluded from results.
+- Dynamic dispatch isn't tracked — confirm with `ministr_references` before
+  deleting.
+- Responses are wrapped in `ToolResponse<T>`, carrying `coherence_alerts`,
+  `indexing_in_progress`, and `next_actions`.
+- Soft errors (`ok: false`) never cancel sibling parallel calls.

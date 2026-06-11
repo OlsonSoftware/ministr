@@ -1,68 +1,23 @@
 ---
 title: ministr_extract
-description: Extract atomic claims from a section, optionally filtered by relevance to a query. Claims are single factual statements that can stand alone.
+description: Atomic claims from a section, optionally filtered by query.
 ---
+
+`ministr_extract` returns the atomic claims of a section, optionally filtered by a relevance query. It's cheaper than `ministr_read` when your agent doesn't need the full prose — for example, when checking a specific fact inside a long section.
 
 ## Parameters
 
-| Parameter | Type | Required | Description |
+| Parameter | Type | Default | Description |
 |---|---|---|---|
-| `section_id` | string | yes | Section ID to extract claims from |
-| `query` | string | no | Optional query to filter claims by relevance |
-| `project` | string | no | Linked-project label. Omit for the session's primary corpus. |
+| `section_id` | string | required | Section ID to extract claims from. |
+| `query` | string | — | Relevance filter; only claims relevant to the query are returned. |
+| `project` | string | — | Linked-project label from `.ministr.toml` `[[linked]]`. Omit for the primary corpus. |
 
-## Response
+## Returns
 
-Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+An `ExtractResponse` with `claims: Vec<ClaimResult>`.
 
-### With `query` — ranked by relevance
+## Notes
 
-```json
-{
-  "coherence_alerts": [ /* only when content changed; see envelope */ ],
-  "result": {
-    "claims": [
-      {
-        "claim_id": "docs/auth.md#jwt-validation:c1",
-        "text": "JWT tokens use RS256 signing algorithm.",
-        "relevance": 0.92
-      },
-      {
-        "claim_id": "docs/auth.md#jwt-validation:c2",
-        "text": "Token expiry is set to 1 hour by default.",
-        "relevance": 0.85
-      }
-    ]
-  }
-}
-```
-
-### Without `query` — document order, no relevance field
-
-```json
-{
-  "coherence_alerts": [ /* only when content changed; see envelope */ ],
-  "result": {
-    "claims": [
-      { "claim_id": "docs/auth.md#jwt-validation:c1", "text": "JWT tokens use RS256 signing algorithm." },
-      { "claim_id": "docs/auth.md#jwt-validation:c2", "text": "Token expiry is set to 1 hour by default." }
-    ]
-  }
-}
-```
-
-### `result` fields
-
-| Field | Description |
-|---|---|
-| `claims` | List of extracted claims |
-| `claims[].claim_id` | Claim ID for use with `ministr_related` |
-| `claims[].text` | The atomic factual statement |
-| `claims[].relevance` | Optional — relevance to the query (0.0-1.0). Present only when a `query` was supplied; omitted otherwise. |
-
-## Behavior
-
-- When `query` is provided, claims are ranked by embedding similarity to the query
-- When `query` is omitted, all claims from the section are returned in document order
-- Claims are the highest-resolution unit in ministr — use them for surgical precision
-- Each claim ID can be passed to `ministr_related` to follow dependency chains
+- Use `ministr_read` instead when you need the full text of the section.
+- The response is wrapped in the standard envelope: `coherence_alerts`, `indexing_in_progress`/`indexing_message`, and `next_actions`. Logical failures return soft errors (`ok: false`, `error_kind`, `message`) and never cancel sibling parallel tool calls.

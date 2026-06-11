@@ -1,0 +1,46 @@
+---
+title: Quickstart
+description: From zero to "your AI just saw your code" in three beats.
+---
+
+Two equivalent paths. The app is the friendlier one; the CLI is faster if you live in a terminal. Both end at the same place: your AI coding tool quietly gains real knowledge of your codebase.
+
+## Path A — the desktop app
+
+1. **Point ministr at your project.** Open the app and choose the folder you code in. Everything stays on your computer.
+2. **Watch it read.** The app shows "reading your code… X of Y files" while it indexes. This happens once; afterwards it keeps up with your changes automatically.
+3. **Connect your AI.** The app shows copy-paste snippets:
+   - Claude Code: `claude mcp add ministr -- ministr`
+   - Cursor / Windsurf (JSON): `{ "mcpServers": { "ministr": { "command": "ministr" } } }`
+
+Then ask your AI something about your codebase. The moment it takes its first look, the app lights up: **"Your AI just saw your code"** — with what it looked at. That handshake is real, never simulated: it fires only on a genuine first tool call.
+
+From here, the [trust panel](/docs/desktop-app) tells you at a glance whether your AI is up to date with your working tree.
+
+## Path B — the CLI
+
+```bash
+cd your-project
+ministr init
+```
+
+`init` detects your project structure (workspaces, languages, bridge frameworks) and writes:
+
+- **`.ministr.toml`** — what to index (detected source and doc paths, sensible ignores)
+- **MCP client configs** — `.mcp.json` (Claude Code), `.cursor/mcp.json`, `.vscode/mcp.json`, merged non-destructively
+- **Agent steering** — rules files and PreToolUse hooks for Claude Code, Cursor, Windsurf, Copilot, plus a universal `AGENTS.md`, so agents are steered toward ministr's tools instead of raw grep
+
+Then restart your AI tool (or run `/mcp` in Claude Code to verify). Indexing happens automatically on the first connection — `ministr index` is optional pre-warming.
+
+`ministr hooks test` verifies the installed steering by simulating tool calls.
+
+## What just happened
+
+Your editor's AI now has 25 extra tools (see the [tool reference](/docs/tools)): semantic search over your code and docs, symbol navigation with real reference graphs, cross-language bridge detection, structured diagnostics, and recorded shell execution. The MCP server itself tells the agent how to use them — you don't need to prompt anything.
+
+## Next
+
+- [The desktop app](/docs/desktop-app) — what each screen tells you
+- [Client setup](/docs/guides/client-setup) — every supported client, including remote HTTP
+- [Configuration](/docs/guides/configuration) — `.ministr.toml` in full
+- [Headless & CI](/docs/guides/headless-and-ci) — required reading before scripting `claude -p`

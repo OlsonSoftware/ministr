@@ -1,0 +1,108 @@
+---
+title: Configuration
+description: The three config layers — .ministr.toml, global config.toml, and per-corpus settings — with full schemas and precedence.
+---
+
+ministr has three configuration layers. For model/dimension settings they merge through one precedence rule: **repo `.ministr.toml` › per-corpus settings › global `config.toml`**.
+
+## Project: `.ministr.toml`
+
+Lives at your repo root (discovered by walking **up** from the working directory). `ministr init` writes a starting point. Minimal config:
+
+```toml
+[corpus]
+paths = ["src", "docs"]
+```
+
+### `[corpus]`
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `paths` | list | `["."]` | repo-relative paths to index |
+| `ignore` | list of globs | `[]` | extra ignore patterns (on top of gitignore + built-ins) |
+| `model` | string | — | embedding model for this project (beats the global default) |
+| `dimension` | integer | — | Matryoshka truncation target; only useful with Matryoshka models like `nomic-embed-text-v1.5` |
+| `rerank_depth` | integer | `100` when `dimension` set | coarse candidates rescored at full dimension; `0` disables |
+
+### Extra sources
+
+```toml
+[[corpus.include]]            # merge an external local directory into this corpus
+path = "~/other/shared-lib"
+
+[[corpus.git]]                # clone and index a git repo
+repo = "https://github.com/org/dep"
+paths = ["src"]               # optional sparse checkout
+branch = "main"               # optional
+
+[[corpus.cloud]]              # fetch a pre-built .ministr-index bundle instead of indexing
+url = "https://example.com/dep.ministr-index"
+pin_version = "abc123"        # optional: skip staleness checks
+```
+
+### `[[linked]]` — multi-project querying
+
+```toml
+[[linked]]
+path = "~/Code/other-repo"
+label = "other"
+```
+
+A linked project is **not merged** — it keeps its own index and identity; agents target it with the `project: "other"` argument on any query tool (`ministr_projects` lists labels). Linked corpus paths are taken from a `.ministr.toml` at the linked root only; duplicate labels are skipped (first wins). Note: the standard stdio MCP path resolves linked projects; results for a linked repo are served from that repo's own index, shared rather than duplicated.
+
+### `[agent]`
+
+```toml
+[agent]
+rules = ["Always run just validate before committing"]
+```
+
+Strings appended to all generated agent rules files (Claude, Cursor, Copilot, …).
+
+### Changing config
+
+The file is the single source of truth: the desktop app's expert panel writes the same `[corpus]` table (and triggers a reindex). When serving, a watcher picks up newly added `paths` without restart; model changes take effect on reindex.
+
+## Global: `~/.ministr/config.toml`
+
+Optional; missing file means all defaults. Override the location with `ministr -C <path>`.
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `data_dir` | path | `~/.ministr` | where indexes, models, and logs live (no env var for this — set it here) |
+| `default_model` | string | `all-MiniLM-L6-v2` | embedding model for new corpora |
+| `default_context_budget` | integer | `100000` | advisory token budget for new sessions |
+| `log_format` | string | `pretty` | `pretty` or `json` |
+| `corpus_paths` | list | `[]` | fallback corpus sources (paths, `https://`, `github://`) |
+| `reranker_model` | string | unset (off) | cross-encoder reranking: `bge-reranker-base`, `bge-reranker-v2-m3`, `jina-reranker-v1-turbo-en`, `jina-reranker-v2-base-multilingual` |
+| `[prefetch]` | table | `enabled = true`, `cache_size = 128` | the prefetch engine |
+
+## Embedding models
+
+`ministr` ships a catalog of ~30 supported models (the app's expert panel and `list_supported_models` enumerate them). Highlights:
+
+- **`all-MiniLM-L6-v2`** (384d) — the default; fast, small, on the GPU-accelerated Candle path on Apple Silicon
+- **`jina-embeddings-v2-base-code`** (768d) — the code-optimized option, 8192-token context
+- **`nomic-embed-text-v1.5`** (768d) — Matryoshka: pair with `dimension` + `rerank_depth` for smaller indexes with full-precision rescoring
+- **BGE / GTE / E5 / Arctic families** — multilingual and quality/size tradeoffs; most have `-q` quantized variants (2–3× faster on CPU)
+
+Backend selection is automatic (Metal GPU via Candle on Apple Silicon; DirectML on Windows; CPU ONNX elsewhere). Overrides: `MINISTR_BACKEND`, `MINISTR_DEVICE=cpu`, `MINISTR_PREFER_QUANTIZED=1`. Changing a corpus's model requires a reindex (the app does this automatically).
+
+## What gets indexed
+
+The walker respects `.gitignore` (local, global, and exclude files) plus built-in ignore lists (~80 directory names like `node_modules`, `target`, `dist`; build artifacts; lockfiles; minified bundles; model binaries). Documents (`.md`, `.mdx`, `.html`, `.pdf`) are sectioned by heading; code files — about 140 extensions — are sectioned per symbol. Files with no supported parser (images, binaries, CSV) are skipped entirely.
+
+## Environment variables
+
+| Var | Effect |
+|---|---|
+| `MINISTR_CORPUS_PATHS` | colon-separated corpus paths; **overrides every other source** (built for containers) |
+| `MINISTR_BACKEND` | `candle` \| `onnx` \| `fastembed` — force the embedding backend |
+| `MINISTR_DEVICE` | `cpu` — force CPU even on GPU machines |
+| `MINISTR_PREFER_QUANTIZED` | `1` — auto-select quantized model variants |
+| `MINISTR_CONTEXT_WINDOW` | the agent model's context window (anchors advisory usage accounting) |
+| `MINISTR_MAX_OUTPUT_TOKENS` | per-tool-result condensation budget (default 22000; minimum 512) |
+| `MINISTR_ALLOWED_HOSTS` | comma-separated Host allowlist for HTTP serving |
+| `RUST_LOG` / `MINISTR_LOG_FORMAT` | log filtering / `json` output |
+
+Precedence reminder for corpus paths specifically: `MINISTR_CORPUS_PATHS` › `.ministr.toml` › `--corpus` flags › global `corpus_paths` — a project `.ministr.toml` beats the `--corpus` flag.

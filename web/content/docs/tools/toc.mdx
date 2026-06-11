@@ -1,71 +1,25 @@
 ---
 title: ministr_toc
-description: Structural overview of the indexed corpus — documents, section counts, and ingestion state.
+description: Structural overview (table of contents) of the indexed corpus.
 ---
+
+`ministr_toc` returns a structural overview — a table of contents — of the indexed corpus. Use it to orient your agent on an unfamiliar codebase before drilling in, or to list the sections of a single document.
 
 ## Parameters
 
-| Parameter | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `document_id` | string | no | — | If provided, return the TOC for a single document |
-| `limit` | integer | no | 100 | Maximum number of entries |
-| `offset` | integer | no | 0 | Pagination offset |
-| `project` | string | no | — | Linked-project label. Omit for the session's primary corpus. |
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `document_id` | string | — | Filter the listing to one document. |
+| `offset` | usize | 0 | Pagination offset into the entries. |
+| `limit` | usize | 100 | Maximum entries to return. |
+| `project` | string | — | Linked-project label from `.ministr.toml` `[[linked]]`. Omit for the primary corpus. |
 
-## Response
+## Returns
 
-Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+A `TocResponse` with `corpus_stats`, `roots`, and `entries`. `corpus_stats` carries `documents`, `sections`, `claims`, `offset`, `returned`, and an optional `ingestion_status`.
 
-```json
-{
-  "coherence_alerts": [ /* only when content changed; see envelope */ ],
-  "result": {
-    "corpus_stats": {
-      "documents": 17,
-      "sections": 219,
-      "claims": 1842,
-      "offset": 0,
-      "returned": 100,
-      "ingestion_status": "running"
-    },
-    "roots": [ /* CorpusRoot per registered source, when no document_id filter */ ],
-    "entries": [
-      {
-        "document_id": "src/auth.rs",
-        "section_id": "src/auth.rs#validate_token",
-        "heading_path": ["src/auth.rs", "fn validate_token"],
-        "depth": 1,
-        "claims_available": 4,
-        "token_count": 312
-      }
-    ]
-  }
-}
-```
+## Notes
 
-### `result` fields
-
-| Field | Description |
-|---|---|
-| `corpus_stats.documents` | Total indexed documents |
-| `corpus_stats.sections` | Total sections across all documents |
-| `corpus_stats.claims` | Total atomic claims extractable across the corpus |
-| `corpus_stats.offset` | The `offset` echoed back from the request |
-| `corpus_stats.returned` | Number of entries actually returned in this page |
-| `corpus_stats.ingestion_status` | Optional — `"pending"` or `"running"` while the corpus is still being indexed; omitted once ingestion completes |
-| `roots` | Registered corpus roots with per-directory metadata. Omitted when filtering to a single `document_id`. |
-| `entries[].document_id` | Parent document ID — pass to `ministr_toc` with `document_id` to drill into one document |
-| `entries[].section_id` | Section identifier — pass to `ministr_read` |
-| `entries[].heading_path` | Heading hierarchy from the document root to this section |
-| `entries[].depth` | Heading depth (1 = top-level) |
-| `entries[].claims_available` | Number of claims extractable from this section via `ministr_extract` |
-| `entries[].token_count` | Approximate token count of the section text |
-
-> **Note.** Behind the desktop app or `ministr serve --proxy`, `ministr_toc` returns a flatter shape (a list of entries with id, title, depth, and children) without the `corpus_stats`/`roots` extras shown above. Treat the structure above as the richest form; consumers should tolerate the leaner one.
-
-## Behavior
-
-- Without `document_id`, returns top-level entries for every document in the corpus (one entry per document)
-- With `document_id`, returns that document's section hierarchy
-- Use for initial orientation when connecting to an unfamiliar corpus
-- To check whether indexing is still in progress, poll the daemon's `/activity` endpoint or watch the desktop app's Overview — not this tool
+- `ingestion_status` is `"pending"` or `"running"` and only appears when relevant.
+- `roots` is only included when the listing is not filtered to a single document (local mode).
+- The response is wrapped in the standard envelope: `coherence_alerts`, `indexing_in_progress`/`indexing_message`, and `next_actions`. Logical failures return soft errors (`ok: false`, `error_kind`, `message`) and never cancel sibling parallel tool calls.

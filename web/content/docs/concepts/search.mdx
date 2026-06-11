@@ -1,18 +1,30 @@
 ---
-title: Hybrid search
-description: Meaning-based and keyword search together, returned at the right level of detail.
+title: Search
+description: What ministr_survey actually does — hybrid retrieval, multi-resolution ranking, optional reranking.
 ---
 
-Not every question is structural. "Where is rate limiting handled?" or "how does auth work here?" is a question about *meaning*, spread across code and docs. That's what `ministr_survey` is for.
+[ministr_survey](/docs/tools/survey) is not a text grep and not a plain vector lookup. A query runs through up to four stages:
 
-## Meaning and keyword, together
+## 1. Multi-resolution dense search
 
-Pure keyword search misses anything phrased differently than you guessed. Pure meaning-based search misses exact identifiers and rare terms. ministr runs both and fuses the rankings, so an exact symbol name and a vague description both land on the right place. An optional re-ranking pass sharpens the top results.
+The query is embedded and searched against every vector resolution at once — document summaries, section summaries, full sections, claims, and code symbols — with resolution-aware scoring. A question can be answered by a doc paragraph, a single claim, or a function, whichever actually matches.
 
-It searches code and prose in one index — a question can be answered by a function, a doc section, or both.
+## 2. Hybrid sparse fusion
 
-## The right level of detail
+When a sparse (keyword) index is configured, dense and sparse rankings are fused with reciprocal-rank fusion. This is the exact-identifier recovery path for code: a search for a specific function name ranks it first even when embedding similarity alone would not.
 
-Every document is available at several resolutions: a one-line summary, a section, a single atomic fact, a symbol signature, or full source. `ministr_survey` returns the level that fits the question, and the agent can zoom in (`ministr_read`, `ministr_extract`) only as far as it actually needs — instead of pulling whole files up front.
+## 3. Matryoshka two-stage rescoring
 
-The net effect: the agent gets the exact slice that answers the question, not a file dump it has to read and discard.
+If the corpus uses a truncated embedding dimension (see `dimension` in [configuration](/docs/guides/configuration)), coarse hits from the small-dimension index are re-scored against stored full-dimension vectors and blended — small index, full-precision ranking.
+
+## 4. Cross-encoder reranking (optional)
+
+With a `reranker_model` configured, retrieval over-fetches candidates and a cross-encoder rescores them against the query before truncation. Off by default.
+
+## Session awareness
+
+Results the agent has **already received are excluded server-side** (the response reports `deduplicated_count`), so repeated searching never wastes context on repeats. Strong hits come back with `next_actions` suggestions (read this section, open this symbol); weak, clustered results may trigger an elicitation asking for a refined query. See [sessions](/docs/concepts/sessions).
+
+## Cross-corpus search
+
+`corpus_ids` fans a query out across multiple corpora ([linked projects](/docs/guides/configuration#linked--multi-project-querying) or cloned repos), tags each hit with `source_corpus`, and merges by score. `corpus_boost` applies per-corpus multipliers (e.g. float your own repo above a dependency's). Fan-out is sequential in the current implementation.

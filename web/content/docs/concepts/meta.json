@@ -1,11 +1,4 @@
 {
   "title": "Concepts",
-  "defaultOpen": true,
-  "pages": [
-    "index",
-    "symbols",
-    "references",
-    "bridges",
-    "search"
-  ]
+  "pages": ["architecture", "indexing", "search", "bridges", "freshness", "sessions"]
 }

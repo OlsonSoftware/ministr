@@ -1,62 +1,28 @@
 ---
 title: ministr_survey
-description: Semantic search across the indexed corpus — documents, sections, claims, and code symbols. Returns ranked results with relevance scores.
+description: Search the indexed corpus by natural-language query.
 ---
+
+`ministr_survey` searches the indexed corpus with a natural-language query. Start here for any vague question your agent has about the codebase or docs, then follow up with `ministr_read` (full text) or `ministr_extract` (atomic claims) on the top results.
 
 ## Parameters
 
-| Parameter | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `query` | string | yes | — | Natural language query |
-| `top_k` | integer | no | 10 | Maximum number of results to return |
-| `project` | string | no | — | Linked-project label (from `.ministr.toml` `[[linked]]`). Omit for the session's primary corpus. |
-| `corpus_ids` | string[] | no | — | Cross-corpus fan-out. When set, fans the query across each corpus ID (own corpora or Atlas slugs like `atlas/react`), tags hits with `source_corpus`, and merges results by score. Omit to query a single corpus. |
-| `corpus_boost` | object | no | — | Per-corpus score multipliers for cross-corpus ranking. Map of `corpus_id → multiplier`; absent corpora default to `1.0`; values clamped to `[0, 10]`. Use `2.0` to float your own repo above Atlas hits, `0.0` to suppress a corpus. |
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `query` | string | required | Natural-language search query. |
+| `top_k` | usize | 10 | Maximum number of results to return. |
+| `project` | string | — | Linked-project label from `.ministr.toml` `[[linked]]`. Omit for the primary corpus. |
+| `corpus_ids` | string[] | — | Cross-corpus fan-out across your own corpora or Atlas slugs. Hits are tagged with `source_corpus` and merged by score. When both are set, `corpus_ids` wins over `project`. |
+| `corpus_boost` | map\<corpus_id, f32\> | — | Per-corpus score multipliers. Absent entries default to 1.0; values are clamped to [0, 10]. Only consulted when `corpus_ids` is set. |
 
-## Response
+## Returns
 
-Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+A `SurveyResponse` with `results` and `deduplicated_count`. Each result carries `content_id`, `resolution` (document, section, claim, or symbol), `score`, `text`, `heading_path`, and `source_corpus`.
 
-```json
-{
-  "coherence_alerts": [ /* only when content changed; see envelope */ ],
-  "result": {
-    "results": [
-      {
-        "content_id": "src/auth.rs#validate_token",
-        "resolution": "section",
-        "score": 0.87,
-        "text": "Validates a JWT token against the configured public key...",
-        "heading_path": ["src/auth.rs", "fn validate_token"]
-      },
-      {
-        "content_id": "sym-src/auth.rs::auth::Claims",
-        "resolution": "symbol_stub",
-        "score": 0.82,
-        "text": "pub struct Claims { sub: String, exp: i64, ... }",
-        "heading_path": ["src/auth.rs", "struct Claims"],
-        "source_corpus": "atlas/my-lib"
-      }
-    ],
-    "deduplicated_count": 2
-  }
-}
-```
+## Notes
 
-### `result` fields
-
-| Field | Description |
-|---|---|
-| `results` | Ranked list of matching content |
-| `results[].content_id` | Hierarchical ID — use with `ministr_read` (sections) or `ministr_definition` (symbols) |
-| `results[].resolution` | Match level: `"summary"`, `"section"`, `"claim"`, `"symbol_stub"`, or `"symbol_full"` |
-| `results[].score` | Similarity score (0.0-1.0, higher is better) |
-| `results[].text` | Content text at the match's resolution level |
-| `results[].heading_path` | Heading hierarchy or symbol path (optional; present on section- and symbol-level hits) |
-| `results[].source_corpus` | Optional — corpus that produced this hit. Present only for cross-corpus `corpus_ids` queries. |
-| `deduplicated_count` | Number of results filtered out (already delivered this session) |
-
-## Behavior
-
-- Matches across all resolution levels — documents, sections, claims, and code symbols
-- Uses hybrid search: meaning-based and keyword, with optional re-ranking
+- Results your agent has already received are excluded server-side before truncation, so repeat surveys don't re-deliver the same content.
+- If the results are low-score and clustered, the tool may issue an elicitation asking the client for a `refined_query`. This is skipped on the cross-corpus path.
+- A strong top hit emits a `next_actions` suggestion: `ministr_read` for sections, `ministr_definition` for symbols.
+- A survey warms a prefetch cache of parent sections (local mode only), making a follow-up `ministr_read` cheaper.
+- The response is wrapped in the standard envelope: `coherence_alerts`, `indexing_in_progress`/`indexing_message`, and `next_actions`. Logical failures return soft errors (`ok: false`, `error_kind`, `message`) and never cancel sibling parallel tool calls.

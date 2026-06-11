@@ -1,0 +1,46 @@
+---
+title: ministr_run
+description: Run a shell command, recorded and captured, with a token-lean digest.
+---
+
+Runs a shell command with its output recorded and captured. The response carries
+the exit code plus a token-lean digest that includes every error line; the full
+log is available via `ministr_run_logs`.
+
+With `background: true` the tool returns a `run_id` immediately instead of
+waiting for the command to finish.
+
+## Parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `command` | string | — | The shell command to run. Required. |
+| `cwd` | string (optional) | first corpus root | Working directory; must be inside an indexed corpus root. |
+| `timeout_secs` | number (optional) | `600` | Timeout in seconds. Maximum 3600. |
+| `background` | bool (optional) | — | When true, returns a `run_id` immediately. |
+
+## Returns
+
+A `RunResponse` with:
+
+- `run_id`
+- `status` — one of `running`, `exited`, `killed`, `timed_out`
+- `exit_code` (optional)
+- `duration_ms` (optional)
+- `bytes_total`
+- `capture_truncated`
+- `digest` (optional) — absent for background starts and still-running runs
+
+## Notes
+
+- Every run is recorded to a local run store (`~/.ministr/exec_runs.db`), so it
+  is auditable and visible in the desktop app's run views.
+- Output capture is bounded (head+tail) so runaway output cannot exhaust
+  memory; exact total byte and line counts are kept even when the middle is
+  dropped.
+- A finished run is also rendered as a bounded markdown report and indexed into
+  the corpus, so `ministr_survey` can answer questions like "what failed last
+  time?" (the newest 50 reports are retained by default).
+- When the MCP server runs in daemon mode, runs execute in the machine-wide
+  daemon-hosted engine, so the desktop app sees them live and can kill them.
+- Marked destructive: it executes arbitrary shell commands within corpus roots.

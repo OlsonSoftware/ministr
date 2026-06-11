@@ -1,49 +1,40 @@
 ---
 title: ministr_fetch
-description: Fetch a web URL and add its content to the corpus. Supports single pages, sitemaps, and llms.txt feeds.
+description: Fetch a URL from the web and index its content.
 ---
+
+Fetches a URL from the web and indexes its content into the corpus. The fetcher
+tries an `llms.txt` strategy first and falls back to a direct page fetch.
+
+With `depth` greater than 0 it follows same-domain links, optionally constrained
+to a path prefix via `path_filter`. The tool can also be invoked as an MCP Task
+(task support is optional).
 
 ## Parameters
 
-| Parameter | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `url` | string | yes | — | HTTP(S) URL to fetch |
-| `depth` | integer | no | 0 | Crawl depth for following same-domain links (0 = single page only) |
-| `max_pages` | integer | no | 50 | Maximum pages to fetch when crawling |
-| `path_filter` | string | no | — | Only fetch URLs whose path starts with this prefix (e.g. `/docs/`) |
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `url` | string | — | The URL to fetch and index. |
+| `depth` | u32 (optional) | `0` | `0` fetches a single page; `1+` follows same-domain links. |
+| `max_pages` | number (optional) | `50` | Maximum number of pages to fetch. |
+| `path_filter` | string (optional) | — | Path prefix to restrict crawling, e.g. `/docs/`. |
 
-## Response
+There is no `project` parameter.
 
-Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+## Returns
 
-```json
-{
-  "coherence_alerts": [ /* only when content changed; see envelope */ ],
-  "result": {
-    "pages_fetched": 14,
-    "sections_indexed": 62,
-    "claims_extracted": 148,
-    "tokens_added": 18420,
-    "strategy_used": "sitemap"
-  }
-}
-```
+A `FetchResponse` with:
 
-### `result` fields
+- `pages_fetched`
+- `sections_indexed`
+- `claims_extracted`
+- `tokens_added`
+- `strategy_used`
 
-| Field | Description |
-|---|---|
-| `pages_fetched` | Number of pages successfully fetched |
-| `sections_indexed` | Total sections indexed across all fetched pages |
-| `claims_extracted` | Total claims extracted across all fetched pages |
-| `tokens_added` | Total tokens added to the corpus |
-| `strategy_used` | Fetch strategy selected (`direct`, `sitemap`, `llms_txt`, etc.) |
+## Notes
 
-## Behavior
-
-- HTML is converted to Markdown via readability extraction before indexing
-- PDF URLs are text-extracted via `pdf-extract`
-- `sitemap.xml` and `llms.txt` feeds are detected and used to expand crawls when present
-- Fetched content is cached locally with ETag / Last-Modified headers
-- Use `ministr_refresh` to re-fetch changed sources
-- Subject to rate limiting (default: 4 concurrent requests)
+- Tries `llms.txt` first, then falls back to fetching the page directly.
+- Returns a soft `not_available` error when the web fetcher, embedder, index,
+  or storage are not configured.
+- Hidden from `tools/list` when no web fetcher is configured.
+- Invocable as an MCP Task.

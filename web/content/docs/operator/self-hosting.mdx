@@ -1,0 +1,33 @@
+---
+title: Self-hosting
+description: Running ministr as a shared HTTP server — community mode, OAuth, and what the cloud overlay adds.
+---
+
+The MIT binary is a complete product. Self-hosting means running it in HTTP mode; no license, no cloud account, no feature gates.
+
+## Community serve
+
+```bash
+ministr serve --transport http --host 0.0.0.0 --port 8080 --oauth
+```
+
+This runs the full engine in-process: MCP over Streamable HTTP at `/mcp`, the [REST surface](/docs/http-api), bundle import/export, and background indexing with a `.ministr.toml` watcher. Point corpora at it with `--corpus`, a `.ministr.toml`, or `MINISTR_CORPUS_PATHS` (the container-friendly override that beats all other config).
+
+**Always use `--oauth` beyond localhost.** It enables OAuth 2.1 (authorization-code + PKCE only, RFC 8414 metadata at `/.well-known/...`) and gates routes by scope: `ministr:read` for queries, `ministr:write` for mutation/exec/observability, `ministr:bundle:read|write` for bundles. Token storage backends, in precedence order: Postgres when `MINISTR_PG_URL` is set; persistent SQLite when `MINISTR_CLOUD_DATA_DIR` is set; in-memory otherwise (dev only).
+
+Also set:
+
+- `MINISTR_ALLOWED_HOSTS` — comma-separated Host allowlist (default is loopback-only)
+- `MINISTR_CORS_ALLOWED_ORIGINS` — CORS is off by default
+
+Clients connect with `{ "mcpServers": { "ministr": { "url": "https://your-host/mcp" } } }`.
+
+## Managed Postgres TLS
+
+If your platform's Postgres presents a private CA (DigitalOcean, others), provide the PEM via `MINISTR_PG_CA_CERT`; connections use rustls with `sslmode=require`.
+
+## The cloud overlay
+
+Organizations, GitHub/OIDC sign-in, SAML configuration, billing, quotas, and hosted corpora live in a proprietary overlay that mounts through a single seam (`CloudRouterMounter`, invoked once at serve boot) in the official cloud binary. The open-source binary compiles with the seam permanently empty — community mode is not a crippled cloud mode; it's the same engine without the multi-tenant machinery.
+
+If you run the cloud binary with an Enterprise license, see [licensing](/docs/operator/licensing) for boot-time validation and revocation, and [OIDC](/docs/operator/oidc) / [SAML](/docs/operator/saml) for SSO.

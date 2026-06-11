@@ -1,66 +1,37 @@
 ---
 title: ministr_symbols
-description: Search the code symbol index for structs, functions, traits, enums, and other declarations by name, kind, module, or visibility.
+description: Find code symbols by name, kind, module, or visibility.
 ---
+
+Find code symbols (functions, structs, traits, etc.) by name, kind, module, or
+visibility. Pair with `ministr_definition` for source and `ministr_references`
+before modifying.
 
 ## Parameters
 
-| Parameter | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `query` | string | no | — | Fuzzy name search (case-insensitive substring match) |
-| `kind` | string | no | — | Filter by kind: `function`, `struct`, `trait`, `enum`, `impl`, `const`, `static`, `type`, `mod` |
-| `module` | string | no | — | Module path prefix filter (e.g. `config` matches `config::sub`) |
-| `visibility` | string | no | — | Filter by visibility: `pub`, `pub(crate)`, `pub(super)`, or `""` for private |
-| `offset` | integer | no | 0 | Number of entries to skip |
-| `limit` | integer | no | 100 | Maximum number of entries to return |
-| `project` | string | no | — | Linked-project label. Omit for the session's primary corpus. |
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `query` | string | — | Optional fuzzy, case-insensitive substring match on the symbol name. |
+| `kind` | string | — | Optional symbol kind: `function`, `struct`, `trait`, `enum`, `impl`, `const`, `static`, `type`, `mod`. |
+| `module` | string | — | Optional module path prefix. |
+| `visibility` | string | — | Optional visibility filter: `pub`, `pub(crate)`, `pub(super)`, or `''` (private). |
+| `offset` | number | `0` | Pagination offset. |
+| `limit` | number | `100` | Maximum number of symbols to return. |
+| `project` | string | — | Linked-project label from `.ministr.toml` `[[linked]]`. Omit for the primary corpus. |
 
-## Response
+## Returns
 
-Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+A `SymbolsResponse` with `symbols`, `total`, and `offset`. Each symbol carries:
 
-```json
-{
-  "coherence_alerts": [ /* only when content changed; see envelope */ ],
-  "result": {
-    "symbols": [
-      {
-        "id": "sym-src/auth.rs::auth::validate_token",
-        "name": "validate_token",
-        "kind": "function",
-        "file": "src/auth.rs",
-        "line": 42,
-        "signature": "pub fn validate_token(token: &str) -> Result<Claims>",
-        "doc_preview": "Validates a JWT token against the configured public key.",
-        "complexity": 4,
-        "caller_count": 12
-      }
-    ],
-    "total": 8,
-    "offset": 0
-  }
-}
-```
+- `id`, `name`, `kind`, `file`, `line`, `signature`
+- `doc_preview` — the first line of the symbol's doc comment
+- `complexity` — cyclomatic complexity (functions only)
+- `caller_count` — transitive caller count (omitted in daemon mode)
 
-### `result` fields
+## Notes
 
-| Field | Description |
-|---|---|
-| `symbols[].id` | Symbol ID — use with `ministr_definition` and `ministr_references` |
-| `symbols[].name` | Declared name |
-| `symbols[].kind` | Symbol kind (`function`, `struct`, `trait`, `enum`, `impl`, `const`, `static`, `type`, `mod`) |
-| `symbols[].file` | Source file path |
-| `symbols[].line` | 1-based start line in the source file |
-| `symbols[].signature` | Declaration signature |
-| `symbols[].doc_preview` | Optional — first line of the symbol's doc comment |
-| `symbols[].complexity` | Optional — cyclomatic complexity (functions only) |
-| `symbols[].caller_count` | Optional — transitive caller count for impact analysis |
-| `total` | Total matches before pagination |
-| `offset` | Offset of the first returned entry within the full result list |
-
-## Behavior
-
-- The query is tokenized with CamelCase + snake_case splitting (`ToolRouter` → `["tool", "router"]`, `list_symbols` → `["list", "symbols"]`); tokens shorter than two characters are dropped.
-- All tokens must match (AND); if AND yields nothing on a multi-token query, ministr falls back to OR.
-- Use `ministr_definition` to get the full source of a symbol.
-- Use `ministr_references` to find callers, implementors, and importers.
+- When exactly one symbol matches, the response emits a `next_actions`
+  suggestion to call `ministr_definition` on it.
+- Responses are wrapped in `ToolResponse<T>`, carrying `coherence_alerts`,
+  `indexing_in_progress`, and `next_actions`.
+- Soft errors (`ok: false`) never cancel sibling parallel calls.

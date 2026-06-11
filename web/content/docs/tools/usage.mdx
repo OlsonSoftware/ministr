@@ -1,58 +1,25 @@
 ---
 title: ministr_usage
-description: An optional, advisory token-usage estimate for the session — internal accounting, not a signal to stop.
+description: Internal ministr accounting of delivered content. Advisory only.
 ---
 
-`ministr_usage` is opt-in. ministr deliberately does **not** put token-usage figures into ordinary tool responses — the per-call numbers are anchored to a configured window, not the model's real context window, and treating them as a limit made agents abandon work early. This tool exists for the rare case where you explicitly want the estimate anyway.
+`ministr_usage` reports ministr's internal accounting: a rough token estimate of what it has delivered to your agent so far. It is advisory only and anchored to a configured window, not your real model context window — do not use it to decide you are low on context or to stop work. It is safe to ignore.
 
 ## Parameters
 
 None.
 
-## Response
+## Returns
 
-```json
-{
-  "total_budget": 100000,
-  "estimated_used": 34500,
-  "estimated_remaining": 65500,
-  "level": "normal",
-  "drop_candidates": [],
-  "prefetch_metrics": { "hits": 3, "misses": 7 },
-  "session_metrics": {
-    "total_deliveries": 12,
-    "cumulative_tokens_delivered": 34500,
-    "total_evictions": 2,
-    "cumulative_tokens_evicted": 5200,
-    "total_compressions": 1,
-    "cumulative_tokens_compressed": 800,
-    "total_tokens_saved": 6000,
-    "compression_ratio": 0.174,
-    "delta_updates": 0,
-    "dedup_hits": 3
-  },
-  "schema_tokens": 4200,
-  "tool_count": 20
-}
-```
+A `UsageResponse` with:
 
-### Response fields
+- `total_budget`, `estimated_used`, `estimated_remaining` — token accounting against the configured window.
+- `level` — `normal`, `elevated`, or `critical`.
+- `drop_candidates` — content ministr suggests dropping.
+- `prefetch_metrics` and `session_metrics` — the latter includes `total_deliveries`, `cumulative_tokens_delivered`, `total_evictions`, `cumulative_tokens_evicted`, `total_compressions`, `cumulative_tokens_compressed`, `total_tokens_saved`, `compression_ratio`, `delta_updates`, and `dedup_hits`.
+- `schema_tokens`, `tool_count`, `coherence_alerts`, `elicitation_evicted`.
 
-| Field | Description |
-|---|---|
-| `total_budget` | Total context window budget in tokens (configured, not real) |
-| `estimated_used` | Estimated tokens currently used |
-| `estimated_remaining` | Estimated tokens remaining |
-| `level` | Pressure level: `"normal"`, `"elevated"`, or `"critical"` |
-| `drop_candidates` | Ranked eviction candidates (empty under normal pressure). Each has `content_id`, `reason`, `tokens_recoverable`, `score`. |
-| `prefetch_metrics` | Prefetch cache hit/miss metrics by strategy |
-| `session_metrics` | Cumulative token economics — deliveries, evictions, compressions, dedup hits, delta updates |
-| `schema_tokens` | Total tokens consumed by MCP tool schemas (descriptions + parameters) |
-| `tool_count` | Number of registered tools |
-| `coherence_alerts` | Optional — pending coherence alerts when underlying content has changed |
-| `elicitation_evicted` | Optional — content IDs evicted via interactive elicitation (when pressure is elevated) |
+## Notes
 
-## Behavior
-
-- **Advisory only.** These figures are anchored to a configured window size, not the agent's real context window. Don't use them to decide you're low on context or to stop working.
-- **Not in normal responses.** Other tools never include this; it has to be requested explicitly.
+- Under non-`normal` pressure, ministr may elicit drop choices from the client and evict them; `elicitation_evicted` reflects this.
+- The numbers track what ministr delivered, not what your agent actually retains — treat them as a hint, never a stop signal.

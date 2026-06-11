@@ -1,0 +1,71 @@
+---
+title: HTTP API
+description: The daemon's REST surface — what the desktop app and tooling consume.
+---
+
+The local daemon serves HTTP over a **Unix domain socket** (`~/.ministr/ministrd.sock`; a named pipe on Windows) — there is no localhost port and no token on the local transport; access control is filesystem permissions. The same routers are mounted (individually, behind OAuth scopes) by `ministr serve --transport http` for remote deployments.
+
+This surface is what the desktop app polls; it's documented for tooling authors and self-hosters. The MCP tools are the agent-facing contract.
+
+## Status & corpora (read)
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/status` | daemon handshake: version, uptime, memory, model, per-corpus stats |
+| GET | `/api/v1/corpora` | registered corpora |
+| GET | `/api/v1/corpora/{id}` | one corpus |
+| POST | `/api/v1/corpora/{id}/survey` | semantic search |
+| POST | `/api/v1/corpora/{id}/symbols` | symbol search |
+| GET | `/api/v1/corpora/{id}/definition/{sym}` | symbol definition |
+| GET | `/api/v1/corpora/{id}/references/{sym}` | symbol references |
+| GET | `/api/v1/corpora/{id}/impact/{sym}` · `/diff-impact` | impact analysis |
+| POST | `/api/v1/corpora/{id}/dead` · `/solid` · `/diagnostics` | analysis suites |
+| POST | `/api/v1/corpora/{id}/toc` · `/extract` · `/related` · `/compress` | retrieval |
+| GET | `/api/v1/corpora/{id}/read/{section}` | read a section |
+| POST | `/api/v1/corpora/{id}/bridge` · GET `/bridge/graph` | bridge queries |
+| GET | `/api/v1/corpora/{id}/files` | indexed file list |
+| POST | `/api/v1/corpora/{id}/file` · `/occurrences` · `/indexed-file` | file content / token occurrences / the stored indexed sections of one file |
+| GET | `/api/v1/corpora/{id}/freshness` | full per-file hash-verified freshness sweep |
+| GET | `/api/v1/corpora/{id}/freshness-summary` | counts-only freshness `{current, stale, new, missing, indexing}` |
+| GET | `/api/v1/corpora/{id}/outcomes` | read→edit outcome receipts |
+| GET | `/api/v1/corpora/{id}/progress` · `/api/v1/progress` | ingestion progress (SSE) |
+| GET | `/api/v1/corpora/{id}/coherence` · `/prefetch` | coherence events / prefetch metrics |
+| GET | `/api/v1/sessions` · `/api/v1/corpora/{id}/sessions/{sid}/usage` | session summaries / usage |
+
+## Corpora (write)
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/v1/corpora` | register a corpus |
+| POST | `/api/v1/corpora/{id}/clone` | clone a git repo as a new linked corpus |
+| POST | `/api/v1/corpora/{id}/reindex` | reindex |
+| PUT | `/api/v1/corpora/{id}/paths` | replace the path set without dropping sessions |
+| DELETE | `/api/v1/corpora/{id}` | unregister |
+| POST/DELETE | `/api/v1/corpora/{id}/sessions[/{sid}]` | session lifecycle |
+| POST | `…/sessions/{sid}/dropped` | mark content dropped |
+| POST | `/api/v1/corpora/import` · `…/{id}/export` | index bundles |
+
+## Execution
+
+The daemon hosts the one machine-wide run engine, so kills and live log tails work across processes:
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/exec/runs` | start a run (`{command, cwd?, session_id?, timeout_secs?, background}`) |
+| GET | `/exec/runs?limit&session_id` | recorded runs, newest first |
+| GET | `/exec/runs/{id}` | one run |
+| GET | `/exec/runs/{id}/logs` | persisted log, or a live snapshot for running runs |
+| POST | `/exec/runs/{id}/kill` | cancel (process-group kill) |
+
+Run cwd is restricted to indexed corpus roots; output capture is bounded; every run is persisted to `~/.ministr/exec_runs.db` (a crash leaves an honest `running` tombstone).
+
+## Observability
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/activity?limit&since` | recent tool-call activity events (in-memory ring) |
+| GET | `/coherence-events` | recent file-change events |
+
+## Scope mapping (remote deployments)
+
+When mounted publicly: read router → `ministr:read`; write, exec, and observability routers → `ministr:write` (observability leaks paths and call patterns); bundle routes → `ministr:bundle:write`. The `/ask` route requires a local `claude` binary and is not mounted on cloud deployments.

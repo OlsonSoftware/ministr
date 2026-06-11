@@ -1,0 +1,76 @@
+---
+title: Client setup
+description: Wiring ministr into Claude Code, Cursor, VS Code, Codex, generic MCP clients, and remote HTTP.
+---
+
+ministr speaks MCP over **stdio**: any client that can spawn a process can use it. The binary auto-discovers `.ministr.toml` by walking up from its working directory, so no arguments are needed.
+
+`ministr init` writes the per-project configs for Claude Code, Cursor, and VS Code automatically — the sections below are for manual setup or other clients.
+
+## Claude Code
+
+CLI shorthand (recommended):
+
+```bash
+claude mcp add ministr -- ministr
+```
+
+Or project-scoped `.mcp.json` at the repo root:
+
+```json
+{ "mcpServers": { "ministr": { "command": "ministr", "args": [] } } }
+```
+
+Verify with `/mcp` inside Claude Code. Note `.mcp.json` is project-scoped — `claude mcp list` only sees it from that directory.
+
+## Cursor
+
+`.cursor/mcp.json` with the same shape, or add it via Settings → MCP:
+
+```json
+{ "mcpServers": { "ministr": { "command": "ministr" } } }
+```
+
+## VS Code / GitHub Copilot
+
+`ministr init` writes `.vscode/mcp.json`. Copilot also reads the steering files init installs (`.github/copilot-instructions.md`, `.github/hooks/ministr-enforce.json`).
+
+## Codex
+
+Codex configuration is user-global (`~/.codex/config.toml`), so `ministr init` deliberately does not touch it. Add manually:
+
+```toml
+[mcp_servers.ministr]
+command = "ministr"
+```
+
+## Environment variables
+
+Pass env vars through your client config's `env` block. Useful ones:
+
+- `MINISTR_CONTEXT_WINDOW` — your model's context window in tokens. MCP has no channel for this, so ministr's advisory usage accounting is anchored to it.
+- `RUST_LOG` — log verbosity (logs go to stderr; stdout is reserved for the protocol).
+
+## Agent steering
+
+A client config makes the tools *available*; steering makes agents *prefer* them. `ministr init` installs both advisory rules and PreToolUse hooks (Claude Code, Cursor, Windsurf, Copilot CLI). The shipped hook behavior is steer-not-wall: built-in `Grep`/`Glob` are declined with a one-line pointer to `ministr_survey`/`ministr_symbols`; a shell `grep`/`rg`/`find` is allowed with an advisory hint; pipelines are never intercepted. Advisory files are written once and never overwritten; hook files are auto-healed to the current template on re-run. `ministr hooks test` validates the installation by simulating tool calls.
+
+The MCP server also ships its own instructions to the agent's system prompt (where to start, what to call before mutating code), so steering works even in clients without hook support.
+
+## Generic JSON-RPC client
+
+Spawn `ministr` as a subprocess and speak MCP over stdin/stdout. A minimal smoke test: send `initialize`, then `tools/list` — you should see the tool surface described in the [reference](/docs/tools).
+
+## Remote / Streamable HTTP
+
+For a shared or self-hosted server:
+
+```bash
+ministr serve --transport http --host 0.0.0.0 --port 8080
+```
+
+Client config: `{ "mcpServers": { "ministr": { "url": "https://your-host/mcp" } } }`.
+
+Add `--oauth` to require OAuth 2.1 (authorization-code + PKCE) with scope-gated routes; without it, all routes are unauthenticated — local development only. The HTTP transport validates the `Host` header against a loopback-only allowlist by default; set `MINISTR_ALLOWED_HOSTS` (comma-separated) when serving on a real hostname. See [self-hosting](/docs/operator/self-hosting).
+
+If you script agents headlessly against any of these clients, read [headless & CI](/docs/guides/headless-and-ci) — there is a flag combination that silently removes MCP tools.

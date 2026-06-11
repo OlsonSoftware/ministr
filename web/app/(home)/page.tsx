@@ -108,9 +108,9 @@ export default function HomePage() {
           <div className="v2-meta">100% local, open over MCP</div>
         </div>
         <div className="v2-footer-links">
-          <Link href="/docs/getting-started">Getting started</Link>
+          <Link href="/docs/quickstart">Getting started</Link>
           <Link href="/docs/tools">Tool reference</Link>
-          <Link href="/docs/architecture">Architecture</Link>
+          <Link href="/docs/concepts/architecture">Architecture</Link>
           <Link href="/stewardship">Stewardship</Link>
         </div>
       </footer>

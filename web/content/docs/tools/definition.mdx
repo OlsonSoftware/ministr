@@ -1,57 +1,35 @@
 ---
 title: ministr_definition
-description: Get the full source code of a symbol by ID — declaration, body, doc comments, and surrounding context.
+description: Full source of a code symbol by ID or file position.
 ---
+
+Get the full source of a code symbol by ID. Call `ministr_references` first if
+you intend to modify or delete the symbol. Pass `blame: true` for git
+authorship of the symbol's lines.
+
+Symbols can be addressed either by `symbol_id` or by position (`file` +
+`line` + `col`), resolved via the occurrence index, LSP-style.
 
 ## Parameters
 
-| Parameter | Type | Required | Description |
+| Parameter | Type | Default | Description |
 |---|---|---|---|
-| `symbol_id` | string | yes | Symbol ID from `ministr_symbols` |
-| `project` | string | no | Linked-project label. Omit for the session's primary corpus. |
+| `symbol_id` | string | — | The symbol ID to resolve. Alternative to position addressing. |
+| `file` | string | — | Position addressing: file path (use with `line` and `col`). |
+| `line` | number | — | Position addressing: 1-based line number. |
+| `col` | number | — | Position addressing: 0-based byte column. |
+| `blame` | boolean | — | Include git blame: per-author line counts plus the last commit. Degrades gracefully to no blame when unavailable. |
+| `project` | string | — | Linked-project label from `.ministr.toml` `[[linked]]`. Omit for the primary corpus. |
 
-## Response
+## Returns
 
-Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+The symbol definition fields at the top level, plus an optional `blame` field
+when requested. The source includes 3 lines of surrounding context.
 
-```json
-{
-  "coherence_alerts": [ /* only when content changed; see envelope */ ],
-  "result": {
-    "id": "sym-src/auth.rs::auth::validate_token",
-    "name": "validate_token",
-    "kind": "function",
-    "visibility": "pub",
-    "signature": "pub fn validate_token(token: &str) -> Result<Claims>",
-    "doc_comment": "Validates a JWT token against the configured public key.",
-    "file_path": "src/auth.rs",
-    "line_start": 42,
-    "line_end": 67,
-    "heading_path": ["src/auth.rs", "fn validate_token"],
-    "source_context": "/// Validates a JWT token against the configured public key.\n///\n/// Returns the decoded claims on success, or an error if the\n/// signature is invalid or the token has expired.\npub fn validate_token(token: &str) -> Result<Claims> {\n    let decoding_key = config.jwks().decoding_key()?;\n    let validation = Validation::new(Algorithm::RS256);\n    let token_data = jsonwebtoken::decode::<Claims>(token, &decoding_key, &validation)?;\n    Ok(token_data.claims)\n}"
-  }
-}
-```
+## Notes
 
-### `result` fields
-
-| Field | Description |
-|---|---|
-| `id` | Symbol ID — the same one accepted by `ministr_definition` and `ministr_references` |
-| `name` | Declared name |
-| `kind` | Symbol kind (function, struct, trait, impl, enum, const, static, type, mod) |
-| `visibility` | Visibility modifier (`pub`, `pub(crate)`, `pub(super)`, or `""` for private) |
-| `signature` | One-line declaration signature |
-| `doc_comment` | Optional — extracted doc comment text with `///` / `/** */` markers stripped |
-| `file_path` | Source file path |
-| `line_start`, `line_end` | 1-based line range in the source file |
-| `heading_path` | Module-hierarchy breadcrumbs for navigation |
-| `source_context` | Full source code of the symbol including doc comments |
-
-## Behavior
-
-- Returns the complete source with doc comments intact
-- For `impl` blocks and traits, includes all method stubs
-- For structs and enums, includes all fields and variants
-- Tokens are counted against the session budget
-- Use `ministr_references` to find call sites after reading a definition
+- Position addressing (`file` + `line` + `col`) is resolved via the occurrence
+  index, LSP-style.
+- Responses are wrapped in `ToolResponse<T>`, carrying `coherence_alerts`,
+  `indexing_in_progress`, and `next_actions`.
+- Soft errors (`ok: false`) never cancel sibling parallel calls.

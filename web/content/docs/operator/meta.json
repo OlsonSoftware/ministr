@@ -1,8 +1,4 @@
 {
-  "title": "Operator guides",
-  "pages": [
-    "license-mint",
-    "oidc-real-idp",
-    "saml-via-oidc-bridge"
-  ]
+  "title": "Operator",
+  "pages": ["self-hosting", "oidc", "saml", "licensing"]
 }

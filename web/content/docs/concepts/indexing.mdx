@@ -1,0 +1,33 @@
+---
+title: Indexing
+description: How a repo becomes documents, sections, claims, and symbols.
+---
+
+## The pipeline
+
+A corpus (your project's path set) is walked, parsed, and stored at several granularities:
+
+1. **Documents** — every supported file. Markdown/HTML/PDF are parsed as prose; ~140 code extensions are parsed as code; everything else is skipped. The walker respects `.gitignore` plus built-in ignore lists (build dirs, lockfiles, bundles, model binaries).
+2. **Sections** — the retrieval unit. Prose sections follow headings; code files get **one section per top-level symbol**. A symbol too large for one section is split at inner AST boundaries into contiguous parts with no text loss. Section IDs are hierarchical and human-readable: `src/auth.rs#validate_token`, `docs/auth.md#error-handling`.
+3. **Claims** — atomic factual assertions extracted from each section (sentence-level, scored for "claim-ness"). They power [ministr_extract](/docs/tools/extract) (cheaper than full text) and [ministr_related](/docs/tools/related) (cross-reference edges: references / depends_on / contradicts / updates).
+4. **Symbols** — the code index: functions, structs, traits, enums, impls, modules, consts, statics, types, each with visibility, signature, doc comment, line range, and cyclomatic complexity. References are tracked by kind: calls, implements, imports, uses, bridge.
+
+## What gets embedded
+
+Six vector resolutions go into the index: document summaries, section summaries, full sections, individual claims, symbol stubs (signature + doc), and full symbol sources. Searches hit all of them and resolve to the right granularity.
+
+## Languages
+
+Symbol extraction uses tree-sitter grammars for **40 languages** — Rust, Python, JavaScript/TypeScript, Go, Java, C, C++ (including Unreal-flavored headers), C#, Ruby, Swift, Kotlin, Bash, PHP, Scala, Lua, Elixir, Haskell, OCaml, Dart, R, HCL, Zig, Solidity, Julia, and more, plus config/data formats (JSON, YAML, TOML, SQL, Protobuf, GraphQL, CMake, Make). File types without a grammar — shaders (HLSL/GLSL/Metal/WGSL), Vue, Astro, Dockerfiles, assembly — still index at text level: searchable, no symbol graph.
+
+## Staying current
+
+- **Incremental**: unchanged files are skipped by content hash; a whole-tree fingerprint short-circuits no-op reindexes.
+- **Watching**: corpora are watched for changes by default; single-file edits reindex through a coherence engine that also notifies connected agents (`coherence_alerts` in tool responses) when content they already received has changed.
+- **Self-healing**: extractor/resolver version stamps force re-parse after ministr upgrades change extraction behavior, even for unchanged files.
+
+What "current" means to *you* is the [freshness](/docs/concepts/freshness) model — a stricter, hash-verified contract.
+
+## Storage
+
+One SQLite database per corpus under `~/.ministr/corpora/<id>/` (WAL mode, versioned migrations) holding documents, sections, claims, symbols, references, occurrences, bridge endpoints/links, file hashes, sessions, and the embedding cache. The HNSW vector index is a derived cache: exact vectors persist in SQLite, and the index is rebuilt from the store whenever a persisted snapshot can't be proven consistent.

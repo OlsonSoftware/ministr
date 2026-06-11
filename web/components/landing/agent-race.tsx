@@ -192,7 +192,7 @@ export function AgentRace() {
         )}
         A replay of one real recorded run on {race.repo} ({race.model}); both
         solved. Early signal, small sample —{' '}
-        <Link href="/docs/benchmarks" className="v2-race-link">
+        <Link href="/docs" className="v2-race-link">
           see the benchmark →
         </Link>
       </figcaption>

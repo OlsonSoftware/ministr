@@ -1,36 +1,22 @@
 ---
 title: ministr_dropped
-description: Signal that content IDs were dropped from the agent's context. Keeps ministr's view of what the agent still has accurate.
+description: Tell ministr which previously delivered content you dropped from context.
 ---
+
+`ministr_dropped` tells ministr that your agent has dropped previously delivered content from its context. Call it immediately after dropping content you received. This keeps ministr's view of what you still hold accurate — without it, future `ministr_read` calls on the dropped IDs return short "already delivered" stubs instead of the full text.
 
 ## Parameters
 
-| Parameter | Type | Required | Description |
+| Parameter | Type | Default | Description |
 |---|---|---|---|
-| `content_ids` | list of strings | yes | Content IDs the agent has dropped from its context |
+| `content_ids` | string[] | required | IDs of the content that was dropped from context. |
 
-## Response
+## Returns
 
-Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload:
+A `DroppedResponse` with `dropped: Vec<String>` (IDs successfully marked as dropped) and `not_found: Vec<String>` (IDs ministr had no delivery record for).
 
-```json
-{
-  "coherence_alerts": [ /* only when content changed; see envelope */ ],
-  "result": {
-    "dropped": ["docs/setup.md#prerequisites", "docs/intro.md#overview"],
-    "not_found": ["unknown-id"]
-  }
-}
-```
+## Notes
 
-### `result` fields
-
-| Field | Description |
-|---|---|
-| `dropped` | Content IDs ministr no longer considers delivered this session |
-| `not_found` | Content IDs ministr had no record of delivering |
-
-## Behavior
-
-- Tells ministr the agent no longer has this content, so a later `ministr_survey` won't filter it out as already delivered
-- An advanced housekeeping tool — most agents do not need to call it explicitly
+- After reporting a drop, a re-`ministr_read` of the same ID returns the full text again rather than a stub.
+- Pairs with `ministr_compress`: compress sections first if you want to keep a short referenceable summary, then drop the originals and report them here.
+- Logical failures return soft errors (`ok: false`, `error_kind`, `message`) and never cancel sibling parallel tool calls.

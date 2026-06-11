@@ -1,64 +1,26 @@
 ---
 title: ministr_read
-description: Read the full text of a section by its hierarchical ID. Returns content with heading path and available claims count.
+description: Full content of a section by ID, with deduplication and delta delivery.
 ---
+
+`ministr_read` returns the full content of a section by ID. Reach for it after `ministr_survey` points your agent at a section it needs in full. If you only need atomic claims, call `ministr_extract` instead — it's cheaper.
 
 ## Parameters
 
-| Parameter | Type | Required | Description |
+| Parameter | Type | Default | Description |
 |---|---|---|---|
-| `section_id` | string | yes | Section ID (e.g. `"docs/auth.md#error-handling"`) |
-| `project` | string | no | Linked-project label. Omit for the session's primary corpus. |
+| `section_id` | string | required | Section ID, e.g. `docs/auth.md#error-handling`. |
+| `project` | string | — | Linked-project label from `.ministr.toml` `[[linked]]`. Omit for the primary corpus. |
 
-## Response
+## Returns
 
-Wrapped in the [standard response envelope](/docs/tools#response-envelope). The `result` payload varies across three cases:
+Either a full `SectionDetail` (`section_id`, `heading_path`, `text`, `summary`, `claims_available`) or an `AlreadyDeliveredResponse` (`section_id`, `status: "already_delivered"`, `claims_available`).
 
-### New content
+## Notes
 
-```json
-{
-  "coherence_alerts": [ /* only when content changed; see envelope */ ],
-  "result": {
-    "section_id": "docs/auth.md#error-handling",
-    "heading_path": ["Authentication", "Error Handling"],
-    "text": "Full section text...",
-    "summary": "How the API surfaces auth failures to the client.",
-    "claims_available": 5
-  }
-}
-```
-
-### Already delivered (unchanged)
-
-If the section was already delivered this session and has not changed, ministr returns a **minimal `result`** — just the section ID, `status: "already_delivered"`, and the available-claims count. The text, heading path, and summary are **not** re-shipped, since the agent already received them on the earlier call.
-
-```json
-{
-  "coherence_alerts": [ /* only when content changed; see envelope */ ],
-  "result": {
-    "section_id": "docs/auth.md#error-handling",
-    "status": "already_delivered",
-    "claims_available": 5
-  }
-}
-```
-
-### Already delivered (changed)
-
-If the section was delivered but the underlying document changed, ministr returns a line-level delta showing what was added, removed, or modified.
-
-### `result` fields
-
-| Field | Description |
-|---|---|
-| `section_id` | The requested section ID |
-| `heading_path` | Heading hierarchy (e.g. `["Chapter 3", "Section 3.2"]`). Absent on `already_delivered` fault responses. |
-| `text` | Full section content. Absent on `already_delivered` fault responses (the agent already has it). |
-| `summary` | Optional — pre-computed section summary when one is available. Absent on `already_delivered` fault responses. |
-| `claims_available` | Number of claims that can be extracted with `ministr_extract` |
-| `status` | Optional — present as `"already_delivered"` on a re-read fault; absent on a fresh delivery |
-
-## Behavior
-
-- Handles three cases: new content, unchanged re-request (returns the `already_delivered` stub), changed re-request (returns a line-level delta)
+- Three-case dedup/delta behavior:
+  1. New content — delivered as full text.
+  2. Already delivered and unchanged — a short `already_delivered` stub. If your agent actually dropped the content from context, report it via `ministr_dropped` and re-read to get the full text again.
+  3. Already delivered but changed underneath — re-delivered as a delta update.
+- Hits on the warm prefetch cache (populated by `ministr_survey`) are served without a backend call.
+- The response is wrapped in the standard envelope: `coherence_alerts` (non-empty when underlying content changed since delivery), `indexing_in_progress`/`indexing_message`, and `next_actions`. Logical failures return soft errors (`ok: false`, `error_kind`, `message`) and never cancel sibling parallel tool calls.
