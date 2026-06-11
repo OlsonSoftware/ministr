@@ -72,7 +72,6 @@ pub fn corpora_read_router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/compress", post(compress_content))
         .route("/api/v1/corpora/{id}/progress", get(ingestion_progress))
         .route("/api/v1/progress", get(ingestion_progress_all))
-        .route("/api/v1/sessions", get(list_all_sessions))
         .route("/api/v1/corpora/{id}/coherence", get(coherence_stream))
         .route("/api/v1/corpora/{id}/prefetch", get(prefetch_metrics))
         .route(
@@ -84,6 +83,23 @@ pub fn corpora_read_router(state: AppState) -> Router {
             get(session_read_section),
         )
         .route("/api/v1/status", get(daemon_status))
+        .with_state(state)
+}
+
+/// Daemon-surface session listing — `GET /api/v1/sessions`
+/// (agent-session summaries across corpora).
+///
+/// Split out of [`corpora_read_router`] deliberately: on the daemon's
+/// own (UDS) surface this path lists agent sessions, but the public
+/// HTTP serve re-hosts the read router AND mounts the F6.2-e session
+/// export router (`ministr_mcp::sessions::export`), which owns
+/// `GET /api/v1/sessions` there (the shape `cloudClient.ts` expects).
+/// Keeping this route in the shared read router made the two collide —
+/// axum panics on overlapping method routes at serve boot. Merge this
+/// router on the daemon surface only.
+pub fn sessions_router(state: AppState) -> Router {
+    Router::new()
+        .route("/api/v1/sessions", get(list_all_sessions))
         .with_state(state)
 }
 
@@ -171,6 +187,7 @@ pub fn exec_router(state: AppState) -> Router {
 /// with per-scope OAuth guards.
 pub fn router(state: AppState) -> Router {
     corpora_read_router(state.clone())
+        .merge(sessions_router(state.clone()))
         .merge(corpora_write_router(state.clone()))
         .merge(corpora_bundle_router(state.clone()))
         .merge(corpora_ask_router(state.clone()))
