@@ -215,6 +215,12 @@ trials each** (index built once in ~430s, shared by all 8 runs):
 | **sonnet** | 4/4 both | $0.198 | $0.334 | 14 / 16 | 157k / 283k | **ministr 41% cheaper** |
 | haiku  | 4/4 both | $0.260 | $0.253 | 25 / 23 | 602k / 577k | ~even (3% pricier) |
 
+**[2026-06-11 retro-caveat: these runs predate the arm-A validity gate —
+tool use was NOT verified. Gated runs later showed arm-A agents shelling out
+to `grep` via Bash (the steering file's "hooks" threat was never actually
+installed by the harness), so treatment in these cells is unverified; treat
+the 41% as suspect until re-measured under the gate + real hook enforcement.]**
+
 **This is where ministr's edge finally shows.** Correctness tied (all 8 solved),
 but on **sonnet** — with a huge repo *and* a task that forces discovery — ministr
 located the fix using roughly **half the cache-read tokens** and fewer turns,
@@ -260,3 +266,16 @@ not discovered. Any future seam task must defeat both outs — distant seams,
 binding conventions absent from training data, search spaces too large to
 enumerate — *and* the runner must verify arm A's tools actually loaded
 (assert ≥1 `mcp__ministr__` call in arm A or fail the run).
+
+Gated glimpse — `2026-06-11`, `realrepo-sympy-tribonacci`, sonnet, 1 trial/arm,
+with the validity gate active: both solved (6–7 turns); **arm A again made
+zero ministr calls** — its first action was `Bash: grep -r "tribonacci"`.
+Root causes, now fully identified: (1) the harness writes the steering
+CLAUDE.md (which *claims* grep-blocking hooks) but installs **no actual
+hooks**, so arm A is really "grep-via-Bash + unadvertised extra tools";
+(2) both real-repo tasks are one-grep-solvable — the planted symptom is a
+greppable literal and the repos are in training data. Fix-forward for a valid
+arm A: install the real PreToolUse hooks a ministr deployment ships (deny
+shell grep/Grep), keep the validity gate, and design tasks whose symptom
+text shares no literal with the fix site. Until then, no arm-comparison
+numbers from this suite should be cited.

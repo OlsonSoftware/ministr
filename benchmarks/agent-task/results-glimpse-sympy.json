@@ -1,0 +1,57 @@
+{
+  "models": [
+    "sonnet"
+  ],
+  "max_budget_usd": 4.0,
+  "arms": [
+    "a",
+    "b"
+  ],
+  "repeat": 1,
+  "results": [
+    {
+      "task": "realrepo-sympy-tribonacci",
+      "difficulty": "real",
+      "model": "sonnet",
+      "arm": "a",
+      "label": "ministr",
+      "uses_ministr": true,
+      "kind": "realrepo",
+      "index_secs": 1648.5,
+      "wall_secs": 63.6,
+      "is_error": false,
+      "num_turns": 6,
+      "total_cost_usd": 0.21665095,
+      "input_tokens": 9,
+      "output_tokens": 1140,
+      "cache_read_tokens": 147104,
+      "cache_creation_tokens": 10022,
+      "result_text": "Output matches `[0, 1, 1, 2, 4, 7, 13, 24]`. The bug was a missing `prev[-2]` term in `_trib` \u2014 the recurrence was computing `T(n-3) + T(n-1)` instead of `T(n-3) + T(n-2) + T(n-1)`.",
+      "validator_passed": true,
+      "validator_summary": "1 passed, 37 deselected, 1 warning in 0.58s",
+      "ministr_calls": 0,
+      "error": " VALIDITY: arm A made zero mcp__ministr__ calls (treatment not received)"
+    },
+    {
+      "task": "realrepo-sympy-tribonacci",
+      "difficulty": "real",
+      "model": "sonnet",
+      "arm": "b",
+      "label": "grep",
+      "uses_ministr": false,
+      "kind": "realrepo",
+      "index_secs": null,
+      "wall_secs": 28.8,
+      "is_error": false,
+      "num_turns": 7,
+      "total_cost_usd": 0.14466959999999995,
+      "input_tokens": 8,
+      "output_tokens": 1187,
+      "cache_read_tokens": 186922,
+      "cache_creation_tokens": 11660,
+      "result_text": "The fix is a one-character change on line 370: `prev[-3] + prev[-1]` was missing `prev[-2]`, so T(n-2) was never added to the recurrence. Adding it back gives the correct sequence `[0, 1, 1, 2, 4, 7, ",
+      "validator_passed": true,
+      "validator_summary": "1 passed, 37 deselected in 0.36s"
+    }
+  ]
+}
