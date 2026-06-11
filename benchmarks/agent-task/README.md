@@ -225,3 +225,31 @@ regardless, so a better search tool helps it less. Honest caveats: 2 trials per
 cell (directional, not definitive — the sonnet effect is large and consistent
 in direction); a single model/repo; correctness was never the differentiator
 here, cost/turns were.
+
+Cross-language seam run — `2026-06-11`, `realrepo-crosslang-jwt` (napi-rs/node-rs
+@b1fd4ff; a Rust-side rename of `verify_sync` breaks the TS suite across the
+napi boundary, where the JS name `verifySync` is a case-TRANSFORM — no literal
+string crosses the language seam; decoy packages carry the Rust spelling), both
+arms × {sonnet, haiku}, **5 trials each** (20 runs, index built once in 1.2s):
+
+| model | solved | ministr | grep | turns (m/g) | head-to-head |
+|-------|:--:|--:|--:|--|--|
+| sonnet | 5/5 both | $2.038 | $1.997 | 94 / 73 | grep 2% cheaper |
+| haiku  | 5/5 both | $0.861 | $0.825 | 115 / 107 | grep 4% cheaper |
+
+**A clean null — the pre-registered hypothesis (grep can't bridge the seam) was
+refuted.** Every run on both models solved it; ministr was never cheaper or
+faster. A transcript-audited trial per arm (sonnet) explains why, and the audit
+finding is the real result: **the ministr-arm agent made zero ministr tool
+calls** — with the MCP server attached and CLAUDE.md steering in place, it
+solved the task with `ls`/`Read`/`Edit` exactly like the grep arm. The arms did
+not differ in behavior, so the small cost delta measures *presence overhead*
+(MCP tool schemas in context), not retrieval value. Two structural reasons no
+retrieval tooling was needed: (1) **co-location** — the renamed Rust source
+lives inside the same package directory as the failing TS tests, so reproducing
+the failure already points at a ~3-file `src/`; (2) **the convention is in the
+weights** — napi's snake_case→camelCase transform is common knowledge to sonnet
+*and* haiku, so the cross-language link is recalled, not discovered. Design
+lesson for any future seam task: it must defeat both outs — distant seams
+(separate crates/dirs at minimum), binding conventions *not* in training data,
+and a search space too large to enumerate by listing the obvious directory.
