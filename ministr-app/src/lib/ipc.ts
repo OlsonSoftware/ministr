@@ -13,6 +13,9 @@ export interface CorpusInfo {
   files_indexed: number;
   sections_count: number;
   active_sessions: number;
+  /** Effective embedding model (expert disclosure only — internals
+   *  vocabulary never renders above a drill-in). */
+  model: string;
 }
 
 export type FreshnessState = "current" | "stale" | "new" | "missing";
@@ -129,4 +132,29 @@ export function corpusFreshnessSummary(
   corpusId: string,
 ): Promise<FreshnessSummary> {
   return invoke<FreshnessSummary>("corpus_freshness_summary", { corpusId });
+}
+
+export interface SupportedModel {
+  name: string;
+  dimension: number;
+  description: string;
+  code_optimized: boolean;
+}
+
+export function listSupportedModels(): Promise<SupportedModel[]> {
+  return invoke<SupportedModel[]>("list_supported_models");
+}
+
+export function setCorpusConfig(
+  corpusId: string,
+  model: string | null,
+  dimension: number | null,
+  rerankDepth: number | null,
+): Promise<void> {
+  return invoke<void>("set_corpus_config", {
+    corpusId,
+    model,
+    dimension,
+    rerankDepth,
+  });
 }

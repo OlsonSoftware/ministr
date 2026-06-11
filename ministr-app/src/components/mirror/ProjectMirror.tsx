@@ -14,6 +14,7 @@ import { FileDrillin } from "./FileDrillin";
 import { derivePresence } from "../../lib/presence";
 import { LiveDot } from "../ui/LiveDot";
 import { ConnectionNote } from "../ui/ConnectionNote";
+import { ExpertConfig } from "./ExpertConfig";
 
 /**
  * Project Mirror (UX-BLUEPRINT §3.2) — what your AI sees. The tree IS
@@ -142,7 +143,7 @@ export function ProjectMirror({
               {String(corpus.files_indexed)}
             </RailRow>
             {corpus.active_sessions > 0 ? (
-              <RailRow label="agents reading">
+              <RailRow label="agents connected">
                 {String(corpus.active_sessions)}
               </RailRow>
             ) : null}
@@ -160,6 +161,13 @@ export function ProjectMirror({
                   {String(corpus.sections_count)}
                 </RailRow>
               </RailSection>
+              <div className="mt-3 px-2">
+                <ExpertConfig
+                  corpusId={corpus.id}
+                  model={corpus.model}
+                  onSaved={() => setPendingAt(Date.now())}
+                />
+              </div>
             </div>
           </details>
         </aside>

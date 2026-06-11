@@ -8,6 +8,7 @@ const CORPUS = {
   paths: ["/Users/dev/side-project"],
   status: "idle",
   files_indexed: 6,
+  model: "minilm",
   sections_count: 412,
   active_sessions: 2,
 };

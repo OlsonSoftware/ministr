@@ -8,6 +8,7 @@ const CORPUS = {
   display_name: "my-app",
   paths: ["/u/me/my-app"],
   files_indexed: 3,
+  model: "minilm",
   sections_count: 9,
   active_sessions: 0,
   status: "idle",
