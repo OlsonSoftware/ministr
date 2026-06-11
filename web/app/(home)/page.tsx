@@ -4,7 +4,6 @@ import { TokenEconomics } from '../../components/landing/token-economics';
 import { CrossLanguageBridge } from '../../components/landing/cross-language-bridge';
 import { FourThingsGrid } from '../../components/landing/four-things-grid';
 import { PipelineFigure } from '../../components/landing/pipeline-figure';
-import { AgentRace } from '../../components/landing/agent-race';
 
 export default function HomePage() {
   return (
@@ -59,14 +58,6 @@ export default function HomePage() {
 
         {/* The headline number, proven with the real benchmark. */}
         <TokenEconomics />
-      </section>
-
-      <hr className="v2-rule" />
-
-      {/* ── The race: a real run, replayed ───────────────── */}
-      <section className="v2-section">
-        <h2 className="v2-h2" style={{ maxWidth: "22ch" }}>Same agent. Same bug. One has ministr.</h2>
-        <AgentRace />
       </section>
 
       <hr className="v2-rule" />
