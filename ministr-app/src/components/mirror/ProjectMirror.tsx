@@ -1,11 +1,12 @@
-import { useMemo, useState } from "react";
-import { corpusFreshness, recentActivity, triggerReindex } from "../../lib/ipc";
+import { useEffect, useMemo, useState } from "react";
+import { corpusFreshness, recentActivity } from "../../lib/ipc";
 import type { CorpusInfo } from "../../lib/ipc";
 import { usePoll } from "../../lib/usePoll";
 import { buildTree, leafNote, summarize } from "../../lib/trustSummary";
 import type { TreeNode } from "../../lib/trustSummary";
 import { StatusBanner } from "../ui/StatusBanner";
 import { ActionChip } from "../ui/ActionChip";
+import { CatchUp } from "../ui/CatchUp";
 import { TreeRow } from "../ui/TreeRow";
 import { TrustMark } from "../ui/TrustMark";
 import { RailRow, RailSection } from "../ui/Rail";
@@ -32,9 +33,21 @@ export function ProjectMirror({
     4_000,
   );
   const { data: activity } = usePoll(() => recentActivity(30), 4_000);
+  const [pendingAt, setPendingAt] = useState<number | null>(null);
+
+  // Optimism yields to real data (or a 15s safety net).
+  useEffect(() => {
+    if (pendingAt === null || !fresh) return;
+    if (fresh.indexing || Date.now() - pendingAt > 15_000) setPendingAt(null);
+  }, [fresh, pendingAt]);
   const presence = derivePresence(activity ?? [], corpus.id, Date.now());
 
-  const summary = fresh ? summarize(corpus.display_name, fresh) : null;
+  const summary = fresh
+    ? summarize(corpus.display_name, {
+        ...fresh,
+        indexing: fresh.indexing || pendingAt !== null,
+      })
+    : null;
   const tree = useMemo(() => (fresh ? buildTree(fresh.files) : []), [fresh]);
   const [openFile, setOpenFile] = useState<TreeNode | null>(null);
 
@@ -64,12 +77,7 @@ export function ProjectMirror({
           sub={summary.sub}
           action={
             summary.state === "stale" ? (
-              <ActionChip
-                variant="primary"
-                onClick={() => void triggerReindex(corpus.id)}
-              >
-                Catch up
-              </ActionChip>
+              <CatchUp corpusId={corpus.id} onAccepted={() => setPendingAt(Date.now())} />
             ) : undefined
           }
         />

@@ -1,10 +1,11 @@
-import { useMemo } from "react";
-import { corpusFreshness, listCorpora, triggerReindex } from "../../lib/ipc";
+import { useEffect, useMemo, useState } from "react";
+import { corpusFreshness, listCorpora } from "../../lib/ipc";
 import type { CorpusInfo, FreshnessResponse } from "../../lib/ipc";
 import { usePoll } from "../../lib/usePoll";
 import { summarize } from "../../lib/trustSummary";
 import { StatusBanner } from "../ui/StatusBanner";
 import { ActionChip } from "../ui/ActionChip";
+import { CatchUp } from "../ui/CatchUp";
 import { Brand } from "../ui/Brand";
 
 /**
@@ -19,17 +20,45 @@ export function TrustPanel({
   onAddProject?: () => void;
 }) {
   const { data: corpora, error } = usePoll(fetchAll, 5_000);
+  // Optimistic "catching up" per corpus, set when the daemon ACCEPTS a
+  // reindex; real poll data (indexing flag) takes over and clears it.
+  const [pending, setPending] = useState<Record<string, number>>({});
+
+  // Optimism must YIELD to real data: clear a corpus's pending flag the
+  // moment the daemon reports real indexing, or after a 15s safety net
+  // (so a too-fast-to-observe reindex can never stick "Catching up…").
+  useEffect(() => {
+    if (!corpora) return;
+    setPending((p) => {
+      const next = { ...p };
+      let changed = false;
+      for (const { info, fresh } of corpora) {
+        const started = next[info.id];
+        if (started && (fresh.indexing || Date.now() - started > 15_000)) {
+          delete next[info.id];
+          changed = true;
+        }
+      }
+      return changed ? next : p;
+    });
+  }, [corpora]);
 
   const rows = useMemo(() => {
     if (!corpora) return [];
-    const summarized = corpora.map(({ info, fresh }) => ({
-      info,
-      summary: summarize(info.display_name, fresh),
-    }));
+    const summarized = corpora.map(({ info, fresh }) => {
+      const optimistic = Boolean(pending[info.id]) && !fresh.indexing;
+      return {
+        info,
+        summary: summarize(info.display_name, {
+          ...fresh,
+          indexing: fresh.indexing || Boolean(optimistic),
+        }),
+      };
+    });
     // Worst first: behind > updating > ok (mission-control exception order).
     const rank = { stale: 0, updating: 1, hidden: 2, ok: 3 } as const;
     return summarized.sort((a, b) => rank[a.summary.state] - rank[b.summary.state]);
-  }, [corpora]);
+  }, [corpora, pending]);
 
   return (
     <div className="mx-auto flex min-h-screen max-w-3xl flex-col gap-4 p-8">
@@ -59,15 +88,12 @@ export function TrustPanel({
               }`}
               action={
                 summary.state === "stale" ? (
-                  <ActionChip
-                    variant="primary"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void triggerReindex(info.id);
-                    }}
-                  >
-                    Catch up
-                  </ActionChip>
+                  <CatchUp
+                    corpusId={info.id}
+                    onAccepted={() =>
+                      setPending((p) => ({ ...p, [info.id]: Date.now() }))
+                    }
+                  />
                 ) : undefined
               }
             />
