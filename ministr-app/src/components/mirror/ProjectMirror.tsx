@@ -13,6 +13,7 @@ import { RailRow, RailSection } from "../ui/Rail";
 import { FileDrillin } from "./FileDrillin";
 import { derivePresence } from "../../lib/presence";
 import { LiveDot } from "../ui/LiveDot";
+import { ConnectionNote } from "../ui/ConnectionNote";
 
 /**
  * Project Mirror (UX-BLUEPRINT §3.2) — what your AI sees. The tree IS
@@ -28,7 +29,7 @@ export function ProjectMirror({
   onBack: () => void;
   onOpenFeed?: () => void;
 }) {
-  const { data: fresh } = usePoll(
+  const { data: fresh, error: connError } = usePoll(
     () => corpusFreshness(corpus.id),
     4_000,
   );
@@ -83,6 +84,7 @@ export function ProjectMirror({
         />
       ) : null}
 
+      {connError && fresh ? <ConnectionNote /> : null}
       {openFile ? (
         <FileDrillin
           corpusId={corpus.id}

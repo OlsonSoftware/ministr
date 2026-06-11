@@ -8,6 +8,8 @@ import { ActionChip } from "../ui/ActionChip";
 import { CatchUp } from "../ui/CatchUp";
 import { Brand } from "../ui/Brand";
 import { ThemePick } from "../ui/ThemePick";
+import { ConnectionNote } from "../ui/ConnectionNote";
+import { Beat } from "../ui/Beat";
 
 /**
  * Home — the Trust Panel (UX-BLUEPRINT §3.1). One plain-English trust
@@ -59,16 +61,36 @@ export function TrustPanel({
     return summarized.sort((a, b) => rank[a.summary.state] - rank[b.summary.state]);
   }, [corpora, pending]);
 
+  // Connection states (gui-rw-daemon-down-states): boot while the very
+  // first fetch is in flight; unreachable when polls fail with nothing
+  // to show; degraded note when last-good data is on screen.
+  if (corpora === null && error === null) {
+    return (
+      <div className="mx-auto flex min-h-screen max-w-3xl flex-col items-center justify-center gap-6 p-8">
+        <Brand />
+        <Beat sentence="connecting to ministr…" />
+      </div>
+    );
+  }
+  if (corpora === null && error !== null) {
+    return (
+      <div className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center gap-6 p-8">
+        <Brand />
+        <StatusBanner
+          state="stale"
+          headline="ministr isn’t running on this Mac"
+          sub="start ministr (or restart this app) — it reconnects automatically"
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto flex min-h-screen max-w-3xl flex-col gap-4 p-8">
       <header className="flex items-center justify-between">
         <Brand />
         <div className="flex items-center gap-4">
-          {error ? (
-            <span className="text-sm text-dim">
-              can’t reach ministr right now
-            </span>
-          ) : null}
+          {error ? <ConnectionNote /> : null}
           <ThemePick />
         </div>
       </header>

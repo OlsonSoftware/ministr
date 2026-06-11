@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { corpusOutcomes, recentActivity } from "../../lib/ipc";
 import type { ActivityEvent, CorpusInfo, OutcomesResponse } from "../../lib/ipc";
 import { usePoll } from "../../lib/usePoll";
+import { ConnectionNote } from "../ui/ConnectionNote";
 import { aggregate, buildFeed, clock } from "../../lib/receipts";
 import { Receipt } from "../ui/Receipt";
 import { ActionChip } from "../ui/ActionChip";
@@ -19,7 +20,7 @@ export function ProofFeed({
   corpus: CorpusInfo;
   onBack: () => void;
 }) {
-  const { data } = usePoll(() => fetchFeed(corpus.id), 4_000);
+  const { data, error: connError } = usePoll(() => fetchFeed(corpus.id), 4_000);
 
   const lines = useMemo(
     () => (data ? buildFeed(data.activity, data.outcomes.events) : []),
@@ -39,6 +40,7 @@ export function ProofFeed({
           </span>
         </h1>
       </header>
+      {connError && data ? <ConnectionNote /> : null}
 
       <section
         aria-label="receipts"
