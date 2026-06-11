@@ -276,7 +276,7 @@ pub(super) async fn update_root_stats<S: Storage + ?Sized>(
 /// trigger one re-extraction pass — bumping `EXTRACTOR_VERSION`
 /// already produces this same effect, so the swap is free.
 #[must_use]
-pub(super) fn compute_content_hash(content: &str) -> String {
+pub fn compute_content_hash(content: &str) -> String {
     blake3::hash(content.as_bytes()).to_hex().to_string()
 }
 

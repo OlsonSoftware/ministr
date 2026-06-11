@@ -61,6 +61,7 @@ pub fn corpora_read_router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/solid", post(solid))
         .route("/api/v1/corpora/{id}/diagnostics", post(diagnostics))
         .route("/api/v1/corpora/{id}/files", get(list_files))
+        .route("/api/v1/corpora/{id}/freshness", get(corpus_freshness))
         .route("/api/v1/corpora/{id}/file", post(file_content))
         .route("/api/v1/corpora/{id}/occurrences", post(occurrences))
         .route("/api/v1/corpora/{id}/read/{section}", get(read_section))
@@ -1772,6 +1773,57 @@ async fn list_files(State(state): State<AppState>, Path(id): Path<String>) -> im
         .collect();
 
     Json(ministr_api::corpus::ListFilesResponse { files }).into_response()
+}
+
+/// `GET /api/v1/corpora/{id}/freshness` — per-file hash-verified trust
+/// states (gui-rw-backend-freshness, the Mirror tree's "tree never lies"
+/// invariant). Re-hashes the working tree with the indexer's own walker
+/// and hash fn, then diffs against `file_hashes`; CPU/IO-heavy, so the
+/// sweep runs on the blocking pool.
+async fn corpus_freshness(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let handle = get_corpus!(&state, &id);
+
+    let records = match handle.storage.list_file_hashes().await {
+        Ok(h) => h,
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
+    };
+    let info = handle.info.read().await.clone();
+    let roots: Vec<std::path::PathBuf> = info.paths.iter().map(std::path::PathBuf::from).collect();
+    let indexing = matches!(
+        info.status,
+        ministr_api::corpus::IndexingStatus::Indexing { .. }
+            | ministr_api::corpus::IndexingStatus::Queued
+    );
+
+    let report = tokio::task::spawn_blocking(move || {
+        ministr_core::freshness::compute_freshness(&roots, &records)
+    })
+    .await;
+    let files = match report {
+        Ok(Ok(entries)) => entries
+            .into_iter()
+            .map(|f| ministr_api::corpus::FileFreshnessInfo {
+                path: f.path,
+                state: match f.state {
+                    ministr_core::freshness::FreshnessState::Current => "current".to_owned(),
+                    ministr_core::freshness::FreshnessState::Stale => "stale".to_owned(),
+                    ministr_core::freshness::FreshnessState::New => "new".to_owned(),
+                    ministr_core::freshness::FreshnessState::Missing => "missing".to_owned(),
+                },
+            })
+            .collect(),
+        Ok(Err(e)) => {
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "freshness_failed", e).into_response();
+        }
+        Err(e) => {
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "freshness_failed", e).into_response();
+        }
+    };
+
+    Json(ministr_api::corpus::FreshnessResponse { files, indexing }).into_response()
 }
 
 /// `POST /api/v1/corpora/{id}/file` — full contents of an indexed source file

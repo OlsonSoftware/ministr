@@ -160,6 +160,27 @@ pub struct ListFilesResponse {
     pub files: Vec<FileInfo>,
 }
 
+/// One file's hash-verified freshness verdict (the GUI trust display).
+/// `state` is one of `"current"`, `"stale"`, `"new"`, `"missing"` —
+/// computed by content-hash comparison, never timestamps.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FileFreshnessInfo {
+    /// File path, same key as [`FileInfo::path`].
+    pub path: String,
+    /// Hash-verified state.
+    pub state: String,
+}
+
+/// Response for the per-corpus freshness report.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FreshnessResponse {
+    /// Every discoverable + every indexed file, with its verdict.
+    pub files: Vec<FileFreshnessInfo>,
+    /// True while an indexing run is in flight for this corpus —
+    /// per-file states are about to change (the GUI's `updating ⟳`).
+    pub indexing: bool,
+}
+
 /// A single SSE event for ingestion progress.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct IngestionProgressEvent {

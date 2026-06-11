@@ -25,6 +25,7 @@ pub mod corpus_id;
 pub mod embedding;
 pub mod error;
 pub mod extraction;
+pub mod freshness;
 pub mod fs_util;
 pub mod git;
 pub mod index;
