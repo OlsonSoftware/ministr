@@ -16,6 +16,7 @@ pub mod compression;
 pub mod delta;
 pub mod drops;
 pub mod memory;
+pub mod outcome;
 pub mod prefetch;
 mod registry;
 mod types;

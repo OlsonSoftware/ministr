@@ -181,6 +181,47 @@ pub struct FreshnessResponse {
     pub indexing: bool,
 }
 
+/// One read→edit join for the GUI's trust-evidence receipts: a file a
+/// session had read was observed changing (gui-rw-session-outcome).
+/// The claim is the JOIN FACT, not a temporal ordering.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct OutcomeEventInfo {
+    /// Session that had read the file.
+    pub session_id: String,
+    /// Absolute path of the edited file.
+    pub path: String,
+    /// 1-based rank among the session's distinct reads (1 = first).
+    pub read_rank: usize,
+    /// True when the edited file was the session's FIRST distinct read.
+    pub first_touch: bool,
+    /// Distinct files the session read before this one (the wander).
+    pub reads_before: usize,
+    /// When the watcher observed the edit (unix ms).
+    pub edited_at_ms: u64,
+}
+
+/// Per-session outcome aggregates (counts only — no synthesis).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SessionOutcomeInfo {
+    /// Session id.
+    pub session_id: String,
+    /// Distinct files the session has read.
+    pub distinct_reads: usize,
+    /// Read→edit joins observed.
+    pub joins: usize,
+    /// Joins where the file was the session's first read.
+    pub first_touch_hits: usize,
+}
+
+/// Response for the per-corpus outcomes report.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct OutcomesResponse {
+    /// Join events, newest edit first.
+    pub events: Vec<OutcomeEventInfo>,
+    /// Per-session aggregates for sessions with at least one read.
+    pub stats: Vec<SessionOutcomeInfo>,
+}
+
 /// A single SSE event for ingestion progress.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct IngestionProgressEvent {

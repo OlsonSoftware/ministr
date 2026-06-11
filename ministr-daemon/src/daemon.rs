@@ -62,6 +62,7 @@ pub fn corpora_read_router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/diagnostics", post(diagnostics))
         .route("/api/v1/corpora/{id}/files", get(list_files))
         .route("/api/v1/corpora/{id}/freshness", get(corpus_freshness))
+        .route("/api/v1/corpora/{id}/outcomes", get(corpus_outcomes))
         .route("/api/v1/corpora/{id}/file", post(file_content))
         .route("/api/v1/corpora/{id}/occurrences", post(occurrences))
         .route("/api/v1/corpora/{id}/read/{section}", get(read_section))
@@ -1824,6 +1825,71 @@ async fn corpus_freshness(
     };
 
     Json(ministr_api::corpus::FreshnessResponse { files, indexing }).into_response()
+}
+
+/// `GET /api/v1/corpora/{id}/outcomes` — read→edit joins + per-session
+/// stats for the GUI's trust-evidence receipts (gui-rw-session-outcome).
+/// Pure on-demand join of two records the daemon already keeps: each
+/// session's delivered items and the coherence (file-change) ring.
+async fn corpus_outcomes(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    use ministr_core::session::outcome;
+
+    let handle = get_corpus!(&state, &id);
+
+    // Edits observed for THIS corpus, as (path, ts) pairs.
+    let edits: Vec<(String, u64)> = state
+        .recent_coherence(COHERENCE_BUFFER_CAPACITY)
+        .await
+        .into_iter()
+        .filter(|e| e.corpus_id == id)
+        .map(|e| (e.path, e.timestamp_ms))
+        .collect();
+
+    let mut events = Vec::new();
+    let mut per_session = Vec::new();
+    {
+        let registry = handle.sessions.lock().await;
+        for sid in registry.session_ids() {
+            let Some(entry) = registry.get_session(&sid) else {
+                continue;
+            };
+            let reads = outcome::distinct_reads(entry.session.delivered_items());
+            if reads.is_empty() {
+                continue;
+            }
+            let session_events = outcome::join_outcomes(&sid, &reads, &edits);
+            let s = outcome::session_stats(&sid, reads.len(), &session_events);
+            per_session.push(ministr_api::corpus::SessionOutcomeInfo {
+                session_id: s.session_id,
+                distinct_reads: s.distinct_reads,
+                joins: s.joins,
+                first_touch_hits: s.first_touch_hits,
+            });
+            events.extend(session_events);
+        }
+    }
+    events.sort_by_key(|e| std::cmp::Reverse(e.edited_at_ms));
+
+    let events = events
+        .into_iter()
+        .map(|e| ministr_api::corpus::OutcomeEventInfo {
+            session_id: e.session_id,
+            path: e.path,
+            read_rank: e.read_rank,
+            first_touch: e.first_touch,
+            reads_before: e.reads_before,
+            edited_at_ms: e.edited_at_ms,
+        })
+        .collect();
+
+    Json(ministr_api::corpus::OutcomesResponse {
+        events,
+        stats: per_session,
+    })
+    .into_response()
 }
 
 /// `POST /api/v1/corpora/{id}/file` — full contents of an indexed source file
