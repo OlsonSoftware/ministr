@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * design-lint — the AAA consistency guardrail (rules re-derived from
- * ../DESIGN.md v4 §11.A — the mechanized half of the Definition of Done).
+ * design-lint — the v5 "Clear Glass" guardrail (rules from ../DESIGN.md v5
+ * §9 — the mechanized half of the Definition of Done).
  *
  * Fails (exit 1) if a banned literal reappears in a className. Comments and
  * the tokens/contract files are excluded so the canonical definitions and
@@ -15,7 +15,7 @@ const path = require("path");
 const SRC = path.join(__dirname, "..", "src");
 
 // Files allowed to mention banned strings (they define / document them).
-const ALLOW = new Set(["lib/ui-tokens.ts", "lib/motion.ts", "main.tsx"]);
+const ALLOW = new Set(["components/ui/trust.ts", "main.tsx"]);
 
 // [label, regex] — regex runs against comment-stripped source.
 const BANNED = [
@@ -79,4 +79,4 @@ if (violations > 0) {
   );
   process.exit(1);
 }
-console.log("design-lint: clean — UI is on the Cockpit contract.");
+console.log("design-lint: clean — UI is on the Clear Glass contract.");

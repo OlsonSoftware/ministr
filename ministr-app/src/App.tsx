@@ -10,7 +10,7 @@ import { Keel } from "./components/Keel";
  */
 export default function App() {
   return (
-    <main className="min-h-screen bg-bg text-text grid place-items-center">
+    <main className="min-h-screen bg-bg text-ink grid place-items-center">
       <Keel
         title="ministr"
         line="rebuilding from the keel — UX-BLUEPRINT v4"

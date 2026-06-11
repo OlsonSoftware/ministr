@@ -11,7 +11,7 @@ export function Keel({ title, line }: { title: string; line: string }) {
   return (
     <section aria-label="rebuild status" className="text-center">
       <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-      <p className="mt-2 text-sm text-text-dim">{line}</p>
+      <p className="mt-2 text-sm text-dim">{line}</p>
     </section>
   );
 }

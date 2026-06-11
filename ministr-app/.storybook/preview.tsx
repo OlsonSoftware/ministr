@@ -21,7 +21,7 @@ const preview: Preview = {
       defaultTheme: "dark",
     }),
     (Story) => (
-      <div className="min-h-screen bg-bg text-text p-10">
+      <div className="min-h-screen bg-bg text-ink p-10">
         <Story />
       </div>
     ),

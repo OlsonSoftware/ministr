@@ -1,30 +1,84 @@
 /**
- * app.css — TOKEN SEED ONLY.
- *
- * The old design language (command-deck v4) is archived on the
- * `archive/app-v1` branch. The real design system for the rewrite is
- * GUI-RW 2 (gui-rw-design-language) and will replace this file; until
- * then this seed defines just enough contract for the harness:
- * `bg-bg` / `text-text` utilities in light + dark.
+ * app.css — the v5 "Clear Glass" token contract (DESIGN.md §3–§6).
+ * The ONLY place color values exist. Utilities consume tokens; raw hex
+ * in a className is a design-lint failure.
  */
 @import "tailwindcss";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --seed-bg: #faf9f6;
-  --seed-text: #1c1a16;
-  --seed-dim: #5c574e;
+  /* §3 neutrals — paper */
+  --v5-bg: #f7f6f2;
+  --v5-surface: #ffffff;
+  --v5-sunken: #efede7;
+  --v5-ink: #1c1a16;
+  --v5-dim: #5c574e;
+  --v5-line: #ddd9cf;
+  /* §3 identity + trust */
+  --v5-brand: #b45309;
+  --v5-ok: #1a7f37;
+  --v5-stale: #9a6700;
+  --v5-ok-wash: #e9f3eb;
+  --v5-stale-wash: #f8f0de;
 }
 
 .dark {
-  --seed-bg: #100f0d;
-  --seed-text: #e9e5dd;
-  --seed-dim: #a39c8f;
+  /* §3 neutrals — console */
+  --v5-bg: #0e0d0b;
+  --v5-surface: #171511;
+  --v5-sunken: #0a0908;
+  --v5-ink: #ece8e0;
+  --v5-dim: #a8a193;
+  --v5-line: #2a2721;
+  --v5-brand: #f5a623;
+  --v5-ok: #3fb950;
+  --v5-stale: #d29922;
+  --v5-ok-wash: #13211a;
+  --v5-stale-wash: #262008;
 }
 
 @theme inline {
-  --color-bg: var(--seed-bg);
-  --color-text: var(--seed-text);
-  --color-text-dim: var(--seed-dim);
+  --color-bg: var(--v5-bg);
+  --color-surface: var(--v5-surface);
+  --color-sunken: var(--v5-sunken);
+  --color-ink: var(--v5-ink);
+  --color-dim: var(--v5-dim);
+  --color-line: var(--v5-line);
+  --color-brand: var(--v5-brand);
+  --color-ok: var(--v5-ok);
+  --color-stale: var(--v5-stale);
+  /* `hidden` trust tone is deliberately the neutral dim (DESIGN.md §3) */
+  --color-hidden: var(--v5-dim);
+  --color-ok-wash: var(--v5-ok-wash);
+  --color-stale-wash: var(--v5-stale-wash);
+}
+
+/* §6 motion — the two sanctioned animations, reduced-motion-safe. */
+@media (prefers-reduced-motion: no-preference) {
+  .pulse-live {
+    animation: v5-pulse 2s ease-in-out infinite;
+  }
+  .beat-sweep {
+    animation: v5-sweep 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes v5-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes v5-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
 }
