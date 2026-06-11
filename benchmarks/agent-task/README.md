@@ -237,19 +237,26 @@ arms × {sonnet, haiku}, **5 trials each** (20 runs, index built once in 1.2s):
 | sonnet | 5/5 both | $2.038 | $1.997 | 94 / 73 | grep 2% cheaper |
 | haiku  | 5/5 both | $0.861 | $0.825 | 115 / 107 | grep 4% cheaper |
 
-**A clean null — the pre-registered hypothesis (grep can't bridge the seam) was
-refuted.** Every run on both models solved it; ministr was never cheaper or
-faster. A transcript-audited trial per arm (sonnet) explains why, and the audit
-finding is the real result: **the ministr-arm agent made zero ministr tool
-calls** — with the MCP server attached and CLAUDE.md steering in place, it
-solved the task with `ls`/`Read`/`Edit` exactly like the grep arm. The arms did
-not differ in behavior, so the small cost delta measures *presence overhead*
-(MCP tool schemas in context), not retrieval value. Two structural reasons no
-retrieval tooling was needed: (1) **co-location** — the renamed Rust source
-lives inside the same package directory as the failing TS tests, so reproducing
-the failure already points at a ~3-file `src/`; (2) **the convention is in the
-weights** — napi's snake_case→camelCase transform is common knowledge to sonnet
-*and* haiku, so the cross-language link is recalled, not discovered. Design
-lesson for any future seam task: it must defeat both outs — distant seams
-(separate crates/dirs at minimum), binding conventions *not* in training data,
-and a search space too large to enumerate by listing the obvious directory.
+**A confounded null — this matrix does NOT measure ministr vs grep.** Every run
+on both models solved it (the correctness tie stands), but the transcript audit
+invalidates the arm comparison: in the audited ministr-arm run the agent made
+**zero ministr tool calls** — and could not have made any. The harness deferred
+all 21 `mcp__ministr__*` tool schemas out of context (a `deferred_tools_delta`
+listing them by name only), and the loader (`ToolSearch`) was not in
+`--allowedTools` — so arm A's "discovery tool" was **unreachable**, not
+declined. The agent solved with `ls`/`Read`/`Edit` exactly like arm B, and the
+2–4% cost delta measures deferred-tool-name overhead, not retrieval value.
+(The 2026-06-05 runs above predate this harness deferral behavior and showed
+distinct per-arm cache profiles; treat the 06-11 arm comparison as void until
+the runner pins eager tool loading and the matrix is re-run.)
+
+Still true and useful from this run: both models solve the seam without ANY
+retrieval tooling, for two structural reasons — (1) **co-location**: the
+renamed Rust source lives inside the same package directory as the failing TS
+tests, so reproducing the failure already points at a ~3-file `src/`; (2)
+**the convention is in the weights**: napi's snake_case→camelCase transform is
+common knowledge to sonnet *and* haiku, so the cross-language link is recalled,
+not discovered. Any future seam task must defeat both outs — distant seams,
+binding conventions absent from training data, search spaces too large to
+enumerate — *and* the runner must verify arm A's tools actually loaded
+(assert ≥1 `mcp__ministr__` call in arm A or fail the run).
