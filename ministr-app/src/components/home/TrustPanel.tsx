@@ -7,6 +7,7 @@ import { StatusBanner } from "../ui/StatusBanner";
 import { ActionChip } from "../ui/ActionChip";
 import { CatchUp } from "../ui/CatchUp";
 import { Brand } from "../ui/Brand";
+import { ThemePick } from "../ui/ThemePick";
 
 /**
  * Home — the Trust Panel (UX-BLUEPRINT §3.1). One plain-English trust
@@ -62,9 +63,14 @@ export function TrustPanel({
     <div className="mx-auto flex min-h-screen max-w-3xl flex-col gap-4 p-8">
       <header className="flex items-center justify-between">
         <Brand />
-        {error ? (
-          <span className="text-sm text-dim">can’t reach ministr right now</span>
-        ) : null}
+        <div className="flex items-center gap-4">
+          {error ? (
+            <span className="text-sm text-dim">
+              can’t reach ministr right now
+            </span>
+          ) : null}
+          <ThemePick />
+        </div>
       </header>
 
       <main className="flex flex-col gap-3" aria-label="your projects">
