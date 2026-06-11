@@ -90,3 +90,29 @@ export function pickProjectFolder(): Promise<string | null> {
 export function registerCorpus(paths: string[]): Promise<RegisterCorpusResponse> {
   return invoke<RegisterCorpusResponse>("register_corpus", { paths });
 }
+
+export interface IndexedSectionInfo {
+  heading: string;
+  text: string;
+}
+
+export interface IndexedFileResponse {
+  sections: IndexedSectionInfo[];
+  found: boolean;
+}
+
+export interface FileContent {
+  content: string;
+  symbols: unknown[];
+}
+
+export function indexedFile(
+  corpusId: string,
+  path: string,
+): Promise<IndexedFileResponse> {
+  return invoke<IndexedFileResponse>("indexed_file", { corpusId, path });
+}
+
+export function readFile(corpusId: string, path: string): Promise<FileContent> {
+  return invoke<FileContent>("read_file", { corpusId, path });
+}

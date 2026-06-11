@@ -222,6 +222,25 @@ pub struct OutcomesResponse {
     pub stats: Vec<SessionOutcomeInfo>,
 }
 
+/// One stored section as the retrieval layer serves it (the drill-in's
+/// "as your AI sees it" view; gui-rw-file-drillin).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct IndexedSectionInfo {
+    /// Human heading path (joined), empty for root sections.
+    pub heading: String,
+    /// The stored section text — exactly what retrieval serves.
+    pub text: String,
+}
+
+/// The indexed view of one file.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct IndexedFileResponse {
+    /// Stored sections in document order. Empty when the file isn't indexed.
+    pub sections: Vec<IndexedSectionInfo>,
+    /// False when no indexed document matches the path.
+    pub found: bool,
+}
+
 /// A single SSE event for ingestion progress.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct IngestionProgressEvent {

@@ -22,12 +22,23 @@ use crate::error::{CommandError, ErrorKind};
 pub async fn pick_project_folder(app: AppHandle) -> Result<Option<String>, CommandError> {
     use tauri_plugin_dialog::DialogExt;
     let app2 = app.clone();
-    let picked = tokio::task::spawn_blocking(move || {
-        app2.dialog().file().blocking_pick_folder()
-    })
-    .await
-    .map_err(|e| CommandError::from(format!("dialog task: {e}")))?;
+    let picked = tokio::task::spawn_blocking(move || app2.dialog().file().blocking_pick_folder())
+        .await
+        .map_err(|e| CommandError::from(format!("dialog task: {e}")))?;
     Ok(picked.map(|p| p.to_string()))
+}
+
+/// Indexed (stored-sections) view of one file — the drill-in's
+/// "as your AI sees it" pane.
+#[tauri::command]
+pub async fn indexed_file(
+    corpus_id: String,
+    path: String,
+) -> Result<ministr_api::corpus::IndexedFileResponse, CommandError> {
+    ministr_api::client::DaemonClient::new()
+        .indexed_file(&corpus_id, &path)
+        .await
+        .map_err(Into::into)
 }
 
 /// Read→edit outcome joins for a corpus (Proof Feed receipts).

@@ -375,6 +375,26 @@ impl DaemonClient {
             .await
     }
 
+    /// The indexed (stored-sections) view of one file — what retrieval
+    /// actually serves (gui-rw-file-drillin).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] if the corpus doesn't exist.
+    pub async fn indexed_file(
+        &self,
+        corpus_id: &str,
+        path: &str,
+    ) -> Result<crate::corpus::IndexedFileResponse, ClientError> {
+        self.post(
+            &format!("/api/v1/corpora/{corpus_id}/indexed-file"),
+            &crate::query::FilePathRequest {
+                path: path.to_owned(),
+            },
+        )
+        .await
+    }
+
     /// List a corpus's indexed files with content hashes + section counts.
     ///
     /// # Errors

@@ -63,6 +63,7 @@ pub fn corpora_read_router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/files", get(list_files))
         .route("/api/v1/corpora/{id}/freshness", get(corpus_freshness))
         .route("/api/v1/corpora/{id}/outcomes", get(corpus_outcomes))
+        .route("/api/v1/corpora/{id}/indexed-file", post(indexed_file))
         .route("/api/v1/corpora/{id}/file", post(file_content))
         .route("/api/v1/corpora/{id}/occurrences", post(occurrences))
         .route("/api/v1/corpora/{id}/read/{section}", get(read_section))
@@ -1888,6 +1889,49 @@ async fn corpus_outcomes(
     Json(ministr_api::corpus::OutcomesResponse {
         events,
         stats: per_session,
+    })
+    .into_response()
+}
+
+/// `POST /api/v1/corpora/{id}/indexed-file` — the STORED sections of one
+/// file, in document order: exactly what retrieval serves, i.e. "the
+/// file as your AI sees it" (gui-rw-file-drillin). Path matching is
+/// tolerant of the namespaced/bare conventions, same as freshness.
+async fn indexed_file(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<query::FilePathRequest>,
+) -> impl IntoResponse {
+    let handle = get_corpus!(&state, &id);
+    let storage = &handle.storage;
+
+    let docs = storage.list_documents().await.unwrap_or_default();
+    let doc = docs.iter().find(|d| {
+        d.source_path == req.path
+            || ministr_core::ingestion::strip_root_prefix(&d.source_path)
+                .is_some_and(|p| p == req.path)
+    });
+    let Some(doc) = doc else {
+        return Json(ministr_api::corpus::IndexedFileResponse {
+            sections: Vec::new(),
+            found: false,
+        })
+        .into_response();
+    };
+
+    let mut sections = storage.list_sections(&doc.id).await.unwrap_or_default();
+    sections.sort_by_key(|s| s.position);
+    let sections = sections
+        .into_iter()
+        .map(|s| ministr_api::corpus::IndexedSectionInfo {
+            heading: s.heading_path.join(" › "),
+            text: s.text,
+        })
+        .collect();
+
+    Json(ministr_api::corpus::IndexedFileResponse {
+        sections,
+        found: true,
     })
     .into_response()
 }

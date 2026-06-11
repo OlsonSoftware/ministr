@@ -9,6 +9,7 @@ import { ActionChip } from "../ui/ActionChip";
 import { TreeRow } from "../ui/TreeRow";
 import { TrustMark } from "../ui/TrustMark";
 import { RailRow, RailSection } from "../ui/Rail";
+import { FileDrillin } from "./FileDrillin";
 
 /**
  * Project Mirror (UX-BLUEPRINT §3.2) — what your AI sees. The tree IS
@@ -31,6 +32,7 @@ export function ProjectMirror({
 
   const summary = fresh ? summarize(corpus.display_name, fresh) : null;
   const tree = useMemo(() => (fresh ? buildTree(fresh.files) : []), [fresh]);
+  const [openFile, setOpenFile] = useState<TreeNode | null>(null);
 
   return (
     <div className="mx-auto flex min-h-screen max-w-5xl flex-col gap-4 p-8">
@@ -69,13 +71,21 @@ export function ProjectMirror({
         />
       ) : null}
 
+      {openFile ? (
+        <FileDrillin
+          corpusId={corpus.id}
+          path={openFile.path}
+          state={openFile.state}
+          onBack={() => setOpenFile(null)}
+        />
+      ) : (
       <div className="flex gap-4">
         <section
           aria-label="files as your AI sees them"
           className="min-w-0 flex-1 rounded-lg border border-line bg-surface p-1"
         >
           {tree.map((node) => (
-            <TreeBranch key={node.path} node={node} level={0} />
+            <TreeBranch key={node.path} node={node} level={0} onOpenFile={setOpenFile} />
           ))}
           {fresh && tree.length === 0 ? (
             <p className="p-4 text-sm text-dim">nothing indexed yet</p>
@@ -113,6 +123,7 @@ export function ProjectMirror({
           </details>
         </aside>
       </div>
+      )}
     </div>
   );
 }
@@ -122,17 +133,31 @@ export function ProjectMirror({
  * when healthy — the quiet-until-it-isn't rule made structural: only
  * subtrees with something to say start open).
  */
-function TreeBranch({ node, level }: { node: TreeNode; level: number }) {
+function TreeBranch({
+  node,
+  level,
+  onOpenFile,
+}: {
+  node: TreeNode;
+  level: number;
+  onOpenFile?: (node: TreeNode) => void;
+}) {
   const [open, setOpen] = useState(node.state !== "ok" || level === 0);
 
   if (node.isFile) {
     return (
-      <TreeRow
-        name={node.name}
-        state={node.state}
-        level={level}
-        note={leafNote(node.raw)}
-      />
+      <button
+        type="button"
+        onClick={() => onOpenFile?.(node)}
+        className="w-full rounded-md text-left focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand"
+      >
+        <TreeRow
+          name={node.name}
+          state={node.state}
+          level={level}
+          note={leafNote(node.raw)}
+        />
+      </button>
     );
   }
   return (
@@ -152,7 +177,12 @@ function TreeBranch({ node, level }: { node: TreeNode; level: number }) {
       </button>
       {open
         ? node.children.map((c) => (
-            <TreeBranch key={c.path} node={c} level={level + 1} />
+            <TreeBranch
+              key={c.path}
+              node={c}
+              level={level + 1}
+              onOpenFile={onOpenFile}
+            />
           ))
         : null}
     </div>
