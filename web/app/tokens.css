@@ -13,7 +13,9 @@
   --bg-3: #28241C;
   --ink: #EDEAE4;
   --ink-2: #C0BCB4;
-  --muted: #7A766F;
+  /* AA-safe on --bg for 12px meta labels (5.12:1; the old #7A766F
+     measured 4.10:1 — below the 4.5:1 small-text floor). */
+  --muted: #8A8680;
   --rule: #2A2620;
   --rule-2: #38332B;
   --amber: #F59E0B;

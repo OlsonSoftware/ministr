@@ -24,8 +24,18 @@ export function CallbackHandler() {
     }
     login(token);
     setStatus("done");
+    // A page that initiated sign-in (e.g. /beta) can stash a return
+    // path; honor same-origin paths only.
+    let returnTo = "/";
+    try {
+      const stored = sessionStorage.getItem("ministr-auth-return");
+      if (stored?.startsWith("/")) returnTo = stored;
+      sessionStorage.removeItem("ministr-auth-return");
+    } catch {
+      /* private browsing */
+    }
     setTimeout(() => {
-      window.location.href = "/";
+      window.location.href = returnTo;
     }, 500);
   }, [token, error, login]);
 
