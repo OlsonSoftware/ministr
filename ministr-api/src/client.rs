@@ -361,6 +361,20 @@ impl DaemonClient {
             .await
     }
 
+    /// Read→edit outcome joins + per-session stats (the GUI's
+    /// trust-evidence receipts; gui-rw-session-outcome).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] if the corpus doesn't exist.
+    pub async fn corpus_outcomes(
+        &self,
+        corpus_id: &str,
+    ) -> Result<crate::corpus::OutcomesResponse, ClientError> {
+        self.get(&format!("/api/v1/corpora/{corpus_id}/outcomes"))
+            .await
+    }
+
     /// List a corpus's indexed files with content hashes + section counts.
     ///
     /// # Errors

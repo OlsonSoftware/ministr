@@ -38,3 +38,42 @@ export function corpusFreshness(corpusId: string): Promise<FreshnessResponse> {
 export function triggerReindex(corpusId: string): Promise<void> {
   return invoke<void>("trigger_reindex", { corpusId });
 }
+
+export interface ActivityEvent {
+  timestamp_ms: number;
+  tool: string;
+  corpus_id: string;
+  session_id?: string;
+  summary: string;
+  tokens_delta?: number;
+  cache_hit: boolean;
+}
+
+export interface OutcomeEventInfo {
+  session_id: string;
+  path: string;
+  read_rank: number;
+  first_touch: boolean;
+  reads_before: number;
+  edited_at_ms: number;
+}
+
+export interface SessionOutcomeInfo {
+  session_id: string;
+  distinct_reads: number;
+  joins: number;
+  first_touch_hits: number;
+}
+
+export interface OutcomesResponse {
+  events: OutcomeEventInfo[];
+  stats: SessionOutcomeInfo[];
+}
+
+export function recentActivity(limit?: number): Promise<ActivityEvent[]> {
+  return invoke<ActivityEvent[]>("recent_activity", { limit });
+}
+
+export function corpusOutcomes(corpusId: string): Promise<OutcomesResponse> {
+  return invoke<OutcomesResponse>("corpus_outcomes", { corpusId });
+}

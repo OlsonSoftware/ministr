@@ -1,21 +1,38 @@
 import { useState } from "react";
 import { TrustPanel } from "./components/home/TrustPanel";
 import { ProjectMirror } from "./components/mirror/ProjectMirror";
+import { ProofFeed } from "./components/feed/ProofFeed";
 import type { CorpusInfo } from "./lib/ipc";
+
+type View =
+  | { kind: "home" }
+  | { kind: "mirror"; corpus: CorpusInfo }
+  | { kind: "feed"; corpus: CorpusInfo };
 
 /**
  * App shell — hub-and-spoke, two levels (UX-BLUEPRINT navigation):
- * Home (Trust Panel) ⇄ Project Mirror. No tabs, no router.
+ * Home (Trust Panel) → Project Mirror → Proof Feed. No tabs, no router.
  */
 export default function App() {
-  const [open, setOpen] = useState<CorpusInfo | null>(null);
+  const [view, setView] = useState<View>({ kind: "home" });
 
   return (
     <div className="min-h-screen bg-bg text-ink">
-      {open ? (
-        <ProjectMirror corpus={open} onBack={() => setOpen(null)} />
+      {view.kind === "home" ? (
+        <TrustPanel
+          onOpenProject={(corpus) => setView({ kind: "mirror", corpus })}
+        />
+      ) : view.kind === "mirror" ? (
+        <ProjectMirror
+          corpus={view.corpus}
+          onBack={() => setView({ kind: "home" })}
+          onOpenFeed={() => setView({ kind: "feed", corpus: view.corpus })}
+        />
       ) : (
-        <TrustPanel onOpenProject={setOpen} />
+        <ProofFeed
+          corpus={view.corpus}
+          onBack={() => setView({ kind: "mirror", corpus: view.corpus })}
+        />
       )}
     </div>
   );

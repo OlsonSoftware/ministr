@@ -15,6 +15,17 @@ use crate::error::{CommandError, ErrorKind};
 ///
 /// gd2: routed over UDS to the headless daemon — the canonical registry —
 /// rather than the GUI's in-process `AppState`.
+/// Read→edit outcome joins for a corpus (Proof Feed receipts).
+#[tauri::command]
+pub async fn corpus_outcomes(
+    corpus_id: String,
+) -> Result<ministr_api::corpus::OutcomesResponse, CommandError> {
+    ministr_api::client::DaemonClient::new()
+        .corpus_outcomes(&corpus_id)
+        .await
+        .map_err(Into::into)
+}
+
 /// Per-file hash-verified trust states for a corpus (Mirror tree +
 /// Home trust rows). Thin pass-through to the daemon's freshness sweep.
 #[tauri::command]

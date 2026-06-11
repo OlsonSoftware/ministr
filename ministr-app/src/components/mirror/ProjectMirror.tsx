@@ -18,9 +18,11 @@ import { RailRow, RailSection } from "../ui/Rail";
 export function ProjectMirror({
   corpus,
   onBack,
+  onOpenFeed,
 }: {
   corpus: CorpusInfo;
   onBack: () => void;
+  onOpenFeed?: () => void;
 }) {
   const { data: fresh } = usePoll(
     () => corpusFreshness(corpus.id),
@@ -42,6 +44,11 @@ export function ProjectMirror({
             what your AI sees
           </span>
         </h1>
+        {onOpenFeed ? (
+          <span className="ml-auto">
+            <ActionChip onClick={onOpenFeed}>What ministr did</ActionChip>
+          </span>
+        ) : null}
       </header>
 
       {summary ? (
