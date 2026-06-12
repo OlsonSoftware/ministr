@@ -223,6 +223,20 @@ async fn eval_retrieval_real_embedder() {
     // truncation + rq6 too); both arms stay above floors (aggregate R@5 0.820 ON
     // / 0.809 OFF over 75 q). Floors left as-is (the 3 tail queries are trivially
     // satisfied on this corpus and must not be read as a cAST win).
+    // DOCS-CORPUS SPARSE DECISION (rq-docs-sparse-metric-decision, decided by
+    // the owner 2026-06-12): docs corpora stay DENSE-ONLY (sparse_weight 0,
+    // option A). The data behind the call: enabling the ast-sparse hybrid on
+    // this docs eval FAILED the pre-committed P@5 floor at every tested
+    // weight (.651 -> .403/.504/.616) while IMPROVING every duplicate-
+    // collapsed metric (nDCG .887->.924, R@5 .796->.891, MRR up). The P@5
+    // drop is substantially a duplicate-credit artifact — the pre-collapse
+    // baseline filled top-5 slots with multiple resolutions of ONE relevant
+    // section and the metric counted each as a distinct hit (the same
+    // artifact accepted-by-design in W2's max-pool, R@5 .820->.811) — but
+    // the conservative call governs until the floors rest on more than 75
+    // queries. Re-decision is gated on rq-eval-synthetic-groundtruth.
+    // Consequence for THIS gate: it runs dense-only by design; the floors
+    // below are dense floors and must not be compared against hybrid runs.
     const BASELINE_RECALL_AT_5: f64 = 0.80;
     const BASELINE_NDCG_AT_5: f64 = 0.88;
     const BASELINE_MRR: f64 = 0.945;
