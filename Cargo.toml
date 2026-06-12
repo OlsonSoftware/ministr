@@ -53,7 +53,7 @@ tokio-postgres = { version = "0.7", features = ["with-serde_json-1"] }
 deadpool-postgres = "0.14"
 tokio-postgres-rustls = "0.13"
 rustls = "0.23"
-rustls-pemfile = "2"
+rustls-pki-types = "1"
 webpki-roots = "1"
 
 # Markdown parsing
@@ -254,15 +254,15 @@ tempfile = "3"
 # from Conventional Commits and rewrites both the crate `version` and
 # these requirements in lockstep on every bump, so this never needs to
 # be hand-edited.
-ministr-api = { path = "ministr-api", version = "0.6.0" }
-ministr-core = { path = "ministr-core", version = "0.6.0" }
-ministr-daemon = { path = "ministr-daemon", version = "0.6.0" }
-ministr-mcp = { path = "ministr-mcp", version = "0.6.0" }
+ministr-api = { path = "ministr-api", version = "0.7.0" }
+ministr-core = { path = "ministr-core", version = "0.7.0" }
+ministr-daemon = { path = "ministr-daemon", version = "0.7.0" }
+ministr-mcp = { path = "ministr-mcp", version = "0.7.0" }
 # F31.2b-ii-B — `ministr-cloud-tools serve` (which lives in the
 # private sibling repo post-F31.4) depends on ministr-cli's lib
 # target to share `cmd_serve_http` + `resolve_config`. MIT crate;
 # proprietary consumers reach it from the sibling workspace.
-ministr-cli = { path = "ministr-cli", version = "0.6.0" }
+ministr-cli = { path = "ministr-cli", version = "0.7.0" }
 # F31.4 (2026-05-27): ministr-cloud, ministr-atlas, and
 # ministr-cloud-tools workspace.dependencies entries were removed
 # along with the crates themselves; their full history (123 commits)

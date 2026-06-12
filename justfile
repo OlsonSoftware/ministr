@@ -77,11 +77,17 @@ msrv:
     rustup toolchain install 1.88 --profile minimal --no-self-update
     cargo +1.88 check --workspace --locked
 
+# Retrieval-quality regression gate — what CI's rust-dev job runs after
+# nextest/doc (ci.yml calls `just eval-gate`; the recipe was lost in the
+# 40c380c justfile slim-down). CPU-pinned (MINISTR_COREML=0) so the gate
+# is deterministic on any runner.
+eval-gate $MINISTR_COREML="0":
+    cargo test --test eval_retrieval eval_retrieval_regression_gate -p ministr-core -- --nocapture
+
 # Pre-release: validate + MSRV + audit + eval gate + web build
-release-preflight: validate msrv
+release-preflight: validate msrv eval-gate
     cargo audit
     cargo deny check
-    cargo test --test eval_retrieval eval_retrieval_regression_gate -p ministr-core -- --nocapture
     cd web && npm run types:check && npm run build
 
 # ── Benchmarks ───────────────────────────────────────────────────────

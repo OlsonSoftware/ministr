@@ -1,6 +1,6 @@
 [package]
 name = "ministr-mcp"
-version = "0.6.0"
+version = "0.7.0"
 publish = false
 edition.workspace = true
 rust-version.workspace = true
@@ -42,7 +42,7 @@ tokio-postgres.workspace = true
 deadpool-postgres.workspace = true
 tokio-postgres-rustls.workspace = true
 rustls.workspace = true
-rustls-pemfile.workspace = true
+rustls-pki-types.workspace = true
 webpki-roots.workspace = true
 hmac.workspace = true
 subtle.workspace = true
