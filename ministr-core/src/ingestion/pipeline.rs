@@ -1104,6 +1104,20 @@ impl IngestionPipeline {
         // Embed all resolution levels (immediate)
         embed_document(&doc, embedder, index, storage).await?;
 
+        // rq4b parity for the immediate path (sparse-watcher-delete-wiring):
+        // the batched embed stage sparse-embeds every pair the dense path
+        // embeds; mirror that here so per-file re-ingests (the coherence
+        // watcher) keep the sparse index coherent. Same pair set as
+        // `embed_document` (doc summary + sections, verbatim).
+        if let (Some(se), Some(si)) = (
+            self.sparse_embedder.as_deref(),
+            self.sparse_index.as_deref(),
+        ) {
+            let mut pairs: Vec<(VectorId, String)> = Vec::new();
+            collect_document_embeddings(&doc, &mut pairs, false);
+            super::embed_stage::sparse_embed_and_insert(&pairs, se, si)?;
+        }
+
         // For code files: extract symbols and embed immediately
         if parser_kind == ParserKind::Code {
             let sym_result = extract_code_symbols(source_path, content, storage, None).await?;
@@ -1117,6 +1131,16 @@ impl IngestionPipeline {
                     self.progress.as_ref(),
                 )
                 .await?;
+                if let (Some(se), Some(si)) = (
+                    self.sparse_embedder.as_deref(),
+                    self.sparse_index.as_deref(),
+                ) {
+                    super::embed_stage::sparse_embed_and_insert(
+                        &sym_result.embedding_pairs,
+                        se,
+                        si,
+                    )?;
+                }
             }
         }
 

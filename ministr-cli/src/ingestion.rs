@@ -438,12 +438,15 @@ fn git_repo_display_name(url: &str) -> String {
 /// Watches all corpus paths for file changes, re-indexes affected files
 /// (including embeddings and vector index), and propagates coherence alerts
 /// to the active session.
+#[allow(clippy::too_many_arguments)] // watcher wiring — each input is a distinct corpus component
 pub(crate) fn spawn_coherence(
     corpus_paths: &[PathBuf],
     server: &ministr_mcp::server::MinistrServer,
     storage: &Arc<ministr_core::storage::SqliteStorage>,
     embedder: &Arc<dyn ministr_core::embedding::Embedder>,
     index: &Arc<dyn ministr_core::index::VectorIndex>,
+    sparse_embedder: Option<&Arc<dyn ministr_core::embedding::SparseEmbedder>>,
+    sparse_index: Option<&Arc<dyn ministr_core::index::SparseIndex>>,
     ignore_patterns: &[String],
 ) -> Result<Option<tokio::task::JoinHandle<()>>> {
     // Collect watch paths: directories directly, individual files via their parent.
@@ -474,12 +477,18 @@ pub(crate) fn spawn_coherence(
         })
         .unwrap_or_else(|| PathBuf::from("."));
 
-    let engine = Arc::new(
+    let mut engine =
         CoherenceEngine::with_embeddings(primary_dir, Arc::clone(embedder), Arc::clone(index))
             // watcher-ignore-filtering: excluded paths never drive a
             // per-file reindex on this surface.
-            .with_exclusions(&watch_paths, ignore_patterns),
-    );
+            .with_exclusions(&watch_paths, ignore_patterns);
+    // sparse-watcher-delete-wiring: when hybrid retrieval is on, watcher
+    // events keep the sparse index coherent too (modify re-embeds, remove
+    // tombstones) instead of waiting for the next full re-ingest's sweep.
+    if let (Some(se), Some(si)) = (sparse_embedder, sparse_index) {
+        engine = engine.with_sparse(Arc::clone(se), Arc::clone(si));
+    }
+    let engine = Arc::new(engine);
 
     let registry = server.registry_arc();
 

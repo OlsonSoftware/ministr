@@ -20,9 +20,9 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 use tracing::{debug, info, instrument, warn};
 
-use crate::embedding::Embedder;
+use crate::embedding::{Embedder, SparseEmbedder};
 use crate::error::CoherenceError;
-use crate::index::VectorIndex;
+use crate::index::{SparseIndex, VectorIndex};
 use crate::ingestion::IngestionPipeline;
 use crate::session::Session;
 use crate::storage::traits::Storage;
@@ -183,6 +183,10 @@ pub struct CoherenceEngine {
     corpus_dir: PathBuf,
     embedder: Option<Arc<dyn Embedder>>,
     index: Option<Arc<dyn VectorIndex>>,
+    /// The corpus's sparse (hybrid) index, when hybrid retrieval is on
+    /// (rq4c). Set via [`Self::with_sparse`]; used by the remove path so a
+    /// watcher-deleted file's postings are tombstoned immediately.
+    sparse_index: Option<Arc<dyn SparseIndex>>,
     /// Per-root exclusion matchers (watcher-ignore-filtering). When set,
     /// events for excluded paths are dropped in [`Self::process_events`]
     /// instead of driving a per-file reindex.
@@ -201,6 +205,7 @@ impl CoherenceEngine {
             corpus_dir,
             embedder: None,
             index: None,
+            sparse_index: None,
             exclusions: Vec::new(),
         }
     }
@@ -220,8 +225,29 @@ impl CoherenceEngine {
             corpus_dir,
             embedder: Some(embedder),
             index: Some(index),
+            sparse_index: None,
             exclusions: Vec::new(),
         }
+    }
+
+    /// Attach the corpus's sparse (hybrid) components so watcher events keep
+    /// the sparse index coherent (sparse-watcher-delete-wiring). Covers BOTH
+    /// event kinds: Created/Modified re-ingests sparse-embed through the
+    /// pipeline's rq4b seam, and Removed tombstones the file's postings via
+    /// `delete_document_vectors`. Per-event updates mutate the in-memory
+    /// sparse index only — the on-disk sidecar persists on the next full
+    /// ingest, exactly like the dense index's per-event behavior.
+    #[must_use]
+    pub fn with_sparse(
+        mut self,
+        sparse_embedder: Arc<dyn SparseEmbedder>,
+        sparse_index: Arc<dyn SparseIndex>,
+    ) -> Self {
+        self.pipeline = self
+            .pipeline
+            .with_sparse_indexing(sparse_embedder, Arc::clone(&sparse_index));
+        self.sparse_index = Some(sparse_index);
+        self
     }
 
     /// Attach exclusion matchers so watcher events for excluded paths
@@ -439,16 +465,17 @@ impl CoherenceEngine {
         // `delete_document_vectors` can still enumerate sections, claims,
         // and symbols via storage. Otherwise the index keeps stale
         // vectors whose documents no longer exist, and later surveys
-        // return result rows that `ministr_read` can't service.
-        // NOTE (rq4b): the coherence engine doesn't hold a sparse index yet —
-        // sparse wiring for the watcher delete path lands with the query-side
-        // surface work (rq4c), which decides where the sparse index lives.
-        // Until then a watcher-removed file's sparse entries are cleaned up by
-        // the next full re-ingest's stale-document sweep.
+        // return result rows that `ministr_read` can't service. The sparse
+        // (hybrid) postings tombstone in the same call when the engine was
+        // built `with_sparse` (sparse-watcher-delete-wiring).
         if let Some(ref index) = self.index
-            && let Err(e) =
-                crate::ingestion::delete_document_vectors(&doc_id, storage, index.as_ref(), None)
-                    .await
+            && let Err(e) = crate::ingestion::delete_document_vectors(
+                &doc_id,
+                storage,
+                index.as_ref(),
+                self.sparse_index.as_deref(),
+            )
+            .await
         {
             tracing::warn!(
                 path = %path.display(),
@@ -992,6 +1019,174 @@ mod tests {
             "every vector for the removed document should be gone from the index \
              (before={before}, after={})",
             index.len()
+        );
+    }
+
+    /// Word-level deterministic sparse mock: each whitespace-separated word
+    /// hashes to a term id with weight 1.0, so tests can query for a word
+    /// and hit exactly the documents containing it. No model, no download.
+    struct WordSparse;
+
+    impl crate::embedding::SparseEmbedder for WordSparse {
+        fn embed_sparse(
+            &self,
+            texts: &[&str],
+        ) -> Result<Vec<crate::embedding::SparseVector>, crate::error::IndexError> {
+            Ok(texts
+                .iter()
+                .map(|t| {
+                    let mut indices: Vec<u32> = t
+                        .split_whitespace()
+                        .map(|w| {
+                            w.bytes()
+                                .fold(0x811c_9dc5_u32, |h, b| (h ^ u32::from(b)).wrapping_mul(31))
+                        })
+                        .collect();
+                    indices.sort_unstable();
+                    indices.dedup();
+                    let values = vec![1.0_f32; indices.len()];
+                    crate::embedding::SparseVector { indices, values }
+                })
+                .collect())
+        }
+    }
+
+    /// Hits in `sparse` for a single-word query, as the matching doc ids.
+    fn sparse_hits(sparse: &dyn crate::index::SparseIndex, word: &str) -> Vec<String> {
+        use crate::embedding::SparseEmbedder as _;
+        let q = WordSparse.embed_sparse(&[word]).unwrap().remove(0);
+        sparse
+            .search_sparse(&q.indices, &q.values, 50)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect()
+    }
+
+    /// sparse-watcher-delete-wiring: a watcher-removed file's sparse postings
+    /// are tombstoned immediately by `process_events`, not left for the next
+    /// full re-ingest's sweep.
+    #[tokio::test]
+    async fn remove_event_tombstones_sparse_postings() {
+        use crate::index::{HnswIndex, InvertedIndex, SparseIndex, VectorIndex};
+        use crate::storage::SqliteStorage;
+
+        let dir = TempDir::new().unwrap();
+        let keep = dir.path().join("keep.md");
+        let doomed = dir.path().join("doomed.md");
+        std::fs::write(&keep, "# Keep\n\nThe keepword stays around.\n").unwrap();
+        std::fs::write(&doomed, "# Doomed\n\nThe doomedword will vanish.\n").unwrap();
+
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let index: Arc<dyn VectorIndex> = Arc::new(HnswIndex::new(64, 1_000).unwrap());
+        let embedder: Arc<dyn crate::embedding::Embedder> = Arc::new(HashEmbedder { dim: 64 });
+        let sparse: Arc<InvertedIndex> = Arc::new(InvertedIndex::new());
+
+        let engine = CoherenceEngine::with_embeddings(
+            dir.path().to_path_buf(),
+            Arc::clone(&embedder),
+            Arc::clone(&index),
+        )
+        .with_sparse(
+            Arc::new(WordSparse),
+            Arc::clone(&sparse) as Arc<dyn crate::index::SparseIndex>,
+        );
+
+        // Created events drive the engine's own re-ingest path, which must
+        // populate the sparse index through the pipeline's rq4b seam.
+        engine
+            .process_events(
+                &[
+                    CoherenceEvent::Created(keep.clone()),
+                    CoherenceEvent::Created(doomed.clone()),
+                ],
+                &storage,
+            )
+            .await
+            .unwrap();
+        assert!(sparse.len_sparse() > 0, "created events populate sparse");
+        assert!(
+            sparse_hits(sparse.as_ref(), "doomedword")
+                .iter()
+                .any(|id| id.contains("doomed.md")),
+            "doomed.md is sparse-searchable before removal",
+        );
+
+        std::fs::remove_file(&doomed).unwrap();
+        engine
+            .process_events(&[CoherenceEvent::Removed(doomed)], &storage)
+            .await
+            .unwrap();
+
+        assert!(
+            !sparse_hits(sparse.as_ref(), "doomedword")
+                .iter()
+                .any(|id| id.contains("doomed.md")),
+            "removed file's sparse postings must be tombstoned immediately",
+        );
+        assert!(
+            sparse_hits(sparse.as_ref(), "keepword")
+                .iter()
+                .any(|id| id.contains("keep.md")),
+            "the surviving file's postings are untouched",
+        );
+    }
+
+    /// sparse-watcher-delete-wiring (modify half): a watcher-modified file's
+    /// sparse postings reflect the NEW content — the old content's terms stop
+    /// matching, the new content's terms start.
+    #[tokio::test]
+    async fn modified_event_updates_sparse_postings() {
+        use crate::index::{HnswIndex, InvertedIndex, VectorIndex};
+        use crate::storage::SqliteStorage;
+
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("doc.md");
+        std::fs::write(&file, "# Doc\n\nThe alphaword version.\n").unwrap();
+
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let index: Arc<dyn VectorIndex> = Arc::new(HnswIndex::new(64, 1_000).unwrap());
+        let embedder: Arc<dyn crate::embedding::Embedder> = Arc::new(HashEmbedder { dim: 64 });
+        let sparse: Arc<InvertedIndex> = Arc::new(InvertedIndex::new());
+
+        let engine = CoherenceEngine::with_embeddings(
+            dir.path().to_path_buf(),
+            Arc::clone(&embedder),
+            Arc::clone(&index),
+        )
+        .with_sparse(
+            Arc::new(WordSparse),
+            Arc::clone(&sparse) as Arc<dyn crate::index::SparseIndex>,
+        );
+
+        engine
+            .process_events(&[CoherenceEvent::Created(file.clone())], &storage)
+            .await
+            .unwrap();
+        assert!(
+            sparse_hits(sparse.as_ref(), "alphaword")
+                .iter()
+                .any(|id| id.contains("doc.md")),
+            "v1 content is sparse-searchable",
+        );
+
+        std::fs::write(&file, "# Doc\n\nThe betaword version.\n").unwrap();
+        engine
+            .process_events(&[CoherenceEvent::Modified(file)], &storage)
+            .await
+            .unwrap();
+
+        assert!(
+            !sparse_hits(sparse.as_ref(), "alphaword")
+                .iter()
+                .any(|id| id.contains("doc.md")),
+            "stale v1 postings must not survive a modify event",
+        );
+        assert!(
+            sparse_hits(sparse.as_ref(), "betaword")
+                .iter()
+                .any(|id| id.contains("doc.md")),
+            "v2 content is sparse-searchable after the modify event",
         );
     }
 

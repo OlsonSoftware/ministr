@@ -493,6 +493,8 @@ pub(crate) async fn build_server(
             &ctx.storage,
             &ctx.embedder,
             &ctx.index,
+            ctx.sparse_embedder.as_ref(),
+            ctx.sparse_index.as_ref(),
             &ctx.ignore,
         )?
     };

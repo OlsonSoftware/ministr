@@ -74,7 +74,9 @@ where
 /// Sparse-embed a flushed batch and insert each `(VectorId, sparse vector)`
 /// into the inverted index (rq4b). Runs on the SAME `(VectorId, text)` pairs
 /// the dense path embeds, so the two indexes always cover identical content.
-fn sparse_embed_and_insert(
+/// `pub(super)` so the immediate content-ingest entry point (the coherence
+/// watcher's per-file path) can mirror the batched stage's sparse population.
+pub(super) fn sparse_embed_and_insert(
     pairs: &[(VectorId, String)],
     sparse_embedder: &dyn SparseEmbedder,
     sparse_index: &dyn SparseIndex,
