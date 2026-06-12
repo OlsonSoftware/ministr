@@ -5,6 +5,7 @@
 //! The [`FastEmbedder`] and [`FastSparseEmbedder`] implementations wrap the
 //! `fastembed` crate for local ONNX-based inference with automatic model download.
 
+pub mod ast_sparse;
 pub mod cache;
 #[cfg(feature = "candle")]
 mod candle_impl;
@@ -19,7 +20,9 @@ pub mod openai;
 mod rerank;
 pub mod service;
 mod sparse;
+pub mod sparse_select;
 
+pub use ast_sparse::AstSparseEncoder;
 pub use cache::CachedEmbedder;
 #[cfg(feature = "candle")]
 pub use candle_impl::{CandleEmbedder, CandleModelInfo, candle_supported_models, is_candle_model};
@@ -31,6 +34,7 @@ pub use hybrid::HybridEmbedder;
 pub use rerank::FastReranker;
 pub use service::{EmbeddingService, EmbeddingServiceConfig};
 pub use sparse::{DEFAULT_SPARSE_MODEL, FastSparseEmbedder};
+pub use sparse_select::{SparseEncoderKind, build_sparse_components};
 
 use crate::error::IndexError;
 
@@ -124,6 +128,34 @@ pub trait SparseEmbedder: Send + Sync {
     ///
     /// Returns [`IndexError::EmbeddingFailed`] if inference fails.
     fn embed_sparse(&self, texts: &[&str]) -> Result<Vec<SparseVector>, IndexError>;
+
+    /// Encode corpus documents for sparse indexing.
+    ///
+    /// `entries` pairs each text with its vector-ID string so
+    /// structure-aware encoders (e.g. [`AstSparseEncoder`]) can derive
+    /// field roles from the ID. The default ignores the IDs — symmetric
+    /// encoders like SPLADE encode documents and queries identically.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexError::EmbeddingFailed`] if encoding fails.
+    fn embed_sparse_docs(&self, entries: &[(&str, &str)]) -> Result<Vec<SparseVector>, IndexError> {
+        let texts: Vec<&str> = entries.iter().map(|(_, t)| *t).collect();
+        self.embed_sparse(&texts)
+    }
+
+    /// Encode a search query.
+    ///
+    /// The default delegates to [`Self::embed_sparse`] (symmetric encoders);
+    /// asymmetric encoders override this with query-specific weighting
+    /// (e.g. corpus IDF).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexError::EmbeddingFailed`] if encoding fails.
+    fn embed_sparse_query(&self, texts: &[&str]) -> Result<Vec<SparseVector>, IndexError> {
+        self.embed_sparse(texts)
+    }
 }
 
 /// A single reranking score: original document index paired with relevance.

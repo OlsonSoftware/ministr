@@ -4,12 +4,13 @@
 //! and a reusable eval pipeline that ingests the eval corpus and scores queries.
 
 use std::path::Path;
+use std::sync::Arc;
 
-use ministr_core::embedding::Embedder;
-use ministr_core::index::ExactScanIndex;
+use ministr_core::embedding::{AstSparseEncoder, Embedder, SparseEmbedder};
+use ministr_core::index::{ExactScanIndex, InvertedIndex, SparseIndex};
 use ministr_core::ingestion::IngestionPipeline;
 use ministr_core::search::{MultiResolutionSearch, SearchConfig};
-use ministr_core::storage::SqliteStorage;
+use ministr_core::storage::{SqliteStorage, Storage};
 
 /// Ground-truth query with expected section IDs and relevance grades.
 #[derive(serde::Deserialize)]
@@ -226,6 +227,112 @@ pub async fn run_eval_with_embedder(
         mean_recall: total_recall / count_f,
         mrr: total_rr / count_f,
         mean_ndcg: total_ndcg / count_f,
+    }
+}
+
+/// Run the eval pipeline in AST-sparse HYBRID mode (rq-ast-sparse-encoder):
+/// same deterministic exact-scan dense leg as [`run_eval_with_embedder`], plus
+/// the zero-model [`AstSparseEncoder`] populated through the production
+/// `with_sparse_indexing` seam, fused at `sparse_weight` via RRF.
+///
+/// Also measures and reports (stderr) the standalone sparse-encode cost over
+/// every stored section — the in-repo encode-cost number the chunk's
+/// acceptance asks for (the bge-m3 comparison leg is research-cited; its
+/// 600 MB model is not downloaded here).
+#[allow(clippy::cast_precision_loss, dead_code)] // shared by multiple test binaries
+pub async fn run_ast_hybrid_eval_with_embedder(
+    corpus_path: &Path,
+    ground_truth: &GroundTruth,
+    embedder: &dyn Embedder,
+    sparse_weight: f32,
+    verbose: bool,
+) -> EvalResults {
+    let dim = embedder.dimension();
+    let storage = SqliteStorage::open_in_memory().expect("failed to create storage");
+    let index = ExactScanIndex::new(dim);
+    let sparse_index: Arc<InvertedIndex> = Arc::new(InvertedIndex::new());
+    let encoder = Arc::new(AstSparseEncoder::new(Arc::clone(&sparse_index)));
+
+    let pipeline = IngestionPipeline::new().with_sparse_indexing(
+        Arc::clone(&encoder) as Arc<dyn SparseEmbedder>,
+        Arc::clone(&sparse_index) as Arc<dyn SparseIndex>,
+    );
+    let stats = pipeline
+        .ingest_directory_with_embeddings(corpus_path, &storage, embedder, &index)
+        .await
+        .expect("ingestion failed");
+    assert!(stats.files_indexed > 0, "no files were indexed");
+    assert!(sparse_index.len_sparse() > 0, "sparse index not populated");
+
+    // Standalone encode-cost measurement: re-encode every stored section once.
+    let mut entries: Vec<(String, String)> = Vec::new();
+    for d in storage.list_documents().await.expect("docs") {
+        for s in storage.list_sections(&d.id).await.expect("sections") {
+            entries.push((format!("section::{}", s.id.as_ref()), s.text.clone()));
+        }
+    }
+    let refs: Vec<(&str, &str)> = entries
+        .iter()
+        .map(|(id, t)| (id.as_str(), t.as_str()))
+        .collect();
+    let t0 = std::time::Instant::now();
+    let _ = encoder.embed_sparse_docs(&refs).expect("encode");
+    let encode = t0.elapsed();
+    eprintln!(
+        "ast-sparse encode cost: {} entries in {:.3}s ({:.0} entries/s, zero model)",
+        refs.len(),
+        encode.as_secs_f64(),
+        refs.len() as f64 / encode.as_secs_f64().max(1e-9),
+    );
+
+    let searcher = MultiResolutionSearch::new(embedder, &index)
+        .with_sparse(encoder.as_ref(), sparse_index.as_ref());
+    let config = SearchConfig {
+        raw_k: 30,
+        top_k: 10,
+        sparse_weight,
+        rerank_top_k: None,
+    };
+
+    let k = 5;
+    let (mut tp, mut tr, mut trr, mut tn) = (0.0, 0.0, 0.0, 0.0);
+    let mut query_count: u32 = 0;
+    for annotation in &ground_truth.queries {
+        let results = searcher
+            .search(&annotation.query, config)
+            .expect("search failed");
+        let result_ids: Vec<String> = results
+            .iter()
+            .map(|r| r.vector_id.content_id().to_string())
+            .collect();
+        let expected_ids: Vec<String> = annotation
+            .expected
+            .iter()
+            .map(|e| e.section_id.clone())
+            .collect();
+        let p = precision_at_k(&result_ids, &expected_ids, k);
+        let r = recall_at_k(&result_ids, &expected_ids, k);
+        let rr = reciprocal_rank(&result_ids, &expected_ids);
+        let ndcg = ndcg_at_k(&result_ids, &annotation.expected, k);
+        tp += p;
+        tr += r;
+        trr += rr;
+        tn += ndcg;
+        query_count += 1;
+        if verbose {
+            eprintln!(
+                "Query: {:60} P@{k}={p:.2}  R@{k}={r:.2}  RR={rr:.2}  nDCG@{k}={ndcg:.2}",
+                &annotation.query,
+            );
+        }
+    }
+    let count_f = f64::from(query_count);
+    EvalResults {
+        query_count,
+        mean_precision: tp / count_f,
+        mean_recall: tr / count_f,
+        mrr: trr / count_f,
+        mean_ndcg: tn / count_f,
     }
 }
 

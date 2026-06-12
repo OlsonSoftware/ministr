@@ -157,7 +157,7 @@ where
         };
 
         let mut scored = if let Some((sparse_embedder, sparse_index)) = sparse_pair {
-            let sparse_vecs = sparse_embedder.embed_sparse(&[query])?;
+            let sparse_vecs = sparse_embedder.embed_sparse_query(&[query])?;
             let sparse_vec =
                 sparse_vecs
                     .into_iter()

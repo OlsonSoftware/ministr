@@ -245,33 +245,30 @@ pub(crate) async fn init_infrastructure(
     );
 
     // rq4c: hybrid retrieval is opt-in via the repo `[corpus] sparse_weight`
-    // knob. When > 0, build the SPLADE embedder (model download on first
-    // use, like the dense model) and load the per-corpus inverted-index
-    // sidecar — empty on a fresh corpus; ingest populates + re-persists it.
+    // knob. When > 0, build the configured sparse encoder (default: the
+    // zero-model AST/BM25F encoder — deterministic, no download;
+    // `sparse_encoder = "splade"` opts into the neural model) and load the
+    // per-corpus inverted-index sidecar — empty on a fresh corpus; ingest
+    // populates + re-persists it. Construction routes through the shared
+    // ministr-core seam so the CLI and daemon cannot drift (parity-epic).
     let sparse_weight = effective.sparse_weight.unwrap_or(0.0);
     let (sparse_embedder, sparse_index) = if sparse_weight > 0.0 {
+        let kind =
+            ministr_core::embedding::SparseEncoderKind::parse(effective.sparse_encoder.as_deref());
         let models_dir = config.data_dir.join("models");
-        let se = ministr_core::embedding::FastSparseEmbedder::new(
-            ministr_core::embedding::DEFAULT_SPARSE_MODEL,
-            Some(&models_dir.to_string_lossy()),
-        )
-        .into_diagnostic()
-        .wrap_err("failed to load the sparse (SPLADE) embedding model")?;
-        let si =
-            <ministr_core::index::InvertedIndex as ministr_core::index::SparseIndex>::load_sparse(
-                &index_dir,
-            )
-            .into_diagnostic()
-            .wrap_err("failed to load the sparse index sidecar")?;
+        let (se, si) =
+            ministr_core::embedding::build_sparse_components(kind, Some(&models_dir), &index_dir)
+                .into_diagnostic()
+                .wrap_err("failed to build the sparse (hybrid) retrieval components")?;
         tracing::info!(
             sparse_weight,
-            model = ministr_core::embedding::DEFAULT_SPARSE_MODEL,
-            docs = ministr_core::index::SparseIndex::len_sparse(&si),
+            encoder = kind.tag(),
+            docs = ministr_core::index::SparseIndex::len_sparse(si.as_ref()),
             "hybrid (sparse+dense) retrieval enabled"
         );
         (
-            Some(Arc::new(se) as Arc<dyn ministr_core::embedding::SparseEmbedder>),
-            Some(Arc::new(si) as Arc<dyn ministr_core::index::SparseIndex>),
+            Some(se),
+            Some(si as Arc<dyn ministr_core::index::SparseIndex>),
         )
     } else {
         (None, None)

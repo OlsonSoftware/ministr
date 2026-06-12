@@ -441,6 +441,12 @@ pub struct CorpusSpec {
     /// global weight works — code corpora peak at 0.6 while docs/prose
     /// corpora regress at every tested weight; pick per corpus.
     pub sparse_weight: Option<f32>,
+    /// Sparse encoder backing hybrid retrieval: `"ast"` (default — zero-model
+    /// BM25F over AST-derived roles, deterministic, no download) or
+    /// `"splade"` (neural sparse; downloads `splade-pp-v1`, retains a small
+    /// semantic-expansion edge on human-phrased queries). Switching encoders
+    /// discards the sparse sidecar; re-index to repopulate it.
+    pub sparse_encoder: Option<String>,
 }
 
 /// An external local directory to include in the corpus.
@@ -559,6 +565,9 @@ pub struct EffectiveCorpusConfig {
     /// Hybrid sparse retrieval weight (repo `[corpus] sparse_weight`; no
     /// `meta.toml`/global source today). `None` or `<= 0` = dense-only.
     pub sparse_weight: Option<f32>,
+    /// Sparse encoder selection (repo `[corpus] sparse_encoder`; `None` =
+    /// the zero-model AST encoder).
+    pub sparse_encoder: Option<String>,
 }
 
 /// Resolve every per-corpus knob into one [`EffectiveCorpusConfig`].
@@ -605,6 +614,7 @@ pub fn resolve_effective_corpus_config(
         // sparse_weight currently lives only in the repo `[corpus]` table
         // (per-corpus-type DEFAULTS land with rq-sparse-weight-defaults-docs).
         sparse_weight: repo_config.and_then(|r| r.corpus.sparse_weight),
+        sparse_encoder: repo_config.and_then(|r| r.corpus.sparse_encoder.clone()),
     }
 }
 

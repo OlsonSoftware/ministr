@@ -119,6 +119,16 @@ const MATRIX: &[Row] = &[
         cli_one_shot: Honored::Yes,
         daemon_registry: Honored::Yes,
     },
+    // sparse_encoder — repo `[corpus] sparse_encoder` (rq-ast-sparse-encoder).
+    // Selects the encoder behind hybrid retrieval: "ast" (default, zero-model
+    // BM25F over AST roles) or "splade" (neural). Both surfaces route through
+    // `ministr_core::embedding::build_sparse_components`, which also guards
+    // sidecar coherence via the `sparse_encoder.tag` marker.
+    Row {
+        knob: "sparse_encoder",
+        cli_one_shot: Honored::Yes,
+        daemon_registry: Honored::Yes,
+    },
 ];
 
 /// The canonical per-corpus knob names, mirroring both the
@@ -133,6 +143,7 @@ const KNOBS: &[&str] = &[
     "claim_extraction",
     "ignore",
     "sparse_weight",
+    "sparse_encoder",
 ];
 
 fn row(knob: &str) -> &'static Row {
@@ -157,6 +168,7 @@ fn matrix_covers_every_effective_knob_exhaustively() {
         claim_extraction,
         ignore,
         sparse_weight,
+        sparse_encoder,
     } = resolve_effective_corpus_config(None, None, &MinistrConfig::default());
     // Touch every binding so a removed knob is a compile error here too.
     let _ = (
@@ -168,6 +180,7 @@ fn matrix_covers_every_effective_knob_exhaustively() {
         &claim_extraction,
         &ignore,
         &sparse_weight,
+        &sparse_encoder,
     );
 
     // `KNOBS` (module scope) is the runtime mirror of the destructure above.
@@ -242,6 +255,34 @@ fn sparse_weight_is_honored_via_the_shared_seam() {
 }
 
 #[test]
+fn sparse_encoder_is_honored_via_the_shared_seam() {
+    // rq-ast-sparse-encoder: absent → None, which `SparseEncoderKind::parse`
+    // maps to the zero-model AST default; set → carried verbatim for both
+    // surfaces to hand the shared `build_sparse_components` seam.
+    let global = MinistrConfig::default();
+    let eff = resolve_effective_corpus_config(None, None, &global);
+    assert_eq!(eff.sparse_encoder, None, "absent knob = AST default");
+
+    let repo = RepoConfig {
+        corpus: CorpusSpec {
+            sparse_encoder: Some("splade".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let eff = resolve_effective_corpus_config(Some(&repo), None, &global);
+    assert_eq!(
+        eff.sparse_encoder.as_deref(),
+        Some("splade"),
+        "the shared seam must honor a repo [corpus] sparse_encoder"
+    );
+
+    let r = row("sparse_encoder");
+    assert_eq!(r.cli_one_shot, Honored::Yes);
+    assert_eq!(r.daemon_registry, Honored::Yes);
+}
+
+#[test]
 fn known_registry_gaps_are_tracked_never_silent() {
     // The registry now applies the per-corpus MODEL (embedder pool,
     // parity-seam-registry-routing), the Matryoshka DIMENSION + RERANK_DEPTH
@@ -264,6 +305,7 @@ fn known_registry_gaps_are_tracked_never_silent() {
                 | "min_section_tokens"
                 | "ignore"
                 | "sparse_weight"
+                | "sparse_encoder"
         ) {
             assert_eq!(
                 r.daemon_registry,

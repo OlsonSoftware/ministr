@@ -127,6 +127,13 @@ eval-bakeoff:
 eval-bakeoff-code:
     cargo test -p ministr-core --test eval_retrieval -- --ignored --nocapture eval_model_bakeoff_code
 
+# rq-ast-sparse-encoder gate: dense-only vs zero-model AST/BM25F hybrid
+# (sparse_weight 0.6) on the code corpus, same dense model, deterministic
+# exact-scan index. Asserts hybrid beats dense on nDCG@5 + MRR and holds R@5;
+# prints the in-repo sparse encode cost. CPU-pinned like eval-quality.
+eval-ast-code $MINISTR_COREML="0":
+    cargo test -p ministr-core --test eval_retrieval -- --ignored --nocapture --exact eval_ast_hybrid_code
+
 # Calibration dump (model-free): print the real content_ids the index emits for
 # eval/corpus-code, used to author/verify eval/ground-truth-code.json section_ids.
 eval-dump-code-ids:

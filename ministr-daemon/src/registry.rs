@@ -1477,16 +1477,19 @@ impl CorpusRegistry {
     }
 
     /// rq4c: build the per-corpus sparse (hybrid) components when
-    /// `sparse_weight > 0` — the SPLADE embedder (model downloads on first
-    /// use, like the dense model) plus the inverted index loaded from the
-    /// `sparse_index.json` sidecar (empty for a fresh corpus;
-    /// `indexer::run_body` populates the same Arc during ingest). Returns
+    /// `sparse_weight > 0` — the configured encoder (default: the zero-model
+    /// AST/BM25F encoder; `sparse_encoder = "splade"` opts into the neural
+    /// model) plus the inverted index loaded from the `sparse_index.json`
+    /// sidecar (empty for a fresh corpus; `indexer::run_body` populates the
+    /// same Arc during ingest). Construction routes through the shared
+    /// ministr-core seam so the CLI and daemon cannot drift. Returns
     /// `(None, None)` when the knob is unset, keeping the corpus dense-only.
     #[allow(clippy::type_complexity)] // a pair of optional trait objects, named once
     fn build_sparse_components(
         &self,
         corpus_id: &str,
         sparse_weight: f32,
+        sparse_encoder: Option<&str>,
         index_dir: &std::path::Path,
     ) -> Result<
         (
@@ -1498,22 +1501,21 @@ impl CorpusRegistry {
         if sparse_weight <= 0.0 {
             return Ok((None, None));
         }
+        let kind = ministr_core::embedding::SparseEncoderKind::parse(sparse_encoder);
         let models_dir = self.config.data_dir.join("models");
-        let se = ministr_core::embedding::FastSparseEmbedder::new(
-            ministr_core::embedding::DEFAULT_SPARSE_MODEL,
-            Some(&models_dir.to_string_lossy()),
-        )
-        .map_err(|e| RegistryError::Embedder(format!("sparse embedder: {e}")))?;
-        let si =
-            <ministr_core::index::InvertedIndex as ministr_core::index::SparseIndex>::load_sparse(
-                index_dir,
-            )
-            .map_err(|e| RegistryError::Storage(format!("load sparse sidecar: {e}")))?;
+        let (se, si) =
+            ministr_core::embedding::build_sparse_components(kind, Some(&models_dir), index_dir)
+                .map_err(|e| RegistryError::Embedder(format!("sparse components: {e}")))?;
         info!(
             corpus_id,
-            sparse_weight, "hybrid (sparse+dense) retrieval enabled"
+            sparse_weight,
+            encoder = kind.tag(),
+            "hybrid (sparse+dense) retrieval enabled"
         );
-        Ok((Some(Arc::new(se)), Some(Arc::new(si))))
+        Ok((
+            Some(se),
+            Some(si as Arc<dyn ministr_core::index::SparseIndex>),
+        ))
     }
 
     async fn create_handle(
@@ -1580,8 +1582,12 @@ impl CorpusRegistry {
         // loads empty for a fresh corpus and `indexer::run` populates the
         // same Arc during ingest.
         let sparse_weight = cfg.sparse_weight.unwrap_or(0.0);
-        let (sparse_embedder, sparse_index) =
-            self.build_sparse_components(corpus_id, sparse_weight, &index_dir)?;
+        let (sparse_embedder, sparse_index) = self.build_sparse_components(
+            corpus_id,
+            sparse_weight,
+            cfg.sparse_encoder.as_deref(),
+            &index_dir,
+        )?;
         if let (Some(se), Some(si)) = (&sparse_embedder, &sparse_index) {
             service = service.with_sparse(Arc::clone(se), Arc::clone(si), sparse_weight);
         }

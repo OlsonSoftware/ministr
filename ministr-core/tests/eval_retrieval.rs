@@ -11,7 +11,7 @@ use std::path::Path;
 
 use common::{
     ExpectedResult, GroundTruth, ndcg_at_k, precision_at_k, probe_corpus_ids, recall_at_k,
-    reciprocal_rank, run_eval_with_embedder,
+    reciprocal_rank, run_ast_hybrid_eval_with_embedder, run_eval_with_embedder,
 };
 use ministr_core::embedding::Embedder;
 use ministr_core::error::IndexError;
@@ -268,6 +268,82 @@ async fn eval_retrieval_real_embedder() {
         results.mrr >= BASELINE_MRR,
         "MRR {:.3} regressed below baseline floor {BASELINE_MRR}",
         results.mrr
+    );
+}
+
+/// rq-ast-sparse-encoder — the zero-model AST/BM25F hybrid gate on the CODE
+/// corpus: dense-only vs ast-hybrid (`sparse_weight` 0.6) with the SAME real
+/// dense embedder on the deterministic exact-scan index. The research-side
+/// evidence (optimize-ingest Phases 9-10, byte-deterministic): ast-hybrid
+/// beat the bge-m3 hybrid bars on 893 synthetic queries (.891/.960 vs
+/// .833/.927 nDCG) and lifted a never-seen corpus +40%; caveats — on 26
+/// human queries bge-m3 keeps a −.019 edge, bge-m3-on-paraphrases was never
+/// measured, and the BM25F fold omits length normalization by design.
+///
+/// THIS gate asserts the in-repo claim: hybrid must beat dense-only on the
+/// 26-query code eval on nDCG@5 + MRR and not regress R@5. The encode-cost
+/// measurement prints alongside (the bge-m3 ingest-delta comparison leg is
+/// research-cited: ~10 min vs ~0.2 s for ~7,300 entries; its 600 MB model is
+/// not downloaded here).
+///
+/// `#[ignore]`: loads the real dense model. Run via `just eval-ast-code`
+/// (CPU-pinned for determinism, like eval-quality).
+#[tokio::test]
+#[ignore = "loads a real embedding model; run via `just eval-ast-code`"]
+async fn eval_ast_hybrid_code() {
+    use ministr_core::embedding::FastEmbedder;
+
+    let Some((corpus_path, ground_truth)) =
+        load_eval_data_from("eval/corpus-code", "eval/ground-truth-code.json")
+    else {
+        eprintln!("Skipping: eval/corpus-code data not found");
+        return;
+    };
+
+    let embedder = FastEmbedder::new("all-MiniLM-L6-v2", None)
+        .expect("failed to load real embedding model (all-MiniLM-L6-v2)");
+
+    let dense = run_eval_with_embedder(&corpus_path, &ground_truth, &embedder, false).await;
+    let hybrid =
+        run_ast_hybrid_eval_with_embedder(&corpus_path, &ground_truth, &embedder, 0.6, false).await;
+
+    eprintln!();
+    eprintln!("=== AST-sparse hybrid vs dense-only (code corpus, all-MiniLM-L6-v2) ===");
+    eprintln!("Queries:     {}", dense.query_count);
+    eprintln!(
+        "P@5:         dense {:.3} -> hybrid {:.3}",
+        dense.mean_precision, hybrid.mean_precision
+    );
+    eprintln!(
+        "R@5:         dense {:.3} -> hybrid {:.3}",
+        dense.mean_recall, hybrid.mean_recall
+    );
+    eprintln!(
+        "MRR:         dense {:.3} -> hybrid {:.3}",
+        dense.mrr, hybrid.mrr
+    );
+    eprintln!(
+        "nDCG@5:      dense {:.3} -> hybrid {:.3}",
+        dense.mean_ndcg, hybrid.mean_ndcg
+    );
+
+    assert!(
+        hybrid.mean_ndcg > dense.mean_ndcg,
+        "ast-hybrid nDCG@5 {:.3} must beat dense-only {:.3} on the code corpus",
+        hybrid.mean_ndcg,
+        dense.mean_ndcg
+    );
+    assert!(
+        hybrid.mrr > dense.mrr,
+        "ast-hybrid MRR {:.3} must beat dense-only {:.3} on the code corpus",
+        hybrid.mrr,
+        dense.mrr
+    );
+    assert!(
+        hybrid.mean_recall >= dense.mean_recall,
+        "ast-hybrid R@5 {:.3} must not regress dense-only {:.3}",
+        hybrid.mean_recall,
+        dense.mean_recall
     );
 }
 

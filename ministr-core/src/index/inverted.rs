@@ -84,6 +84,27 @@ impl InvertedIndex {
             inner: RwLock::new(InvertedIndexInner::default()),
         }
     }
+
+    /// Number of live documents containing `term_id`.
+    ///
+    /// Posting lists hold one entry per (term, document) and deletions strip
+    /// postings eagerly, so the list length *is* the document frequency. This
+    /// is the statistic query-time IDF derives from (`AstSparseEncoder`) —
+    /// document frequency lives in the persisted sidecar, so it can never
+    /// drift from the indexed corpus.
+    #[must_use]
+    pub fn doc_frequency(&self, term_id: u32) -> usize {
+        self.inner
+            .read()
+            .map_or(0, |inner| inner.postings.get(&term_id).map_or(0, Vec::len))
+    }
+
+    /// Number of live (non-tombstoned) documents in the index.
+    #[must_use]
+    pub fn doc_count(&self) -> usize {
+        use super::SparseIndex as _;
+        self.len_sparse()
+    }
 }
 
 impl Default for InvertedIndex {

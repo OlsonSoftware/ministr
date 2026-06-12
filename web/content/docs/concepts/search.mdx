@@ -11,7 +11,7 @@ The query is embedded and searched against every vector resolution at once — d
 
 ## 2. Hybrid sparse fusion
 
-With `sparse_weight > 0` in [configuration](/docs/guides/configuration#hybrid-retrieval-sparse_weight), ingestion also builds a sparse (SPLADE) keyword index and dense + sparse rankings are fused with weighted reciprocal-rank fusion. This is the exact-identifier recovery path for code: a search for a specific function name ranks it first even when embedding similarity alone would not. The weight is deliberately per-corpus — code corpora measured best at `0.6`, while documentation corpora measured best with fusion off entirely.
+With `sparse_weight > 0` in [configuration](/docs/guides/configuration#hybrid-retrieval-sparse_weight), ingestion also builds a sparse keyword index and dense + sparse rankings are fused with weighted reciprocal-rank fusion. This is the exact-identifier recovery path for code: a search for a specific function name ranks it first even when embedding similarity alone would not. The default sparse encoder is zero-model and structural — BM25F over the definition name / doc comment / signature / body roles with identifier subtokens and corpus IDF — so it is deterministic, costs no download, and encodes in milliseconds (`sparse_encoder = "splade"` opts into the neural alternative). The weight is deliberately per-corpus — code corpora measured best at `0.6`, while documentation corpora measured best with fusion off entirely.
 
 ## 3. Matryoshka two-stage rescoring
 

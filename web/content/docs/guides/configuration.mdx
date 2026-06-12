@@ -24,15 +24,26 @@ paths = ["src", "docs"]
 | `dimension` | integer | — | Matryoshka truncation target; only useful with Matryoshka models like `nomic-embed-text-v1.5` |
 | `rerank_depth` | integer | `100` when `dimension` set | coarse candidates rescored at full dimension; `0` disables |
 | `sparse_weight` | float | — (dense-only) | hybrid retrieval: sparse (keyword) share of the dense+sparse fusion, `0.0–1.0`. `ministr init` writes `0.6` for code projects |
+| `sparse_encoder` | string | `"ast"` | sparse encoder behind hybrid retrieval: `"ast"` (zero-model, deterministic) or `"splade"` (neural; ~100 MB download) |
 
 ### Hybrid retrieval (`sparse_weight`)
 
-With `sparse_weight > 0`, ingestion also builds a sparse (SPLADE) keyword
-index and every survey fuses dense and sparse rankings — the
-exact-identifier recovery path for code, where a search for a specific
-function name ranks it first even when embedding similarity alone would not.
-The sparse model (~100 MB) downloads on first use and ingestion does extra
-inference, so the knob is per-corpus and visible, never silently on.
+With `sparse_weight > 0`, ingestion also builds a sparse keyword index and
+every survey fuses dense and sparse rankings — the exact-identifier
+recovery path for code, where a search for a specific function name ranks
+it first even when embedding similarity alone would not.
+
+The default encoder is **structural, not neural**: a BM25F-style scorer
+over the roles ministr already derives from your code (definition name,
+doc comment, signature, body), with identifier subtokens and corpus IDF.
+It needs no model download, adds ~no ingest time (thousands of entries
+encode in milliseconds), and is fully deterministic. On ministr's
+deterministic code evals it outperformed the neural sparse encoder
+(nDCG@5 .891 vs .833 over 871 queries) — with one honest exception: on
+human-phrased queries the neural encoder kept a small (~.02 nDCG)
+semantic-expansion edge. Set `sparse_encoder = "splade"` to use the neural
+model instead (~100 MB download, slower ingest). Switching encoders
+discards the sparse index; re-index to repopulate it.
 
 **Pick the weight by corpus type — there is no good global value.** On
 ministr's own deterministic evaluation corpora (2026-06): code retrieval

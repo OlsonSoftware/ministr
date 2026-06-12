@@ -82,10 +82,13 @@ fn sparse_embed_and_insert(
     if pairs.is_empty() {
         return Ok(());
     }
-    let texts: Vec<&str> = pairs.iter().map(|(_, t)| t.as_str()).collect();
+    let entries: Vec<(&str, &str)> = pairs
+        .iter()
+        .map(|(vid, t)| (vid.as_str(), t.as_str()))
+        .collect();
     let sparse_vecs =
         sparse_embedder
-            .embed_sparse(&texts)
+            .embed_sparse_docs(&entries)
             .map_err(|e| IngestionError::Embedding {
                 reason: format!("sparse embedding failed: {e}"),
             })?;

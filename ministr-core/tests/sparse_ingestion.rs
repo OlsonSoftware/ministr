@@ -219,3 +219,80 @@ async fn removed_file_is_swept_from_the_sparse_index_on_reingest() {
         "beta's sparse entries are gone"
     );
 }
+
+/// End-to-end hybrid retrieval with the REAL zero-model AST encoder
+/// (rq-ast-sparse-encoder): ingest through the production pipeline, then an
+/// exact-identifier query must surface the right document via the sparse leg
+/// — no model download, fully deterministic, CI-safe.
+#[tokio::test]
+async fn ast_encoder_hybrid_finds_exact_identifier_end_to_end() {
+    use ministr_core::embedding::AstSparseEncoder;
+    use ministr_core::search::{MultiResolutionSearch, SearchConfig};
+
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("retry.rs"),
+        "/// Computes the exponential backoff delay.\npub fn compute_backoff_delay(attempt: u32) -> u64 {\n    1u64 << attempt\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("quorum.rs"),
+        "/// Tracks quorum lease ownership.\npub fn quorum_lease_owner(node: u32) -> u32 {\n    node\n}\n",
+    )
+    .unwrap();
+
+    let dense = MockDense { dim: 8 };
+    let index = HnswIndex::new(8, 1000).unwrap();
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let sparse_index: Arc<InvertedIndex> = Arc::new(InvertedIndex::new());
+    let encoder = Arc::new(AstSparseEncoder::new(Arc::clone(&sparse_index)));
+
+    IngestionPipeline::new()
+        .with_sparse_indexing(
+            Arc::clone(&encoder) as Arc<dyn SparseEmbedder>,
+            Arc::clone(&sparse_index) as Arc<dyn SparseIndex>,
+        )
+        .ingest_directory_with_embeddings(tmp.path(), &storage, &dense, &index)
+        .await
+        .expect("ingest");
+    assert!(sparse_index.len_sparse() > 0, "sparse index populated");
+
+    // The dense mock is near-meaningless (byte hashes), so a hybrid hit on
+    // the exact identifier demonstrates the AST sparse leg doing the work.
+    let searcher = MultiResolutionSearch::new(&dense, &index)
+        .with_sparse(encoder.as_ref(), sparse_index.as_ref());
+    let config = SearchConfig {
+        raw_k: 30,
+        top_k: 5,
+        sparse_weight: 0.6,
+        rerank_top_k: None,
+    };
+    let results = searcher
+        .search("compute_backoff_delay", config)
+        .expect("hybrid search");
+    assert!(
+        results
+            .first()
+            .is_some_and(|r| r.vector_id.content_id().contains("retry.rs")),
+        "exact-identifier query must rank the defining file first; got {:?}",
+        results
+            .iter()
+            .map(|r| r.vector_id.content_id())
+            .collect::<Vec<_>>()
+    );
+
+    // Determinism: the same query twice returns the identical ranking.
+    let again = searcher
+        .search("compute_backoff_delay", config)
+        .expect("again");
+    let ids = |rs: &[ministr_core::search::ScoredResult]| -> Vec<String> {
+        rs.iter()
+            .map(|r| r.vector_id.as_str().to_string())
+            .collect()
+    };
+    assert_eq!(
+        ids(&results),
+        ids(&again),
+        "hybrid ranking is deterministic"
+    );
+}
