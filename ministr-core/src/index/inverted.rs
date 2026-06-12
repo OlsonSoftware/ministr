@@ -146,9 +146,15 @@ impl SparseIndex for InvertedIndex {
             }
         }
 
-        // Sort by score descending, take top k
+        // Sort by score descending, ties by doc ID ascending, take top k.
+        // The ID tie-break makes exact-score ties deterministic: discrete-
+        // valued sparse encoders (BM25-class) tie constantly, and without it
+        // the order follows HashMap iteration — different every process run.
         let mut results: Vec<(usize, f32)> = scores.into_iter().collect();
-        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.1.total_cmp(&a.1)
+                .then_with(|| inner.doc_ids[a.0].cmp(&inner.doc_ids[b.0]))
+        });
         results.truncate(k);
 
         Ok(results
@@ -306,6 +312,33 @@ mod tests {
         }
         let results = index.search_sparse(&[1], &[1.0], 3).unwrap();
         assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn exact_score_ties_resolve_by_doc_id_ascending() {
+        // Regression: the sort used partial_cmp with no tie-break, so
+        // exact-score ties followed HashMap iteration order — a different
+        // order every process run. Discrete-weight encoders (BM25-class)
+        // tie constantly, so hybrid results were nondeterministic.
+        let index = InvertedIndex::new();
+        // Insert in scrambled order; every doc scores exactly 1.0.
+        for name in ["doc-f", "doc-b", "doc-e", "doc-a", "doc-d", "doc-c"] {
+            index.insert_sparse(name, &[1], &[1.0]).unwrap();
+        }
+
+        let results = index.search_sparse(&[1], &[1.0], 10).unwrap();
+        let ids: Vec<&str> = results.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["doc-a", "doc-b", "doc-c", "doc-d", "doc-e", "doc-f"],
+            "tied scores must order by doc ID ascending"
+        );
+
+        // The top-k cut among ties must also be deterministic: the k
+        // lexicographically-smallest IDs survive.
+        let top3 = index.search_sparse(&[1], &[1.0], 3).unwrap();
+        let top3_ids: Vec<&str> = top3.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(top3_ids, ["doc-a", "doc-b", "doc-c"]);
     }
 
     #[test]
