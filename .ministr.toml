@@ -15,3 +15,8 @@ ignore = [
     "*.pdf",
 ]
 
+# Hybrid (dense + sparse) retrieval — measured knee for code corpora.
+# The default sparse encoder is the zero-model AST/BM25F one (deterministic,
+# no download); set sparse_encoder = "splade" to opt into the neural model.
+sparse_weight = 0.6
+
