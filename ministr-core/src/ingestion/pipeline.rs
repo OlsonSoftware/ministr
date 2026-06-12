@@ -584,6 +584,16 @@ pub struct IngestionPipeline {
     /// borderline doc out of top-5). Kept default-OFF on that net; exposed as
     /// an opt-in so per-corpus callers + future code-corpus evals can measure it.
     contextualize_embeddings: bool,
+    /// Optional sparse (SPLADE-style) embedder for hybrid retrieval (rq4b).
+    /// When set together with `sparse_index`, the embed stage also
+    /// sparse-embeds every `(VectorId, text)` pair and populates the inverted
+    /// index, making the RRF hybrid query path real. `None` (default) keeps
+    /// ingestion dense-only at zero added cost.
+    sparse_embedder: Option<Arc<dyn crate::embedding::SparseEmbedder>>,
+    /// The inverted index `sparse_embedder` populates. Delete/rollback paths
+    /// mirror dense deletions here so the two indexes never disagree, and the
+    /// end-of-ingest hook persists it as a sidecar next to the HNSW files.
+    sparse_index: Option<Arc<dyn crate::index::SparseIndex>>,
 }
 
 impl Default for IngestionPipeline {
@@ -611,6 +621,8 @@ impl IngestionPipeline {
             corpus_dir: None,
             embedding_service: None,
             contextualize_embeddings: false,
+            sparse_embedder: None,
+            sparse_index: None,
         }
     }
 
@@ -650,6 +662,42 @@ impl IngestionPipeline {
     ) -> Self {
         self.dual_embedder = Some(dual_embedder);
         self.full_dim_storage = Some(storage);
+        self
+    }
+
+    /// rq4b: persist the sparse sidecar next to the HNSW files at the end of
+    /// a successful ingest (when both a sparse index and a corpus dir are
+    /// configured). The dense index is persisted by the caller / the mid-run
+    /// checkpoint; the sparse sidecar is cheap (JSON) so end-of-ingest is
+    /// sufficient.
+    fn persist_sparse_sidecar(&self) -> Result<(), IngestionError> {
+        if let (Some(si), Some(dir)) = (self.sparse_index.as_deref(), self.corpus_dir.as_deref()) {
+            si.persist_sparse(dir)
+                .map_err(|e| IngestionError::Embedding {
+                    reason: format!("sparse index persist failed: {e}"),
+                })?;
+        }
+        Ok(())
+    }
+
+    /// Enable sparse (hybrid) indexing during ingestion (rq4b).
+    ///
+    /// When set, the embed stage sparse-embeds every `(VectorId, text)` pair
+    /// it dense-embeds — on BOTH the single and dual (Matryoshka) paths — and
+    /// inserts the result into `sparse_index`. Document deletion and
+    /// embed-failure rollback mirror dense deletions into the sparse index,
+    /// and the end of a successful ingest persists it as a sidecar in the
+    /// corpus dir (when one is configured via [`Self::with_corpus_dir`]).
+    /// Default off: without this call, ingestion is bit-identical to the
+    /// dense-only pipeline.
+    #[must_use]
+    pub fn with_sparse_indexing(
+        mut self,
+        sparse_embedder: Arc<dyn crate::embedding::SparseEmbedder>,
+        sparse_index: Arc<dyn crate::index::SparseIndex>,
+    ) -> Self {
+        self.sparse_embedder = Some(sparse_embedder);
+        self.sparse_index = Some(sparse_index);
         self
     }
 
@@ -926,6 +974,7 @@ impl IngestionPipeline {
                 hash_path: Some(relative_path),
                 content_hash: Some(hash),
                 mtime_ns: file_mtime_ns,
+                sparse_index: self.sparse_index.as_deref(),
             },
         )
         .await?;
@@ -982,6 +1031,7 @@ impl IngestionPipeline {
                 hash_path: Some(source_path),
                 content_hash: Some(hash),
                 mtime_ns: None,
+                sparse_index: self.sparse_index.as_deref(),
             },
         )
         .await?;
@@ -1046,6 +1096,7 @@ impl IngestionPipeline {
                 hash_path: Some(source_path),
                 content_hash: Some(hash),
                 mtime_ns: None,
+                sparse_index: self.sparse_index.as_deref(),
             },
         )
         .await?;
@@ -1101,7 +1152,13 @@ impl IngestionPipeline {
         S: Storage + ?Sized,
         I: VectorIndex + ?Sized,
     {
-        let deleted = super::embedding::delete_document_vectors(doc_id, storage, index).await?;
+        let deleted = super::embedding::delete_document_vectors(
+            doc_id,
+            storage,
+            index,
+            self.sparse_index.as_deref(),
+        )
+        .await?;
         storage
             .delete_document(doc_id)
             .await
@@ -1230,7 +1287,16 @@ impl IngestionPipeline {
         )
         .await;
 
-        Self::sweep_stale_documents(storage, index, dir, root_id, &files, &mut stats).await?;
+        Self::sweep_stale_documents(
+            storage,
+            index,
+            self.sparse_index.as_deref(),
+            dir,
+            root_id,
+            &files,
+            &mut stats,
+        )
+        .await?;
 
         info!(
             indexed = stats.files_indexed,
@@ -1435,6 +1501,7 @@ impl IngestionPipeline {
     async fn sweep_stale_documents<S, I>(
         storage: &S,
         index: &I,
+        sparse_index: Option<&dyn crate::index::SparseIndex>,
         dir: &Path,
         root_id: Option<&str>,
         files: &[PathBuf],
@@ -1510,7 +1577,8 @@ impl IngestionPipeline {
                 continue;
             }
             debug!(path = %doc.source_path, "file removed, deleting from index");
-            super::embedding::delete_document_vectors(&doc.id, storage, index).await?;
+            super::embedding::delete_document_vectors(&doc.id, storage, index, sparse_index)
+                .await?;
             storage
                 .delete_document(&doc.id)
                 .await
@@ -1778,7 +1846,13 @@ impl IngestionPipeline {
                     continue;
                 }
                 debug!(path = %doc.source_path, "file removed, deleting from index");
-                super::embedding::delete_document_vectors(&doc.id, storage, index).await?;
+                super::embedding::delete_document_vectors(
+                    &doc.id,
+                    storage,
+                    index,
+                    self.sparse_index.as_deref(),
+                )
+                .await?;
                 storage
                     .delete_document(&doc.id)
                     .await
@@ -1902,6 +1976,12 @@ impl IngestionPipeline {
             .dual_embedder
             .as_ref()
             .zip(self.full_dim_storage.as_ref());
+        // rq4b: sparse (hybrid) indexing rides the same embed channel — the
+        // consumer sparse-embeds every flushed batch into the inverted index.
+        let sparse = self
+            .sparse_embedder
+            .as_deref()
+            .zip(self.sparse_index.as_deref());
         let progress_ref = self.progress.as_ref();
         let service_ref = self.embedding_service.as_deref();
         // Copy the shared storage reference for the consumer (`&S` is `Copy`),
@@ -1919,6 +1999,7 @@ impl IngestionPipeline {
                 embedder,
                 service_ref,
                 dual.map(|(d, s)| (d.as_ref(), s)),
+                sparse,
                 index,
                 progress_ref,
             )
@@ -1945,10 +2026,17 @@ impl IngestionPipeline {
                 error = %err,
                 "embedding failed — rolling back partially-indexed documents",
             );
-            super::embedding::rollback_partial_documents(&docs_to_rollback, storage, index).await;
+            super::embedding::rollback_partial_documents(
+                &docs_to_rollback,
+                storage,
+                index,
+                self.sparse_index.as_deref(),
+            )
+            .await;
         }
 
         let embed_count = embed_result?;
+        self.persist_sparse_sidecar()?;
 
         if let Some(ref progress) = self.progress {
             // fg4 — per-stage observability: emit the run's throughput +
@@ -2131,6 +2219,7 @@ impl IngestionPipeline {
                 hash_path: Some(relative_path),
                 content_hash: Some(hash),
                 mtime_ns: file_mtime_ns,
+                sparse_index: self.sparse_index.as_deref(),
             },
         )
         .await?;
@@ -2802,6 +2891,7 @@ mod rooted_helper_tests {
         IngestionPipeline::sweep_stale_documents(
             &storage,
             &index,
+            None,
             dir,
             Some(ROOT_A),
             &files,
@@ -2830,6 +2920,7 @@ mod rooted_helper_tests {
         IngestionPipeline::sweep_stale_documents(
             &storage,
             &index,
+            None,
             dir,
             Some(ROOT_A),
             &files,
@@ -2861,6 +2952,7 @@ mod rooted_helper_tests {
         IngestionPipeline::sweep_stale_documents(
             &storage,
             &index,
+            None,
             dir,
             Some(ROOT_A),
             &files,
@@ -2894,6 +2986,7 @@ mod rooted_helper_tests {
         IngestionPipeline::sweep_stale_documents(
             &storage,
             &index,
+            None,
             dir,
             Some(ROOT_A),
             &files,
@@ -2920,6 +3013,7 @@ mod rooted_helper_tests {
         IngestionPipeline::sweep_stale_documents(
             &storage,
             &index,
+            None,
             dir,
             Some(ROOT_A),
             &files,
@@ -2949,9 +3043,11 @@ mod rooted_helper_tests {
 
         let files = [PathBuf::from("/corpus/keep.rs")];
         let mut stats = IngestionStats::new(files.len());
-        IngestionPipeline::sweep_stale_documents(&storage, &index, dir, None, &files, &mut stats)
-            .await
-            .expect("sweep");
+        IngestionPipeline::sweep_stale_documents(
+            &storage, &index, None, dir, None, &files, &mut stats,
+        )
+        .await
+        .expect("sweep");
 
         assert_eq!(stats.files_removed, 1);
         assert_eq!(surviving_paths(&storage).await, vec!["keep.rs".to_string()]);

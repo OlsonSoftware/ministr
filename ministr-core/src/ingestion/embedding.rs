@@ -368,10 +368,14 @@ fn contextualize_text(heading_path: &[String], text: &str) -> String {
 }
 
 /// Delete all vectors associated with a document from the index.
+///
+/// When a sparse (hybrid) index is in play (rq4b), the same vector ids are
+/// tombstoned there too — dense and sparse views of a document never disagree.
 pub(crate) async fn delete_document_vectors<S: Storage + ?Sized, I: VectorIndex + ?Sized>(
     doc_id: &crate::types::ContentId,
     storage: &S,
     index: &I,
+    sparse_index: Option<&dyn crate::index::SparseIndex>,
 ) -> Result<usize, IngestionError> {
     let mut deleted = 0;
     // D4: collect every vector id we remove from the index so we can also
@@ -465,6 +469,15 @@ pub(crate) async fn delete_document_vectors<S: Storage + ?Sized, I: VectorIndex 
         let _ = storage.delete_symbols_for_file(&doc.source_path).await;
     }
 
+    // rq4b: mirror every removed id into the sparse index so hybrid search
+    // never surfaces a tombstoned document. Best-effort per id — a sparse
+    // miss is normal for ids ingested before sparse indexing was enabled.
+    if let Some(sparse) = sparse_index {
+        for vid in &removed_vids {
+            let _ = sparse.delete_sparse(vid);
+        }
+    }
+
     // D4: remove the same ids from the indexed_vectors source of truth.
     let refs: Vec<&str> = removed_vids.iter().map(String::as_str).collect();
     storage
@@ -482,13 +495,17 @@ pub(crate) async fn delete_document_vectors<S: Storage + ?Sized, I: VectorIndex 
 /// indexed — the Persist-stage "no partial document" invariant. Best-effort:
 /// per-document failures are logged and skipped, since the caller is already on
 /// the error path.
-pub(crate) async fn rollback_partial_documents<S, I>(docs: &[ContentId], storage: &S, index: &I)
-where
+pub(crate) async fn rollback_partial_documents<S, I>(
+    docs: &[ContentId],
+    storage: &S,
+    index: &I,
+    sparse_index: Option<&dyn crate::index::SparseIndex>,
+) where
     S: Storage + ?Sized,
     I: VectorIndex + ?Sized,
 {
     for doc_id in docs {
-        if let Err(e) = delete_document_vectors(doc_id, storage, index).await {
+        if let Err(e) = delete_document_vectors(doc_id, storage, index, sparse_index).await {
             warn!(doc_id = %doc_id, error = %e, "rollback: delete vectors failed");
         }
         if let Err(e) = storage.delete_document(doc_id).await {
@@ -521,6 +538,7 @@ mod tests {
             std::slice::from_ref(&ContentId("doc1".to_owned())),
             &storage,
             &index,
+            None,
         )
         .await;
 

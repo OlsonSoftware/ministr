@@ -40,6 +40,10 @@ pub(super) struct ProcessOptions<'a> {
     pub content_hash: Option<String>,
     /// File mtime in nanos. Stored alongside the hash when available.
     pub mtime_ns: Option<i64>,
+    /// Sparse (hybrid) index to mirror dense vector deletions into when a
+    /// re-indexed document's old vectors are torn down (rq4b). `None` when
+    /// sparse indexing is not configured.
+    pub sparse_index: Option<&'a dyn crate::index::SparseIndex>,
 }
 
 /// The shared document processing pipeline.
@@ -97,7 +101,7 @@ where
     // 6. Delete old document (+ vectors if re-indexing)
     if existing_hash {
         if let Some(index) = delete_vectors_index {
-            delete_document_vectors(&doc.id, storage, index).await?;
+            delete_document_vectors(&doc.id, storage, index, opts.sparse_index).await?;
         }
         storage
             .delete_document(&doc.id)

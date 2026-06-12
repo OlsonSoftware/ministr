@@ -14,9 +14,9 @@
 
 use std::sync::Arc;
 
-use crate::embedding::{DualEmbedder, Embedder, EmbeddingService};
+use crate::embedding::{DualEmbedder, Embedder, EmbeddingService, SparseEmbedder};
 use crate::error::IngestionError;
-use crate::index::VectorIndex;
+use crate::index::{SparseIndex, VectorIndex};
 use crate::storage::{SqliteStorage, Storage};
 use crate::types::VectorId;
 
@@ -35,12 +35,14 @@ use super::pipeline::{IngestionPhase, IngestionProgress};
 /// # Errors
 ///
 /// Propagates [`IngestionError`] from embedding or vector insertion.
+#[allow(clippy::too_many_arguments)] // stage wiring — each input is a distinct seam
 pub(super) async fn run_embed_stage<S, E, I>(
     embed_rx: tokio::sync::mpsc::Receiver<Vec<(VectorId, String)>>,
     storage: &S,
     embedder: &E,
     service: Option<&EmbeddingService>,
     dual: Option<(&dyn DualEmbedder, &SqliteStorage)>,
+    sparse: Option<(&dyn SparseEmbedder, &dyn SparseIndex)>,
     index: &I,
     progress: Option<&Arc<IngestionProgress>>,
 ) -> Result<usize, IngestionError>
@@ -52,10 +54,49 @@ where
     if let Some((dual_embedder, full_dim_storage)) = dual {
         // The dual path persists the truncated indexed vectors via
         // `full_dim_storage` (the same content.db) inside the batch helper.
-        consume_dual(embed_rx, dual_embedder, index, full_dim_storage, progress).await
+        consume_dual(
+            embed_rx,
+            dual_embedder,
+            index,
+            full_dim_storage,
+            sparse,
+            progress,
+        )
+        .await
     } else {
-        consume_single(embed_rx, storage, embedder, service, index, progress).await
+        consume_single(
+            embed_rx, storage, embedder, service, sparse, index, progress,
+        )
+        .await
     }
+}
+
+/// Sparse-embed a flushed batch and insert each `(VectorId, sparse vector)`
+/// into the inverted index (rq4b). Runs on the SAME `(VectorId, text)` pairs
+/// the dense path embeds, so the two indexes always cover identical content.
+fn sparse_embed_and_insert(
+    pairs: &[(VectorId, String)],
+    sparse_embedder: &dyn SparseEmbedder,
+    sparse_index: &dyn SparseIndex,
+) -> Result<(), IngestionError> {
+    if pairs.is_empty() {
+        return Ok(());
+    }
+    let texts: Vec<&str> = pairs.iter().map(|(_, t)| t.as_str()).collect();
+    let sparse_vecs =
+        sparse_embedder
+            .embed_sparse(&texts)
+            .map_err(|e| IngestionError::Embedding {
+                reason: format!("sparse embedding failed: {e}"),
+            })?;
+    for ((vid, _), sv) in pairs.iter().zip(sparse_vecs.iter()) {
+        sparse_index
+            .insert_sparse(vid.as_str(), &sv.indices, &sv.values)
+            .map_err(|e| IngestionError::Embedding {
+                reason: format!("sparse insert failed for {}: {e}", vid.as_str()),
+            })?;
+    }
+    Ok(())
 }
 
 /// Single-embedder path: consume embedding pairs from the producer channel,
@@ -65,6 +106,7 @@ async fn consume_single<S, E, I>(
     storage: &S,
     embedder: &E,
     service: Option<&EmbeddingService>,
+    sparse: Option<(&dyn SparseEmbedder, &dyn SparseIndex)>,
     index: &I,
     progress: Option<&Arc<IngestionProgress>>,
 ) -> Result<usize, IngestionError>
@@ -91,6 +133,9 @@ where
             let count =
                 batch_embed_and_insert(&buffer, embedder, service, index, storage, progress)
                     .await?;
+            if let Some((se, si)) = sparse {
+                sparse_embed_and_insert(&buffer, se, si)?;
+            }
             total_embeddings += count;
             buffer.clear();
         }
@@ -98,6 +143,9 @@ where
     if !buffer.is_empty() {
         let count =
             batch_embed_and_insert(&buffer, embedder, service, index, storage, progress).await?;
+        if let Some((se, si)) = sparse {
+            sparse_embed_and_insert(&buffer, se, si)?;
+        }
         total_embeddings += count;
     }
     Ok(total_embeddings)
@@ -110,6 +158,7 @@ async fn consume_dual<I>(
     dual_embedder: &dyn DualEmbedder,
     index: &I,
     full_dim_storage: &SqliteStorage,
+    sparse: Option<(&dyn SparseEmbedder, &dyn SparseIndex)>,
     progress: Option<&Arc<IngestionProgress>>,
 ) -> Result<usize, IngestionError>
 where
@@ -136,6 +185,9 @@ where
                 progress,
             )
             .await?;
+            if let Some((se, si)) = sparse {
+                sparse_embed_and_insert(&buffer, se, si)?;
+            }
             total_embeddings += count;
             buffer.clear();
         }
@@ -144,6 +196,9 @@ where
         let count =
             batch_embed_and_insert_dual(&buffer, dual_embedder, index, full_dim_storage, progress)
                 .await?;
+        if let Some((se, si)) = sparse {
+            sparse_embed_and_insert(&buffer, se, si)?;
+        }
         total_embeddings += count;
     }
     Ok(total_embeddings)
@@ -193,7 +248,7 @@ mod tests {
         .expect("send pairs");
         drop(tx); // close the channel so the stage drains and returns
 
-        let count = run_embed_stage(rx, &storage, &embedder, None, None, &index, None)
+        let count = run_embed_stage(rx, &storage, &embedder, None, None, None, &index, None)
             .await
             .expect("embed stage");
 
@@ -209,7 +264,7 @@ mod tests {
         let storage = SqliteStorage::open_in_memory().expect("storage");
         drop(tx);
 
-        let count = run_embed_stage(rx, &storage, &embedder, None, None, &index, None)
+        let count = run_embed_stage(rx, &storage, &embedder, None, None, None, &index, None)
             .await
             .expect("embed stage");
 
@@ -246,7 +301,7 @@ mod tests {
             .expect("send pairs");
         drop(tx);
 
-        let err = run_embed_stage(rx, &storage, &embedder, None, None, &index, None)
+        let err = run_embed_stage(rx, &storage, &embedder, None, None, None, &index, None)
             .await
             .expect_err("embedder failure must surface");
 
@@ -294,7 +349,7 @@ mod tests {
         .expect("send pairs");
         drop(tx);
 
-        let count = run_embed_stage(rx, &storage, &embedder, None, None, &index, None)
+        let count = run_embed_stage(rx, &storage, &embedder, None, None, None, &index, None)
             .await
             .expect("embed stage drains cleanly");
 

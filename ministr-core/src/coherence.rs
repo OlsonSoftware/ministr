@@ -440,9 +440,15 @@ impl CoherenceEngine {
         // and symbols via storage. Otherwise the index keeps stale
         // vectors whose documents no longer exist, and later surveys
         // return result rows that `ministr_read` can't service.
+        // NOTE (rq4b): the coherence engine doesn't hold a sparse index yet —
+        // sparse wiring for the watcher delete path lands with the query-side
+        // surface work (rq4c), which decides where the sparse index lives.
+        // Until then a watcher-removed file's sparse entries are cleaned up by
+        // the next full re-ingest's stale-document sweep.
         if let Some(ref index) = self.index
             && let Err(e) =
-                crate::ingestion::delete_document_vectors(&doc_id, storage, index.as_ref()).await
+                crate::ingestion::delete_document_vectors(&doc_id, storage, index.as_ref(), None)
+                    .await
         {
             tracing::warn!(
                 path = %path.display(),
