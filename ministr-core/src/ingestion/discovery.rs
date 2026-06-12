@@ -258,7 +258,7 @@ fn ignored_walk(dir: &Path, extra_ignores: &[String]) -> Result<ignore::Walk, In
 /// defense-in-depth re-check from callers that already know the file
 /// belongs to a particular corpus root (so without that information,
 /// the safe default is to defer to the walker).
-pub(super) fn is_in_ignored_dir(root: Option<&Path>, file_path: &Path) -> bool {
+pub(crate) fn is_in_ignored_dir(root: Option<&Path>, file_path: &Path) -> bool {
     let Some(root) = root else {
         return false;
     };
@@ -274,6 +274,89 @@ pub(super) fn is_in_ignored_dir(root: Option<&Path>, file_path: &Path) -> bool {
         }
     }
     false
+}
+
+/// Single-path exclusion check for watcher events (watcher-ignore-filtering).
+///
+/// The walker ([`ignored_walk`]) is the exclusion truth at discovery time,
+/// but file-watcher events arrive one path at a time, after discovery. This
+/// matcher answers "would the walker have excluded this path?" cheaply per
+/// path, from the same three layers:
+///
+/// 1. the built-in always-ignore directory names/globs (component check) and
+///    file patterns,
+/// 2. the corpus root's `.gitignore` (and the standard git global/exclude
+///    files via the `ignore` crate's gitignore semantics),
+/// 3. the user's `.ministr.toml` `[corpus] ignore` patterns.
+///
+/// Known, deliberate divergence: `.gitignore` files NESTED below the root
+/// are not consulted here (the walker honors them). A file excluded only by
+/// a nested gitignore may still pass this filter; the full-reindex path
+/// (which uses the walker) remains the cleanup backstop.
+#[derive(Debug)]
+pub struct ExclusionMatcher {
+    root: PathBuf,
+    gitignore: ignore::gitignore::Gitignore,
+}
+
+impl ExclusionMatcher {
+    /// Build a matcher for one corpus root with the given user patterns.
+    ///
+    /// Invalid user patterns are skipped with a warning, matching
+    /// [`ignored_walk`]'s tolerance.
+    #[must_use]
+    pub fn for_root(root: &Path, user_patterns: &[String]) -> Self {
+        let mut builder = ignore::gitignore::GitignoreBuilder::new(root);
+        // Root .gitignore, if present (nested ones deliberately not
+        // consulted) — and ONLY inside a git repository: the walker's
+        // `ignore` crate applies gitignore rules only when the tree is
+        // git-controlled (`require_git`), so the matcher must too or the
+        // two disagree on non-git corpora (caught by
+        // `exclusion_matcher_agrees_with_the_walker`).
+        let in_git_repo = root.ancestors().any(|a| a.join(".git").exists());
+        let gitignore_path = root.join(".gitignore");
+        if in_git_repo && gitignore_path.is_file() {
+            let _ = builder.add(&gitignore_path);
+        }
+        // Built-in file patterns + dir globs (dir names are checked separately
+        // via the component check, which is cheaper and depth-independent).
+        for pattern in ALWAYS_IGNORE_PATTERNS {
+            let _ = builder.add_line(None, pattern);
+        }
+        for pattern in ALWAYS_IGNORE_DIR_GLOBS {
+            let _ = builder.add_line(None, &format!("**/{pattern}/"));
+        }
+        // User `[corpus] ignore` patterns — same vocabulary the walker takes.
+        for pattern in user_patterns {
+            if builder.add_line(None, pattern).is_err() {
+                tracing::warn!(pattern, "invalid [corpus] ignore pattern — skipped");
+            }
+        }
+        let gitignore = builder
+            .build()
+            .unwrap_or_else(|_| ignore::gitignore::Gitignore::empty());
+        Self {
+            root: root.to_path_buf(),
+            gitignore,
+        }
+    }
+
+    /// Whether the walker would have excluded this path.
+    ///
+    /// Returns `false` for paths outside this matcher's root (a different
+    /// root's matcher is responsible for them).
+    #[must_use]
+    pub fn is_excluded(&self, path: &Path) -> bool {
+        if path.strip_prefix(&self.root).is_err() {
+            return false;
+        }
+        if is_in_ignored_dir(Some(&self.root), path) {
+            return true;
+        }
+        self.gitignore
+            .matched_path_or_any_parents(path, path.is_dir())
+            .is_ignore()
+    }
 }
 
 /// Discover all supported files in a directory recursively.
@@ -636,6 +719,68 @@ mod tests {
             1,
             "naming a file directly beats an ignore pattern"
         );
+    }
+
+    // watcher-ignore-filtering: the single-path matcher answers "would the
+    // walker have excluded this?" — prove agreement on a fixture tree.
+    #[test]
+    fn exclusion_matcher_agrees_with_the_walker() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(&tmp.path().join("keep.rs"), "fn main() {}");
+        write(&tmp.path().join("skipme.md"), "# skip");
+        write(&tmp.path().join("Binaries/junk.rs"), "fn junk() {}");
+        write(&tmp.path().join("node_modules/dep.js"), "x");
+        write(&tmp.path().join(".gitignore"), "gitignored.md\n");
+        write(&tmp.path().join("gitignored.md"), "# hidden by git");
+        write(&tmp.path().join("nested/ok.rs"), "fn ok() {}");
+
+        let ignores = vec!["*me.md".to_owned(), "Binaries/".to_owned()];
+        let walked = discover_files_with_ignores(tmp.path(), &ignores).unwrap();
+        let matcher = ExclusionMatcher::for_root(tmp.path(), &ignores);
+
+        // Every supported file in the tree: walker-included <=> not matcher-excluded.
+        for rel in [
+            "keep.rs",
+            "skipme.md",
+            "Binaries/junk.rs",
+            "node_modules/dep.js",
+            "gitignored.md",
+            "nested/ok.rs",
+        ] {
+            let abs = tmp.path().join(rel);
+            let in_walk = walked.contains(&abs);
+            let excluded = matcher.is_excluded(&abs);
+            assert_eq!(
+                in_walk, !excluded,
+                "walker and matcher disagree on {rel}: in_walk={in_walk}, excluded={excluded}"
+            );
+        }
+        // Sanity on the expected split (no .git here, so gitignore is
+        // inert — exactly like the walker).
+        assert!(matcher.is_excluded(&tmp.path().join("skipme.md")));
+        assert!(matcher.is_excluded(&tmp.path().join("Binaries/junk.rs")));
+        assert!(matcher.is_excluded(&tmp.path().join("node_modules/dep.js")));
+        assert!(!matcher.is_excluded(&tmp.path().join("gitignored.md")));
+        assert!(!matcher.is_excluded(&tmp.path().join("keep.rs")));
+        assert!(!matcher.is_excluded(&tmp.path().join("nested/ok.rs")));
+        // Paths outside the root are not this matcher's business.
+        assert!(!matcher.is_excluded(Path::new("/somewhere/else.rs")));
+
+        // Now make it a git repo: gitignore applies in BOTH walker and
+        // matcher, and they still agree.
+        std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
+        let walked = discover_files_with_ignores(tmp.path(), &ignores).unwrap();
+        let matcher = ExclusionMatcher::for_root(tmp.path(), &ignores);
+        assert!(matcher.is_excluded(&tmp.path().join("gitignored.md")));
+        assert!(!walked.contains(&tmp.path().join("gitignored.md")));
+        for rel in ["keep.rs", "gitignored.md", "skipme.md", "nested/ok.rs"] {
+            let abs = tmp.path().join(rel);
+            assert_eq!(
+                walked.contains(&abs),
+                !matcher.is_excluded(&abs),
+                "git-repo case disagreement on {rel}"
+            );
+        }
     }
 
     #[test]

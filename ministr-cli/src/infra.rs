@@ -431,6 +431,7 @@ pub(crate) async fn build_server(
             &ctx.storage,
             &ctx.embedder,
             &ctx.index,
+            &ctx.ignore,
         )?
     };
 

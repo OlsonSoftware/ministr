@@ -183,6 +183,10 @@ pub struct CoherenceEngine {
     corpus_dir: PathBuf,
     embedder: Option<Arc<dyn Embedder>>,
     index: Option<Arc<dyn VectorIndex>>,
+    /// Per-root exclusion matchers (watcher-ignore-filtering). When set,
+    /// events for excluded paths are dropped in [`Self::process_events`]
+    /// instead of driving a per-file reindex.
+    exclusions: Vec<crate::ingestion::ExclusionMatcher>,
 }
 
 impl CoherenceEngine {
@@ -197,6 +201,7 @@ impl CoherenceEngine {
             corpus_dir,
             embedder: None,
             index: None,
+            exclusions: Vec::new(),
         }
     }
 
@@ -215,7 +220,26 @@ impl CoherenceEngine {
             corpus_dir,
             embedder: Some(embedder),
             index: Some(index),
+            exclusions: Vec::new(),
         }
+    }
+
+    /// Attach exclusion matchers so watcher events for excluded paths
+    /// (built-in ignores, the root `.gitignore`, `[corpus] ignore`
+    /// patterns) are dropped instead of re-indexed
+    /// (watcher-ignore-filtering). One matcher per corpus root.
+    #[must_use]
+    pub fn with_exclusions(mut self, roots: &[PathBuf], user_patterns: &[String]) -> Self {
+        self.exclusions = roots
+            .iter()
+            .map(|r| crate::ingestion::ExclusionMatcher::for_root(r, user_patterns))
+            .collect();
+        self
+    }
+
+    /// Whether any attached matcher excludes this path.
+    fn is_excluded(&self, path: &Path) -> bool {
+        self.exclusions.iter().any(|m| m.is_excluded(path))
     }
 
     /// Process a batch of coherence events.
@@ -253,6 +277,14 @@ impl CoherenceEngine {
         }
 
         for event in latest.values() {
+            // watcher-ignore-filtering: an excluded path never drives a
+            // per-file reindex (Removed included — exclusion at ingest means
+            // it was never indexed; pre-existing stale docs are pruned by the
+            // next full reindex, which uses the walker).
+            if self.is_excluded(event.path()) {
+                debug!(path = %event.path().display(), "skipping event for excluded path");
+                continue;
+            }
             match event {
                 CoherenceEvent::Created(p) | CoherenceEvent::Modified(p) => {
                     match self.reindex_file(p, storage).await {
@@ -777,6 +809,57 @@ mod tests {
         assert!(
             !affected.is_empty(),
             "should have affected sections after modify"
+        );
+    }
+
+    // watcher-ignore-filtering: with exclusions attached, an event for an
+    // excluded path drives NO per-file reindex — the index never sees it.
+    #[tokio::test]
+    async fn coherence_engine_drops_events_for_excluded_paths() {
+        use crate::storage::SqliteStorage;
+
+        let dir = TempDir::new().unwrap();
+        let keep = dir.path().join("keep.md");
+        let skip = dir.path().join("skipme.md");
+        std::fs::write(&keep, "# Keep\n\nIndexed.\n").unwrap();
+        std::fs::write(&skip, "# Skip\n\nMust never be indexed.\n").unwrap();
+
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let engine = CoherenceEngine::new(dir.path().to_path_buf())
+            .with_exclusions(&[dir.path().to_path_buf()], &["*me.md".to_owned()]);
+
+        let events = vec![
+            CoherenceEvent::Modified(skip.clone()),
+            CoherenceEvent::Modified(keep.clone()),
+        ];
+        let affected = engine.process_events(&events, &storage).await.unwrap();
+        assert!(!affected.is_empty(), "kept-file event must still flow");
+
+        let docs = storage.list_documents().await.unwrap();
+        assert!(
+            docs.iter().any(|d| d.id.0.contains("keep.md")),
+            "kept file indexed"
+        );
+        assert!(
+            !docs.iter().any(|d| d.id.0.contains("skipme.md")),
+            "excluded file must not be re-indexed by the watcher path: {:?}",
+            docs.iter().map(|d| &d.id).collect::<Vec<_>>()
+        );
+
+        // Built-in exclusions apply too, with no user patterns at all.
+        let nm = dir.path().join("node_modules/dep.md");
+        std::fs::create_dir_all(nm.parent().unwrap()).unwrap();
+        std::fs::write(&nm, "# Dep\n\nVendored.\n").unwrap();
+        let engine2 = CoherenceEngine::new(dir.path().to_path_buf())
+            .with_exclusions(&[dir.path().to_path_buf()], &[]);
+        engine2
+            .process_events(&[CoherenceEvent::Created(nm)], &storage)
+            .await
+            .unwrap();
+        let docs = storage.list_documents().await.unwrap();
+        assert!(
+            !docs.iter().any(|d| d.id.0.contains("node_modules")),
+            "built-in ignores must hold on the watcher path"
         );
     }
 

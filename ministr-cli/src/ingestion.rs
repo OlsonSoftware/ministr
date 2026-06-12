@@ -417,6 +417,7 @@ pub(crate) fn spawn_coherence(
     storage: &Arc<ministr_core::storage::SqliteStorage>,
     embedder: &Arc<dyn ministr_core::embedding::Embedder>,
     index: &Arc<dyn ministr_core::index::VectorIndex>,
+    ignore_patterns: &[String],
 ) -> Result<Option<tokio::task::JoinHandle<()>>> {
     // Collect watch paths: directories directly, individual files via their parent.
     let watch_paths: Vec<PathBuf> = corpus_paths
@@ -446,11 +447,12 @@ pub(crate) fn spawn_coherence(
         })
         .unwrap_or_else(|| PathBuf::from("."));
 
-    let engine = Arc::new(CoherenceEngine::with_embeddings(
-        primary_dir,
-        Arc::clone(embedder),
-        Arc::clone(index),
-    ));
+    let engine = Arc::new(
+        CoherenceEngine::with_embeddings(primary_dir, Arc::clone(embedder), Arc::clone(index))
+            // watcher-ignore-filtering: excluded paths never drive a
+            // per-file reindex on this surface.
+            .with_exclusions(&watch_paths, ignore_patterns),
+    );
 
     let registry = server.registry_arc();
 

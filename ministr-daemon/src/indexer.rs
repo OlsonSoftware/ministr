@@ -331,6 +331,24 @@ pub fn spawn_watcher(
             }
         };
 
+        // watcher-ignore-filtering: drop events for excluded paths BEFORE
+        // batching, so an edit to an ignored/gitignored file causes neither a
+        // reindex enqueue (status flapping) nor a coherence broadcast (UI
+        // noise). Matchers carry the corpus's `[corpus] ignore` patterns.
+        let user_patterns: Vec<String> = {
+            let corpora = registry.corpora().read().await;
+            corpora
+                .get(&corpus_id)
+                .map(|h| h.ignore.clone())
+                .unwrap_or_default()
+        };
+        let exclusions: Vec<ministr_core::ingestion::ExclusionMatcher> = watch_paths
+            .iter()
+            .map(|r| ministr_core::ingestion::ExclusionMatcher::for_root(r, &user_patterns))
+            .collect();
+        let is_excluded =
+            move |ev: &CoreCoherenceEvent| exclusions.iter().any(|m| m.is_excluded(ev.path()));
+
         info!(corpus_id, "file watcher started");
 
         loop {
@@ -342,11 +360,13 @@ pub fn spawn_watcher(
                     break;
                 }
                 event = watcher.recv() => {
-                    if let Some(ev) = event {
-                        ev
-                    } else {
-                        info!(corpus_id, "file watcher channel closed");
-                        break;
+                    match event {
+                        Some(ev) if is_excluded(&ev) => continue,
+                        Some(ev) => ev,
+                        None => {
+                            info!(corpus_id, "file watcher channel closed");
+                            break;
+                        }
                     }
                 }
             };
@@ -368,7 +388,11 @@ pub fn spawn_watcher(
                     biased;
                     () = cancel.cancelled() => break,
                     res = tokio::time::timeout(wait, watcher.recv()) => match res {
-                        Ok(Some(ev)) => batch.push(ev),
+                        Ok(Some(ev)) => {
+                            if !is_excluded(&ev) {
+                                batch.push(ev);
+                            }
+                        }
                         Ok(None) | Err(_) => break,
                     }
                 }
