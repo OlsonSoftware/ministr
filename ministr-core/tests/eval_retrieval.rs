@@ -175,15 +175,15 @@ async fn eval_retrieval_regression_gate() {
 async fn eval_retrieval_real_embedder() {
     use ministr_core::embedding::FastEmbedder;
 
-    // Re-seeded 2026-06-12 (W1) from a `just eval-quality` run on the
-    // deterministic ExactScanIndex: P@5=0.573, R@5=0.820, MRR=0.934,
-    // nDCG@5=0.870 — confirmed byte-identical across two full runs (75
-    // per-query lines + aggregates hash-equal). The previous 0.05 slack
-    // existed to absorb HNSW graph-construction noise (measured: 4 distinct
-    // outputs in 6 runs); with the exact scan that noise is gone, so the
-    // floors now sit ~0.01 under observed and any breach is a real
-    // regression. (Historic seed 2026-06-02 on HNSW: R@5=0.819, MRR=0.939,
-    // nDCG@5=0.872 — within the old noise band of today's values.)
+    // Re-seeded 2026-06-12 (W2 max-pool scoring) from a deterministic
+    // `just eval-quality` run: P@5=0.603, R@5=0.811, MRR=0.957, nDCG@5=0.890
+    // — byte-identical across two full runs. W2 deleted the resolution
+    // weight table in favor of raw-cosine max-pool per content_id; vs the W1
+    // baseline (P@5=0.573, R@5=0.820, MRR=0.934, nDCG@5=0.870) that moved
+    // P@5 +0.030, MRR +0.023, nDCG +0.020, and R@5 −0.009 — the recall dip
+    // is a duplicate-credit metric artifact (collapsing resolutions removes
+    // hits the metric used to count twice), accepted by design. Floors sit
+    // ~0.01 under observed; any breach is a real regression.
     //
     // rq3-eval-confirm A/B (2026-06-02): the cAST split (rq3a) is NEUTRAL on this
     // doc-heavy corpus. CODE_CHUNK_BUDGET=256 (split ON): R@5 0.812 / MRR 0.939 /
@@ -212,9 +212,9 @@ async fn eval_retrieval_real_embedder() {
     // truncation + rq6 too); both arms stay above floors (aggregate R@5 0.820 ON
     // / 0.809 OFF over 75 q). Floors left as-is (the 3 tail queries are trivially
     // satisfied on this corpus and must not be read as a cAST win).
-    const BASELINE_RECALL_AT_5: f64 = 0.81;
-    const BASELINE_NDCG_AT_5: f64 = 0.86;
-    const BASELINE_MRR: f64 = 0.92;
+    const BASELINE_RECALL_AT_5: f64 = 0.80;
+    const BASELINE_NDCG_AT_5: f64 = 0.88;
+    const BASELINE_MRR: f64 = 0.945;
 
     let Some((corpus_path, ground_truth)) = load_eval_data() else {
         eprintln!("Skipping eval: eval/ data not found");

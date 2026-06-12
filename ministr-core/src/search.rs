@@ -1,9 +1,10 @@
 //! Multi-resolution query pipeline.
 //!
-//! Searches across all three resolution levels (summaries, sections, claims),
-//! merges results, and applies resolution-aware scoring. The query pipeline
-//! embeds the query text, searches the vector index, then enriches results
-//! with metadata from storage.
+//! Searches across all resolution levels (summaries, sections, claims,
+//! symbols), scores by raw cosine similarity, and max-pools to the best
+//! vector per content before truncation, so the top-k always holds distinct
+//! content. The query pipeline embeds the query text, searches the vector
+//! index, then enriches results with metadata from storage.
 
 use std::collections::HashMap;
 
@@ -15,28 +16,6 @@ use crate::types::{Resolution, VectorId};
 
 /// Default number of raw candidates to retrieve before re-ranking.
 const DEFAULT_RAW_K: usize = 30;
-
-/// Resolution weight for claim-level results (highest precision).
-const CLAIM_WEIGHT: f32 = 1.0;
-
-/// Resolution weight for section-level results.
-const SECTION_WEIGHT: f32 = 0.85;
-
-/// Resolution weight for summary-level results (broadest).
-const SUMMARY_WEIGHT: f32 = 0.7;
-
-/// Resolution weight for code symbol stubs (signature + doc, high precision).
-const SYMBOL_STUB_WEIGHT: f32 = 0.95;
-
-/// Resolution weight for code symbol full source.
-const SYMBOL_FULL_WEIGHT: f32 = 0.9;
-
-/// Word count threshold: queries with fewer words than this are considered
-/// "broad" and get a summary boost.
-const BROAD_QUERY_WORD_THRESHOLD: usize = 4;
-
-/// Boost applied to summary results for broad (short) queries.
-const BROAD_QUERY_SUMMARY_BOOST: f32 = 0.15;
 
 /// RRF smoothing constant (k in the formula `1/(k + rank)`).
 /// The standard value from the original RRF paper.
@@ -51,7 +30,8 @@ pub struct ScoredResult {
     pub raw_distance: f32,
     /// Resolution level of the result.
     pub resolution: Resolution,
-    /// Final score after resolution weighting (higher = better).
+    /// Final score: raw cosine similarity (or the RRF score on the hybrid
+    /// path). Higher = better.
     pub score: f32,
 }
 
@@ -92,9 +72,10 @@ impl Default for SearchConfig {
 
 /// Multi-resolution search over a vector index.
 ///
-/// Embeds a query, retrieves candidates from the vector index, applies
-/// resolution-aware scoring, and returns ranked results. Optionally performs
-/// hybrid search by fusing dense and sparse retrieval via RRF.
+/// Embeds a query, retrieves candidates from the vector index, scores by raw
+/// cosine similarity, and max-pools to the best vector per content before
+/// truncation. Optionally performs hybrid search by fusing dense and sparse
+/// retrieval via RRF.
 ///
 /// # Examples
 ///
@@ -169,8 +150,6 @@ where
 
         let raw_results = self.index.search_knn(&query_vector, config.raw_k)?;
 
-        let is_broad_query = query.split_whitespace().count() < BROAD_QUERY_WORD_THRESHOLD;
-
         let sparse_pair = if config.sparse_weight > 0.0 {
             self.sparse_embedder.zip(self.sparse_index)
         } else {
@@ -194,27 +173,28 @@ where
             )?;
 
             // Build dense scored results
-            let dense_scored: Vec<ScoredResult> = raw_results
-                .iter()
-                .filter_map(|r| score_result(r, is_broad_query))
-                .collect();
+            let dense_scored: Vec<ScoredResult> =
+                raw_results.iter().filter_map(score_result).collect();
 
             // Fuse using RRF
             rrf_fuse(&dense_scored, &sparse_results, config.sparse_weight)
         } else {
-            raw_results
-                .iter()
-                .filter_map(|r| score_result(r, is_broad_query))
-                .collect()
+            raw_results.iter().filter_map(score_result).collect()
         };
 
-        // Sort by score descending (higher is better)
+        // Sort by score descending; ties break by content_id ascending for
+        // run-to-run determinism.
         scored.sort_by(|a, b| {
             b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
+                .total_cmp(&a.score)
+                .then_with(|| a.vector_id.content_id().cmp(b.vector_id.content_id()))
         });
 
+        // Collapse to the best-scoring vector per content_id (max-pool across
+        // resolutions) BEFORE truncating, so top_k slots always hold distinct
+        // content.
+        let mut seen = std::collections::HashSet::new();
+        scored.retain(|r| seen.insert(r.vector_id.content_id().to_string()));
         scored.truncate(config.top_k);
         Ok(scored)
     }
@@ -277,31 +257,21 @@ fn rrf_fuse(
         .collect()
 }
 
-/// Convert a raw search result into a scored result with resolution weighting.
+/// Convert a raw search result into a scored result.
+///
+/// Score is the raw cosine similarity. The hand-tuned resolution-weight table
+/// that used to multiply it lost to plain max-pooled raw similarity on both
+/// eval corpora (docs P@5 +5.6%, code nDCG@5 +11.9% under the deterministic
+/// exact-scan gate, 2026-06); cross-resolution preference is handled by the
+/// per-content max-pool collapse in `search()` instead.
 ///
 /// Returns `None` if the vector ID cannot be parsed (i.e., not a multi-resolution ID).
-fn score_result(raw: &RawSearchResult, is_broad_query: bool) -> Option<ScoredResult> {
+fn score_result(raw: &RawSearchResult) -> Option<ScoredResult> {
     let vector_id = VectorId::parse(&raw.id)?;
     let resolution = vector_id.resolution();
 
     // Convert distance to similarity (cosine distance is in [0, 2], similarity in [0, 1])
-    let similarity = 1.0 - (raw.distance / 2.0);
-
-    let resolution_weight = match resolution {
-        Resolution::Claim => CLAIM_WEIGHT,
-        Resolution::Section => SECTION_WEIGHT,
-        Resolution::Summary => {
-            if is_broad_query {
-                SUMMARY_WEIGHT + BROAD_QUERY_SUMMARY_BOOST
-            } else {
-                SUMMARY_WEIGHT
-            }
-        }
-        Resolution::SymbolStub => SYMBOL_STUB_WEIGHT,
-        Resolution::SymbolFull => SYMBOL_FULL_WEIGHT,
-    };
-
-    let score = similarity * resolution_weight;
+    let score = 1.0 - (raw.distance / 2.0);
 
     Some(ScoredResult {
         vector_id,
@@ -419,33 +389,81 @@ mod tests {
     }
 
     #[test]
-    fn claims_weighted_higher_than_summaries() {
-        // For same distance, claim score > summary score
-        let claim_raw = RawSearchResult {
-            id: "claim::c1".to_string(),
-            distance: 0.3,
-        };
-        let claim_result = score_result(&claim_raw, false).unwrap();
-
-        let summary_raw = RawSearchResult {
-            id: "doc-summary::d1".to_string(),
-            distance: 0.3,
-        };
-        let summary_result = score_result(&summary_raw, false).unwrap();
-
-        assert!(claim_result.score > summary_result.score);
+    fn score_is_raw_similarity_regardless_of_resolution() {
+        // H8: same distance → same score across every resolution; the old
+        // resolution-weight table is gone.
+        let ids = [
+            "claim::c1",
+            "section::s1",
+            "doc-summary::d1",
+            "symbol-stub::sym-foo",
+            "symbol-full::sym-bar",
+        ];
+        for id in ids {
+            let raw = RawSearchResult {
+                id: id.to_string(),
+                distance: 0.3,
+            };
+            let result = score_result(&raw).unwrap();
+            assert!(
+                (result.score - 0.85).abs() < 1e-6,
+                "{id}: expected raw similarity 0.85, got {}",
+                result.score
+            );
+        }
     }
 
     #[test]
-    fn broad_query_boosts_summaries() {
-        let raw = RawSearchResult {
-            id: "doc-summary::d1".to_string(),
-            distance: 0.3,
-        };
-        let narrow = score_result(&raw, false).unwrap();
-        let broad = score_result(&raw, true).unwrap();
+    fn search_collapses_to_best_vector_per_content_id() {
+        // sec-summary::doc1#auth and section::doc1#auth share the content_id
+        // doc1#auth — only ONE of them may appear in the results, and every
+        // returned content_id must be distinct.
+        let (embedder, index) = setup_index_with_resolutions();
+        let searcher = MultiResolutionSearch::new(&embedder, &index);
 
-        assert!(broad.score > narrow.score);
+        let results = searcher
+            .search("auth section", SearchConfig::default())
+            .unwrap();
+
+        assert!(!results.is_empty());
+        let content_ids: Vec<&str> = results.iter().map(|r| r.vector_id.content_id()).collect();
+        let mut deduped = content_ids.clone();
+        deduped.sort_unstable();
+        deduped.dedup();
+        assert_eq!(
+            content_ids.len(),
+            deduped.len(),
+            "search returned duplicate content_ids: {content_ids:?}"
+        );
+    }
+
+    #[test]
+    fn collapse_keeps_the_higher_scoring_resolution() {
+        // Two vectors with the same content_id at different distances: the
+        // surviving result must carry the better (lower-distance) score.
+        let dim = 8;
+        let embedder = MockEmbedder { dim };
+        let index = HnswIndex::new(dim, 100).unwrap();
+
+        let query = "authentication tokens";
+        let query_vec = &embedder.embed(&[query]).unwrap()[0];
+        // Exact-match vector for the section resolution of doc1#auth...
+        index.insert("section::doc1#auth", query_vec).unwrap();
+        // ...and a slightly perturbed vector for its sec-summary sibling.
+        let mut other = query_vec.clone();
+        other[0] += 0.3;
+        index.insert("sec-summary::doc1#auth", &other).unwrap();
+
+        let searcher = MultiResolutionSearch::new(&embedder, &index);
+        let results = searcher.search(query, SearchConfig::default()).unwrap();
+
+        assert_eq!(results.len(), 1, "same content_id must collapse to one");
+        assert_eq!(results[0].resolution, Resolution::Section);
+        assert!(
+            (results[0].score - 1.0).abs() < 1e-5,
+            "the exact-match (max) score must survive the collapse, got {}",
+            results[0].score
+        );
     }
 
     #[test]
@@ -454,7 +472,7 @@ mod tests {
             id: "plain-id-no-prefix".to_string(),
             distance: 0.1,
         };
-        assert!(score_result(&raw, false).is_none());
+        assert!(score_result(&raw).is_none());
     }
 
     #[test]
@@ -477,7 +495,7 @@ mod tests {
                 id: id.to_string(),
                 distance: 0.2,
             };
-            score_result(&raw, false).unwrap()
+            score_result(&raw).unwrap()
         };
 
         assert_eq!(make("doc-summary::d1").resolution, Resolution::Summary);
@@ -492,40 +510,6 @@ mod tests {
             make("symbol-full::sym-bar").resolution,
             Resolution::SymbolFull
         );
-    }
-
-    #[test]
-    fn symbol_stub_weighted_higher_than_section() {
-        let stub_raw = RawSearchResult {
-            id: "symbol-stub::sym-foo".to_string(),
-            distance: 0.3,
-        };
-        let stub_result = score_result(&stub_raw, false).unwrap();
-
-        let section_raw = RawSearchResult {
-            id: "section::s1".to_string(),
-            distance: 0.3,
-        };
-        let section_result = score_result(&section_raw, false).unwrap();
-
-        assert!(stub_result.score > section_result.score);
-    }
-
-    #[test]
-    fn symbol_full_weighted_higher_than_section() {
-        let full_raw = RawSearchResult {
-            id: "symbol-full::sym-bar".to_string(),
-            distance: 0.3,
-        };
-        let full_result = score_result(&full_raw, false).unwrap();
-
-        let section_raw = RawSearchResult {
-            id: "section::s1".to_string(),
-            distance: 0.3,
-        };
-        let section_result = score_result(&section_raw, false).unwrap();
-
-        assert!(full_result.score > section_result.score);
     }
 
     // --- RRF fusion tests ---
