@@ -13,6 +13,7 @@
 //! should call this and be done.
 
 use rustls::ClientConfig;
+use rustls::pki_types::{CertificateDer, pem::PemObject};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
 /// Build the workspace-standard Postgres TLS connector.
@@ -21,7 +22,7 @@ pub fn make_rustls_connector() -> MakeRustlsConnect {
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     if let Ok(pem) = std::env::var("MINISTR_PG_CA_CERT") {
-        let certs = rustls_pemfile::certs(&mut pem.as_bytes())
+        let certs = CertificateDer::pem_slice_iter(pem.as_bytes())
             .collect::<Result<Vec<_>, _>>()
             .unwrap_or_default();
         let (added, _ignored) = roots.add_parsable_certificates(certs);
