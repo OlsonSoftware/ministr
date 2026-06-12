@@ -18,9 +18,7 @@ use ministr_api::corpus::{CorpusInfo, IndexingStatus};
 use ministr_api::corpus_restorer::{CorpusRestoreError, CorpusRestorer};
 use ministr_core::config::MinistrConfig;
 use ministr_core::corpus_id::{CorpusIdError, canonical_corpus_paths, corpus_id_from_paths};
-use ministr_core::embedding::{
-    DualEmbedder, Embedder, EmbeddingService, FastReranker, MatryoshkaEmbedder,
-};
+use ministr_core::embedding::{DualEmbedder, Embedder, FastReranker, MatryoshkaEmbedder};
 use ministr_core::index::{HnswIndex, VectorIndex, VectorIndexLoad};
 use ministr_core::ingestion::IngestionProgress;
 use ministr_core::service::QueryService;
@@ -264,8 +262,16 @@ fn merge_live_info(
 }
 
 impl CorpusRegistry {
-    pub fn new(embedder: Arc<dyn Embedder>, config: MinistrConfig) -> Self {
-        let embedding_service = Arc::new(EmbeddingService::with_model(Arc::clone(&embedder)));
+    /// `default_model_cache_key` is the backend-qualified embedding-cache key
+    /// for the boot-built `embedder` (the CLI scheme:
+    /// `{model}{backend_suffix}`, e.g. `"all-MiniLM-L6-v2:onnx"`). The indexer
+    /// uses it to key the per-corpus embedding cache, so candle- and
+    /// onnx-built vectors never mix under one key.
+    pub fn new(
+        embedder: Arc<dyn Embedder>,
+        default_model_cache_key: String,
+        config: MinistrConfig,
+    ) -> Self {
         // Seed the per-model pool with the default model's boot-built Arcs so
         // the common (default-model) path reuses them with no rebuild; any
         // per-corpus model is built + cached lazily by `embedder_for`.
@@ -273,7 +279,7 @@ impl CorpusRegistry {
         pool.seed(
             &config.default_model,
             Arc::clone(&embedder),
-            Arc::clone(&embedding_service),
+            default_model_cache_key,
         );
         Self {
             pool,
@@ -2146,7 +2152,11 @@ mod tests {
 
     fn build_test_registry() -> CorpusRegistry {
         let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder { dim: 4 });
-        CorpusRegistry::new(embedder, MinistrConfig::default())
+        CorpusRegistry::new(
+            embedder,
+            "mock-model:test".to_string(),
+            MinistrConfig::default(),
+        )
     }
 
     #[tokio::test]
@@ -2221,7 +2231,7 @@ mod tests {
             data_dir: data_dir.to_path_buf(),
             ..MinistrConfig::default()
         };
-        CorpusRegistry::new(embedder, config)
+        CorpusRegistry::new(embedder, "mock-model:test".to_string(), config)
     }
 
     #[tokio::test]

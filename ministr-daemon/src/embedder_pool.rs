@@ -19,19 +19,31 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use ministr_core::embedding::{Embedder, EmbeddingService};
+use ministr_core::embedding::Embedder;
 
-/// Builds a raw [`Embedder`] for a model name, or returns an error message.
-/// Injectable so the pool is unit-testable without loading a real model.
+/// Builds a raw [`Embedder`] for a model name — returning it together with its
+/// backend-qualified embedding-cache key (e.g. `"all-MiniLM-L6-v2:onnx"`) — or
+/// returns an error message. Injectable so the pool is unit-testable without
+/// loading a real model.
 pub(crate) type EmbedderBuilder =
-    Arc<dyn Fn(&str) -> Result<Arc<dyn Embedder>, String> + Send + Sync>;
+    Arc<dyn Fn(&str) -> Result<(Arc<dyn Embedder>, String), String> + Send + Sync>;
 
-/// A model's embedder paired with its dedicated embedding service. Both fields
-/// are `Arc`, so cloning is cheap.
+/// A model's embedder plus its backend-qualified embedding-cache key. Cheap to
+/// clone (`Arc` + `String`).
+///
+/// Note (ingest-embed-cache-wiring): the pool used to also carry a shared
+/// per-model [`EmbeddingService`]. Ingest now spawns a fresh per-corpus
+/// service around the per-corpus `CachedEmbedder` (the cache connection is
+/// per-corpus), and nothing else consumed the pooled one, so it was removed —
+/// no idle embed thread per model.
 #[derive(Clone)]
 pub(crate) struct PooledEmbedder {
     pub embedder: Arc<dyn Embedder>,
-    pub service: Arc<EmbeddingService>,
+    /// Backend-qualified key for the per-corpus embedding cache
+    /// (`{model}{backend_suffix}`, same scheme as the CLI's
+    /// `cache_model_key`). The suffix matters: candle and onnx produce
+    /// different vector spaces, and the key keeps them apart in one cache.
+    pub cache_model_key: String,
 }
 
 /// Resident cache of `model name -> (embedder, service)`, built on first use.
@@ -55,28 +67,32 @@ impl EmbedderPool {
     pub(crate) fn with_data_dir(data_dir: PathBuf) -> Self {
         Self::new(Arc::new(move |model: &str| {
             ministr_core::embedding::create_embedder(model, &data_dir)
-                .map(|(embedder, _info)| embedder)
+                .map(|(embedder, info)| {
+                    let key = format!("{model}{}", info.cache_key_suffix());
+                    (embedder, key)
+                })
                 .map_err(|e| e.to_string())
         }))
     }
 
-    /// Insert an already-built embedder + service under `model`. Used to seed
-    /// the daemon's default model with the Arcs constructed at boot, so the
-    /// default path never rebuilds.
-    pub(crate) fn seed(
-        &self,
-        model: &str,
-        embedder: Arc<dyn Embedder>,
-        service: Arc<EmbeddingService>,
-    ) {
+    /// Insert an already-built embedder under `model`. Used to seed the
+    /// daemon's default model with the Arc constructed at boot, so the
+    /// default path never rebuilds. `cache_model_key` is the backend-qualified
+    /// embedding-cache key for that boot-built embedder.
+    pub(crate) fn seed(&self, model: &str, embedder: Arc<dyn Embedder>, cache_model_key: String) {
         self.entries
             .lock()
             .expect("embedder pool mutex poisoned")
-            .insert(model.to_string(), PooledEmbedder { embedder, service });
+            .insert(
+                model.to_string(),
+                PooledEmbedder {
+                    embedder,
+                    cache_model_key,
+                },
+            );
     }
 
     /// The cached entry for `model`, building (and caching) it on first use.
-    /// Building wraps the new embedder in its own [`EmbeddingService`].
     ///
     /// # Errors
     ///
@@ -95,9 +111,11 @@ impl EmbedderPool {
         // must not block cached lookups of other models. A rare concurrent
         // double-build of the same fresh model just discards one result; both
         // are functionally identical weights, so correctness is unaffected.
-        let embedder = (self.build)(model)?;
-        let service = Arc::new(EmbeddingService::with_model(Arc::clone(&embedder)));
-        let pooled = PooledEmbedder { embedder, service };
+        let (embedder, cache_model_key) = (self.build)(model)?;
+        let pooled = PooledEmbedder {
+            embedder,
+            cache_model_key,
+        };
         self.entries
             .lock()
             .expect("embedder pool mutex poisoned")
@@ -129,9 +147,12 @@ mod tests {
 
     fn counting_pool(counter: &Arc<AtomicUsize>) -> EmbedderPool {
         let c = Arc::clone(counter);
-        EmbedderPool::new(Arc::new(move |_model: &str| {
+        EmbedderPool::new(Arc::new(move |model: &str| {
             c.fetch_add(1, Ordering::SeqCst);
-            Ok(Arc::new(StubEmbedder { dim: 384 }) as Arc<dyn Embedder>)
+            Ok((
+                Arc::new(StubEmbedder { dim: 384 }) as Arc<dyn Embedder>,
+                format!("{model}:stub"),
+            ))
         }))
     }
 
@@ -145,7 +166,8 @@ mod tests {
         // Second get for the same model is a cache hit — no rebuild, same Arc.
         assert_eq!(builds.load(Ordering::SeqCst), 1);
         assert!(Arc::ptr_eq(&a.embedder, &b.embedder));
-        assert!(Arc::ptr_eq(&a.service, &b.service));
+        // The builder's backend-qualified cache key rides along.
+        assert_eq!(a.cache_model_key, "model-a:stub");
 
         // A distinct model builds a second entry.
         let _c = pool.get("model-b").expect("build b");
@@ -158,11 +180,10 @@ mod tests {
             panic!("seeded model must not trigger a build");
         }));
         let embedder: Arc<dyn Embedder> = Arc::new(StubEmbedder { dim: 384 });
-        let service = Arc::new(EmbeddingService::with_model(Arc::clone(&embedder)));
-        pool.seed("default", Arc::clone(&embedder), Arc::clone(&service));
+        pool.seed("default", Arc::clone(&embedder), "default:stub".to_string());
 
         let got = pool.get("default").expect("seeded entry");
         assert!(Arc::ptr_eq(&got.embedder, &embedder));
-        assert!(Arc::ptr_eq(&got.service, &service));
+        assert_eq!(got.cache_model_key, "default:stub");
     }
 }

@@ -31,7 +31,8 @@ pub fn build_state(config: MinistrConfig) -> Result<AppState, Box<dyn std::error
         dim = embedder.dimension(),
         "embedding model loaded"
     );
-    let registry = CorpusRegistry::new(embedder, config);
+    let default_model_cache_key = format!("{}{}", config.default_model, backend.cache_key_suffix());
+    let registry = CorpusRegistry::new(embedder, default_model_cache_key, config);
     Ok(AppState::new(registry))
 }
 

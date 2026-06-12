@@ -1343,7 +1343,9 @@ mod tests {
         std::mem::forget(tmp);
         let embedder: Arc<dyn Embedder> = Arc::new(ZeroEmbedder);
         Arc::new(ministr_daemon::registry::CorpusRegistry::new(
-            embedder, config,
+            embedder,
+            "mock-model:test".to_string(),
+            config,
         ))
     }
 }

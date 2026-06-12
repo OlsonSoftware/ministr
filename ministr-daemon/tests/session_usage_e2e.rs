@@ -58,7 +58,11 @@ fn test_app() -> axum::Router {
     }
 
     let embedder: Arc<dyn ministr_core::embedding::Embedder> = Arc::new(FixedEmbedder);
-    let registry = ministr_daemon::registry::CorpusRegistry::new(embedder, config);
+    let registry = ministr_daemon::registry::CorpusRegistry::new(
+        embedder,
+        "mock-model:test".to_string(),
+        config,
+    );
     let state = ministr_daemon::state::AppState::new(registry);
     ministr_daemon::daemon::router(state)
 }

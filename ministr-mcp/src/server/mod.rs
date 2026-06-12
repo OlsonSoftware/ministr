@@ -5523,6 +5523,7 @@ mod tests {
 
         let corpus_registry = Arc::new(ministr_daemon::registry::CorpusRegistry::new(
             Arc::clone(&embedder),
+            "mock-model:test".to_string(),
             ministr_core::config::MinistrConfig::default(),
         ));
         let server = server.with_corpus_registry(Arc::clone(&corpus_registry));

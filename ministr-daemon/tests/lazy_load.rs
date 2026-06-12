@@ -45,7 +45,11 @@ async fn get_or_lazy_load_warms_a_cold_corpus_from_the_manifest() {
     // Registry A registers the corpus — this writes the on-disk manifest
     // (corpora.json) + the corpus data dir.
     let embedder_a: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim: 16 });
-    let reg_a = Arc::new(CorpusRegistry::new(embedder_a, config.clone()));
+    let reg_a = Arc::new(CorpusRegistry::new(
+        embedder_a,
+        "mock-model:test".to_string(),
+        config.clone(),
+    ));
     let (corpus_id, _started) = reg_a
         .register(std::slice::from_ref(&src_str))
         .await
@@ -55,7 +59,11 @@ async fn get_or_lazy_load_warms_a_cold_corpus_from_the_manifest() {
     // in-memory map and never calls restore() — exactly the state a query
     // hits when it arrives before the corpus has been warmed.
     let embedder_b: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim: 16 });
-    let reg_b = Arc::new(CorpusRegistry::new(embedder_b, config));
+    let reg_b = Arc::new(CorpusRegistry::new(
+        embedder_b,
+        "mock-model:test".to_string(),
+        config,
+    ));
 
     // A strict `get` misses — B never loaded it.
     assert!(
@@ -112,7 +120,11 @@ async fn warming_clears_once_a_corpus_is_loaded() {
     };
 
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim: 16 });
-    let reg = Arc::new(CorpusRegistry::new(embedder, config));
+    let reg = Arc::new(CorpusRegistry::new(
+        embedder,
+        "mock-model:test".to_string(),
+        config,
+    ));
 
     // Nothing registered yet → nothing warming.
     assert!(reg.warming_placeholders().await.is_empty());

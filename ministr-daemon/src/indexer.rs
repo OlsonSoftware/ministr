@@ -124,7 +124,7 @@ pub(crate) async fn run_body(registry: &CorpusRegistry, corpus_id: &str, paths: 
     // defensive guard, not the normal path.
     let PooledEmbedder {
         embedder: pooled_embedder,
-        service: pooled_service,
+        cache_model_key: pooled_embedder_cache_key,
     } = match registry.embedder_for(&model) {
         Ok(pooled) => pooled,
         Err(e) => {
@@ -148,21 +148,38 @@ pub(crate) async fn run_body(registry: &CorpusRegistry, corpus_id: &str, paths: 
     // `dimension`, ingest must produce TRUNCATED vectors so they land in the
     // truncated-dim HNSW index `create_handle` built (via the same
     // `apply_dimension` seam) — otherwise ingest writes full-dim vectors into a
-    // truncated index. We wrap the pooled embedder identically, then route it
-    // through a fresh per-corpus `EmbeddingService` so the truncated embed still
-    // runs off the Tokio runtime (ADR 0001 D1). The default-dimension path keeps
-    // the shared, model-pooled service unchanged.
+    // truncated index.
     let (embedder, service, dual) = match apply_dimension(&pooled_embedder, dimension) {
         Ok((embedder, dual)) => {
-            let service = if dimension.is_some() {
+            if dimension.is_some() {
                 info!(
                     corpus_id,
                     dimension, "indexing with per-corpus Matryoshka truncation"
                 );
-                Arc::new(EmbeddingService::with_model(Arc::clone(&embedder)))
-            } else {
-                pooled_service
+            }
+            // ingest-embed-cache-wiring: route ingest embeds through the
+            // per-corpus embedding cache (content.db `embedding_cache` table)
+            // — persistent cross-ingest hits + intra-batch exact-text dedup
+            // (CachedEmbedder, W3). The CLI surface has done this since
+            // PHASE6 (infra.rs cache_model_key); this brings the daemon to
+            // parity. The cache key is dimension-qualified when Matryoshka
+            // truncation is active, since truncated vectors live in a
+            // different space than full-dim ones.
+            //
+            // The cached embedder is per-corpus (it holds this corpus's cache
+            // connection), so it gets a fresh per-corpus EmbeddingService —
+            // keeping the synchronous embed + cache SQLite I/O on a dedicated
+            // thread (ADR 0001 D1). The service lives for this ingest and its
+            // worker joins when the pipeline drops it.
+            let cache_model_key = match dimension {
+                Some(d) => format!("{pooled_embedder_cache_key}@mat{d}"),
+                None => pooled_embedder_cache_key.clone(),
             };
+            let cache = ministr_core::embedding::cache::EmbeddingCache::new(storage.conn());
+            let embedder: Arc<dyn ministr_core::embedding::Embedder> = Arc::new(
+                ministr_core::embedding::CachedEmbedder::new(embedder, cache, &cache_model_key),
+            );
+            let service = Arc::new(EmbeddingService::with_model(Arc::clone(&embedder)));
             (embedder, service, dual)
         }
         Err(e) => {

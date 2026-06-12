@@ -21,6 +21,14 @@ pub(crate) struct InfrastructureContext {
     pub(crate) index_dir: PathBuf,
     pub(crate) storage: Arc<ministr_core::storage::SqliteStorage>,
     pub(crate) embedder: Arc<dyn ministr_core::embedding::Embedder>,
+    /// The embedder BEFORE the `CachedEmbedder` wrapper (`embedder` = this +
+    /// the primary corpus's embedding cache). The serve-mode `CorpusRegistry`
+    /// is seeded with this one so the daemon indexer can wrap it with each
+    /// corpus's OWN cache instead of double-wrapping (ingest-embed-cache-wiring).
+    pub(crate) uncached_embedder: Arc<dyn ministr_core::embedding::Embedder>,
+    /// Backend-qualified embedding-cache key for `uncached_embedder`
+    /// (`{model}{backend_suffix}`, dimension-qualified when Matryoshka is on).
+    pub(crate) cache_model_key: String,
     pub(crate) index: Arc<dyn ministr_core::index::VectorIndex>,
     /// Dual embedder for two-stage Matryoshka retrieval (set when dimension is configured).
     pub(crate) dual_embedder: Option<Arc<dyn ministr_core::embedding::DualEmbedder>>,
@@ -165,12 +173,18 @@ pub(crate) async fn init_infrastructure(
             );
             let emb: Arc<dyn ministr_core::embedding::Embedder> = Arc::clone(&matryoshka) as _;
             let dual: Arc<dyn ministr_core::embedding::DualEmbedder> = matryoshka;
-            (emb, Some(dual), key)
+            // Dimension-qualify the cache key: truncated vectors live in a
+            // different space than full-dim ones, and a dimension-less key
+            // would serve stale-dimension vectors after a `dimension` change
+            // (ingest-embed-cache-wiring fix; default-dimension users keep
+            // the historical key, so their caches survive).
+            (emb, Some(dual), format!("{key}@mat{target_dim}"))
         } else {
             (raw_embedder, None, key)
         }
     };
 
+    let uncached_embedder = Arc::clone(&embedder);
     let embedding_cache = ministr_core::embedding::cache::EmbeddingCache::new(storage.conn());
     let embedder: Arc<dyn ministr_core::embedding::Embedder> = Arc::new(
         ministr_core::embedding::CachedEmbedder::new(embedder, embedding_cache, &cache_model_key),
@@ -226,6 +240,8 @@ pub(crate) async fn init_infrastructure(
         index_dir,
         storage: Arc::new(storage),
         embedder,
+        uncached_embedder,
+        cache_model_key,
         index,
         dual_embedder,
         rerank_depth: rerank_depth.unwrap_or(100),
@@ -612,8 +628,13 @@ pub(crate) fn build_corpus_registry(
     ctx: &InfrastructureContext,
     config: &ministr_core::config::MinistrConfig,
 ) -> Arc<ministr_daemon::registry::CorpusRegistry> {
+    // Seed with the UNCACHED embedder: the daemon indexer wraps it with each
+    // corpus's own embedding cache (ingest-embed-cache-wiring); seeding the
+    // already-cached `ctx.embedder` would double-wrap and bind every corpus's
+    // inner cache to the primary corpus's content.db.
     Arc::new(ministr_daemon::registry::CorpusRegistry::new(
-        Arc::clone(&ctx.embedder),
+        Arc::clone(&ctx.uncached_embedder),
+        ctx.cache_model_key.clone(),
         config.clone(),
     ))
 }

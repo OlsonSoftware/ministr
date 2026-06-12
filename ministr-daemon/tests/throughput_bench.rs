@@ -95,7 +95,11 @@ async fn coordinator_throughput_25_corpora() {
         ..MinistrConfig::default()
     };
     let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim: 16 });
-    let registry = Arc::new(CorpusRegistry::new(embedder, config));
+    let registry = Arc::new(CorpusRegistry::new(
+        embedder,
+        "mock-model:test".to_string(),
+        config,
+    ));
 
     // Generate the corpora on disk (kept alive until the bench finishes so the
     // source files exist throughout ingest).

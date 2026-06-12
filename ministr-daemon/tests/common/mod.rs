@@ -147,7 +147,11 @@ impl TestDaemon {
             data_dir: tmp_dir.path().to_path_buf(),
             ..ministr_core::config::MinistrConfig::default()
         };
-        let registry = Arc::new(CorpusRegistry::new(Arc::clone(&embedder), config));
+        let registry = Arc::new(CorpusRegistry::new(
+            Arc::clone(&embedder),
+            "mock-model:test".to_string(),
+            config,
+        ));
         registry
             .corpora()
             .write()

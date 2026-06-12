@@ -3289,7 +3289,11 @@ mod tests {
         }
 
         let embedder: Arc<dyn ministr_core::embedding::Embedder> = Arc::new(FixedEmbedder);
-        let registry = crate::registry::CorpusRegistry::new(embedder, MinistrConfig::default());
+        let registry = crate::registry::CorpusRegistry::new(
+            embedder,
+            "mock-model:test".to_string(),
+            MinistrConfig::default(),
+        );
         crate::state::AppState::new(registry)
     }
 
