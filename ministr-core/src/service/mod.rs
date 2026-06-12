@@ -673,6 +673,9 @@ pub struct QueryService {
     index: Arc<dyn VectorIndex>,
     sparse_embedder: Option<Arc<dyn SparseEmbedder>>,
     sparse_index: Option<Arc<dyn SparseIndex>>,
+    /// RRF sparse share for hybrid retrieval (0.0–1.0); only meaningful when
+    /// the sparse components are set. `<= 0` behaves dense-only.
+    sparse_weight: f32,
     reranker: Option<Arc<dyn Reranker>>,
     /// Optional dual embedder for two-stage Matryoshka reranking at query time.
     dual_embedder: Option<Arc<dyn DualEmbedder>>,
@@ -694,21 +697,27 @@ impl QueryService {
             index,
             sparse_embedder: None,
             sparse_index: None,
+            sparse_weight: 0.0,
             reranker: None,
             dual_embedder: None,
             matryoshka_rerank_depth: 100,
         }
     }
 
-    /// Add sparse search components for hybrid retrieval.
+    /// Add sparse search components for hybrid retrieval, fusing dense and
+    /// sparse results via weighted RRF with `sparse_weight` as the sparse
+    /// share (0.0–1.0). A weight `<= 0` leaves the query path dense-only
+    /// even with the components attached.
     #[must_use]
     pub fn with_sparse(
         mut self,
         sparse_embedder: Arc<dyn SparseEmbedder>,
         sparse_index: Arc<dyn SparseIndex>,
+        sparse_weight: f32,
     ) -> Self {
         self.sparse_embedder = Some(sparse_embedder);
         self.sparse_index = Some(sparse_index);
+        self.sparse_weight = sparse_weight;
         self
     }
 

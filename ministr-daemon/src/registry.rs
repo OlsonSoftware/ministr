@@ -178,6 +178,16 @@ pub struct CorpusHandle {
     /// `IngestionPipeline`; the freshness sweep applies them to its walk so
     /// ignored files never surface as "new" in the trust display.
     pub ignore: Vec<String>,
+    /// Sparse (SPLADE) embedder for hybrid retrieval (rq4c) — `Some` when the
+    /// corpus's `.ministr.toml` `[corpus] sparse_weight` is > 0. Shared by
+    /// the query path (`service` already holds it) and `indexer::run`
+    /// (populates the inverted index via the rq4b seam).
+    pub sparse_embedder: Option<Arc<dyn ministr_core::embedding::SparseEmbedder>>,
+    /// The corpus's live inverted index (loaded from the `sparse_index.json`
+    /// sidecar at handle creation; ingest repopulates the SAME Arc, so
+    /// queries see new sparse postings exactly like they see new dense
+    /// vectors through the shared `index` Arc).
+    pub sparse_index: Option<Arc<dyn ministr_core::index::SparseIndex>>,
     /// `Arc` so `list()` (and any read-mostly status path) can clone the
     /// handle out and drop the corpora-map guard *before* awaiting the
     /// session lock. Accessors are unchanged — `Arc` derefs to the
@@ -1466,6 +1476,46 @@ impl CorpusRegistry {
         Ok(())
     }
 
+    /// rq4c: build the per-corpus sparse (hybrid) components when
+    /// `sparse_weight > 0` — the SPLADE embedder (model downloads on first
+    /// use, like the dense model) plus the inverted index loaded from the
+    /// `sparse_index.json` sidecar (empty for a fresh corpus;
+    /// `indexer::run_body` populates the same Arc during ingest). Returns
+    /// `(None, None)` when the knob is unset, keeping the corpus dense-only.
+    #[allow(clippy::type_complexity)] // a pair of optional trait objects, named once
+    fn build_sparse_components(
+        &self,
+        corpus_id: &str,
+        sparse_weight: f32,
+        index_dir: &std::path::Path,
+    ) -> Result<
+        (
+            Option<Arc<dyn ministr_core::embedding::SparseEmbedder>>,
+            Option<Arc<dyn ministr_core::index::SparseIndex>>,
+        ),
+        RegistryError,
+    > {
+        if sparse_weight <= 0.0 {
+            return Ok((None, None));
+        }
+        let models_dir = self.config.data_dir.join("models");
+        let se = ministr_core::embedding::FastSparseEmbedder::new(
+            ministr_core::embedding::DEFAULT_SPARSE_MODEL,
+            Some(&models_dir.to_string_lossy()),
+        )
+        .map_err(|e| RegistryError::Embedder(format!("sparse embedder: {e}")))?;
+        let si =
+            <ministr_core::index::InvertedIndex as ministr_core::index::SparseIndex>::load_sparse(
+                index_dir,
+            )
+            .map_err(|e| RegistryError::Storage(format!("load sparse sidecar: {e}")))?;
+        info!(
+            corpus_id,
+            sparse_weight, "hybrid (sparse+dense) retrieval enabled"
+        );
+        Ok((Some(Arc::new(se)), Some(Arc::new(si))))
+    }
+
     async fn create_handle(
         &self,
         corpus_id: &str,
@@ -1521,6 +1571,19 @@ impl CorpusRegistry {
                 rerank_depth = cfg.rerank_depth.unwrap_or(100),
                 "per-corpus Matryoshka truncation + rerank applied"
             );
+        }
+
+        // rq4c: hybrid (sparse+dense) retrieval when the corpus's
+        // `.ministr.toml` `[corpus] sparse_weight` is > 0 — mirrors the CLI's
+        // `init_infrastructure` wiring. The SPLADE model downloads on first
+        // use (opt-in knob, same contract as the dense model); the sidecar
+        // loads empty for a fresh corpus and `indexer::run` populates the
+        // same Arc during ingest.
+        let sparse_weight = cfg.sparse_weight.unwrap_or(0.0);
+        let (sparse_embedder, sparse_index) =
+            self.build_sparse_components(corpus_id, sparse_weight, &index_dir)?;
+        if let (Some(se), Some(si)) = (&sparse_embedder, &sparse_index) {
+            service = service.with_sparse(Arc::clone(se), Arc::clone(si), sparse_weight);
         }
 
         // rq5b: attach a cross-encoder reranker to the production query path
@@ -1587,6 +1650,8 @@ impl CorpusRegistry {
             parser: cfg.parser,
             min_section_tokens: cfg.min_section_tokens,
             ignore: cfg.ignore.clone(),
+            sparse_embedder,
+            sparse_index,
             sessions: Arc::new(tokio::sync::Mutex::new(SessionRegistry::new(
                 UsageConfig::default(),
             ))),

@@ -432,6 +432,15 @@ pub struct CorpusSpec {
     /// Defaults to 100. Set to 0 to disable two-stage reranking while still
     /// using truncated embeddings.
     pub rerank_depth: Option<usize>,
+    /// Hybrid (sparse + dense) retrieval weight for this corpus (rq4c).
+    ///
+    /// When set > 0, ingestion also builds a sparse (SPLADE) inverted index
+    /// and surveys fuse dense + sparse results via weighted RRF, with this
+    /// value as the sparse share (0.0–1.0). `None` / `0` keeps the corpus
+    /// dense-only. Measured guidance (optimize-ingest, 2026-06): NO single
+    /// global weight works — code corpora peak at 0.6 while docs/prose
+    /// corpora regress at every tested weight; pick per corpus.
+    pub sparse_weight: Option<f32>,
 }
 
 /// An external local directory to include in the corpus.
@@ -547,6 +556,9 @@ pub struct EffectiveCorpusConfig {
     /// User ignore patterns (repo `[corpus] ignore`; gitignore-style globs,
     /// applied on top of `.gitignore` + the built-in always-ignore lists).
     pub ignore: Vec<String>,
+    /// Hybrid sparse retrieval weight (repo `[corpus] sparse_weight`; no
+    /// `meta.toml`/global source today). `None` or `<= 0` = dense-only.
+    pub sparse_weight: Option<f32>,
 }
 
 /// Resolve every per-corpus knob into one [`EffectiveCorpusConfig`].
@@ -590,6 +602,9 @@ pub fn resolve_effective_corpus_config(
         ignore: repo_config
             .map(|r| r.corpus.ignore.clone())
             .unwrap_or_default(),
+        // sparse_weight currently lives only in the repo `[corpus]` table
+        // (per-corpus-type DEFAULTS land with rq-sparse-weight-defaults-docs).
+        sparse_weight: repo_config.and_then(|r| r.corpus.sparse_weight),
     }
 }
 

@@ -91,6 +91,7 @@ pub(crate) async fn run_body(registry: &CorpusRegistry, corpus_id: &str, paths: 
         index_dir,
         progress,
         prefetch,
+        sparse,
     ) = {
         let corpora = registry.corpora().read().await;
         let Some(handle) = corpora.get(corpus_id) else {
@@ -108,6 +109,14 @@ pub(crate) async fn run_body(registry: &CorpusRegistry, corpus_id: &str, paths: 
             handle.data_dir.join("index"),
             Arc::clone(&handle.progress),
             Arc::clone(&handle.prefetch),
+            // rq4c: the handle's sparse pair (Some when `[corpus]
+            // sparse_weight` > 0). Ingest populates the SAME Arc the
+            // QueryService reads, so surveys see new sparse postings live.
+            handle
+                .sparse_embedder
+                .as_ref()
+                .map(Arc::clone)
+                .zip(handle.sparse_index.as_ref().map(Arc::clone)),
         )
     };
 
@@ -217,6 +226,11 @@ pub(crate) async fn run_body(registry: &CorpusRegistry, corpus_id: &str, paths: 
     if let Some(dual) = dual {
         pipeline = pipeline.with_dual_embedder(dual, (*storage).clone());
     }
+    // rq4c: hybrid retrieval — populate the inverted index during ingestion
+    // (rq4b seam), same wiring as the CLI's build_corpus_pipeline.
+    if let Some((se, si)) = &sparse {
+        pipeline = pipeline.with_sparse_indexing(Arc::clone(se), Arc::clone(si));
+    }
 
     match pipeline
         .ingest_paths_with_embeddings(&local_paths, &*storage, &*embedder, &*index)
@@ -234,6 +248,14 @@ pub(crate) async fn run_body(registry: &CorpusRegistry, corpus_id: &str, paths: 
 
             if let Err(e) = index.persist(&index_dir) {
                 error!(corpus_id, error = %e, "failed to persist vector index");
+            }
+            // rq4c: persist the sparse sidecar next to the HNSW files (the
+            // daemon pipeline doesn't set a corpus_dir, so the pipeline's
+            // own end-of-ingest hook doesn't fire here).
+            if let Some((_, si)) = &sparse
+                && let Err(e) = si.persist_sparse(&index_dir)
+            {
+                error!(corpus_id, error = %e, "failed to persist sparse index");
             }
 
             // Flush the prefetch warm cache — any entries it holds were

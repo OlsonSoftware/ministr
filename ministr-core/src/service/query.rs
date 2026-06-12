@@ -149,8 +149,10 @@ impl QueryService {
         if let (Some(se), Some(si)) = (&self.sparse_embedder, &self.sparse_index) {
             searcher = searcher.with_sparse(se.as_ref(), si.as_ref());
         }
+        // rq4c: the per-corpus configured weight (with_sparse); <= 0 or no
+        // components attached behaves dense-only.
         let sparse_weight = if self.sparse_embedder.is_some() {
-            0.3
+            self.sparse_weight.max(0.0)
         } else {
             0.0
         };
@@ -232,8 +234,10 @@ impl QueryService {
         if let (Some(se), Some(si)) = (&self.sparse_embedder, &self.sparse_index) {
             searcher = searcher.with_sparse(se.as_ref(), si.as_ref());
         }
+        // rq4c: the per-corpus configured weight (with_sparse); <= 0 or no
+        // components attached behaves dense-only.
         let sparse_weight = if self.sparse_embedder.is_some() {
-            0.3
+            self.sparse_weight.max(0.0)
         } else {
             0.0
         };

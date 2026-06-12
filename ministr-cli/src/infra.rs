@@ -34,6 +34,15 @@ pub(crate) struct InfrastructureContext {
     pub(crate) dual_embedder: Option<Arc<dyn ministr_core::embedding::DualEmbedder>>,
     /// Number of coarse candidates to rescore with full-dim vectors.
     pub(crate) rerank_depth: usize,
+    /// Sparse (SPLADE) embedder for hybrid retrieval — set when the repo
+    /// `[corpus] sparse_weight` knob is > 0 (rq4c). Used by BOTH ingestion
+    /// (populates the inverted index, rq4b seam) and the query path.
+    pub(crate) sparse_embedder: Option<Arc<dyn ministr_core::embedding::SparseEmbedder>>,
+    /// The shared inverted index (loaded from the `sparse_index.json` sidecar
+    /// at open; ingest repopulates it and the pipeline re-persists).
+    pub(crate) sparse_index: Option<Arc<dyn ministr_core::index::SparseIndex>>,
+    /// RRF sparse share for surveys (0 when sparse is disabled).
+    pub(crate) sparse_weight: f32,
     /// Per-corpus parser override resolved from `meta.toml` (parity-meta-toml-load);
     /// `None` = auto-detect by extension. Applied to the ingestion pipeline.
     pub(crate) parser: Option<ministr_core::parser::ParserKind>,
@@ -235,6 +244,39 @@ pub(crate) async fn init_infrastructure(
         config,
     );
 
+    // rq4c: hybrid retrieval is opt-in via the repo `[corpus] sparse_weight`
+    // knob. When > 0, build the SPLADE embedder (model download on first
+    // use, like the dense model) and load the per-corpus inverted-index
+    // sidecar — empty on a fresh corpus; ingest populates + re-persists it.
+    let sparse_weight = effective.sparse_weight.unwrap_or(0.0);
+    let (sparse_embedder, sparse_index) = if sparse_weight > 0.0 {
+        let models_dir = config.data_dir.join("models");
+        let se = ministr_core::embedding::FastSparseEmbedder::new(
+            ministr_core::embedding::DEFAULT_SPARSE_MODEL,
+            Some(&models_dir.to_string_lossy()),
+        )
+        .into_diagnostic()
+        .wrap_err("failed to load the sparse (SPLADE) embedding model")?;
+        let si =
+            <ministr_core::index::InvertedIndex as ministr_core::index::SparseIndex>::load_sparse(
+                &index_dir,
+            )
+            .into_diagnostic()
+            .wrap_err("failed to load the sparse index sidecar")?;
+        tracing::info!(
+            sparse_weight,
+            model = ministr_core::embedding::DEFAULT_SPARSE_MODEL,
+            docs = ministr_core::index::SparseIndex::len_sparse(&si),
+            "hybrid (sparse+dense) retrieval enabled"
+        );
+        (
+            Some(Arc::new(se) as Arc<dyn ministr_core::embedding::SparseEmbedder>),
+            Some(Arc::new(si) as Arc<dyn ministr_core::index::SparseIndex>),
+        )
+    } else {
+        (None, None)
+    };
+
     Ok(InfrastructureContext {
         corpus_dir,
         index_dir,
@@ -245,6 +287,9 @@ pub(crate) async fn init_infrastructure(
         index,
         dual_embedder,
         rerank_depth: rerank_depth.unwrap_or(100),
+        sparse_embedder,
+        sparse_index,
+        sparse_weight,
         parser: effective.parser,
         min_section_tokens: effective.min_section_tokens,
         ignore: effective.ignore,
@@ -405,6 +450,10 @@ pub(crate) async fn build_server(
     );
     if let Some(ref dual_emb) = ctx.dual_embedder {
         service = service.with_matryoshka_rerank(Arc::clone(dual_emb), ctx.rerank_depth);
+    }
+    // rq4c: hybrid fusion on the survey path when the corpus opted in.
+    if let (Some(se), Some(si)) = (&ctx.sparse_embedder, &ctx.sparse_index) {
+        service = service.with_sparse(Arc::clone(se), Arc::clone(si), ctx.sparse_weight);
     }
     let service = Arc::new(service);
 

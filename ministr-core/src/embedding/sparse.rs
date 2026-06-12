@@ -16,6 +16,11 @@ use super::{SparseEmbedder, SparseVector};
 /// Default batch size for sparse embedding inference.
 const DEFAULT_BATCH_SIZE: usize = 256;
 
+/// Default SPLADE model for hybrid retrieval (rq4c). Both ingestion surfaces
+/// construct from this single constant so the CLI and the daemon can never
+/// drift onto different sparse vector spaces for the same corpus.
+pub const DEFAULT_SPARSE_MODEL: &str = "splade-pp-v1";
+
 /// Sparse embedding model powered by SPLADE via the `fastembed` crate.
 ///
 /// Produces sparse vectors where only activated vocabulary positions carry

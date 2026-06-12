@@ -30,7 +30,7 @@ pub use fastembed_impl::{
 pub use hybrid::HybridEmbedder;
 pub use rerank::FastReranker;
 pub use service::{EmbeddingService, EmbeddingServiceConfig};
-pub use sparse::FastSparseEmbedder;
+pub use sparse::{DEFAULT_SPARSE_MODEL, FastSparseEmbedder};
 
 use crate::error::IndexError;
 

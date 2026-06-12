@@ -159,3 +159,106 @@ fn sparse_weight_is_inert_without_sparse_components() {
         "without sparse components, sparse_weight is ignored (pure dense)"
     );
 }
+
+/// Sparse embedder that activates the identifier token only for texts that
+/// actually contain the identifier — content-sensitive, unlike
+/// [`FixedSparseEmbedder`], so it can drive a real ingest.
+struct ContentSparseEmbedder;
+
+impl SparseEmbedder for ContentSparseEmbedder {
+    fn embed_sparse(&self, texts: &[&str]) -> Result<Vec<SparseVector>, IndexError> {
+        Ok(texts
+            .iter()
+            .map(|t| {
+                if t.contains("TokenBucket") {
+                    SparseVector {
+                        indices: vec![IDENT_TOKEN],
+                        values: vec![1.0],
+                    }
+                } else {
+                    SparseVector {
+                        indices: vec![3],
+                        values: vec![1.0],
+                    }
+                }
+            })
+            .collect())
+    }
+}
+
+/// rq4c — the production `QueryService::survey` path honors the configured
+/// `sparse_weight`: the SAME ingested corpus answers differently with hybrid
+/// fusion on (the exact-identifier doc wins) vs dense-only (the dense
+/// tie-break picks the alphabetically-first content id, NOT the target).
+///
+/// The dense embedder returns one fixed vector for everything, so all dense
+/// scores tie and the W2 deterministic tie-break (`content_id` ascending)
+/// decides — `aaa.md`'s sections sort before `zzz.md`'s. Only the sparse
+/// signal distinguishes the `TokenBucket` doc.
+#[tokio::test]
+async fn query_service_survey_honors_the_configured_sparse_weight() {
+    use std::sync::Arc;
+
+    use ministr_core::ingestion::IngestionPipeline;
+    use ministr_core::service::QueryService;
+    use ministr_core::storage::SqliteStorage;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("aaa.md"),
+        "# Cache\n\nGeneric caching notes without the identifier.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        src.join("zzz.md"),
+        "# Limiter\n\nThe TokenBucket rate limiter refills per tick.\n",
+    )
+    .unwrap();
+
+    // File-backed storage so the QueryService can open its own connection.
+    let db_path = tmp.path().join("content.db");
+    let storage = SqliteStorage::open(&db_path).unwrap();
+
+    let dense_embedder = Arc::new(FixedDenseEmbedder {
+        query: vec![1.0, 0.0, 0.0, 0.0],
+    });
+    let dense_index = Arc::new(HnswIndex::new(4, 1000).unwrap());
+    let sparse_embedder: Arc<dyn SparseEmbedder> = Arc::new(ContentSparseEmbedder);
+    let sparse_index: Arc<dyn SparseIndex> = Arc::new(InvertedIndex::new());
+
+    let pipeline = IngestionPipeline::new()
+        .with_sparse_indexing(Arc::clone(&sparse_embedder), Arc::clone(&sparse_index));
+    pipeline
+        .ingest_directory_with_embeddings(&src, &storage, dense_embedder.as_ref(), &*dense_index)
+        .await
+        .expect("ingest");
+
+    let dense_only = QueryService::new(
+        SqliteStorage::open(&db_path).unwrap(),
+        Arc::clone(&dense_embedder) as Arc<dyn Embedder>,
+        Arc::clone(&dense_index) as Arc<dyn VectorIndex>,
+    );
+    let hybrid = QueryService::new(
+        SqliteStorage::open(&db_path).unwrap(),
+        Arc::clone(&dense_embedder) as Arc<dyn Embedder>,
+        Arc::clone(&dense_index) as Arc<dyn VectorIndex>,
+    )
+    .with_sparse(sparse_embedder, sparse_index, 0.9);
+
+    let dense_top = dense_only.survey("TokenBucket", 2).await.expect("survey");
+    assert!(!dense_top.is_empty());
+    assert!(
+        !dense_top[0].text.contains("TokenBucket"),
+        "dense-only ties break to the alphabetically-first doc, not the target"
+    );
+
+    let hybrid_top = hybrid.survey("TokenBucket", 2).await.expect("survey");
+    assert!(!hybrid_top.is_empty());
+    assert!(
+        hybrid_top[0].text.contains("TokenBucket"),
+        "with sparse_weight=0.9 the exact-identifier doc must win, got: {}",
+        hybrid_top[0].text
+    );
+}

@@ -110,6 +110,15 @@ const MATRIX: &[Row] = &[
         cli_one_shot: Honored::Yes,
         daemon_registry: Honored::Yes,
     },
+    // sparse_weight — repo `[corpus] sparse_weight` (rq4c). When > 0 both
+    // surfaces build the SPLADE embedder + load the sparse sidecar, populate
+    // the inverted index during ingestion (rq4b seam), and fuse dense +
+    // sparse at query time via `QueryService::with_sparse` with this weight.
+    Row {
+        knob: "sparse_weight",
+        cli_one_shot: Honored::Yes,
+        daemon_registry: Honored::Yes,
+    },
 ];
 
 /// The canonical per-corpus knob names, mirroring both the
@@ -123,6 +132,7 @@ const KNOBS: &[&str] = &[
     "min_section_tokens",
     "claim_extraction",
     "ignore",
+    "sparse_weight",
 ];
 
 fn row(knob: &str) -> &'static Row {
@@ -146,6 +156,7 @@ fn matrix_covers_every_effective_knob_exhaustively() {
         min_section_tokens,
         claim_extraction,
         ignore,
+        sparse_weight,
     } = resolve_effective_corpus_config(None, None, &MinistrConfig::default());
     // Touch every binding so a removed knob is a compile error here too.
     let _ = (
@@ -156,6 +167,7 @@ fn matrix_covers_every_effective_knob_exhaustively() {
         &min_section_tokens,
         &claim_extraction,
         &ignore,
+        &sparse_weight,
     );
 
     // `KNOBS` (module scope) is the runtime mirror of the destructure above.
@@ -203,6 +215,33 @@ fn model_is_honored_end_to_end_via_the_shared_seam() {
 }
 
 #[test]
+fn sparse_weight_is_honored_via_the_shared_seam() {
+    // rq4c: the hybrid knob resolves through the same seam both surfaces
+    // route through; absent → None (dense-only), set → carried verbatim.
+    let global = MinistrConfig::default();
+    let eff = resolve_effective_corpus_config(None, None, &global);
+    assert_eq!(eff.sparse_weight, None, "absent knob = dense-only");
+
+    let repo = RepoConfig {
+        corpus: CorpusSpec {
+            sparse_weight: Some(0.6),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let eff = resolve_effective_corpus_config(Some(&repo), None, &global);
+    assert_eq!(
+        eff.sparse_weight,
+        Some(0.6),
+        "the shared seam must honor a repo [corpus] sparse_weight"
+    );
+
+    let r = row("sparse_weight");
+    assert_eq!(r.cli_one_shot, Honored::Yes);
+    assert_eq!(r.daemon_registry, Honored::Yes);
+}
+
+#[test]
 fn known_registry_gaps_are_tracked_never_silent() {
     // The registry now applies the per-corpus MODEL (embedder pool,
     // parity-seam-registry-routing), the Matryoshka DIMENSION + RERANK_DEPTH
@@ -218,7 +257,13 @@ fn known_registry_gaps_are_tracked_never_silent() {
     for r in MATRIX {
         if matches!(
             r.knob,
-            "model" | "dimension" | "rerank_depth" | "parser" | "min_section_tokens" | "ignore"
+            "model"
+                | "dimension"
+                | "rerank_depth"
+                | "parser"
+                | "min_section_tokens"
+                | "ignore"
+                | "sparse_weight"
         ) {
             assert_eq!(
                 r.daemon_registry,

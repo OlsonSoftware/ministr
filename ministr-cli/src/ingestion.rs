@@ -48,6 +48,16 @@ fn build_corpus_pipeline(
     if let Some(dual) = &ctx.dual_embedder {
         pipeline = pipeline.with_dual_embedder(Arc::clone(dual), (*ctx.storage).clone());
     }
+    // rq4c: hybrid retrieval — populate the inverted index during ingestion
+    // (rq4b seam). The corpus dir is set so the pipeline persists the
+    // sparse_index.json sidecar at end-of-ingest; dense mid-run persistence
+    // still requires `persist_every` (streaming), so dense behavior is
+    // unchanged.
+    if let (Some(se), Some(si)) = (&ctx.sparse_embedder, &ctx.sparse_index) {
+        pipeline = pipeline
+            .with_sparse_indexing(Arc::clone(se), Arc::clone(si))
+            .with_corpus_dir(ctx.index_dir.clone());
+    }
     if let Some(n) = streaming_persist_every {
         pipeline = pipeline
             .with_corpus_dir(ctx.index_dir.clone())
