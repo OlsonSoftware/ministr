@@ -152,8 +152,8 @@ pub(crate) async fn run_body(registry: &CorpusRegistry, corpus_id: &str, paths: 
     // through a fresh per-corpus `EmbeddingService` so the truncated embed still
     // runs off the Tokio runtime (ADR 0001 D1). The default-dimension path keeps
     // the shared, model-pooled service unchanged.
-    let (embedder, service) = match apply_dimension(&pooled_embedder, dimension) {
-        Ok((embedder, _dual)) => {
+    let (embedder, service, dual) = match apply_dimension(&pooled_embedder, dimension) {
+        Ok((embedder, dual)) => {
             let service = if dimension.is_some() {
                 info!(
                     corpus_id,
@@ -163,7 +163,7 @@ pub(crate) async fn run_body(registry: &CorpusRegistry, corpus_id: &str, paths: 
             } else {
                 pooled_service
             };
-            (embedder, service)
+            (embedder, service, dual)
         }
         Err(e) => {
             error!(corpus_id, model = %model, error = %e, "invalid per-corpus dimension — cannot index");
@@ -188,12 +188,18 @@ pub(crate) async fn run_body(registry: &CorpusRegistry, corpus_id: &str, paths: 
     // knobs — `parser` (override auto-detection) + `min_section_tokens` (section
     // merge threshold) — the SAME knobs the CLI's `run_corpus_ingestion` applies,
     // so the two ingestion surfaces stay in parity.
-    let pipeline = IngestionPipeline::new()
+    let mut pipeline = IngestionPipeline::new()
         .with_progress(Arc::clone(&progress))
         .with_parser_override(parser)
         .with_min_section_tokens(min_section_tokens)
         .with_ignore_patterns(ignore_patterns)
         .with_embedding_service(service);
+    // rq-matryoshka-dual-ingest: store full-dim vectors when this corpus has a
+    // Matryoshka `dimension` configured — same wiring as the CLI's
+    // run_corpus_ingestion, so the two ingestion surfaces stay in parity.
+    if let Some(dual) = dual {
+        pipeline = pipeline.with_dual_embedder(dual, (*storage).clone());
+    }
 
     match pipeline
         .ingest_paths_with_embeddings(&local_paths, &*storage, &*embedder, &*index)

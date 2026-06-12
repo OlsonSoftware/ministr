@@ -749,6 +749,59 @@ mod tests {
         (embedder, index)
     }
 
+    // rq-matryoshka-dual-ingest: a dimension-configured (dual-embedder)
+    // ingest must store FULL-dimension vectors so query-time two-stage
+    // rerank has data to rescore against.
+    #[tokio::test]
+    async fn dual_embedder_ingest_populates_full_dim_vectors() {
+        use crate::index::IndexedVectorStore;
+
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("doc.md"),
+            "# Matryoshka\n\nTruncated retrieval with full-dimension rescoring.\n",
+        )
+        .unwrap();
+
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let full_dim = 8;
+        let target_dim = 4;
+        let raw: std::sync::Arc<dyn crate::embedding::Embedder> =
+            std::sync::Arc::new(MockEmbedder { dim: full_dim });
+        let matryoshka = std::sync::Arc::new(
+            crate::embedding::MatryoshkaEmbedder::new(std::sync::Arc::clone(&raw), target_dim)
+                .unwrap(),
+        );
+        let embedder: std::sync::Arc<dyn crate::embedding::Embedder> =
+            std::sync::Arc::clone(&matryoshka) as _;
+        let dual: std::sync::Arc<dyn crate::embedding::DualEmbedder> = matryoshka;
+        let index = crate::index::HnswIndex::new(target_dim, 10_000).unwrap();
+
+        let pipeline = IngestionPipeline::new().with_dual_embedder(dual, storage.clone());
+        let stats = pipeline
+            .ingest_directory_with_embeddings(tmp.path(), &storage, &*embedder, &index)
+            .await
+            .unwrap();
+        assert_eq!(stats.files_indexed, 1);
+        assert!(stats.total_embeddings > 0);
+
+        // Every stored full-dim vector must be FULL dimension, and at least
+        // one must exist (the table is no longer starved).
+        let indexed = storage.list_indexed_vectors().await.unwrap();
+        let id_refs: Vec<&str> = indexed.iter().map(|(id, _)| id.as_str()).collect();
+        let full = storage.get_full_dim_vectors(&id_refs).await.unwrap();
+        assert!(
+            !full.is_empty(),
+            "dimension-configured ingest must populate full_dim_vectors"
+        );
+        for (id, v) in &full {
+            assert_eq!(v.len(), full_dim, "{id} stored at wrong dimension");
+        }
+
+        // And the truncated side stayed truncated (HNSW dim respected).
+        assert_eq!(index.dimension(), target_dim);
+    }
+
     #[tokio::test]
     async fn ingest_with_embeddings_creates_vectors() {
         let tmp = tempfile::tempdir().unwrap();

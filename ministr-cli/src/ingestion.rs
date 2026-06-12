@@ -26,6 +26,39 @@ use crate::infra::InfrastructureContext;
 /// callers opt in because they run on a 4 GiB pod and need to bound
 /// peak HNSW rss; local `ministr index` passes `None` and keeps the
 /// bundle-at-end shape, avoiding gratuitous fsyncs on developer disks.
+/// Build the corpus ingestion pipeline from the resolved per-corpus config.
+///
+/// parity-meta-toml-load: applies the SAME knobs the daemon's `indexer::run`
+/// applies (parser + `min_section_tokens` + ignore patterns), so the CLI
+/// one-shot and the registry ingest surfaces honor them identically.
+/// rq-matryoshka-dual-ingest: when a per-corpus `dimension` is configured,
+/// also stores full-dimension vectors alongside the truncated HNSW vectors so
+/// query-time two-stage rerank (`with_matryoshka_rerank`) has data to rescore
+/// against — without this the dimension knob was silently half-dead.
+fn build_corpus_pipeline(
+    ctx: &InfrastructureContext,
+    progress: &Arc<ministr_core::ingestion::IngestionProgress>,
+    streaming_persist_every: Option<usize>,
+) -> ministr_core::ingestion::IngestionPipeline {
+    let mut pipeline = ministr_core::ingestion::IngestionPipeline::new()
+        .with_progress(Arc::clone(progress))
+        .with_parser_override(ctx.parser)
+        .with_min_section_tokens(ctx.min_section_tokens)
+        .with_ignore_patterns(ctx.ignore.clone());
+    if let Some(dual) = &ctx.dual_embedder {
+        pipeline = pipeline.with_dual_embedder(Arc::clone(dual), (*ctx.storage).clone());
+    }
+    if let Some(n) = streaming_persist_every {
+        pipeline = pipeline
+            .with_corpus_dir(ctx.index_dir.clone())
+            .with_batch_config(ministr_core::ingestion::BatchIngestionConfig {
+                batch_size: 4,
+                persist_every: Some(n),
+            });
+    }
+    pipeline
+}
+
 pub(crate) async fn run_corpus_ingestion(
     corpus_paths: &[String],
     git_includes: &[ministr_core::config::GitInclude],
@@ -61,23 +94,7 @@ pub(crate) async fn run_corpus_ingestion(
     let index = &*ctx.index;
 
     let start = std::time::Instant::now();
-    // parity-meta-toml-load: apply this corpus's resolved per-corpus `meta.toml`
-    // knobs (parser + min_section_tokens) — the SAME knobs the daemon's
-    // `indexer::run` applies — so the CLI one-shot and the registry ingest
-    // surfaces honor them identically.
-    let mut pipeline = ministr_core::ingestion::IngestionPipeline::new()
-        .with_progress(Arc::clone(progress))
-        .with_parser_override(ctx.parser)
-        .with_min_section_tokens(ctx.min_section_tokens)
-        .with_ignore_patterns(ctx.ignore.clone());
-    if let Some(n) = streaming_persist_every {
-        pipeline = pipeline
-            .with_corpus_dir(ctx.index_dir.clone())
-            .with_batch_config(ministr_core::ingestion::BatchIngestionConfig {
-                batch_size: 4,
-                persist_every: Some(n),
-            });
-    }
+    let pipeline = build_corpus_pipeline(ctx, progress, streaming_persist_every);
 
     // Ingest local paths.
     if !local_paths.is_empty() {
