@@ -15,6 +15,8 @@ import { derivePresence } from "../../lib/presence";
 import { LiveDot } from "../ui/LiveDot";
 import { ConnectionNote } from "../ui/ConnectionNote";
 import { ExpertConfig } from "./ExpertConfig";
+import { IndexingInstrument } from "../ui/IndexingInstrument";
+import { useIngestionProgress } from "../../lib/useIngestionProgress";
 
 /**
  * Project Mirror (UX-BLUEPRINT §3.2) — what your AI sees. The tree IS
@@ -35,6 +37,10 @@ export function ProjectMirror({
     4_000,
   );
   const { data: activity } = usePoll(() => recentActivity(30), 4_000);
+  // Live indexing progress for the full instrument in the banner
+  // (gui-indexing-instrument).
+  const { progress } = useIngestionProgress(1_000);
+  const liveProgress = progress.get(corpus.id);
   const [pendingAt, setPendingAt] = useState<number | null>(null);
 
   // Optimism yields to real data (or a 15s safety net).
@@ -106,6 +112,11 @@ export function ProjectMirror({
           action={
             summary.state === "stale" ? (
               <CatchUp corpusId={corpus.id} onAccepted={() => setPendingAt(Date.now())} />
+            ) : undefined
+          }
+          footer={
+            summary.state === "updating" && liveProgress?.running ? (
+              <IndexingInstrument progress={liveProgress} />
             ) : undefined
           }
         />

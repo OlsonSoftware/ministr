@@ -10,6 +10,8 @@ import { Brand } from "../ui/Brand";
 import { ThemePick } from "../ui/ThemePick";
 import { ConnectionNote } from "../ui/ConnectionNote";
 import { Beat } from "../ui/Beat";
+import { IndexingInstrument } from "../ui/IndexingInstrument";
+import { useIngestionProgress } from "../../lib/useIngestionProgress";
 
 /**
  * Home — the Trust Panel (UX-BLUEPRINT §3.1). One plain-English trust
@@ -23,6 +25,9 @@ export function TrustPanel({
   onAddProject?: () => void;
 }) {
   const { data: corpora, error } = usePoll(fetchAll, 5_000);
+  // Live per-corpus indexing progress — drives the inline instrument on
+  // any row that is updating (gui-indexing-instrument).
+  const { progress } = useIngestionProgress(1_000);
   // Optimistic "catching up" per corpus, set when the daemon ACCEPTS a
   // reindex; real poll data (indexing flag) takes over and clears it.
   const [pending, setPending] = useState<Record<string, number>>({});
@@ -119,6 +124,15 @@ export function TrustPanel({
                     onAccepted={() =>
                       setPending((p) => ({ ...p, [info.id]: Date.now() }))
                     }
+                  />
+                ) : undefined
+              }
+              footer={
+                summary.state === "updating" &&
+                progress.get(info.id)?.running ? (
+                  <IndexingInstrument
+                    progress={progress.get(info.id)!}
+                    variant="compact"
                   />
                 ) : undefined
               }

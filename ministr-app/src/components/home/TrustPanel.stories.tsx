@@ -51,3 +51,31 @@ export const Empty: Story = {
   args: { onOpenProject: () => {} },
   decorators: [withTauriMock({ list_corpora: [] })],
 };
+
+/** A row mid-reindex: the compact Indexing Instrument rides inside the
+ *  updating banner (gui-indexing-instrument). */
+export const Updating: Story = {
+  args: { onOpenProject: () => {} },
+  decorators: [
+    withTauriMock({
+      list_corpora: CORPORA,
+      corpus_freshness_summary: (args: Record<string, unknown>) =>
+        args.corpusId === "corpus-aaaa"
+          ? { current: 1, stale: 0, new: 0, missing: 0, indexing: true }
+          : FRESHNESS[String(args.corpusId)],
+      ingestion_progress: [
+        {
+          corpus_id: "corpus-aaaa",
+          status: 1,
+          phase: "embedding",
+          files_total: 214,
+          files_done: 214,
+          sections_done: 1582,
+          embeddings_total: 4200,
+          embeddings_done: 2604,
+          current_file: "src/daemon/indexer.rs",
+        },
+      ],
+    }),
+  ],
+};

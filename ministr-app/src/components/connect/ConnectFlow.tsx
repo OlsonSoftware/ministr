@@ -11,6 +11,8 @@ import { Brand } from "../ui/Brand";
 import { Beat } from "../ui/Beat";
 import { ActionChip } from "../ui/ActionChip";
 import { StatusBanner } from "../ui/StatusBanner";
+import { IndexingInstrument } from "../ui/IndexingInstrument";
+import { useIngestionProgress } from "../../lib/useIngestionProgress";
 
 /**
  * Connect flow — the first five minutes (UX-BLUEPRINT §3.4). Three
@@ -90,6 +92,12 @@ function ReadingBeat({
 }) {
   const { data: corpora } = usePoll(listCorpora, 1_500);
   const mine = corpora?.find((c) => c.id === corpusId);
+  // The §7 evolution: sentence + instrument. While determinate progress
+  // streams, the full Indexing Instrument carries the moment and the
+  // sentence becomes its caption; before that (or if progress is ever
+  // unavailable) the original Beat keeps the beat.
+  const { progress } = useIngestionProgress(1_000);
+  const liveProgress = progress.get(corpusId);
 
   const sentence = useMemo(() => {
     const st = mine?.status as
@@ -111,7 +119,14 @@ function ReadingBeat({
       <h1 className="text-2xl font-semibold tracking-tight text-ink">
         ministr is reading your code
       </h1>
-      <Beat sentence={sentence} />
+      {liveProgress?.running ? (
+        <div className="space-y-2">
+          <IndexingInstrument progress={liveProgress} />
+          <p className="text-sm text-dim">{sentence}</p>
+        </div>
+      ) : (
+        <Beat sentence={sentence} />
+      )}
     </section>
   );
 }
