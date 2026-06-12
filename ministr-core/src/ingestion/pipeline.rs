@@ -1634,6 +1634,50 @@ impl IngestionPipeline {
 
     // ── Entry point 5: multi-path with embeddings ────────────────────────
 
+    /// Pre-flight no-op probe (ingest-lazy-embedder-load): decide — without
+    /// an embedder, vector index, or model load — whether
+    /// [`Self::ingest_paths_with_embeddings`] would take its manifest-level
+    /// mtime fast-skip. Callers (the one-shot CLI) use this to bail out
+    /// BEFORE paying the multi-second embedding-model load on a warm no-op
+    /// re-index.
+    ///
+    /// KEEP IN LOCKSTEP with the fast-skip gate inside
+    /// `ingest_paths_with_embeddings`: this calls the SAME discovery walk,
+    /// the SAME bridge detection, and the SAME mtime comparison, so the
+    /// probe cannot disagree with the gate. Bridge corpora return `false`
+    /// (the full pass must run to relink cross-language bridges — see the
+    /// bug-#3 note at the gate). Inherits `all_files_unchanged_by_mtime`'s
+    /// intentional repair side effect (the `file_hashes` wipe on
+    /// documents-table drift) — the same action the real path would take.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`IngestionError`] from discovery or storage reads.
+    pub async fn paths_ingest_would_noop<S>(
+        &self,
+        paths: &[PathBuf],
+        storage: &S,
+    ) -> Result<bool, IngestionError>
+    where
+        S: Storage + ?Sized,
+    {
+        let files = super::discovery::discover_paths_with_ignores(paths, &self.ignore_patterns)?;
+        if files.is_empty() {
+            return Ok(false);
+        }
+        let mut bridge_kinds = std::collections::BTreeSet::new();
+        for path in paths {
+            if path.is_dir() {
+                bridge_kinds.extend(detector::FrameworkDetector::detect(path));
+            }
+        }
+        bridge_kinds.extend(detector::FrameworkDetector::detect_in_files(&files));
+        if !bridge_kinds.is_empty() {
+            return Ok(false);
+        }
+        all_files_unchanged_by_mtime(&files, paths, storage).await
+    }
+
     #[instrument(skip(self, storage, embedder, index), fields(path_count = paths.len()))]
     #[allow(clippy::too_many_lines)] // orchestration entry point — each step is unique
     pub async fn ingest_paths_with_embeddings<S, E, I>(
@@ -1732,6 +1776,8 @@ impl IngestionPipeline {
 
         // Manifest-level mtime fast skip — only taken when no bridge kinds
         // were detected, since bridge linking runs only inside the full pass.
+        // KEEP IN LOCKSTEP with `paths_ingest_would_noop` above: the pre-load
+        // probe must reach the same verdict from the same inputs.
         if bridge_kinds.is_empty()
             && !files.is_empty()
             && let Ok(true) = all_files_unchanged_by_mtime(&files, paths, storage).await

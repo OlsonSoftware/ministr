@@ -1308,6 +1308,24 @@ pub async fn cmd_index(
         return Ok(());
     }
 
+    // ingest-lazy-embedder-load: a warm no-op re-index must not pay the
+    // multi-second embedding-model load. Probe the same fast-skip gate the
+    // pipeline would take — before init_infrastructure touches ONNX.
+    if infra::noop_reindex_short_circuit(
+        corpus_paths,
+        git_includes,
+        config,
+        resolved_model,
+        resolved_dimension,
+    )
+    .await
+    {
+        tracing::info!(
+            "corpus unchanged (mtime fast-skip) — nothing to index; embedding model not loaded"
+        );
+        return Ok(());
+    }
+
     let ctx = infra::init_infrastructure(
         corpus_paths,
         config,

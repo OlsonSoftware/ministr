@@ -135,3 +135,67 @@ async fn extractor_version_mismatch_defeats_short_circuit() {
         after.extractor_version,
     );
 }
+
+/// ingest-lazy-embedder-load: the pre-load no-op probe
+/// (`paths_ingest_would_noop`) must agree with the multi-path fast-skip gate
+/// — false on a fresh corpus, true after an unchanged ingest, false again the
+/// moment a file's mtime moves. The probe runs WITHOUT an embedder or index,
+/// which is the whole point: the CLI consults it before paying the
+/// embedding-model load.
+#[tokio::test]
+async fn noop_probe_mirrors_the_multi_path_fast_skip() {
+    let tmp = write_project();
+    let root = tmp.path().join("proj");
+    let paths = vec![root.clone()];
+    let storage = SqliteStorage::open_in_memory().expect("storage");
+    let probe = IngestionPipeline::new();
+
+    assert!(
+        !probe
+            .paths_ingest_would_noop(&paths, &storage)
+            .await
+            .expect("probe on fresh storage"),
+        "a never-ingested corpus must not probe as a no-op",
+    );
+
+    // Real multi-path ingest (the entry the CLI uses).
+    let embedder = MockEmbedder::default();
+    let index = HnswIndex::new(embedder.dimension(), 10_000).expect("hnsw index");
+    let pipeline = IngestionPipeline::new();
+    let stats = pipeline
+        .ingest_paths_with_embeddings(&paths, &storage, &embedder, &index)
+        .await
+        .expect("multi-path ingest");
+    assert!(
+        stats.files_indexed >= 1,
+        "first ingest indexes, got {stats:?}"
+    );
+
+    assert!(
+        probe
+            .paths_ingest_would_noop(&paths, &storage)
+            .await
+            .expect("probe after ingest"),
+        "an unchanged corpus must probe as a no-op (this is the gate the CLI \
+         consults before loading the embedding model)",
+    );
+
+    // Move one file's mtime into the future — content identical, but the
+    // mtime gate (deliberately conservative) must fall through.
+    let lib = root.join("lib.rs");
+    let future = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+    let f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&lib)
+        .expect("open lib.rs");
+    f.set_modified(future).expect("set mtime");
+    drop(f);
+
+    assert!(
+        !probe
+            .paths_ingest_would_noop(&paths, &storage)
+            .await
+            .expect("probe after touch"),
+        "a touched file must defeat the no-op probe exactly like the real gate",
+    );
+}

@@ -666,6 +666,135 @@ pub(crate) fn elapsed_millis(start: std::time::Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
+/// Pre-flight no-op short-circuit for `ministr index`
+/// (ingest-lazy-embedder-load): decide whether the run would be a complete
+/// no-op BEFORE [`init_infrastructure`] pays the multi-second embedding-model
+/// load. A warm no-op re-index used to cost ~10.5s wall for ~0.009s of
+/// pipeline work — all model load.
+///
+/// Returns `true` only when EVERY gate agrees the full run would change
+/// nothing: all sources are local directories (web/git always take the full
+/// path), the corpus database already exists (cold corpora go through
+/// [`init_infrastructure`], which also owns the legacy-dir migration), the
+/// stored index belongs to the SAME model + dimension (a changed model must
+/// re-embed), and the pipeline's own no-op probe
+/// (`IngestionPipeline::paths_ingest_would_noop` — the same discovery walk,
+/// bridge detection, and mtime comparison as the real fast-skip gate) says
+/// nothing changed. Any error or unknown answers `false` — the full path is
+/// always correct, just slower.
+///
+/// Skipping also skips the fast-skip path's `repair_missing_refs` and
+/// root-stats refresh; both are idempotent and were already performed by the
+/// last completed run over these same unchanged files.
+pub(crate) async fn noop_reindex_short_circuit(
+    corpus_paths: &[String],
+    git_includes: &[ministr_core::config::GitInclude],
+    config: &ministr_core::config::MinistrConfig,
+    resolved_model: &str,
+    resolved_dimension: Option<usize>,
+) -> bool {
+    use ministr_core::config::{CorpusSource, classify_corpus_path};
+
+    if corpus_paths.is_empty() || !git_includes.is_empty() {
+        return false;
+    }
+    let mut local_paths: Vec<std::path::PathBuf> = Vec::new();
+    for raw in corpus_paths {
+        match classify_corpus_path(raw) {
+            CorpusSource::Local(p) => local_paths.push(p),
+            CorpusSource::Web(_) | CorpusSource::Git(_) => return false,
+        }
+    }
+    if local_paths.is_empty() {
+        return false;
+    }
+
+    let corpus_dir = config
+        .data_dir
+        .join("corpora")
+        .join(corpus_data_dir_name(corpus_paths));
+    let db_path = corpus_dir.join("content.db");
+    if !db_path.exists() {
+        return false;
+    }
+    if !index_matches_model(
+        &corpus_dir.join("index"),
+        resolved_model,
+        resolved_dimension,
+    ) {
+        return false;
+    }
+
+    // The probe must walk with the SAME effective ignore patterns the real
+    // ingest would use — identical resolution to init_infrastructure.
+    let meta = ministr_core::config::CorpusConfig::load(&corpus_dir.join("meta.toml")).ok();
+    let repo_cfg = corpus_paths.first().and_then(|p| {
+        let path = std::path::Path::new(p);
+        let dir = if path.is_dir() {
+            Some(path)
+        } else {
+            path.parent()
+        };
+        dir.and_then(|d| ministr_core::config::RepoConfig::discover(d).ok().flatten())
+    });
+    let effective = ministr_core::config::resolve_effective_corpus_config(
+        repo_cfg.as_ref().map(|(_, rc)| rc),
+        meta.as_ref(),
+        config,
+    );
+
+    let Ok(storage) = ministr_core::storage::SqliteStorage::open(&db_path) else {
+        return false;
+    };
+    let pipeline =
+        ministr_core::ingestion::IngestionPipeline::new().with_ignore_patterns(effective.ignore);
+    match pipeline
+        .paths_ingest_would_noop(&local_paths, &storage)
+        .await
+    {
+        Ok(noop) => noop,
+        Err(e) => {
+            tracing::debug!(error = %e, "no-op probe failed — taking the full ingest path");
+            false
+        }
+    }
+}
+
+/// Check the stored index's model identity from `index/id_map.json` —
+/// `model_name` + `dim` — WITHOUT loading the HNSW graph or any model.
+/// A model or dimension change must re-embed, so the no-op short-circuit
+/// only fires on an exact match; anything unknown is `false`.
+fn index_matches_model(index_dir: &Path, model: &str, dimension: Option<usize>) -> bool {
+    #[derive(serde::Deserialize)]
+    struct IdMapModel {
+        dim: usize,
+        #[serde(default)]
+        model_name: Option<String>,
+    }
+    let Ok(raw) = std::fs::read_to_string(index_dir.join("id_map.json")) else {
+        return false;
+    };
+    let Ok(meta) = serde_json::from_str::<IdMapModel>(&raw) else {
+        return false;
+    };
+    if meta.model_name.as_deref() != Some(model) {
+        return false;
+    }
+    match dimension {
+        // Matryoshka override configured: the index must already be in that
+        // truncated space.
+        Some(d) => meta.dim == d,
+        // No override: the stored dim must be the model's NATIVE dimension —
+        // if a previous override was removed, the stored truncated space is
+        // stale and must re-embed. Unknown model names (remote embedders)
+        // stay conservative.
+        None => ministr_core::embedding::supported_models()
+            .iter()
+            .find(|m| m.name == model)
+            .is_some_and(|m| m.dimension == meta.dim),
+    }
+}
+
 /// Build a `CorpusRegistry` that shares the same `Arc<dyn Embedder>` as the
 /// MCP server's `InfrastructureContext`. Used by `cmd_serve_http` to expose
 /// `ministr-daemon::daemon::*_router` REST routes alongside the MCP routes
