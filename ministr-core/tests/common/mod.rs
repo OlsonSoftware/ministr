@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use ministr_core::embedding::Embedder;
-use ministr_core::index::HnswIndex;
+use ministr_core::index::ExactScanIndex;
 use ministr_core::ingestion::IngestionPipeline;
 use ministr_core::search::{MultiResolutionSearch, SearchConfig};
 use ministr_core::storage::SqliteStorage;
@@ -133,8 +133,12 @@ pub fn ndcg_at_k(result_ids: &[String], expected: &[ExpectedResult], k: usize) -
 /// Run the full eval pipeline: ingest corpus, run all ground-truth queries,
 /// return aggregated metrics.
 ///
-/// Each call creates fresh in-memory storage and HNSW index, so different
-/// embedders (with different dimensions) can be compared fairly.
+/// Each call creates fresh in-memory storage and a deterministic exact-scan
+/// index, so different embedders (with different dimensions) can be compared
+/// fairly AND two runs of the same configuration produce byte-identical
+/// metrics. (HNSW graph construction is not run-to-run deterministic —
+/// measured 4 distinct eval outputs in 6 runs — which made gate deltas under
+/// ±0.01 unreadable; the exact scan has timing parity at this corpus size.)
 #[allow(clippy::cast_precision_loss)]
 pub async fn run_eval_with_embedder(
     corpus_path: &Path,
@@ -144,7 +148,7 @@ pub async fn run_eval_with_embedder(
 ) -> EvalResults {
     let dim = embedder.dimension();
     let storage = SqliteStorage::open_in_memory().expect("failed to create storage");
-    let index = HnswIndex::new(dim, 10_000).expect("failed to create index");
+    let index = ExactScanIndex::new(dim);
 
     let pipeline = IngestionPipeline::new();
     let stats = pipeline
@@ -246,7 +250,7 @@ pub async fn probe_corpus_ids(
 ) -> Vec<(String, Vec<String>)> {
     let dim = embedder.dimension();
     let storage = SqliteStorage::open_in_memory().expect("failed to create storage");
-    let index = HnswIndex::new(dim, 10_000).expect("failed to create index");
+    let index = ExactScanIndex::new(dim);
     let pipeline = IngestionPipeline::new();
     pipeline
         .ingest_directory_with_embeddings(corpus_path, &storage, embedder, &index)

@@ -6,12 +6,20 @@
 //!
 //! The [`SparseIndex`] trait and [`InvertedIndex`] implementation provide
 //! sparse vector storage for keyword-level matching via SPLADE embeddings.
+//!
+//! [`ExactScanIndex`] is a brute-force, fully deterministic implementation
+//! used by the retrieval-quality eval gate (HNSW graph construction is not
+//! run-to-run deterministic, so gates built on it cannot tell a regression
+//! from noise).
 
 pub mod health;
+
+mod exact;
 mod hnsw;
 mod inverted;
 mod rebuild;
 
+pub use exact::ExactScanIndex;
 pub use health::{VectorSetHealth, analyze_vectors};
 pub use hnsw::{HnswIndex, HnswIndexConfig};
 pub use inverted::InvertedIndex;
