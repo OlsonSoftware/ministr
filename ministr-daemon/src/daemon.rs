@@ -3578,9 +3578,13 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(kill["killed"], true);
 
-        // The record finalizes as killed.
-        let mut final_status = String::new();
-        for _ in 0..200 {
+        // The record finalizes as killed. Deadline-based: finalization
+        // needs the waiter task to observe the child's exit, which on a
+        // loaded CI runner can take well past the kill ack (a 5s window
+        // flaked in release CI with the run still "running").
+        let mut final_status = String::from("running");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while std::time::Instant::now() < deadline {
             let (_, rec) = call(
                 &app,
                 "GET",
@@ -3594,7 +3598,10 @@ mod tests {
             }
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         }
-        assert_eq!(final_status, "killed");
+        assert_eq!(
+            final_status, "killed",
+            "killed run must finalize as 'killed' (still '{final_status}' at deadline)"
+        );
 
         // Policy: a cwd outside the allowed roots is FORBIDDEN.
         let (status, _) = call(
