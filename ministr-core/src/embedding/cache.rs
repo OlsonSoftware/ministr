@@ -221,22 +221,44 @@ impl Embedder for CachedEmbedder {
 
         // 1. Hash each text
         let hashes: Vec<String> = texts.iter().map(|t| content_hash(t)).collect();
-        let hash_refs: Vec<&str> = hashes.iter().map(String::as_str).collect();
 
-        // 2. Batch lookup
+        // 1b. Collapse byte-identical texts within the batch. Measured on a
+        // cold ingest: 23.7% of embed texts are byte-duplicates (sec-summary
+        // == section text pairs co-occur in one flush batch), each previously
+        // inferred and cache-queried separately. Identical bytes produce the
+        // identical vector, so deduping is transparent by construction.
+        // `slot[i]` is the unique-slot index serving input position `i`.
+        let mut first: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::with_capacity(texts.len());
+        let mut unique_idx: Vec<usize> = Vec::new(); // unique slot -> index into `texts`
+        let mut slot: Vec<usize> = Vec::with_capacity(texts.len());
+        for (i, &t) in texts.iter().enumerate() {
+            if let Some(&u) = first.get(t) {
+                slot.push(u);
+            } else {
+                first.insert(t, unique_idx.len());
+                slot.push(unique_idx.len());
+                unique_idx.push(i);
+            }
+        }
+        let hash_refs: Vec<&str> = unique_idx.iter().map(|&i| hashes[i].as_str()).collect();
+
+        // 2. Batch lookup (unique texts only)
         let cached = self.cache.get_batch(&hash_refs, &self.model_name)?;
 
-        // 3. Identify misses
+        // 3. Identify misses (indices into the unique-slot space)
         let mut miss_indices: Vec<usize> = Vec::new();
         let mut miss_texts: Vec<&str> = Vec::new();
         for (i, entry) in cached.iter().enumerate() {
             if entry.is_none() {
                 miss_indices.push(i);
-                miss_texts.push(texts[i]);
+                miss_texts.push(texts[unique_idx[i]]);
             }
         }
 
-        let hits = texts.len() - miss_indices.len();
+        // Hit/miss counters count UNIQUE texts per batch: duplicates of one
+        // text are one inference (or one hit), not several.
+        let hits = hash_refs.len() - miss_indices.len();
         self.cache_hits.fetch_add(hits, Ordering::Relaxed);
         self.cache_misses
             .fetch_add(miss_indices.len(), Ordering::Relaxed);
@@ -253,21 +275,24 @@ impl Embedder for CachedEmbedder {
             let entries: Vec<(&str, &[f32])> = miss_indices
                 .iter()
                 .zip(miss_vectors.iter())
-                .map(|(&i, vec)| (hashes[i].as_str(), vec.as_slice()))
+                .map(|(&i, vec)| (hashes[unique_idx[i]].as_str(), vec.as_slice()))
                 .collect();
             self.cache.put_batch(&entries, &self.model_name)?;
         }
 
-        // 6. Reassemble in original order
-        let mut results: Vec<Vec<f32>> =
+        // 6. Materialize unique vectors (cached + fresh), then fan out to
+        //    every input position via `slot`.
+        let mut unique_vecs: Vec<Vec<f32>> =
             cached.into_iter().map(Option::unwrap_or_default).collect();
-        for (slot, vector) in miss_indices.iter().zip(miss_vectors.into_iter()) {
-            results[*slot] = vector;
+        for (&i, vector) in miss_indices.iter().zip(miss_vectors.into_iter()) {
+            unique_vecs[i] = vector;
         }
+        let results: Vec<Vec<f32>> = slot.into_iter().map(|u| unique_vecs[u].clone()).collect();
 
         debug!(
             hits,
             misses = miss_indices.len(),
+            duplicates = texts.len() - hash_refs.len(),
             "embedding cache batch complete"
         );
 
@@ -432,5 +457,100 @@ mod tests {
 
         let h3 = content_hash("different text");
         assert_ne!(h1, h3);
+    }
+
+    /// Text-deterministic mock: the vector depends only on the text bytes,
+    /// like a real embedding model (identical bytes → identical vector).
+    /// `CountingEmbedder` is position-dependent and would violate that
+    /// premise, so dedup-transparency tests use this one.
+    struct TextHashEmbedder {
+        dim: usize,
+        embed_count: AtomicUsize,
+    }
+
+    impl Embedder for TextHashEmbedder {
+        fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, IndexError> {
+            self.embed_count.fetch_add(texts.len(), Ordering::Relaxed);
+            Ok(texts
+                .iter()
+                .map(|t| {
+                    let mut v = vec![0.0f32; self.dim];
+                    for (i, b) in t.bytes().enumerate() {
+                        v[i % self.dim] += f32::from(b) / 255.0;
+                    }
+                    v
+                })
+                .collect())
+        }
+
+        fn dimension(&self) -> usize {
+            self.dim
+        }
+    }
+
+    #[test]
+    fn duplicates_within_a_batch_are_inferred_once() {
+        let (_storage, cache) = setup_cache();
+        let inner = Arc::new(TextHashEmbedder {
+            dim: 4,
+            embed_count: AtomicUsize::new(0),
+        });
+        let inner_ref = Arc::clone(&inner);
+        let embedder = CachedEmbedder::new(inner, cache, "test-model");
+
+        let result = embedder
+            .embed(&["alpha", "beta", "alpha", "alpha"])
+            .unwrap();
+        assert_eq!(result.len(), 4);
+        // Only the 2 unique texts reach the inner embedder.
+        assert_eq!(inner_ref.embed_count.load(Ordering::Relaxed), 2);
+        // Counters use unique-text semantics.
+        assert_eq!(embedder.cache_hits(), 0);
+        assert_eq!(embedder.cache_misses(), 2);
+        // Every duplicate position carries the identical vector.
+        assert_eq!(result[0], result[2]);
+        assert_eq!(result[0], result[3]);
+        assert_ne!(result[0], result[1]);
+    }
+
+    #[test]
+    fn dedup_output_is_position_identical_to_the_inner_embedder() {
+        // The transparency invariant: for any batch (duplicates included),
+        // CachedEmbedder::embed == inner.embed, position by position.
+        let (_storage, cache) = setup_cache();
+        let reference = TextHashEmbedder {
+            dim: 4,
+            embed_count: AtomicUsize::new(0),
+        };
+        let batch = ["a", "b", "a", "c", "b", "a"];
+        let expected = reference.embed(&batch).unwrap();
+
+        let inner = Arc::new(TextHashEmbedder {
+            dim: 4,
+            embed_count: AtomicUsize::new(0),
+        });
+        let embedder = CachedEmbedder::new(inner, cache, "test-model");
+        let actual = embedder.embed(&batch).unwrap();
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn duplicate_hits_count_once_per_batch() {
+        let (_storage, cache) = setup_cache();
+        let inner = Arc::new(TextHashEmbedder {
+            dim: 4,
+            embed_count: AtomicUsize::new(0),
+        });
+        let inner_ref = Arc::clone(&inner);
+        let embedder = CachedEmbedder::new(inner, cache, "test-model");
+
+        embedder.embed(&["alpha", "alpha"]).unwrap();
+        assert_eq!(embedder.cache_misses(), 1);
+
+        // Second batch: the duplicated cached text is one hit, not two.
+        embedder.embed(&["alpha", "alpha", "alpha"]).unwrap();
+        assert_eq!(embedder.cache_hits(), 1);
+        assert_eq!(inner_ref.embed_count.load(Ordering::Relaxed), 1);
     }
 }

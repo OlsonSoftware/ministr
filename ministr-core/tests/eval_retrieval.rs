@@ -175,15 +175,25 @@ async fn eval_retrieval_regression_gate() {
 async fn eval_retrieval_real_embedder() {
     use ministr_core::embedding::FastEmbedder;
 
-    // Re-seeded 2026-06-12 (W2 max-pool scoring) from a deterministic
-    // `just eval-quality` run: P@5=0.603, R@5=0.811, MRR=0.957, nDCG@5=0.890
-    // — byte-identical across two full runs. W2 deleted the resolution
-    // weight table in favor of raw-cosine max-pool per content_id; vs the W1
-    // baseline (P@5=0.573, R@5=0.820, MRR=0.934, nDCG@5=0.870) that moved
-    // P@5 +0.030, MRR +0.023, nDCG +0.020, and R@5 −0.009 — the recall dip
-    // is a duplicate-credit metric artifact (collapsing resolutions removes
-    // hits the metric used to count twice), accepted by design. Floors sit
-    // ~0.01 under observed; any breach is a real regression.
+    // Re-seeded 2026-06-12 (W2 max-pool scoring): P@5=0.603, R@5=0.811,
+    // MRR=0.957, nDCG@5=0.888-0.890 (see flicker note below). W2 deleted the
+    // resolution weight table in favor of raw-cosine max-pool per content_id;
+    // vs the W1 baseline (P@5=0.573, R@5=0.820, MRR=0.934, nDCG@5=0.870)
+    // that moved P@5 +0.030, MRR +0.023, nDCG +0.020, and R@5 −0.009 — the
+    // recall dip is a duplicate-credit metric artifact (collapsing
+    // resolutions removes hits the metric used to count twice), accepted by
+    // design.
+    //
+    // KNOWN RESIDUAL NONDETERMINISM (discovered 2026-06-12 during W3): the
+    // exact-scan index removed INDEX noise, but ONNX inference itself is
+    // intermittently nondeterministic on this machine — 3/75 near-tie doc
+    // queries (transient-retries, OAuth-PKCE, refresh-rotation) flip at the
+    // 2nd nDCG decimal between identical-code runs, moving mean nDCG within
+    // [0.888, 0.890]. P@5 / R@5 / MRR have not been observed to move.
+    // Proven independent of any code change by A/B with the working tree
+    // reverted. Tracked by the eval-inference-determinism roadmap chunk;
+    // until fixed, treat nDCG deltas <= 0.002 as inference flicker, not
+    // signal. Floors sit ~0.01 under the observed band.
     //
     // rq3-eval-confirm A/B (2026-06-02): the cAST split (rq3a) is NEUTRAL on this
     // doc-heavy corpus. CODE_CHUNK_BUDGET=256 (split ON): R@5 0.812 / MRR 0.939 /
