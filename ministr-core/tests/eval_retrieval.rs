@@ -184,16 +184,17 @@ async fn eval_retrieval_real_embedder() {
     // resolutions removes hits the metric used to count twice), accepted by
     // design.
     //
-    // KNOWN RESIDUAL NONDETERMINISM (discovered 2026-06-12 during W3): the
-    // exact-scan index removed INDEX noise, but ONNX inference itself is
-    // intermittently nondeterministic on this machine — 3/75 near-tie doc
-    // queries (transient-retries, OAuth-PKCE, refresh-rotation) flip at the
-    // 2nd nDCG decimal between identical-code runs, moving mean nDCG within
-    // [0.888, 0.890]. P@5 / R@5 / MRR have not been observed to move.
-    // Proven independent of any code change by A/B with the working tree
-    // reverted. Tracked by the eval-inference-determinism roadmap chunk;
-    // until fixed, treat nDCG deltas <= 0.002 as inference flicker, not
-    // signal. Floors sit ~0.01 under the observed band.
+    // INFERENCE DETERMINISM (root-caused 2026-06-12): the macOS-default
+    // CoreML CPUAndGPU execution provider is run-to-run nondeterministic —
+    // Metal parallel reductions flipped 3/75 near-tie doc queries at the
+    // 2nd nDCG decimal (mean nDCG wandering [0.888, 0.890]) between
+    // identical-code runs. `just eval-quality` therefore pins the eval to
+    // the CPU EP via MINISTR_COREML=0 (set in the justfile recipe), which
+    // is hash-identical across runs (proven 6x). Run this test through
+    // `just eval-quality`, not bare cargo, or set MINISTR_COREML=0
+    // yourself — on the GPU path, sub-0.002 nDCG deltas are flicker, not
+    // signal. CPU-EP observed values: P@5=0.603, R@5=0.811, MRR=0.957,
+    // nDCG@5=0.890; floors sit ~0.01 under.
     //
     // rq3-eval-confirm A/B (2026-06-02): the cAST split (rq3a) is NEUTRAL on this
     // doc-heavy corpus. CODE_CHUNK_BUDGET=256 (split ON): R@5 0.812 / MRR 0.939 /

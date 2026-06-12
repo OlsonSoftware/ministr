@@ -94,7 +94,14 @@ bench:
 # eval/corpus + eval/ground-truth.json. Deliberately OUTSIDE `just validate` so
 # CI never downloads a model. Re-seed the BASELINE_* floors in
 # tests/eval_retrieval.rs from the printed numbers to tighten the gate.
-eval-quality:
+#
+# MINISTR_COREML=0 pins the eval to the CPU execution provider: the macOS
+# default (CoreML CPUAndGPU) is run-to-run NONDETERMINISTIC — Metal parallel
+# reductions flip 3/75 near-tie queries at the 2nd nDCG decimal — while the
+# CPU EP is hash-identical across runs (proven 6x, 2026-06-12). Eval-only:
+# production keeps the GPU path. The exact-scan index (W1) + this pin
+# together make the gate byte-deterministic end to end.
+eval-quality $MINISTR_COREML="0":
     cargo test -p ministr-core --test eval_retrieval -- --ignored --nocapture eval_retrieval_real_embedder
 
 # RQ1 content-loss measurement: how many embedded sections exceed the 128/256
