@@ -410,6 +410,46 @@ pub fn render_toml(detection: &ProjectDetection) -> String {
         let _ = writeln!(out, "]");
     }
 
+    // sparse_weight — per-corpus-type hybrid retrieval default (rq4c/W5).
+    // VISIBLE default, never silent: code projects get the measured 0.6 in
+    // the generated file where the user reviews it before the first index;
+    // docs-only projects get the keep-it-off guidance as a comment. The
+    // measurement (deterministic eval, 2026-06): code nDCG@5 +23.6% at 0.6
+    // (the knee), while docs precision regresses at EVERY weight — there is
+    // no good global default, so the value is per-corpus by construction.
+    let _ = writeln!(out);
+    if ecosystem_count(detection) > 0 {
+        let _ = writeln!(
+            out,
+            "# Hybrid retrieval: fuse keyword (sparse) and semantic (dense) search."
+        );
+        let _ = writeln!(
+            out,
+            "# 0.6 is the measured sweet spot for code corpora (exact identifiers"
+        );
+        let _ = writeln!(
+            out,
+            "# rank first). First index downloads a small sparse model (~100 MB)"
+        );
+        let _ = writeln!(
+            out,
+            "# and ingest does extra inference. Delete the line (or set 0) to"
+        );
+        let _ = writeln!(out, "# stay dense-only.");
+        let _ = writeln!(out, "sparse_weight = 0.6");
+    } else {
+        let _ = writeln!(
+            out,
+            "# Hybrid retrieval (sparse_weight) is OFF: on documentation/prose"
+        );
+        let _ = writeln!(
+            out,
+            "# corpora keyword fusion measurably hurts precision. For corpora"
+        );
+        let _ = writeln!(out, "# that are mostly code, set:");
+        let _ = writeln!(out, "# sparse_weight = 0.6");
+    }
+
     // [agent] section — custom rules injected into generated agent configs
     let _ = writeln!(out);
     let _ = writeln!(out, "# [agent]");
@@ -1126,6 +1166,37 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn generated_config_ships_the_code_corpus_sparse_default_visibly() {
+        // W5: a detected CODE project gets the measured hybrid default as an
+        // ACTIVE, visible line in the generated file (the user reviews it
+        // before the first index); a project with no code gets guidance as a
+        // comment only — never a silent behavior change.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        fs::write(root.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "pub fn x() {}\n").unwrap();
+
+        let toml = render_toml(&detect_project(root));
+        assert!(
+            toml.contains("\nsparse_weight = 0.6\n"),
+            "code project: active sparse_weight line, got:\n{toml}"
+        );
+
+        let empty = TempDir::new().unwrap();
+        fs::write(empty.path().join("README.md"), "# docs only\n").unwrap();
+        let toml = render_toml(&detect_project(empty.path()));
+        assert!(
+            !toml.contains("\nsparse_weight = 0.6\n"),
+            "docs-only project must NOT enable sparse, got:\n{toml}"
+        );
+        assert!(
+            toml.contains("# sparse_weight = 0.6"),
+            "docs-only project still carries the commented guidance, got:\n{toml}"
+        );
+    }
 
     #[test]
     fn test_detect_cargo_workspace() {

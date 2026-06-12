@@ -23,6 +23,28 @@ paths = ["src", "docs"]
 | `model` | string | — | embedding model for this project (beats the global default) |
 | `dimension` | integer | — | Matryoshka truncation target; only useful with Matryoshka models like `nomic-embed-text-v1.5` |
 | `rerank_depth` | integer | `100` when `dimension` set | coarse candidates rescored at full dimension; `0` disables |
+| `sparse_weight` | float | — (dense-only) | hybrid retrieval: sparse (keyword) share of the dense+sparse fusion, `0.0–1.0`. `ministr init` writes `0.6` for code projects |
+
+### Hybrid retrieval (`sparse_weight`)
+
+With `sparse_weight > 0`, ingestion also builds a sparse (SPLADE) keyword
+index and every survey fuses dense and sparse rankings — the
+exact-identifier recovery path for code, where a search for a specific
+function name ranks it first even when embedding similarity alone would not.
+The sparse model (~100 MB) downloads on first use and ingestion does extra
+inference, so the knob is per-corpus and visible, never silently on.
+
+**Pick the weight by corpus type — there is no good global value.** On
+ministr's own deterministic evaluation corpora (2026-06): code retrieval
+peaked at `0.6` (nDCG@5 +23.6% over dense-only; quality declines again at
+`0.7`+), while documentation/prose precision regressed at *every* tested
+weight, even `0.1`. Rule of thumb:
+
+| Corpus | `sparse_weight` |
+|---|---|
+| mostly code | `0.6` |
+| mixed code + docs | start at `0.3`, evaluate |
+| documentation / prose | leave unset (dense-only) |
 
 ### Extra sources
 
@@ -82,11 +104,37 @@ Optional; missing file means all defaults. Override the location with `ministr -
 `ministr` ships a catalog of ~30 supported models (the app's expert panel and `list_supported_models` enumerate them). Highlights:
 
 - **`all-MiniLM-L6-v2`** (384d) — the default; fast, small, on the GPU-accelerated Candle path on Apple Silicon
-- **`jina-embeddings-v2-base-code`** (768d) — the code-optimized option, 8192-token context
+- **`embedding-gemma-300m`** (768d) — the measured quality pick for code-heavy corpora (see below)
+- **`jina-embeddings-v2-base-code`** (768d) — code-*branded*, 8192-token context — but see the honest caveat below
 - **`nomic-embed-text-v1.5`** (768d) — Matryoshka: pair with `dimension` + `rerank_depth` for smaller indexes with full-precision rescoring
 - **BGE / GTE / E5 / Arctic families** — multilingual and quality/size tradeoffs; most have `-q` quantized variants (2–3× faster on CPU)
 
 Backend selection is automatic (Metal GPU via Candle on Apple Silicon; DirectML on Windows; CPU ONNX elsewhere). Overrides: `MINISTR_BACKEND`, `MINISTR_DEVICE=cpu`, `MINISTR_PREFER_QUANTIZED=1`. Changing a corpus's model requires a reindex (the app does this automatically).
+
+### Choosing a model for code: what we actually measured
+
+A deterministic bake-off on ministr's own evaluation corpora (2026-06)
+produced three results worth knowing before you pick:
+
+- **`embedding-gemma-300m` won on code** — code recall@5 +8.3% and nDCG@5
+  +4.3% over the MiniLM default, with docs precision also up. It is ~14×
+  the parameters of MiniLM, so ingestion is correspondingly slower — a
+  real tradeoff, not a free upgrade.
+- **The code-branded model lost.** `jina-embeddings-v2-base-code` scored
+  ~16% *worse* than the generic MiniLM default on ministr's own
+  ground-truth code queries. "Code model" labels don't automatically
+  transfer to natural-language→code retrieval over mixed corpora —
+  evaluate on your corpus before switching.
+- **Preprocessing isn't universal.** Splitting identifiers
+  (`camelCase`/`snake_case` → words) before embedding helped MiniLM
+  slightly (+1.7%) but *hurt* gemma (−5.6%). Fixes for weak tokenizers
+  break strong ones; ministr applies no such transform.
+
+**Dimension guidance for gemma:** run it at its native `768` (no
+`dimension` knob). If HNSW memory matters, `dimension = 256` with the
+default two-stage rerank (`rerank_depth = 100`) recovers docs to full
+fidelity and code to within 0.8% — with a 3× smaller index. The rerank is
+load-bearing: truncation *without* it costs 5.6–7.8% code nDCG.
 
 ## What gets indexed
 

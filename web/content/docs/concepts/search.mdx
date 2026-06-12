@@ -7,11 +7,11 @@ description: What ministr_survey actually does — hybrid retrieval, multi-resol
 
 ## 1. Multi-resolution dense search
 
-The query is embedded and searched against every vector resolution at once — document summaries, section summaries, full sections, claims, and code symbols — with resolution-aware scoring. A question can be answered by a doc paragraph, a single claim, or a function, whichever actually matches.
+The query is embedded and searched against every vector resolution at once — document summaries, section summaries, full sections, claims, and code symbols. Candidates are scored by raw cosine similarity and **max-pooled per content item**: of all the resolutions a section matched at, only its best-scoring vector survives, so the top-k always holds distinct content. (This replaced an earlier hand-tuned per-resolution weight table — on deterministic evaluation the weights *lost* to plain max-pooling on both docs and code.) A question can be answered by a doc paragraph, a single claim, or a function, whichever actually matches.
 
 ## 2. Hybrid sparse fusion
 
-When a sparse (keyword) index is configured, dense and sparse rankings are fused with reciprocal-rank fusion. This is the exact-identifier recovery path for code: a search for a specific function name ranks it first even when embedding similarity alone would not.
+With `sparse_weight > 0` in [configuration](/docs/guides/configuration#hybrid-retrieval-sparse_weight), ingestion also builds a sparse (SPLADE) keyword index and dense + sparse rankings are fused with weighted reciprocal-rank fusion. This is the exact-identifier recovery path for code: a search for a specific function name ranks it first even when embedding similarity alone would not. The weight is deliberately per-corpus — code corpora measured best at `0.6`, while documentation corpora measured best with fusion off entirely.
 
 ## 3. Matryoshka two-stage rescoring
 
