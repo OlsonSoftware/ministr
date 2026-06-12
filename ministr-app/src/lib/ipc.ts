@@ -38,6 +38,28 @@ export function corpusFreshness(corpusId: string): Promise<FreshnessResponse> {
   return invoke<FreshnessResponse>("corpus_freshness", { corpusId });
 }
 
+/** Per-corpus ingestion-progress snapshot (mirrors ministr-api
+ *  IngestionProgressInfo): the daemon's live counters, polled point-in-time.
+ *  Rate + ETA are NOT on the wire — they derive client-side (lib/progress). */
+export interface IngestionProgressInfo {
+  corpus_id: string;
+  /** 0 = pending, 1 = running, 2 = complete. */
+  status: number;
+  /** "idle" | "discovering" | "parsing" | "embedding" | "finalizing". */
+  phase: string;
+  files_total: number;
+  files_done: number;
+  sections_done: number;
+  embeddings_total: number;
+  embeddings_done: number;
+  /** Relative path of the file being processed; empty string when idle. */
+  current_file: string;
+}
+
+export function ingestionProgress(): Promise<IngestionProgressInfo[]> {
+  return invoke<IngestionProgressInfo[]>("ingestion_progress");
+}
+
 export function triggerReindex(corpusId: string): Promise<void> {
   return invoke<void>("trigger_reindex", { corpusId });
 }
