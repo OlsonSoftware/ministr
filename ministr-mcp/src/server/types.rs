@@ -272,11 +272,6 @@ pub(crate) struct UsageResponse {
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     #[schemars(default)]
     pub(crate) coherence_alerts: Vec<CoherenceAlert>,
-    /// Content IDs evicted via interactive elicitation (empty if elicitation
-    /// was unavailable, declined, or pressure was normal).
-    #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    #[schemars(default)]
-    pub(crate) elicitation_evicted: Vec<String>,
 }
 
 /// Cumulative token economics for a session.

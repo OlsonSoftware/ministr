@@ -1265,8 +1265,7 @@ impl MinistrServer {
             // `project`.
             let is_cross_corpus = params.corpus_ids.as_ref().is_some_and(|v| !v.is_empty());
 
-            // Run the survey through the backend trait; if results are
-            // ambiguous, try eliciting a refined query.
+            // Run the survey through the backend trait.
             let survey_result = if is_cross_corpus {
                 let corpus_ids = params.corpus_ids.as_deref().unwrap_or(&[]);
                 cross_corpus_survey(
@@ -1289,83 +1288,6 @@ impl MinistrServer {
                         &exclude_ids,
                     )
                     .await
-            };
-
-            // Attempt disambiguation: if top score is low and scores are clustered,
-            // elicit a refined query from the agent and re-run the search.
-            // F6.3-a — skip elicitation on the cross-corpus path; the
-            // re-run helper is single-corpus framed and the merge
-            // distorts the "spread" heuristic that drives the prompt.
-            let survey_result = match &survey_result {
-                Ok((results, _)) if results.len() >= 3 && !is_cross_corpus => {
-                    let top_score = results.first().map_or(0.0, |r| r.score);
-                    let fifth_score = results.get(4).map_or(0.0, |r| r.score);
-                    let spread = top_score - fifth_score;
-
-                    if top_score < 0.5 && spread < 0.1 {
-                        debug!(
-                            top_score,
-                            spread, "ambiguous survey results, attempting elicitation"
-                        );
-                        let peer_guard = self.peer.lock().await;
-                        if let Some(peer) = peer_guard.clone() {
-                            drop(peer_guard);
-                            let preview: String = results
-                                .iter()
-                                .take(5)
-                                .enumerate()
-                                .map(|(i, r)| {
-                                    format!(
-                                        "  {}. [score={:.2}] {}",
-                                        i + 1,
-                                        r.score,
-                                        r.text.chars().take(80).collect::<String>()
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n");
-                            let message = format!(
-                                "Your query '{}' returned ambiguous results \
-                                 (top score {top_score:.2}, spread {spread:.2}):\n\
-                                 {preview}\n\n\
-                                 Provide a more specific refined_query, or leave empty to \
-                                 keep these results.",
-                                params.query
-                            );
-                            if let Some(refinement) = crate::elicitation::try_elicit::<
-                                crate::elicitation::SearchRefinement,
-                            >(&peer, &message)
-                            .await
-                            {
-                                if refinement.refined_query.is_empty() {
-                                    survey_result
-                                } else {
-                                    debug!(
-                                        refined = %refinement.refined_query,
-                                        "re-running survey with refined query"
-                                    );
-                                    self.backend
-                                        .survey_with_exclude(
-                                            tenant_subject.as_deref(),
-                                            params.project.as_deref(),
-                                            &refinement.refined_query,
-                                            top_k,
-                                            &exclude_ids,
-                                        )
-                                        .await
-                                }
-                            } else {
-                                survey_result
-                            }
-                        } else {
-                            drop(peer_guard);
-                            survey_result
-                        }
-                    } else {
-                        survey_result
-                    }
-                }
-                _ => survey_result,
             };
 
             match survey_result {
@@ -1894,55 +1816,6 @@ impl MinistrServer {
                 "ministr_usage complete"
             );
 
-            // When usage is elevated, try eliciting which sections to drop.
-            let mut elicitation_evicted = Vec::new();
-            if status.level != UsageLevel::Normal && !candidates.is_empty() {
-                let candidate_list: String = candidates
-                    .iter()
-                    .map(|c| format!("  - {} ({} tokens)", c.content_id, c.tokens_recoverable))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let message = format!(
-                    "Usage level is {level_str}. These sections are drop candidates:\n\
-                     {candidate_list}\n\n\
-                     Which content_ids would you like to evict? \
-                     (provide comma-separated content_ids, or decline to skip)"
-                );
-
-                let peer_guard = self.peer.lock().await;
-                if let Some(peer) = peer_guard.clone() {
-                    drop(peer_guard);
-                    if let Some(choice) = crate::elicitation::try_elicit::<
-                        crate::elicitation::DropChoice,
-                    >(&peer, &message)
-                    .await
-                    {
-                        let ids = choice.ids();
-                        if !ids.is_empty() {
-                            let mut reg = self.registry.lock().await;
-                            // F-Test-3b-fix-1-shared-bootstrap: ensure_session_mut
-                            // creates the entry if missing (fresh fork session id).
-                            let entry = self.ensure_session_mut(&mut reg);
-                            for id_str in &ids {
-                                let content_id = ContentId(id_str.clone());
-                                if entry.session.remove_delivered(&content_id).is_some() {
-                                    entry.budget.force_evict(id_str);
-                                    elicitation_evicted.push(id_str.clone());
-                                }
-                            }
-                            drop(reg);
-                            self.persist_session().await;
-                            debug!(
-                                evicted = ?elicitation_evicted,
-                                "evicted via budget elicitation"
-                            );
-                        }
-                    }
-                } else {
-                    drop(peer_guard);
-                }
-            }
-
             let (schema_tokens, tool_count) = self.schema_token_overhead();
 
             let response = UsageResponse {
@@ -1967,7 +1840,6 @@ impl MinistrServer {
                 schema_tokens,
                 tool_count,
                 coherence_alerts: alerts,
-                elicitation_evicted,
             };
             structured_result(&response)
         }

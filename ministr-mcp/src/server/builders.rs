@@ -190,7 +190,7 @@ impl MinistrServer {
     /// This is the replacement for the old `ProxyServer`. Local-only
     /// features (the `ministr_fetch` / `ministr_clone` / `ministr_refresh`
     /// corpus-mutating tools, `ministr_task`, prefetch warming, analytics,
-    /// elicitation, and the storage-backed survey helpers) are unavailable
+    /// and the storage-backed survey helpers) are unavailable
     /// in daemon-forward mode and return errors when invoked.
     ///
     /// `corpus_id` and `session_id` must already be resolved by the caller
