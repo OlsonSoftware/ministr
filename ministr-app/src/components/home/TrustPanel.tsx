@@ -11,6 +11,7 @@ import { ThemePick } from "../ui/ThemePick";
 import { ConnectionNote } from "../ui/ConnectionNote";
 import { Beat } from "../ui/Beat";
 import { IndexingInstrument } from "../ui/IndexingInstrument";
+import { Screen } from "../ui/Screen";
 import { useIngestionProgress } from "../../lib/useIngestionProgress";
 
 /**
@@ -69,38 +70,45 @@ export function TrustPanel({
   // Connection states (gui-rw-daemon-down-states): boot while the very
   // first fetch is in flight; unreachable when polls fail with nothing
   // to show; degraded note when last-good data is on screen.
+  // Footer is omitted on these two states: ministr is not confirmed
+  // running, so the "● ministr running" trust-footer would be a lie.
   if (corpora === null && error === null) {
     return (
-      <div className="mx-auto flex min-h-screen max-w-3xl flex-col items-center justify-center gap-6 p-8">
-        <Brand />
-        <Beat sentence="connecting to ministr…" />
-      </div>
+      <Screen align="center" gap="lg" footer={null}>
+        <div className="flex flex-col items-center gap-6">
+          <Brand />
+          <Beat sentence="connecting to ministr…" />
+        </div>
+      </Screen>
     );
   }
   if (corpora === null && error !== null) {
     return (
-      <div className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center gap-6 p-8">
+      <Screen align="center" gap="lg" footer={null}>
         <Brand />
         <StatusBanner
           state="stale"
           headline="ministr isn’t running on this Mac"
           sub="start ministr (or restart this app) — it reconnects automatically"
         />
-      </div>
+      </Screen>
     );
   }
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-3xl flex-col gap-4 p-8">
-      <header className="flex items-center justify-between">
-        <Brand />
-        <div className="flex items-center gap-4">
-          {error ? <ConnectionNote /> : null}
-          <ThemePick />
+    <Screen
+      align="center"
+      header={
+        <div className="flex items-center justify-between">
+          <Brand />
+          <div className="flex items-center gap-4">
+            {error ? <ConnectionNote /> : null}
+            <ThemePick />
+          </div>
         </div>
-      </header>
-
-      <main className="flex flex-col gap-3" aria-label="your projects">
+      }
+    >
+      <section className="flex flex-col gap-3" aria-label="your projects">
         {rows.map(({ info, summary }) => (
           <div key={info.id} className="relative">
             <button
@@ -156,8 +164,8 @@ export function TrustPanel({
             <ActionChip onClick={onAddProject}>+ Add a project</ActionChip>
           </div>
         ) : null}
-      </main>
-    </div>
+      </section>
+    </Screen>
   );
 }
 
