@@ -79,22 +79,27 @@ pub fn compute_freshness(
             };
             let rel = rel.to_string_lossy().replace('\\', "/");
             let namespaced = namespace_path(&root_id, &rel);
-            // Tolerant join: storage keys are namespaced for multi-root
-            // corpora and bare-relative for single-root; accept either.
-            let (key, record) = match by_path.remove_entry(namespaced.as_str()) {
-                Some((k, r)) => (k.to_owned(), Some(r)),
-                None => match by_path.remove_entry(rel.as_str()) {
-                    Some((k, r)) => (k.to_owned(), Some(r)),
-                    None => (
-                        if multi_root {
-                            namespaced.clone()
-                        } else {
-                            rel.clone()
-                        },
-                        None,
-                    ),
-                },
+            // The key the GUI displays: namespaced for multi-root corpora,
+            // bare-relative for single-root.
+            let display_key = if multi_root {
+                namespaced.clone()
+            } else {
+                rel.clone()
             };
+            // Tolerant join: accept whichever key shape ingestion actually
+            // wrote for this file — namespaced (`rid/rel`, rooted),
+            // bare-relative (single- / NULL-root), OR the absolute path.
+            // The rooted writer keys some corpora by their full absolute
+            // path (a `strip_prefix` fallback in `build_file_items` /
+            // `parse_and_store_file`; tracked by ingest-rooted-abs-path-keys).
+            // Without the absolute candidate, every such file is reported
+            // New while its record is reported Missing, so the corpus shows
+            // permanently "out of date" and no reindex can clear it.
+            let abs = file.to_string_lossy().replace('\\', "/");
+            let record = by_path
+                .remove(namespaced.as_str())
+                .or_else(|| by_path.remove(rel.as_str()))
+                .or_else(|| by_path.remove(abs.as_str()));
             let state = match record {
                 None => FreshnessState::New,
                 // Unreadable/non-UTF-8 now but indexed before reads as
@@ -104,7 +109,10 @@ pub fn compute_freshness(
                     _ => FreshnessState::Stale,
                 },
             };
-            out.push(FileFreshness { path: key, state });
+            out.push(FileFreshness {
+                path: display_key,
+                state,
+            });
         }
     }
 
@@ -195,16 +203,55 @@ mod tests {
 
     #[test]
     fn namespaced_records_join_across_roots() {
+        // Genuinely multi-root (2 roots) so the namespaced key is the
+        // reported display key — single-root corpora report bare-relative.
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("repo");
+        let other = dir.path().join("other");
         write(&root, "lib.rs", "pub fn x() {}");
+        write(&other, "keep.rs", "pub fn y() {}");
         let root_id = compute_root_id(&root);
         let records = vec![rec(&namespace_path(&root_id, "lib.rs"), "pub fn x() {}")];
-        let report = compute_freshness(std::slice::from_ref(&root), &records, &[]).unwrap();
+        let report = compute_freshness(&[root.clone(), other.clone()], &records, &[]).unwrap();
         assert_eq!(
             state_of(&report, &namespace_path(&root_id, "lib.rs")),
             &FreshnessState::Current
         );
+    }
+
+    #[test]
+    fn absolute_keyed_records_still_match() {
+        // Regression (freshness-abs-key-match): the rooted writer keys some
+        // corpora by each file's ABSOLUTE path. The sweep must still match
+        // those records — not report a phantom New (file) + Missing (record)
+        // for every file, which made the GUI show a corpus permanently "out
+        // of date" with no reindex able to clear it. Present files resolve
+        // Current/Stale and are reported under the clean relative key.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(root, "src/same.rs", "fn same() {}");
+        write(root, "src/changed.rs", "fn changed() { /* v2 */ }");
+
+        let abs = |rel: &str| root.join(rel).to_string_lossy().replace('\\', "/");
+        let records = vec![
+            rec(&abs("src/same.rs"), "fn same() {}"),
+            rec(&abs("src/changed.rs"), "fn changed() {}"),
+            rec(&abs("src/deleted.rs"), "fn gone() {}"),
+        ];
+
+        let report = compute_freshness(&[root.to_path_buf()], &records, &[]).unwrap();
+        // Matched by the absolute candidate, reported under the relative key.
+        assert_eq!(state_of(&report, "src/same.rs"), &FreshnessState::Current);
+        assert_eq!(state_of(&report, "src/changed.rs"), &FreshnessState::Stale);
+        // The genuinely deleted file's absolute record is still Missing.
+        assert_eq!(
+            state_of(&report, &abs("src/deleted.rs")),
+            &FreshnessState::Missing
+        );
+        // No phantom duplicates: a present file appears once, relative-keyed,
+        // and never under its absolute path.
+        assert_eq!(report.iter().filter(|f| f.path == "src/same.rs").count(), 1);
+        assert!(!report.iter().any(|f| f.path == abs("src/same.rs")));
     }
 
     #[test]
