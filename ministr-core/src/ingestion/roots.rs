@@ -163,6 +163,82 @@ pub(super) fn find_root_for_file<'a>(
     find_root_entry_for_file(file, roots).map(|(_, id)| id.as_str())
 }
 
+/// The storage key for a discovered file: its path relative to the owning
+/// source root, namespaced by the root id when the corpus spans more than one
+/// registered source (so identically-named files under different roots — e.g.
+/// `src/lib.rs` in many crates — don't collide on one key).
+///
+/// This is the index KEY, deliberately NOT the on-disk locator: read sites
+/// reconstruct the absolute path from `corpus_roots.path` + this key (see
+/// `QueryService::resolve_source_path`). It matches what
+/// [`crate::freshness::compute_freshness`] reconstructs — namespaced
+/// (`rid/rel`) for multi-source corpora, bare-relative for single-source —
+/// and the GUI display key. (The legacy `compute_relative_path` stub returned
+/// the file's ABSOLUTE path here, which embedded the indexing machine's paths
+/// and never matched the freshness sweep — see freshness-abs-key-match /
+/// ingest-key-locator-decouple.)
+///
+/// `roots` are the corpus's *directory* sources paired with their
+/// [`compute_root_id`]; `source_count` is the FULL registered path count
+/// (directories AND files), matching `compute_freshness`'s `multi_root` test.
+pub(super) fn relative_storage_key(
+    file: &Path,
+    roots: &[(PathBuf, String)],
+    source_count: usize,
+) -> String {
+    let Some((root_path, root_id)) = find_root_entry_for_file(file, roots) else {
+        // No owning directory root (e.g. a bare file passed directly as a
+        // source): fall back to the path with a leading `./` stripped.
+        return compute_relative_path(file, &[]);
+    };
+    // Discovery preserves the literal root prefix, so a literal strip is the
+    // common path and matches `compute_freshness` exactly; fall back to a
+    // canonical strip only when the root matched via canonicalization (a
+    // symlinked source), and to the bare path if even that fails.
+    let rel = match file
+        .strip_prefix(root_path)
+        .map(Path::to_path_buf)
+        .or_else(|_| {
+            let cf = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
+            let cr = root_path
+                .canonicalize()
+                .unwrap_or_else(|_| root_path.clone());
+            cf.strip_prefix(&cr).map(Path::to_path_buf)
+        }) {
+        Ok(r) => r.to_string_lossy().replace('\\', "/"),
+        Err(_) => return compute_relative_path(file, &[]),
+    };
+    if source_count > 1 {
+        namespace_path(root_id, &rel)
+    } else {
+        rel
+    }
+}
+
+/// Candidate stored index keys for an ABSOLUTE on-disk path, most-specific
+/// first: namespaced (`rid/rel`) and bare-relative against the owning corpus
+/// root (post-decouple corpora), then the raw absolute path (pre-decouple /
+/// legacy corpora). Diff-impact tries each until one resolves to symbols, so
+/// it works across both key schemes without a reindex. `roots` are the
+/// corpus's directory roots paired with their [`compute_root_id`].
+#[must_use]
+pub fn symbol_key_candidates(abs_path: &str, roots: &[(PathBuf, String)]) -> Vec<String> {
+    let p = Path::new(abs_path);
+    let mut keys = Vec::new();
+    if let Some((root_path, root_id)) = roots
+        .iter()
+        .filter(|(rp, _)| p.starts_with(rp))
+        .max_by_key(|(rp, _)| rp.as_os_str().len())
+        && let Ok(rel) = p.strip_prefix(root_path)
+    {
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        keys.push(namespace_path(root_id, &rel));
+        keys.push(rel);
+    }
+    keys.push(abs_path.to_string());
+    keys
+}
+
 // ── Language statistics ──────────────────────────────────────────────────────
 
 pub(super) fn language_for_extension(ext: &str) -> &'static str {
@@ -308,8 +384,17 @@ pub(super) async fn all_files_unchanged_by_mtime<S: Storage + ?Sized>(
         return Ok(false);
     }
 
+    // Key each file EXACTLY as `ingest_paths_with_embeddings` wrote it
+    // (relative_storage_key over the same dir-roots + source count), so the
+    // fast-skip's lookups hit the stored rows instead of always missing.
+    let dir_roots: Vec<(PathBuf, String)> = paths
+        .iter()
+        .filter(|p| p.is_dir())
+        .map(|p| (p.clone(), compute_root_id(p)))
+        .collect();
+
     for file_path in files {
-        let relative = compute_relative_path(file_path, paths);
+        let relative = relative_storage_key(file_path, &dir_roots, paths.len());
         let Some(stored_mtime) = stored_map.get(relative.as_str()) else {
             return Ok(false);
         };
@@ -358,4 +443,67 @@ pub(super) async fn all_files_unchanged_by_mtime<S: Storage + ?Sized>(
     }
 
     Ok(true)
+}
+
+#[cfg(test)]
+mod relative_key_tests {
+    use super::*;
+
+    #[test]
+    fn single_source_key_is_bare_relative() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("repo");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let file = root.join("src/lib.rs");
+        std::fs::write(&file, "fn x() {}").unwrap();
+
+        let roots = vec![(root.clone(), compute_root_id(&root))];
+        let key = relative_storage_key(&file, &roots, 1);
+        assert_eq!(key, "src/lib.rs");
+        assert!(!key.starts_with('/'), "key must never be absolute: {key}");
+    }
+
+    #[test]
+    fn multi_source_key_is_namespaced_and_collision_free() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("crate_a");
+        let b = dir.path().join("crate_b");
+        std::fs::create_dir_all(a.join("src")).unwrap();
+        std::fs::create_dir_all(b.join("src")).unwrap();
+        let fa = a.join("src/lib.rs");
+        let fb = b.join("src/lib.rs");
+        std::fs::write(&fa, "fn a() {}").unwrap();
+        std::fs::write(&fb, "fn b() {}").unwrap();
+
+        let roots = vec![
+            (a.clone(), compute_root_id(&a)),
+            (b.clone(), compute_root_id(&b)),
+        ];
+        let ka = relative_storage_key(&fa, &roots, 2);
+        let kb = relative_storage_key(&fb, &roots, 2);
+        assert_ne!(ka, kb, "same rel under different roots must not collide");
+        assert!(
+            ka.ends_with("/src/lib.rs") && ka.starts_with("root-"),
+            "{ka}"
+        );
+        assert!(
+            kb.ends_with("/src/lib.rs") && kb.starts_with("root-"),
+            "{kb}"
+        );
+        assert!(!ka.starts_with('/') && !kb.starts_with('/'));
+    }
+
+    #[test]
+    fn absolute_discovered_path_keys_relative_not_absolute() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        std::fs::write(root.join("a.rs"), "fn a() {}").unwrap();
+        let abs_file = root.join("a.rs");
+        assert!(abs_file.is_absolute());
+
+        let roots = vec![(root.clone(), compute_root_id(&root))];
+        let key = relative_storage_key(&abs_file, &roots, 1);
+        assert_eq!(key, "a.rs");
+        assert!(!key.starts_with('/'), "regressed to absolute key: {key}");
+    }
 }

@@ -31,6 +31,12 @@ impl LocalBackend {
     pub fn service(&self) -> &Arc<QueryService> {
         &self.service
     }
+
+    /// Corpus local directory roots (path + id) for diff-impact key
+    /// reconstruction (ingest-key-locator-decouple).
+    pub(crate) async fn local_dir_roots(&self) -> Vec<(std::path::PathBuf, String)> {
+        self.service.local_dir_roots().await
+    }
 }
 
 impl QueryBackend for LocalBackend {

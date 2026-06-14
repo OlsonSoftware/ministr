@@ -13,7 +13,7 @@ use ministr_core::error::IndexError;
 use ministr_core::index::HnswIndex;
 use ministr_core::ingestion::IngestionPipeline;
 use ministr_core::service::{CallDirection, QueryService};
-use ministr_core::storage::SqliteStorage;
+use ministr_core::storage::{SqliteStorage, Storage};
 
 /// Deterministic mock embedder — the composition is symbol/AST + git driven, so
 /// embedding quality is irrelevant and this avoids a model download.
@@ -97,6 +97,19 @@ async fn compute_diff_impact_over_real_repo() {
         .ingest_paths_with_embeddings(std::slice::from_ref(&repo), &storage, &embedder, &index)
         .await
         .expect("ingest repo");
+
+    // ingest-key-locator-decouple: the writer stores RELATIVE keys, never the
+    // machine-absolute path. Diff-impact + blame below still resolve because
+    // the readers reconstruct the absolute locator from corpus_roots.
+    let docs = storage.list_documents().await.unwrap();
+    assert!(!docs.is_empty(), "expected indexed documents");
+    for d in &docs {
+        assert!(
+            !std::path::Path::new(&d.source_path).is_absolute(),
+            "source_path must be relative, got absolute: {}",
+            d.source_path
+        );
+    }
 
     let service = QueryService::new(
         storage,

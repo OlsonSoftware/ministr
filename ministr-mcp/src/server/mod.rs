@@ -140,14 +140,24 @@ async fn resolve_changed_seeds(
     let mut seeds: Vec<ChangedSymbol> = Vec::new();
     let mut seed_ids: HashSet<String> = HashSet::new();
     let mut changed_files = 0usize;
+    // `file.path` is git-toplevel-ABSOLUTE; stored symbol keys are
+    // relative/namespaced (or absolute for pre-decouple corpora). Rebuild the
+    // candidate keys from the corpus roots and try each (ingest-key-locator-decouple).
+    let dir_roots = backend.corpus_roots(tenant_subject, project).await;
     for file in changed {
-        let filter = SymbolFilter {
-            file_path: Some(file.path.clone()),
-            ..SymbolFilter::default()
-        };
-        let syms = backend
-            .search_symbols(tenant_subject, project, filter)
-            .await?;
+        let mut syms = Vec::new();
+        for key in ministr_core::ingestion::symbol_key_candidates(&file.path, &dir_roots) {
+            let filter = SymbolFilter {
+                file_path: Some(key),
+                ..SymbolFilter::default()
+            };
+            syms = backend
+                .search_symbols(tenant_subject, project, filter)
+                .await?;
+            if !syms.is_empty() {
+                break;
+            }
+        }
         let mut file_hit = false;
         for s in syms {
             let touched = file

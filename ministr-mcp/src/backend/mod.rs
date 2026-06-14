@@ -884,6 +884,38 @@ impl Backend {
         }
     }
 
+    /// Corpus local directory roots (abs path + root id) for reconstructing a
+    /// stored index key from a changed file's absolute path in diff-impact
+    /// (ingest-key-locator-decouple). Daemon-forward backends return empty —
+    /// diff-impact there falls back to absolute-key matching; the daemon
+    /// resolves relative corpora via its own in-process Registry backend.
+    pub async fn corpus_roots(
+        &self,
+        tenant_subject: Option<&str>,
+        project: Option<&str>,
+    ) -> Vec<(std::path::PathBuf, String)> {
+        match self {
+            Self::Local(b) => b.local_dir_roots().await,
+            Self::Daemon(_) | Self::DaemonMulti(_) => Vec::new(),
+            Self::Registry {
+                default_service,
+                registry,
+                tenant_filter,
+            } => match Self::resolve_registry_handle(
+                default_service,
+                registry,
+                tenant_filter.as_ref(),
+                tenant_subject,
+                project,
+            )
+            .await
+            {
+                Ok(handle) => handle.service.local_dir_roots().await,
+                Err(default) => default.local_dir_roots().await,
+            },
+        }
+    }
+
     pub async fn compress(
         &self,
         tenant_subject: Option<&str>,

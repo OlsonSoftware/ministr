@@ -32,9 +32,9 @@ use super::discovery::is_in_ignored_dir;
 use super::embedding::{batch_embed_and_insert, collect_document_embeddings, embed_document};
 use super::process::{ProcessOptions, store_enriched_document};
 use super::roots::{
-    accumulate_language_stats, all_files_unchanged_by_mtime, compute_content_hash,
-    compute_relative_path, compute_root_id, file_mtime_nanos, find_root_entry_for_file,
-    namespace_path, strip_root_prefix, update_root_stats,
+    accumulate_language_stats, all_files_unchanged_by_mtime, compute_content_hash, compute_root_id,
+    file_mtime_nanos, find_root_entry_for_file, namespace_path, relative_storage_key,
+    strip_root_prefix, update_root_stats,
 };
 use super::symbols::{
     PendingRef, extract_code_symbols, persist_pending_refs, rebuild_bridge_endpoints,
@@ -1833,10 +1833,17 @@ impl IngestionPipeline {
 
         accumulate_language_stats(&files, &roots, &mut root_lang_stats, &mut root_file_counts);
 
+        let source_count = paths.len();
         let file_items: Vec<FileItem> = files
             .iter()
             .map(|file_path| {
-                let relative = compute_relative_path(file_path, paths);
+                // relative_storage_key namespaces by owning root iff the corpus
+                // has >1 source — the portable index KEY, matching
+                // compute_freshness's display key. The absolute on-disk locator
+                // is reconstructed at read sites via resolve_source_path
+                // (ingest-key-locator-decouple). Was compute_relative_path,
+                // which stored the machine-absolute path.
+                let relative = relative_storage_key(file_path, &roots, source_count);
                 let (root_path, root_id) = match find_root_entry_for_file(file_path, &roots) {
                     Some((p, id)) => (Some(p.clone()), Some(id.clone())),
                     None => (None, None),
@@ -1903,9 +1910,11 @@ impl IngestionPipeline {
                 "skipping stale-doc cleanup: discovery returned 0 files (likely a transient unreadable root, not an emptied corpus)"
             );
         } else {
+            // Same keying as the writer above so orphan detection is an
+            // equality test against the stored source_path, not a stat.
             let discovered: std::collections::HashSet<String> = files
                 .iter()
-                .map(|f| compute_relative_path(f, paths))
+                .map(|f| relative_storage_key(f, &roots, source_count))
                 .collect();
             let existing_docs = storage
                 .list_documents()

@@ -46,7 +46,9 @@ pub use discovery::{
     discover_files, discover_files_with_ignores, discover_paths, discover_paths_with_ignores,
     is_unreal_corpus,
 };
-pub use roots::{compute_content_hash, compute_root_id, namespace_path, strip_root_prefix};
+pub use roots::{
+    compute_content_hash, compute_root_id, namespace_path, strip_root_prefix, symbol_key_candidates,
+};
 pub use sections::coalesce_small_sections;
 
 // Re-export for intra-crate use by the coherence engine so file-remove

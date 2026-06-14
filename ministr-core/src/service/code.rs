@@ -456,31 +456,42 @@ impl QueryService {
     async fn diff_seed_set(
         &self,
         changed: &[crate::git::ChangedFile],
+        dir_roots: &[(std::path::PathBuf, String)],
         max_seeds: usize,
     ) -> Result<(Vec<DiffChangedSymbol>, usize), QueryError> {
         let mut seeds: Vec<DiffChangedSymbol> = Vec::new();
         let mut seed_ids: HashSet<String> = HashSet::new();
         let mut changed_files = 0usize;
         for file in changed {
-            let filter = SymbolFilter {
-                file_path: Some(file.path.clone()),
-                ..SymbolFilter::default()
-            };
+            // `file.path` is git-toplevel-ABSOLUTE; the stored symbol key is
+            // relative/namespaced (or, for pre-decouple corpora, absolute).
+            // Try each candidate key until one resolves to symbols.
+            let mut symbols = Vec::new();
+            for key in crate::ingestion::symbol_key_candidates(&file.path, dir_roots) {
+                let filter = SymbolFilter {
+                    file_path: Some(key),
+                    ..SymbolFilter::default()
+                };
+                symbols = self.storage.list_symbols(&filter).await?;
+                if !symbols.is_empty() {
+                    break;
+                }
+            }
             let mut file_hit = false;
-            for s in self.storage.list_symbols(&filter).await? {
+            for s in symbols {
                 let touched = file
                     .ranges
                     .iter()
                     .any(|r| r.overlaps(s.line_start, s.line_end));
                 if touched && seed_ids.insert(s.id.0.clone()) {
                     file_hit = true;
-                    let blame = crate::git::blame::blame_range(
-                        Path::new(&s.file_path),
-                        s.line_start,
-                        s.line_end,
-                    )
-                    .ok()
-                    .flatten();
+                    // Reconstruct the absolute path for git blame from the
+                    // stored (possibly relative/namespaced) key.
+                    let abs = self.resolve_source_path(&s.file_path).await;
+                    let blame =
+                        crate::git::blame::blame_range(Path::new(&abs), s.line_start, s.line_end)
+                            .ok()
+                            .flatten();
                     let (authors, last_author) = blame.map_or((Vec::new(), None), |b| {
                         (
                             b.authors
@@ -556,8 +567,15 @@ impl QueryService {
 
         // The repo dir is the first on-disk local corpus root.
         let roots = self.storage.list_corpus_roots().await?;
+        // Dir roots (abs path + id) used to rebuild each changed file's stored
+        // index key from its absolute path (ingest-key-locator-decouple).
+        let dir_roots: Vec<(std::path::PathBuf, String)> = roots
+            .iter()
+            .filter(|r| matches!(r.kind, RootKind::Local) && Path::new(&r.path).is_dir())
+            .map(|r| (std::path::PathBuf::from(&r.path), r.id.clone()))
+            .collect();
         let Some(repo) = roots
-            .into_iter()
+            .iter()
             .find(|r| matches!(r.kind, RootKind::Local) && Path::new(&r.path).is_dir())
         else {
             return Ok(empty());
@@ -566,7 +584,7 @@ impl QueryService {
             return Ok(empty());
         };
 
-        let (seeds, changed_files) = self.diff_seed_set(&changed, MAX_SEEDS).await?;
+        let (seeds, changed_files) = self.diff_seed_set(&changed, &dir_roots, MAX_SEEDS).await?;
 
         // Union the blast radius across the seeds (shallowest depth wins).
         let mut impacted_map: HashMap<String, ImpactCaller> = HashMap::new();
@@ -732,16 +750,45 @@ impl QueryService {
     /// absolute directory, and joins with the relative path. For local
     /// (un-namespaced) paths, returns the path as-is.
     pub(super) async fn resolve_source_path(&self, file_path: &str) -> String {
+        // Legacy absolute keys (pre-decouple corpora) and bare file sources are
+        // already usable as on-disk paths.
+        if std::path::Path::new(file_path).is_absolute() {
+            return file_path.to_string();
+        }
+        // Namespaced `{root_id}/{relative}` (multi-source corpora) → join that
+        // root's absolute dir.
         if let Some(relative) = crate::ingestion::strip_root_prefix(file_path) {
-            // Extract root ID (everything before the first '/')
             let root_id = &file_path[..file_path.len() - relative.len() - 1];
             if let Ok(Some(root)) = self.storage.get_corpus_root(root_id).await {
-                let mut resolved = std::path::PathBuf::from(&root.path);
-                resolved.push(relative);
-                return resolved.to_string_lossy().to_string();
+                return std::path::PathBuf::from(&root.path)
+                    .join(relative)
+                    .to_string_lossy()
+                    .into_owned();
+            }
+        } else if let Ok(roots) = self.storage.list_corpus_roots().await {
+            // Bare-relative (single-source corpus) → join the sole local root.
+            if let Some(root) = roots.iter().find(|r| matches!(r.kind, RootKind::Local)) {
+                return std::path::PathBuf::from(&root.path)
+                    .join(file_path)
+                    .to_string_lossy()
+                    .into_owned();
             }
         }
         file_path.to_string()
+    }
+
+    /// The corpus's local directory roots paired with their `root_id`, for
+    /// rebuilding a stored index key from a file's absolute path (diff-impact
+    /// over the `Backend` abstraction; ingest-key-locator-decouple).
+    pub async fn local_dir_roots(&self) -> Vec<(std::path::PathBuf, String)> {
+        self.storage
+            .list_corpus_roots()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|r| matches!(r.kind, RootKind::Local) && Path::new(&r.path).is_dir())
+            .map(|r| (std::path::PathBuf::from(&r.path), r.id))
+            .collect()
     }
 
     /// Read the full UTF-8 contents of an indexed source file.
