@@ -8,6 +8,7 @@ import { StatusBanner } from "../ui/StatusBanner";
 import { ActionChip } from "../ui/ActionChip";
 import { BackButton } from "../ui/BackButton";
 import { CatchUp } from "../ui/CatchUp";
+import { RemoveProject } from "../ui/RemoveProject";
 import { TreeRow } from "../ui/TreeRow";
 import { TrustMark } from "../ui/TrustMark";
 import { RailRow, RailSection } from "../ui/Rail";
@@ -199,6 +200,16 @@ export function ProjectMirror({
               </div>
             </div>
           </details>
+          {/* Remove stays out of "advanced": a user who added the wrong
+              folder must be able to undo it without hunting. Quiet by
+              default, confirm-guarded against accidents. */}
+          <div className="border-t border-line px-2 pt-4">
+            <RemoveProject
+              corpusId={corpus.id}
+              displayName={corpus.display_name}
+              onRemoved={onBack}
+            />
+          </div>
         </aside>
       </div>
       )}

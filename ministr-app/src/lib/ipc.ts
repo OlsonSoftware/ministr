@@ -116,6 +116,16 @@ export function registerCorpus(paths: string[]): Promise<RegisterCorpusResponse>
   return invoke<RegisterCorpusResponse>("register_corpus", { paths });
 }
 
+/**
+ * Forget a project: unregister it from the daemon AND delete its on-disk
+ * index (the daemon owns the data dir and purges it). The project vanishes
+ * from Home; re-add it any time. Backs the GUI remove affordance
+ * (gui-ux-remove-project).
+ */
+export function removeProject(corpusId: string): Promise<void> {
+  return invoke<void>("remove_project", { corpusId });
+}
+
 export interface IndexedSectionInfo {
   heading: string;
   text: string;
