@@ -19,6 +19,13 @@ export interface CorpusInfo {
   /** Detected tech-stack language slugs (e.g. ["rust","typescript"]) for
    *  the per-project tech-icon row. Empty when unknown. (gui-card-tech-stack) */
   stack?: string[];
+  /** Unix timestamp (SECONDS) of the last completed indexing, if known —
+   *  set by the daemon registry post-success (gui-v6-card-richer-stats). */
+  last_indexed?: number;
+  /** Code symbols extracted (functions/structs/…); 0 for non-code corpora. */
+  symbols_count?: number;
+  /** Embeddings in the vector index. */
+  embeddings_count?: number;
 }
 
 export type FreshnessState = "current" | "stale" | "new" | "missing";

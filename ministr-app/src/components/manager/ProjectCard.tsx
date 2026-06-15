@@ -26,8 +26,8 @@ export interface ProjectCardData {
   status: TrustState;
   files: number;
   sections: number;
-  /** Human index size, e.g. "2.4 MB" (optional until wired). */
-  size?: string;
+  /** Code symbols extracted (functions/structs/…); omit/0 for non-code. */
+  symbols?: number;
   /** Relative last-indexed, e.g. "3m ago". */
   indexedAgo?: string;
   /** Count of files behind your changes (drives the status chip). */
@@ -64,7 +64,7 @@ export function ProjectCard({
   onRemove?: () => void;
 }) {
   const Heading = `h${headingLevel}` as "h2" | "h3";
-  const { name, status, files, sections, size, indexedAgo, behind, stack, agents, progress } =
+  const { name, status, files, sections, symbols, indexedAgo, behind, stack, agents, progress } =
     data;
   const indexing = status === "updating" && progress?.running;
   const meta = TRUST[status];
@@ -153,7 +153,7 @@ export function ProjectCard({
           <div className="flex flex-wrap gap-x-8 gap-y-2">
             <Stat value={fmt(files)} label="files" />
             <Stat value={fmt(sections)} label="sections" />
-            {size ? <Stat value={size} label="index" /> : null}
+            {symbols ? <Stat value={fmt(symbols)} label="symbols" /> : null}
             {indexedAgo ? <Stat value={indexedAgo} label="indexed" /> : null}
           </div>
         )}

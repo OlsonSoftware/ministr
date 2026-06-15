@@ -4,6 +4,7 @@ import { corpusFreshnessSummary, triggerReindex } from "../../lib/ipc";
 import type { CorpusInfo } from "../../lib/ipc";
 import { usePoll } from "../../lib/usePoll";
 import { summarizeCounts } from "../../lib/trustSummary";
+import { relTime } from "../../lib/relTime";
 import { Screen } from "../ui/Screen";
 import { ShellHeader } from "../ui/ShellHeader";
 import { BackButton } from "../ui/BackButton";
@@ -56,6 +57,8 @@ export function ProjectManage({
     behind: (fresh?.stale ?? 0) + (fresh?.new ?? 0),
     agents: corpus.active_sessions,
     stack: corpus.stack ?? [],
+    symbols: corpus.symbols_count,
+    indexedAgo: corpus.last_indexed ? relTime(corpus.last_indexed) : undefined,
     progress: live,
   };
 
@@ -85,11 +88,14 @@ export function ProjectManage({
         {indexingLive && live ? (
           <IndexingInstrument progress={live} />
         ) : (
+          // The summary card above carries files/sections; here just the
+          // last-read context + the action (no duplicate stats).
           <div className="flex items-center justify-between gap-4">
-            <div className="flex gap-8">
-              <Stat value={card.files.toLocaleString("en-US")} label="files" />
-              <Stat value={card.sections.toLocaleString("en-US")} label="sections" />
-            </div>
+            <p className="text-sm tabular-nums text-dim">
+              {corpus.last_indexed
+                ? `last read ${relTime(corpus.last_indexed)}`
+                : "not indexed yet"}
+            </p>
             <ActionChip onClick={reindex}>Re-read project</ActionChip>
           </div>
         )}
@@ -133,14 +139,5 @@ function ManageSection({ label, children }: { label: string; children: ReactNode
       </h2>
       <div className="rounded-lg border border-line bg-surface p-4">{children}</div>
     </section>
-  );
-}
-
-function Stat({ value, label }: { value: string; label: string }) {
-  return (
-    <div className="min-w-0">
-      <div className="text-lg font-semibold tabular-nums text-ink">{value}</div>
-      <div className="text-xs text-dim">{label}</div>
-    </div>
   );
 }

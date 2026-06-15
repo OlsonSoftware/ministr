@@ -13,6 +13,8 @@ const CORPUS: CorpusInfo = {
   active_sessions: 0,
   model: "bge-small-en-v1.5",
   stack: ["typescript", "rust"],
+  symbols_count: 410,
+  last_indexed: Math.floor(Date.now() / 1000) - 600,
 };
 
 const MODELS = [

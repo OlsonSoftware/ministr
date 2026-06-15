@@ -3,6 +3,7 @@ import { corpusFreshnessSummary, listCorpora, triggerReindex } from "../../lib/i
 import type { CorpusInfo, FreshnessSummary } from "../../lib/ipc";
 import { usePoll } from "../../lib/usePoll";
 import { summarizeCounts } from "../../lib/trustSummary";
+import { relTime } from "../../lib/relTime";
 import { StatusBanner } from "../ui/StatusBanner";
 import { ActionChip } from "../ui/ActionChip";
 import { Brand } from "../ui/Brand";
@@ -129,6 +130,8 @@ export function TrustPanel({
             behind: fresh.stale + fresh.new,
             agents: info.active_sessions,
             stack: info.stack ?? [],
+            symbols: info.symbols_count,
+            indexedAgo: info.last_indexed ? relTime(info.last_indexed) : undefined,
             progress: progress.get(info.id),
           };
           return (
