@@ -18,7 +18,7 @@ import { LiveDot } from "./LiveDot";
  * being clipped — center-when-short AND scroll-when-tall from one rule.
  */
 
-type Width = "xl" | "2xl" | "3xl";
+type Width = "xl" | "2xl" | "3xl" | "5xl";
 type Gap = "sm" | "md" | "lg";
 type Align = "start" | "center";
 
@@ -26,6 +26,7 @@ const WIDTH: Record<Width, string> = {
   xl: "max-w-xl",
   "2xl": "max-w-2xl",
   "3xl": "max-w-3xl",
+  "5xl": "max-w-5xl",
 };
 
 const GAP: Record<Gap, string> = {

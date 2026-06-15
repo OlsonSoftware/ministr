@@ -16,6 +16,7 @@ import { LiveDot } from "../ui/LiveDot";
 import { ConnectionNote } from "../ui/ConnectionNote";
 import { ExpertConfig } from "./ExpertConfig";
 import { IndexingInstrument } from "../ui/IndexingInstrument";
+import { Screen } from "../ui/Screen";
 import { useIngestionProgress } from "../../lib/useIngestionProgress";
 
 /**
@@ -85,25 +86,43 @@ export function ProjectMirror({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [openFile]);
 
-  return (
-    <div className="mx-auto flex min-h-screen max-w-5xl flex-col gap-4 p-8">
-      <header className="flex items-center gap-3">
-        <ActionChip onClick={onBack} aria-label="back to all projects">
-          ‹
-        </ActionChip>
-        <h1 className="text-xl font-semibold tracking-tight text-ink">
-          {corpus.display_name}
-          <span className="ml-2 text-sm font-normal text-dim">
-            what your AI sees
-          </span>
-        </h1>
-        {onOpenFeed ? (
-          <span className="ml-auto">
-            <ActionChip onClick={onOpenFeed}>What ministr did</ActionChip>
-          </span>
-        ) : null}
-      </header>
+  // Live presence rides in the trust-footer when an agent is reading;
+  // otherwise Screen falls back to its default "ministr running" footer.
+  const footer =
+    presence?.kind === "live" ? (
+      <div className="border-t border-line pt-3">
+        <LiveDot label={presence.sentence} />
+      </div>
+    ) : presence?.kind === "recent" ? (
+      <div className="border-t border-line pt-3 text-sm text-dim">
+        {presence.sentence}
+      </div>
+    ) : undefined;
 
+  return (
+    <Screen
+      width="5xl"
+      align="center"
+      footer={footer}
+      header={
+        <div className="flex items-center gap-3">
+          <ActionChip onClick={onBack} aria-label="back to all projects">
+            ‹
+          </ActionChip>
+          <h1 className="text-xl font-semibold tracking-tight text-ink">
+            {corpus.display_name}
+            <span className="ml-2 text-sm font-normal text-dim">
+              what your AI sees
+            </span>
+          </h1>
+          {onOpenFeed ? (
+            <span className="ml-auto">
+              <ActionChip onClick={onOpenFeed}>What ministr did</ActionChip>
+            </span>
+          ) : null}
+        </div>
+      }
+    >
       {summary ? (
         <StatusBanner
           state={summary.state}
@@ -184,16 +203,7 @@ export function ProjectMirror({
         </aside>
       </div>
       )}
-      {presence?.kind === "live" ? (
-        <footer aria-label="live presence">
-          <LiveDot label={presence.sentence} />
-        </footer>
-      ) : presence?.kind === "recent" ? (
-        <footer aria-label="recent presence">
-          <p className="text-sm text-dim">{presence.sentence}</p>
-        </footer>
-      ) : null}
-    </div>
+    </Screen>
   );
 }
 
