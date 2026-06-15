@@ -1253,6 +1253,8 @@ fn synthesize_pending_corpus_info(
         // Cloud "pending" (no bundle/index yet) is a different state from
         // gd6 "warming" (indexed on disk, loading into memory).
         warming: false,
+        // Remote pod placeholder — no local paths to detect against.
+        stack: Vec::new(),
     }
 }
 

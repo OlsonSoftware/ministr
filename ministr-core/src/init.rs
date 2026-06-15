@@ -203,6 +203,109 @@ fn dir_has_extension(root: &Path, exts: &[&str]) -> bool {
     })
 }
 
+/// The display tech-stack (language slugs) for a corpus, derived from its
+/// path set (gui-card-tech-stack). The longest-common-ancestor directory
+/// of the paths is treated as the project root. Returns normalized slugs
+/// like `["rust", "typescript", "go"]`. Empty when no paths or nothing is
+/// recognized. Cheap (root-manifest existence only); frameworks are a
+/// later refinement.
+#[must_use]
+pub fn detect_stack(paths: &[String]) -> Vec<String> {
+    match stack_root(paths) {
+        Some(root) => detect_languages(&root),
+        None => Vec::new(),
+    }
+}
+
+/// Language slugs present at `root`, by cheap root-manifest detection only
+/// (no tree walk). A Node project resolves to either `"typescript"`
+/// (tsconfig.json present) or `"javascript"`. Order is stable so the GUI
+/// row renders deterministically.
+#[must_use]
+pub fn detect_languages(root: &Path) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+
+    if root.join("Cargo.toml").exists() {
+        out.push("rust".into());
+    }
+    if root.join("package.json").exists() {
+        if root.join("tsconfig.json").exists() {
+            out.push("typescript".into());
+        } else {
+            out.push("javascript".into());
+        }
+    }
+    if root.join("pyproject.toml").exists() || root.join("setup.py").exists() {
+        out.push("python".into());
+    }
+    if root.join("go.mod").exists() {
+        out.push("go".into());
+    }
+    if root.join("pom.xml").exists()
+        || root.join("build.gradle").exists()
+        || root.join("build.gradle.kts").exists()
+    {
+        out.push("java".into());
+    }
+    if root.join("build.gradle.kts").exists() || root.join("settings.gradle.kts").exists() {
+        out.push("kotlin".into());
+    }
+    if root.join("composer.json").exists() {
+        out.push("php".into());
+    }
+    if root.join("Gemfile").exists() || dir_has_extension(root, &["gemspec"]) {
+        out.push("ruby".into());
+    }
+    if dir_has_extension(root, &["csproj", "sln"]) {
+        out.push("csharp".into());
+    }
+    if root.join("Package.swift").exists() {
+        out.push("swift".into());
+    }
+    if root.join("build.sbt").exists() {
+        out.push("scala".into());
+    }
+    if root.join("CMakeLists.txt").exists() {
+        out.push("cpp".into());
+    }
+    if root.join("mix.exs").exists() {
+        out.push("elixir".into());
+    }
+
+    out
+}
+
+/// The longest-common-ancestor directory of a corpus's path set (each
+/// file path contributes its parent directory). `None` when the set is
+/// empty or the paths share no common ancestor.
+fn stack_root(paths: &[String]) -> Option<PathBuf> {
+    let dirs: Vec<PathBuf> = paths
+        .iter()
+        .map(|p| {
+            let pb = PathBuf::from(p);
+            if pb.is_file() {
+                pb.parent().map(Path::to_path_buf).unwrap_or(pb)
+            } else {
+                pb
+            }
+        })
+        .collect();
+
+    let mut iter = dirs.iter();
+    let mut common = iter.next()?.clone();
+    for d in iter {
+        while !d.starts_with(&common) {
+            if !common.pop() {
+                break;
+            }
+        }
+    }
+    if common.as_os_str().is_empty() {
+        return None;
+    }
+    Some(common)
+}
+
 /// Detect project structure at `root` and build a [`ProjectDetection`].
 ///
 /// Scans for manifests, workspace layouts, bridge frameworks, source
@@ -1166,6 +1269,32 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn detect_stack_reads_root_manifests_and_resolves_node_to_ts() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        fs::write(root.join("Cargo.toml"), "[package]\nname=\"x\"\n").unwrap();
+        fs::write(root.join("package.json"), "{}\n").unwrap();
+        fs::write(root.join("tsconfig.json"), "{}\n").unwrap();
+        fs::write(root.join("go.mod"), "module x\n").unwrap();
+
+        let stack = detect_stack(&[root.to_string_lossy().into_owned()]);
+        assert!(stack.contains(&"rust".to_string()), "got {stack:?}");
+        assert!(stack.contains(&"typescript".to_string()), "got {stack:?}");
+        assert!(
+            !stack.contains(&"javascript".to_string()),
+            "tsconfig present → typescript, not javascript: {stack:?}"
+        );
+        assert!(stack.contains(&"go".to_string()), "got {stack:?}");
+    }
+
+    #[test]
+    fn detect_stack_empty_for_no_paths_and_a_bare_dir() {
+        assert!(detect_stack(&[]).is_empty());
+        let tmp = TempDir::new().unwrap();
+        assert!(detect_stack(&[tmp.path().to_string_lossy().into_owned()]).is_empty());
+    }
 
     #[test]
     fn generated_config_ships_the_code_corpus_sparse_default_visibly() {

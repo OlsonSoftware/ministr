@@ -85,6 +85,7 @@ fn build_handle(
             symbols_count: 0,
             model: "all-MiniLM-L6-v2".into(),
             warming: false,
+            stack: Vec::new(),
         })),
         storage,
         index,

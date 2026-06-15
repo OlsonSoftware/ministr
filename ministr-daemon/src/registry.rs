@@ -1340,6 +1340,7 @@ impl CorpusRegistry {
                 symbols_count: 0,
                 model: String::new(),
                 warming: true,
+                stack: ministr_core::init::detect_stack(paths),
             })
             .collect()
     }
@@ -1646,6 +1647,8 @@ impl CorpusRegistry {
                 model: model.clone(),
                 // A handle that exists is, by definition, warmed.
                 warming: false,
+                // Detected once from the path set (gui-card-tech-stack).
+                stack: ministr_core::init::detect_stack(paths),
             })),
             storage,
             index,
@@ -2010,6 +2013,7 @@ mod tests {
             symbols_count: 0,
             model: "all-MiniLM-L6-v2".into(),
             warming: false,
+            stack: Vec::new(),
         }
     }
 

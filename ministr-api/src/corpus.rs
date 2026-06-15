@@ -103,6 +103,12 @@ pub struct CorpusInfo {
     /// always serialise this as `false` (the serde default).
     #[serde(default)]
     pub warming: bool,
+    /// Detected tech stack — normalized language slugs (e.g. `["rust",
+    /// "typescript"]`) derived once from the path set at registration, for
+    /// the GUI's per-project tech-icon row (gui-card-tech-stack). Empty for
+    /// placeholder/pending corpora or when nothing is recognized.
+    #[serde(default)]
+    pub stack: Vec<String>,
 }
 
 /// Current indexing status of a corpus.

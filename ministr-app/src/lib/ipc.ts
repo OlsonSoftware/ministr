@@ -16,6 +16,9 @@ export interface CorpusInfo {
   /** Effective embedding model (expert disclosure only — internals
    *  vocabulary never renders above a drill-in). */
   model: string;
+  /** Detected tech-stack language slugs (e.g. ["rust","typescript"]) for
+   *  the per-project tech-icon row. Empty when unknown. (gui-card-tech-stack) */
+  stack?: string[];
 }
 
 export type FreshnessState = "current" | "stale" | "new" | "missing";
