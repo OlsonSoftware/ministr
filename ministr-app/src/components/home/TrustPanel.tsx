@@ -134,8 +134,12 @@ export function TrustPanel({
             <div className="rounded-lg transition peer-hover:shadow-sm peer-hover:ring-1 peer-hover:ring-dim peer-focus-visible:shadow-sm peer-focus-visible:ring-1 peer-focus-visible:ring-dim">
               <StatusBanner
                 state={summary.state}
-                headline={summary.headline}
-                sub={`${info.display_name} · ${summary.sub}${
+                // Object-first (gui-ux-card-object-first): the PROJECT is
+                // the card's headline; the trust verdict rides the sub-line.
+                // State stays pre-attentive via the mark + the card tone, so
+                // demoting the verdict to a line costs nothing at a glance.
+                headline={info.display_name}
+                sub={`${summary.headline}${
                   info.active_sessions > 0
                     ? ` · ${info.active_sessions} agent${info.active_sessions === 1 ? "" : "s"} connected`
                     : ""
