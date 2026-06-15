@@ -45,11 +45,12 @@ export function ConnectFlow({
   // the other three roots (gui-shell-consistent-chrome): the Brand now rides
   // top-left in the shell header like every other screen, instead of a big
   // bespoke logo centered in the content — so the app reads as one app. The
-  // welcome stays centered in the column below.
+  // welcome top-anchors under the header (align=start) like the manager
+  // screens, instead of floating vertically centered (gui-connect-layout-centering).
   return (
     <Screen
       width="xl"
-      align="center"
+      align="start"
       gap="lg"
       header={<ShellHeader leading={<Brand />} trailing={<SettingsMenu />} />}
     >
