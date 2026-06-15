@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { TrustPanel } from "./components/home/TrustPanel";
 import { ProjectManage } from "./components/manager/ProjectManage";
-import { ProofFeed } from "./components/feed/ProofFeed";
 import { ConnectFlow } from "./components/connect/ConnectFlow";
 import { Screen } from "./components/ui/Screen";
 import { Brand } from "./components/ui/Brand";
@@ -12,15 +11,13 @@ type View =
   | { kind: "boot" }
   | { kind: "home" }
   | { kind: "connect"; firstRun?: boolean }
-  | { kind: "mirror"; corpus: CorpusInfo }
-  // `from` records where the feed was entered so "back" returns there:
-  // Home (the per-card "What it did" entry) or the project Mirror.
-  | { kind: "feed"; corpus: CorpusInfo; from: "home" | "mirror" };
+  | { kind: "mirror"; corpus: CorpusInfo };
 
 /**
- * App shell — hub-and-spoke, two levels (UX-BLUEPRINT navigation):
- * Home (Trust Panel) → Project Mirror → Proof Feed, plus the first-run
- * Connect flow (also reachable from Home's add-project).
+ * App shell (GUI v6 — index manager): Home (the index list) → ProjectManage
+ * (per-index management), plus the first-run Connect flow (also reachable
+ * from Home's add-project). The `kind: "mirror"` view now renders the
+ * management panel (the name is kept to avoid churn).
  */
 export default function App() {
   const [view, setView] = useState<View>({ kind: "boot" });
@@ -57,13 +54,7 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
       setView((v) =>
-        v.kind === "feed"
-          ? v.from === "home"
-            ? { kind: "home" }
-            : { kind: "mirror", corpus: v.corpus }
-          : v.kind === "mirror" || v.kind === "connect"
-            ? { kind: "home" }
-            : v,
+        v.kind === "mirror" || v.kind === "connect" ? { kind: "home" } : v,
       );
     };
     window.addEventListener("keydown", onKey);
@@ -89,22 +80,10 @@ export default function App() {
           onOpenProject={(corpus) => setView({ kind: "mirror", corpus })}
           onAddProject={() => setView({ kind: "connect" })}
         />
-      ) : view.kind === "mirror" ? (
+      ) : (
         <ProjectManage
           corpus={view.corpus}
           onBack={() => setView({ kind: "home" })}
-        />
-      ) : (
-        <ProofFeed
-          corpus={view.corpus}
-          onBack={() =>
-            setView(
-              view.from === "home"
-                ? { kind: "home" }
-                : { kind: "mirror", corpus: view.corpus },
-            )
-          }
-          backLabel={view.from === "home" ? "All projects" : view.corpus.display_name}
         />
       )}
     </div>
