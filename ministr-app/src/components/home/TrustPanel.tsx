@@ -11,6 +11,7 @@ import { ThemePick } from "../ui/ThemePick";
 import { ConnectionNote } from "../ui/ConnectionNote";
 import { Beat } from "../ui/Beat";
 import { IndexingInstrument } from "../ui/IndexingInstrument";
+import { TechRow } from "../ui/TechRow";
 import { Screen } from "../ui/Screen";
 import { useIngestionProgress } from "../../lib/useIngestionProgress";
 
@@ -120,7 +121,10 @@ export function TrustPanel({
     >
       <section className="flex flex-col gap-3" aria-label="your projects">
         {rows.map(({ info, summary }) => (
-          <div key={info.id} className="relative">
+          // `group` so the tech-icon row lights to brand colour on card
+          // hover/focus (the overlay covers content, so per-icon :hover
+          // can't fire) — gui-card-tech-icons.
+          <div key={info.id} className="group relative">
             <button
               type="button"
               aria-label={`open ${info.display_name}`}
@@ -165,15 +169,24 @@ export function TrustPanel({
                     </ActionChip>
                   </div>
                 }
-                footer={
-                  summary.state === "updating" &&
-                  progress.get(info.id)?.running ? (
-                    <IndexingInstrument
-                      progress={progress.get(info.id)!}
-                      variant="compact"
-                    />
-                  ) : undefined
-                }
+                footer={(() => {
+                  const indexing =
+                    summary.state === "updating" &&
+                    progress.get(info.id)?.running;
+                  const stack = info.stack ?? [];
+                  if (!indexing && stack.length === 0) return undefined;
+                  return (
+                    <div className="space-y-2">
+                      {indexing ? (
+                        <IndexingInstrument
+                          progress={progress.get(info.id)!}
+                          variant="compact"
+                        />
+                      ) : null}
+                      {stack.length > 0 ? <TechRow slugs={stack} /> : null}
+                    </div>
+                  );
+                })()}
               />
             </div>
           </div>

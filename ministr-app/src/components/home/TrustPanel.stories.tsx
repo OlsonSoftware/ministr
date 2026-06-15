@@ -11,6 +11,7 @@ const CORPORA = [
     files_indexed: 214,
     sections_count: 1582,
     active_sessions: 1,
+    stack: ["rust", "typescript", "go", "python"],
   },
   {
     id: "corpus-bbbb",
@@ -20,6 +21,7 @@ const CORPORA = [
     files_indexed: 88,
     sections_count: 412,
     active_sessions: 0,
+    stack: ["typescript", "ruby", "elixir", "swift", "kotlin", "scala", "cpp"],
   },
 ];
 
