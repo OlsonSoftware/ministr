@@ -7,7 +7,7 @@ import { StatusBanner } from "../ui/StatusBanner";
 import { ActionChip } from "../ui/ActionChip";
 import { CatchUp } from "../ui/CatchUp";
 import { Brand } from "../ui/Brand";
-import { ThemePick } from "../ui/ThemePick";
+import { SettingsMenu } from "../ui/SettingsMenu";
 import { ConnectionNote } from "../ui/ConnectionNote";
 import { Beat } from "../ui/Beat";
 import { IndexingInstrument } from "../ui/IndexingInstrument";
@@ -114,7 +114,7 @@ export function TrustPanel({
           <Brand />
           <div className="flex items-center gap-4">
             {error ? <ConnectionNote /> : null}
-            <ThemePick />
+            <SettingsMenu />
           </div>
         </div>
       }

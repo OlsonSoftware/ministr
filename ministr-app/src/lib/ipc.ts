@@ -193,3 +193,35 @@ export function setCorpusConfig(
     rerankDepth,
   });
 }
+
+/**
+ * The running daemon's own status (mirrors ministr-api DaemonStatus). The
+ * `version` here is the LIVE binary's version — the truthful one to show in
+ * the About surface (the app bundle's Info.plist can drift). Backs the
+ * Settings/About popover (gui-ux-settings-help-daemon-surface).
+ */
+export interface DaemonStatus {
+  version: string;
+  uptime_secs: number;
+  memory_mb: number;
+  model: string;
+  model_dimension: number;
+  corpora: CorpusInfo[];
+  /** Absolute path to the daemon log, when the daemon exposes one. */
+  log_path?: string;
+  total_sessions: number;
+  autostart_enabled?: boolean;
+}
+
+export function daemonStatus(): Promise<DaemonStatus> {
+  return invoke<DaemonStatus>("daemon_status");
+}
+
+/**
+ * Open a path or URL in the OS default handler (Tauri `open_path` shells out
+ * to macOS `open`, which handles https:// too). Used for the docs/help link
+ * and "reveal the daemon log".
+ */
+export function openExternal(target: string): Promise<void> {
+  return invoke<void>("open_path", { path: target });
+}
