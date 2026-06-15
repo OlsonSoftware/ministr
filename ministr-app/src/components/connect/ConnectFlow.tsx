@@ -12,6 +12,7 @@ import { Beat } from "../ui/Beat";
 import { ActionChip } from "../ui/ActionChip";
 import { StatusBanner } from "../ui/StatusBanner";
 import { IndexingInstrument } from "../ui/IndexingInstrument";
+import { Screen } from "../ui/Screen";
 import { useIngestionProgress } from "../../lib/useIngestionProgress";
 
 /**
@@ -28,8 +29,12 @@ type Stage =
 export function ConnectFlow({ onDone }: { onDone: () => void }) {
   const [stage, setStage] = useState<Stage>({ kind: "pick" });
 
+  // ConnectFlow was the calm reference (already justify-center). It now
+  // composes the same Screen shell as the other three roots for DRY
+  // parity + the consistent trust-footer — same centered rhythm, zero
+  // regression (Brand rides inside the centered content, no header slot).
   return (
-    <div className="mx-auto flex min-h-screen max-w-xl flex-col justify-center gap-6 p-8">
+    <Screen width="xl" align="center" gap="lg">
       <Brand size="lg" />
       {stage.kind === "pick" ? (
         <PickBeat onPicked={(id) => setStage({ kind: "reading", corpusId: id })} />
@@ -41,7 +46,7 @@ export function ConnectFlow({ onDone }: { onDone: () => void }) {
       ) : (
         <ConnectBeat corpusId={stage.corpusId} onDone={onDone} />
       )}
-    </div>
+    </Screen>
   );
 }
 
