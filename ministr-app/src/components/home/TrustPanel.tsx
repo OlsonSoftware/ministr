@@ -1,38 +1,34 @@
 import { useEffect, useMemo, useState } from "react";
-import { corpusFreshnessSummary, listCorpora } from "../../lib/ipc";
+import { corpusFreshnessSummary, listCorpora, triggerReindex } from "../../lib/ipc";
 import type { CorpusInfo, FreshnessSummary } from "../../lib/ipc";
 import { usePoll } from "../../lib/usePoll";
 import { summarizeCounts } from "../../lib/trustSummary";
 import { StatusBanner } from "../ui/StatusBanner";
 import { ActionChip } from "../ui/ActionChip";
-import { CatchUp } from "../ui/CatchUp";
 import { Brand } from "../ui/Brand";
 import { ShellHeader } from "../ui/ShellHeader";
 import { SettingsMenu } from "../ui/SettingsMenu";
 import { ConnectionNote } from "../ui/ConnectionNote";
 import { Beat } from "../ui/Beat";
-import { IndexingInstrument } from "../ui/IndexingInstrument";
-import { TechRow } from "../ui/TechRow";
+import { ProjectCard } from "../manager/ProjectCard";
+import type { ProjectCardData } from "../manager/ProjectCard";
 import { Screen } from "../ui/Screen";
 import { useIngestionProgress } from "../../lib/useIngestionProgress";
 
 /**
- * Home — the Trust Panel (UX-BLUEPRINT §3.1). One plain-English trust
- * row per project, worst first; healthy projects stay quiet.
+ * Home — the index MANAGER (GUI v6, gui-v6-visual-language). One visual
+ * ProjectCard per index, worst-first: status as a colored rail + numeric
+ * stat strip + icon actions, NOT a prose sentence. Healthy indexes stay
+ * quiet; behind/indexing ones rise to the top.
  */
 export function TrustPanel({
   onOpenProject,
   onAddProject,
-  onOpenFeed,
 }: {
   onOpenProject: (corpus: CorpusInfo) => void;
   // Required: the empty home must NEVER dead-end — the "Choose a folder…"
   // CTA is the only way out of a zero-project state, so every mount wires it.
   onAddProject: () => void;
-  // Per-card "What it did" entry — makes the activity/Proof Feed
-  // discoverable from Home (gui-ux-wayfinding-feed-access), not buried two
-  // levels down behind the Mirror.
-  onOpenFeed: (corpus: CorpusInfo) => void;
 }) {
   const { data: corpora, error } = usePoll(fetchAll, 5_000);
   // Live per-corpus indexing progress — drives the inline instrument on
@@ -65,6 +61,7 @@ export function TrustPanel({
     if (!corpora) return [];
     const summarized = corpora.map(({ info, fresh }) => ({
       info,
+      fresh,
       summary: summarizeCounts(info.display_name, {
         stale: fresh.stale,
         new: fresh.new,
@@ -123,77 +120,32 @@ export function TrustPanel({
       }
     >
       <section className="flex flex-col gap-3" aria-label="your projects">
-        {rows.map(({ info, summary }) => (
-          // `group` so the tech-icon row lights to brand colour on card
-          // hover/focus (the overlay covers content, so per-icon :hover
-          // can't fire) — gui-card-tech-icons.
-          <div key={info.id} className="group relative">
-            <button
-              type="button"
-              aria-label={`open ${info.display_name}`}
-              onClick={() => onOpenProject(info)}
-              className="peer absolute inset-0 z-0 cursor-pointer rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+        {rows.map(({ info, fresh, summary }) => {
+          const data: ProjectCardData = {
+            name: info.display_name,
+            status: summary.state,
+            files: info.files_indexed,
+            sections: info.sections_count,
+            behind: fresh.stale + fresh.new,
+            agents: info.active_sessions,
+            stack: info.stack ?? [],
+            progress: progress.get(info.id),
+          };
+          return (
+            <ProjectCard
+              key={info.id}
+              data={data}
+              onOpen={() => onOpenProject(info)}
+              onReindex={() => {
+                // Optimistic: flag pending now; real indexing data takes
+                // over (or the 15s net clears it). Reuses the machinery
+                // CatchUp used, now driven by the card's reindex icon.
+                setPending((p) => ({ ...p, [info.id]: Date.now() }));
+                void triggerReindex(info.id).catch(() => {});
+              }}
             />
-            {/* Calm clickable-card affordance: the whole card lifts on
-                hover AND keyboard focus (WCAG 1.4.13 parity) — a neutral
-                ring + shadow-sm, never a second hue. A first-timer can see
-                the row is a thing you open. */}
-            <div className="rounded-lg transition peer-hover:shadow-sm peer-hover:ring-1 peer-hover:ring-dim peer-focus-visible:shadow-sm peer-focus-visible:ring-1 peer-focus-visible:ring-dim">
-              <StatusBanner
-                state={summary.state}
-                // Object-first (gui-ux-card-object-first): the PROJECT is
-                // the card's headline; the trust verdict rides the sub-line.
-                // State stays pre-attentive via the mark + the card tone, so
-                // demoting the verdict to a line costs nothing at a glance.
-                headline={info.display_name}
-                sub={`${summary.headline}${
-                  info.active_sessions > 0
-                    ? ` · ${info.active_sessions} agent${info.active_sessions === 1 ? "" : "s"} connected`
-                    : ""
-                }`}
-                action={
-                  <div className="flex items-center gap-2">
-                    {summary.state === "stale" ? (
-                      <CatchUp
-                        corpusId={info.id}
-                        onAccepted={() =>
-                          setPending((p) => ({ ...p, [info.id]: Date.now() }))
-                        }
-                      />
-                    ) : null}
-                    <ActionChip
-                      aria-label={`what ministr did for ${info.display_name}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onOpenFeed(info);
-                      }}
-                    >
-                      What it did
-                    </ActionChip>
-                  </div>
-                }
-                footer={(() => {
-                  const indexing =
-                    summary.state === "updating" &&
-                    progress.get(info.id)?.running;
-                  const stack = info.stack ?? [];
-                  if (!indexing && stack.length === 0) return undefined;
-                  return (
-                    <div className="space-y-2">
-                      {indexing ? (
-                        <IndexingInstrument
-                          progress={progress.get(info.id)!}
-                          variant="compact"
-                        />
-                      ) : null}
-                      {stack.length > 0 ? <TechRow slugs={stack} /> : null}
-                    </div>
-                  );
-                })()}
-              />
-            </div>
-          </div>
-        ))}
+          );
+        })}
         {corpora && rows.length === 0 ? (
           <div className="space-y-3 py-12 text-center">
             <p className="text-sm text-dim">

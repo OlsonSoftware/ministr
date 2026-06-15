@@ -46,18 +46,18 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const MixedHealth: Story = {
-  args: { onOpenProject: () => {}, onAddProject: () => {}, onOpenFeed: () => {} },
+  args: { onOpenProject: () => {}, onAddProject: () => {} },
 };
 
 export const Empty: Story = {
-  args: { onOpenProject: () => {}, onAddProject: () => {}, onOpenFeed: () => {} },
+  args: { onOpenProject: () => {}, onAddProject: () => {} },
   decorators: [withTauriMock({ list_corpora: [] })],
 };
 
 /** A row mid-reindex: the compact Indexing Instrument rides inside the
  *  updating banner (gui-indexing-instrument). */
 export const Updating: Story = {
-  args: { onOpenProject: () => {}, onAddProject: () => {}, onOpenFeed: () => {} },
+  args: { onOpenProject: () => {}, onAddProject: () => {} },
   decorators: [
     withTauriMock({
       list_corpora: CORPORA,

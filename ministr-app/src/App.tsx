@@ -88,7 +88,6 @@ export default function App() {
         <TrustPanel
           onOpenProject={(corpus) => setView({ kind: "mirror", corpus })}
           onAddProject={() => setView({ kind: "connect" })}
-          onOpenFeed={(corpus) => setView({ kind: "feed", corpus, from: "home" })}
         />
       ) : view.kind === "mirror" ? (
         <ProjectMirror
