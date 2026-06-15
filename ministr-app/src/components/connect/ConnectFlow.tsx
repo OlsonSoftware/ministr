@@ -26,7 +26,16 @@ type Stage =
   | { kind: "reading"; corpusId: string }
   | { kind: "connect"; corpusId: string };
 
-export function ConnectFlow({ onDone }: { onDone: () => void }) {
+export function ConnectFlow({
+  onDone,
+  firstRun = false,
+}: {
+  onDone: () => void;
+  /** First launch (no projects registered yet): the pick beat leads with
+   *  a plain-words welcome that says what ministr is. The add-a-project
+   *  path (firstRun=false) skips it — that user already knows. */
+  firstRun?: boolean;
+}) {
   const [stage, setStage] = useState<Stage>({ kind: "pick" });
 
   // ConnectFlow was the calm reference (already justify-center). It now
@@ -37,7 +46,10 @@ export function ConnectFlow({ onDone }: { onDone: () => void }) {
     <Screen width="xl" align="center" gap="lg">
       <Brand size="lg" />
       {stage.kind === "pick" ? (
-        <PickBeat onPicked={(id) => setStage({ kind: "reading", corpusId: id })} />
+        <PickBeat
+          firstRun={firstRun}
+          onPicked={(id) => setStage({ kind: "reading", corpusId: id })}
+        />
       ) : stage.kind === "reading" ? (
         <ReadingBeat
           corpusId={stage.corpusId}
@@ -50,17 +62,29 @@ export function ConnectFlow({ onDone }: { onDone: () => void }) {
   );
 }
 
-function PickBeat({ onPicked }: { onPicked: (corpusId: string) => void }) {
+function PickBeat({
+  onPicked,
+  firstRun = false,
+}: {
+  onPicked: (corpusId: string) => void;
+  firstRun?: boolean;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
     <section aria-label="pick your project" className="space-y-3">
+      {firstRun ? (
+        <p className="text-sm font-medium text-dim">Welcome to ministr</p>
+      ) : null}
       <h1 className="text-2xl font-semibold tracking-tight text-ink">
-        Point ministr at your project
+        {firstRun
+          ? "Let your AI read your real code"
+          : "Point ministr at your project"}
       </h1>
       <p className="text-sm text-dim">
-        Pick the folder you code in. ministr reads it so your AI can see
-        it properly — everything stays on your computer.
+        {firstRun
+          ? "ministr reads a project on your Mac so your AI answers from your actual code — not guesses. Pick the folder you code in to start; everything stays on your computer."
+          : "Pick the folder you code in. ministr reads it so your AI can see it properly — everything stays on your computer."}
       </p>
       <ActionChip
         variant="primary"

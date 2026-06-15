@@ -21,9 +21,17 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** Beat 1 — the front door. */
+/** Beat 1 — the front door (returning user adding another project). */
 export const Pick: Story = {
   args: { onDone: () => {} },
+  decorators: [withTauriMock({})],
+};
+
+/** First launch — the gate App.tsx routes a brand-new user into: a
+ *  plain-words welcome that says what ministr is, then the same single
+ *  "Choose a folder…" action. Never a bare empty Home. */
+export const FirstRun: Story = {
+  args: { onDone: () => {}, firstRun: true },
   decorators: [withTauriMock({})],
 };
 
