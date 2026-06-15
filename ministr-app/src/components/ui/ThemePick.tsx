@@ -35,13 +35,16 @@ export function ThemePick() {
     <div ref={rootRef} className="relative">
       <button
         type="button"
-        aria-label="Appearance"
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center rounded-md p-1.5 text-dim transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand"
+        className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-dim transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand"
       >
         <AppearanceIcon />
+        {/* A visible label, not an inscrutable icon — a first-timer can
+            tell what this control does (gui-ux-density-rebalance; NN/G:
+            icons need text labels). */}
+        Appearance
       </button>
 
       {open ? (

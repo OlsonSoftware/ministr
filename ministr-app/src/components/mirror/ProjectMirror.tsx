@@ -104,7 +104,7 @@ export function ProjectMirror({
   return (
     <Screen
       width="5xl"
-      align="center"
+      align="start"
       footer={footer}
       header={
         <div className="flex items-center gap-3">

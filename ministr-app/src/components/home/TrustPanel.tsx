@@ -104,7 +104,10 @@ export function TrustPanel({
 
   return (
     <Screen
-      align="center"
+      // A populated list anchors at the top and fills the column (it's a
+      // tool, not a hero); only the genuinely-short empty state stays
+      // centered (gui-ux-density-rebalance).
+      align={rows.length === 0 ? "center" : "start"}
       header={
         <div className="flex items-center justify-between">
           <Brand />

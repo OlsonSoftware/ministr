@@ -33,7 +33,7 @@ export function ProofFeed({
 
   return (
     <Screen
-      align="center"
+      align="start"
       header={
         <div className="flex items-center gap-3">
           <BackButton onClick={onBack} label={backLabel} />
