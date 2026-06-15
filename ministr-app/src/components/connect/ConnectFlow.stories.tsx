@@ -69,6 +69,35 @@ export const ConnectWaiting: Story = {
     const btn = await canvas.findByRole("button", { name: /choose a folder/i });
     await userEvent.click(btn);
     await canvas.findByText(/Connect your AI/);
+    // The wait is no longer dead: active verify + troubleshooting + an exit.
+    await canvas.findByRole("button", { name: /check connection/i });
+    await canvas.findByText(/not working\?/i);
+    await canvas.findByRole("button", { name: /skip for now/i });
+    // Active verify with no event yet → honest "not connected" verdict.
+    await userEvent.click(canvas.getByRole("button", { name: /check connection/i }));
+    await canvas.findByText(/hasn’t connected yet/i);
+  },
+};
+
+/** Beat 3, daemon down — the wait surfaces a recoverable problem, not a
+ *  dead screen, when ministr isn't reachable. */
+export const ConnectDaemonDown: Story = {
+  args: { onDone: () => {} },
+  decorators: [
+    withTauriMock({
+      pick_project_folder: "/Users/dev/my-app",
+      register_corpus: { corpus_id: "corpus-new", indexing_started: true },
+      list_corpora: [{ ...INDEXING, status: { state: "idle" }, files_indexed: 1482 }],
+      recent_activity: () => {
+        throw new Error("connection refused");
+      },
+    }),
+  ],
+  play: async ({ canvasElement, userEvent }) => {
+    const canvas = within(canvasElement);
+    const btn = await canvas.findByRole("button", { name: /choose a folder/i });
+    await userEvent.click(btn);
+    await canvas.findByText(/ministr isn’t running on this Mac/);
   },
 };
 

@@ -11,6 +11,7 @@ import { Brand } from "../ui/Brand";
 import { Beat } from "../ui/Beat";
 import { ActionChip } from "../ui/ActionChip";
 import { StatusBanner } from "../ui/StatusBanner";
+import { LiveDot } from "../ui/LiveDot";
 import { IndexingInstrument } from "../ui/IndexingInstrument";
 import { Screen } from "../ui/Screen";
 import { useIngestionProgress } from "../../lib/useIngestionProgress";
@@ -171,8 +172,26 @@ function ConnectBeat({
   onDone: () => void;
 }) {
   // The handshake: ONLY a real tool call against this corpus fires it.
-  const { data: activity } = usePoll(() => recentActivity(20), 2_000);
+  const { data: activity, error } = usePoll(() => recentActivity(20), 2_000);
   const first = activity?.find((e) => e.corpus_id === corpusId);
+
+  // Active verify (gui-ux-connect-verify-troubleshoot): a real re-query, so
+  // the user isn't stuck on a passive wait. "checked" with no event yet
+  // surfaces the plain-words verdict + troubleshooting below.
+  const [check, setCheck] = useState<"idle" | "checking" | "none">("idle");
+  // The daemon is unreachable when polls keep failing with nothing to show.
+  const daemonDown = error != null && activity == null;
+
+  const verify = () => {
+    setCheck("checking");
+    void recentActivity(20)
+      .then((evs) => {
+        // A hit flips us to the connected branch on the next poll (≤2s);
+        // otherwise say so honestly and open the troubleshooting.
+        setCheck(evs.some((e) => e.corpus_id === corpusId) ? "idle" : "none");
+      })
+      .catch(() => setCheck("none"));
+  };
 
   if (first) {
     return (
@@ -206,9 +225,47 @@ function ConnectBeat({
       <pre className="overflow-x-auto rounded-lg border border-line bg-sunken p-3 font-mono text-xs text-ink">
         {SNIPPET_JSON}
       </pre>
-      <p className="text-sm text-dim">
-        This screen will light up the moment your AI takes its first look.
-      </p>
+
+      <div className="flex items-center justify-between gap-3 pt-1">
+        <LiveDot label="watching for your AI’s first look…" />
+        <ActionChip busy={check === "checking"} onClick={verify}>
+          Check connection
+        </ActionChip>
+      </div>
+
+      {daemonDown ? (
+        <StatusBanner
+          state="stale"
+          headline="ministr isn’t running on this Mac"
+          sub="start ministr (or restart this app) — it reconnects automatically"
+        />
+      ) : check === "none" ? (
+        <StatusBanner
+          state="stale"
+          headline="Your AI hasn’t connected yet"
+          sub="that’s normal if you just added it — try the steps below, then Check again"
+        />
+      ) : null}
+
+      <details className="rounded-lg border border-line bg-surface px-3 py-2">
+        <summary className="cursor-pointer text-sm text-dim">
+          Not working?
+        </summary>
+        <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-sm text-dim">
+          <li>Make sure ministr is running (the menu-bar icon, or relaunch this app).</li>
+          <li>Run the command above inside your project folder.</li>
+          <li>Restart your AI — Claude Code, Cursor, or Windsurf — so it loads ministr.</li>
+          <li>Ask it anything about your code; the first question connects it.</li>
+        </ol>
+      </details>
+
+      <button
+        type="button"
+        onClick={onDone}
+        className="cursor-pointer text-sm text-dim underline-offset-2 transition-colors hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+      >
+        Skip for now — open your project
+      </button>
     </section>
   );
 }
