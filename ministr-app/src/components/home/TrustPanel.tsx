@@ -23,7 +23,9 @@ export function TrustPanel({
   onAddProject,
 }: {
   onOpenProject: (corpus: CorpusInfo) => void;
-  onAddProject?: () => void;
+  // Required: the empty home must NEVER dead-end — the "Choose a folder…"
+  // CTA is the only way out of a zero-project state, so every mount wires it.
+  onAddProject: () => void;
 }) {
   const { data: corpora, error } = usePoll(fetchAll, 5_000);
   // Live per-corpus indexing progress — drives the inline instrument on
@@ -152,14 +154,12 @@ export function TrustPanel({
             <p className="text-sm text-dim">
               No projects yet — add a folder and your AI can start reading it.
             </p>
-            {onAddProject ? (
-              <ActionChip variant="primary" onClick={onAddProject}>
-                Add a project
-              </ActionChip>
-            ) : null}
+            <ActionChip variant="primary" onClick={onAddProject}>
+              Choose a folder…
+            </ActionChip>
           </div>
         ) : null}
-        {corpora && rows.length > 0 && onAddProject ? (
+        {corpora && rows.length > 0 ? (
           <div className="pt-2">
             <ActionChip onClick={onAddProject}>+ Add a project</ActionChip>
           </div>
