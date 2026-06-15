@@ -8,6 +8,7 @@ import { relTime } from "../../lib/relTime";
 import { Screen } from "../ui/Screen";
 import { ShellHeader } from "../ui/ShellHeader";
 import { BackButton } from "../ui/BackButton";
+import { SettingsMenu } from "../ui/SettingsMenu";
 import { ActionChip } from "../ui/ActionChip";
 import { IndexingInstrument } from "../ui/IndexingInstrument";
 import { ProjectCard } from "./ProjectCard";
@@ -77,6 +78,7 @@ export function ProjectManage({
           leading={<BackButton onClick={onBack} label="All projects" />}
           title={corpus.display_name}
           subtitle="manage index"
+          trailing={<SettingsMenu />}
         />
       }
     >

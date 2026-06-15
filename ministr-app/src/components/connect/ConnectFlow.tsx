@@ -9,6 +9,7 @@ import { usePoll } from "../../lib/usePoll";
 import { activitySentence } from "../../lib/receipts";
 import { Brand } from "../ui/Brand";
 import { ShellHeader } from "../ui/ShellHeader";
+import { SettingsMenu } from "../ui/SettingsMenu";
 import { Beat } from "../ui/Beat";
 import { ActionChip } from "../ui/ActionChip";
 import { StatusBanner } from "../ui/StatusBanner";
@@ -50,7 +51,7 @@ export function ConnectFlow({
       width="xl"
       align="center"
       gap="lg"
-      header={<ShellHeader leading={<Brand />} />}
+      header={<ShellHeader leading={<Brand />} trailing={<SettingsMenu />} />}
     >
       {stage.kind === "pick" ? (
         <PickBeat
