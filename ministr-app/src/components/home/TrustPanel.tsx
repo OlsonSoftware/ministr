@@ -117,36 +117,42 @@ export function TrustPanel({
               type="button"
               aria-label={`open ${info.display_name}`}
               onClick={() => onOpenProject(info)}
-              className="absolute inset-0 z-0 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+              className="peer absolute inset-0 z-0 cursor-pointer rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
             />
-            <StatusBanner
-              state={summary.state}
-              headline={summary.headline}
-              sub={`${info.display_name} · ${summary.sub}${
-                info.active_sessions > 0
-                  ? ` · ${info.active_sessions} agent${info.active_sessions === 1 ? "" : "s"} connected`
-                  : ""
-              }`}
-              action={
-                summary.state === "stale" ? (
-                  <CatchUp
-                    corpusId={info.id}
-                    onAccepted={() =>
-                      setPending((p) => ({ ...p, [info.id]: Date.now() }))
-                    }
-                  />
-                ) : undefined
-              }
-              footer={
-                summary.state === "updating" &&
-                progress.get(info.id)?.running ? (
-                  <IndexingInstrument
-                    progress={progress.get(info.id)!}
-                    variant="compact"
-                  />
-                ) : undefined
-              }
-            />
+            {/* Calm clickable-card affordance: the whole card lifts on
+                hover AND keyboard focus (WCAG 1.4.13 parity) — a neutral
+                ring + shadow-sm, never a second hue. A first-timer can see
+                the row is a thing you open. */}
+            <div className="rounded-lg transition peer-hover:shadow-sm peer-hover:ring-1 peer-hover:ring-dim peer-focus-visible:shadow-sm peer-focus-visible:ring-1 peer-focus-visible:ring-dim">
+              <StatusBanner
+                state={summary.state}
+                headline={summary.headline}
+                sub={`${info.display_name} · ${summary.sub}${
+                  info.active_sessions > 0
+                    ? ` · ${info.active_sessions} agent${info.active_sessions === 1 ? "" : "s"} connected`
+                    : ""
+                }`}
+                action={
+                  summary.state === "stale" ? (
+                    <CatchUp
+                      corpusId={info.id}
+                      onAccepted={() =>
+                        setPending((p) => ({ ...p, [info.id]: Date.now() }))
+                      }
+                    />
+                  ) : undefined
+                }
+                footer={
+                  summary.state === "updating" &&
+                  progress.get(info.id)?.running ? (
+                    <IndexingInstrument
+                      progress={progress.get(info.id)!}
+                      variant="compact"
+                    />
+                  ) : undefined
+                }
+              />
+            </div>
           </div>
         ))}
         {corpora && rows.length === 0 ? (

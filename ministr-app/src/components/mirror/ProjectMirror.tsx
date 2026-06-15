@@ -230,13 +230,14 @@ function TreeBranch({
         data-tree-row
         data-tree-path={node.path}
         onClick={() => onOpenFile?.(node)}
-        className="w-full rounded-md text-left focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand"
+        className="w-full cursor-pointer rounded-md text-left focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand"
       >
         <TreeRow
           name={node.name}
           state={node.state}
           level={level}
           note={leafNote(node.raw, node.state === "updating")}
+          disclosure="navigates"
         />
       </button>
     );
@@ -249,13 +250,14 @@ function TreeBranch({
         data-tree-dir
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="w-full rounded-md text-left focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand"
+        className="w-full cursor-pointer rounded-md text-left focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand"
       >
         <TreeRow
           name={`${node.name}/`}
           state={node.state}
           level={level}
           note={open ? undefined : node.state === "ok" ? undefined : "needs a look"}
+          disclosure={open ? "expanded" : "expandable"}
         />
       </button>
       {open

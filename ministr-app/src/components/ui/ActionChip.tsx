@@ -25,7 +25,7 @@ export function ActionChip({
       type="button"
       disabled={busy || props.disabled}
       aria-busy={busy || undefined}
-      className={`rounded-md border bg-surface px-3 py-1.5 text-sm transition-colors hover:bg-sunken focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:opacity-60 ${look} ${className}`}
+      className={`cursor-pointer rounded-md border bg-surface px-3 py-1.5 text-sm transition-colors hover:bg-sunken focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:cursor-default disabled:opacity-60 ${look} ${className}`}
       {...props}
     >
       {busy ? (
