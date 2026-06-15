@@ -8,6 +8,7 @@ import {
 import { usePoll } from "../../lib/usePoll";
 import { activitySentence } from "../../lib/receipts";
 import { Brand } from "../ui/Brand";
+import { ShellHeader } from "../ui/ShellHeader";
 import { Beat } from "../ui/Beat";
 import { ActionChip } from "../ui/ActionChip";
 import { StatusBanner } from "../ui/StatusBanner";
@@ -39,13 +40,18 @@ export function ConnectFlow({
 }) {
   const [stage, setStage] = useState<Stage>({ kind: "pick" });
 
-  // ConnectFlow was the calm reference (already justify-center). It now
-  // composes the same Screen shell as the other three roots for DRY
-  // parity + the consistent trust-footer — same centered rhythm, zero
-  // regression (Brand rides inside the centered content, no header slot).
+  // ConnectFlow composes the same Screen shell + the shared ShellHeader as
+  // the other three roots (gui-shell-consistent-chrome): the Brand now rides
+  // top-left in the shell header like every other screen, instead of a big
+  // bespoke logo centered in the content — so the app reads as one app. The
+  // welcome stays centered in the column below.
   return (
-    <Screen width="xl" align="center" gap="lg">
-      <Brand size="lg" />
+    <Screen
+      width="xl"
+      align="center"
+      gap="lg"
+      header={<ShellHeader leading={<Brand />} />}
+    >
       {stage.kind === "pick" ? (
         <PickBeat
           firstRun={firstRun}

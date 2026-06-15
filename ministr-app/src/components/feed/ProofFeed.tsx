@@ -6,6 +6,7 @@ import { ConnectionNote } from "../ui/ConnectionNote";
 import { aggregate, buildFeed, clock } from "../../lib/receipts";
 import { Receipt } from "../ui/Receipt";
 import { BackButton } from "../ui/BackButton";
+import { ShellHeader } from "../ui/ShellHeader";
 import { Screen } from "../ui/Screen";
 
 /**
@@ -35,15 +36,11 @@ export function ProofFeed({
     <Screen
       align="start"
       header={
-        <div className="flex items-center gap-3">
-          <BackButton onClick={onBack} label={backLabel} />
-          <h1 className="text-xl font-semibold tracking-tight text-ink">
-            {corpus.display_name}
-            <span className="ml-2 text-sm font-normal text-dim">
-              what ministr did for your AI
-            </span>
-          </h1>
-        </div>
+        <ShellHeader
+          leading={<BackButton onClick={onBack} label={backLabel} />}
+          title={corpus.display_name}
+          subtitle="what ministr did for your AI"
+        />
       }
     >
       {connError && data ? <ConnectionNote /> : null}

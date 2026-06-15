@@ -7,6 +7,7 @@ import type { TreeNode } from "../../lib/trustSummary";
 import { StatusBanner } from "../ui/StatusBanner";
 import { ActionChip } from "../ui/ActionChip";
 import { BackButton } from "../ui/BackButton";
+import { ShellHeader } from "../ui/ShellHeader";
 import { CatchUp } from "../ui/CatchUp";
 import { RemoveProject } from "../ui/RemoveProject";
 import { TreeRow } from "../ui/TreeRow";
@@ -107,20 +108,16 @@ export function ProjectMirror({
       align="start"
       footer={footer}
       header={
-        <div className="flex items-center gap-3">
-          <BackButton onClick={onBack} label="All projects" />
-          <h1 className="text-xl font-semibold tracking-tight text-ink">
-            {corpus.display_name}
-            <span className="ml-2 text-sm font-normal text-dim">
-              what your AI sees
-            </span>
-          </h1>
-          {onOpenFeed ? (
-            <span className="ml-auto">
+        <ShellHeader
+          leading={<BackButton onClick={onBack} label="All projects" />}
+          title={corpus.display_name}
+          subtitle="what your AI sees"
+          trailing={
+            onOpenFeed ? (
               <ActionChip onClick={onOpenFeed}>What ministr did</ActionChip>
-            </span>
-          ) : null}
-        </div>
+            ) : undefined
+          }
+        />
       }
     >
       {summary ? (

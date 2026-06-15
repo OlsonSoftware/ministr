@@ -7,6 +7,7 @@ import { StatusBanner } from "../ui/StatusBanner";
 import { ActionChip } from "../ui/ActionChip";
 import { CatchUp } from "../ui/CatchUp";
 import { Brand } from "../ui/Brand";
+import { ShellHeader } from "../ui/ShellHeader";
 import { SettingsMenu } from "../ui/SettingsMenu";
 import { ConnectionNote } from "../ui/ConnectionNote";
 import { Beat } from "../ui/Beat";
@@ -110,13 +111,15 @@ export function TrustPanel({
       // centered (gui-ux-density-rebalance).
       align={rows.length === 0 ? "center" : "start"}
       header={
-        <div className="flex items-center justify-between">
-          <Brand />
-          <div className="flex items-center gap-4">
-            {error ? <ConnectionNote /> : null}
-            <SettingsMenu />
-          </div>
-        </div>
+        <ShellHeader
+          leading={<Brand />}
+          trailing={
+            <>
+              {error ? <ConnectionNote /> : null}
+              <SettingsMenu />
+            </>
+          }
+        />
       }
     >
       <section className="flex flex-col gap-3" aria-label="your projects">
