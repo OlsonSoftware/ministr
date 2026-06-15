@@ -18,9 +18,18 @@ export function Receipt({
   kind?: "win" | "headsup";
 }) {
   return (
-    <div className="flex items-baseline gap-3 px-2 py-1.5 text-sm">
+    <div className="flex items-baseline gap-3 px-2 py-2 text-sm">
       <span className="shrink-0 font-mono text-xs text-dim">{time}</span>
-      {kind ? <TrustMark state={kind === "win" ? "ok" : "stale"} /> : null}
+      {/* Consistent icon column: verdicts carry a trust mark, neutral
+          events a low-key dim dot — so every sentence starts on the same
+          column instead of reading ragged (C7). */}
+      {kind ? (
+        <TrustMark state={kind === "win" ? "ok" : "stale"} />
+      ) : (
+        <span aria-hidden className="inline-block w-4 shrink-0 text-center text-dim">
+          ·
+        </span>
+      )}
       <p className="text-ink">{sentence}</p>
     </div>
   );

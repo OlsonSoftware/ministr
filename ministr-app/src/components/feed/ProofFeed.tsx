@@ -6,6 +6,7 @@ import { ConnectionNote } from "../ui/ConnectionNote";
 import { aggregate, buildFeed, clock } from "../../lib/receipts";
 import { Receipt } from "../ui/Receipt";
 import { ActionChip } from "../ui/ActionChip";
+import { Screen } from "../ui/Screen";
 
 /**
  * Proof Feed — the trust-evidence engine (UX-BLUEPRINT §3.3).
@@ -28,23 +29,27 @@ export function ProofFeed({
   );
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-3xl flex-col gap-4 p-8">
-      <header className="flex items-center gap-3">
-        <ActionChip onClick={onBack} aria-label="back">
-          ‹
-        </ActionChip>
-        <h1 className="text-xl font-semibold tracking-tight text-ink">
-          {corpus.display_name}
-          <span className="ml-2 text-sm font-normal text-dim">
-            what ministr did for your AI
-          </span>
-        </h1>
-      </header>
+    <Screen
+      align="center"
+      header={
+        <div className="flex items-center gap-3">
+          <ActionChip onClick={onBack} aria-label="back">
+            ‹
+          </ActionChip>
+          <h1 className="text-xl font-semibold tracking-tight text-ink">
+            {corpus.display_name}
+            <span className="ml-2 text-sm font-normal text-dim">
+              what ministr did for your AI
+            </span>
+          </h1>
+        </div>
+      }
+    >
       {connError && data ? <ConnectionNote /> : null}
 
       <section
         aria-label="receipts"
-        className="rounded-lg border border-line bg-surface p-1"
+        className="divide-y divide-line rounded-lg border border-line bg-surface p-1"
       >
         {lines.map((l, i) => (
           <Receipt
@@ -88,7 +93,7 @@ export function ProofFeed({
           ))}
         </div>
       </details>
-    </div>
+    </Screen>
   );
 }
 
