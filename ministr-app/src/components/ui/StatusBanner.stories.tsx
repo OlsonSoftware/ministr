@@ -34,3 +34,36 @@ export const Updating: Story = {
     sub: "reading the 3 files you changed",
   },
 };
+
+export const Hidden: Story = {
+  args: {
+    state: "hidden",
+    headline: "Hidden from your AI",
+    sub: "this folder is excluded by an ignore rule",
+  },
+};
+
+/** The whole point of C5: three states side by side read pre-attentively
+ *  — the behind card tints + rails, hidden recedes, healthy stays quiet. */
+export const TrustCueStack: Story = {
+  args: { state: "stale", headline: "" },
+  render: () => (
+    <div className="flex w-[28rem] flex-col gap-3">
+      <StatusBanner
+        state="stale"
+        headline="Your AI is 3 saves behind"
+        sub="side-project · it may answer from old code"
+      />
+      <StatusBanner
+        state="ok"
+        headline="Your AI sees your code — up to date"
+        sub="my-app · everything matches your working tree"
+      />
+      <StatusBanner
+        state="hidden"
+        headline="Hidden from your AI"
+        sub="scratch · excluded by an ignore rule"
+      />
+    </div>
+  ),
+};
