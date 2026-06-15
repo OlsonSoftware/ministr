@@ -6,6 +6,7 @@ import { buildTree, leafNote, summarize } from "../../lib/trustSummary";
 import type { TreeNode } from "../../lib/trustSummary";
 import { StatusBanner } from "../ui/StatusBanner";
 import { ActionChip } from "../ui/ActionChip";
+import { BackButton } from "../ui/BackButton";
 import { CatchUp } from "../ui/CatchUp";
 import { TreeRow } from "../ui/TreeRow";
 import { TrustMark } from "../ui/TrustMark";
@@ -106,9 +107,7 @@ export function ProjectMirror({
       footer={footer}
       header={
         <div className="flex items-center gap-3">
-          <ActionChip onClick={onBack} aria-label="back to all projects">
-            ‹
-          </ActionChip>
+          <BackButton onClick={onBack} label="All projects" />
           <h1 className="text-xl font-semibold tracking-tight text-ink">
             {corpus.display_name}
             <span className="ml-2 text-sm font-normal text-dim">

@@ -18,7 +18,7 @@ type Story = StoryObj<typeof meta>;
 
 /** First fetch never resolves → the connecting beat. */
 export const Connecting: Story = {
-  args: { onOpenProject: () => {}, onAddProject: () => {} },
+  args: { onOpenProject: () => {}, onAddProject: () => {}, onOpenFeed: () => {} },
   decorators: [
     withTauriMock({
       list_corpora: () => new Promise(() => {}),
@@ -31,7 +31,7 @@ export const Connecting: Story = {
 
 /** Every fetch fails, nothing to show → the unreachable banner. */
 export const Unreachable: Story = {
-  args: { onOpenProject: () => {}, onAddProject: () => {} },
+  args: { onOpenProject: () => {}, onAddProject: () => {}, onOpenFeed: () => {} },
   decorators: [
     withTauriMock({
       list_corpora: () => {
@@ -48,7 +48,7 @@ export const Unreachable: Story = {
 
 /** Data loaded once, then polls fail → last-good rows + honest note. */
 export const ConnectionLost: Story = {
-  args: { onOpenProject: () => {}, onAddProject: () => {} },
+  args: { onOpenProject: () => {}, onAddProject: () => {}, onOpenFeed: () => {} },
   decorators: [
     (() => {
       let calls = 0;

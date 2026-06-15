@@ -21,11 +21,16 @@ import { useIngestionProgress } from "../../lib/useIngestionProgress";
 export function TrustPanel({
   onOpenProject,
   onAddProject,
+  onOpenFeed,
 }: {
   onOpenProject: (corpus: CorpusInfo) => void;
   // Required: the empty home must NEVER dead-end — the "Choose a folder…"
   // CTA is the only way out of a zero-project state, so every mount wires it.
   onAddProject: () => void;
+  // Per-card "What it did" entry — makes the activity/Proof Feed
+  // discoverable from Home (gui-ux-wayfinding-feed-access), not buried two
+  // levels down behind the Mirror.
+  onOpenFeed: (corpus: CorpusInfo) => void;
 }) {
   const { data: corpora, error } = usePoll(fetchAll, 5_000);
   // Live per-corpus indexing progress — drives the inline instrument on
@@ -133,14 +138,25 @@ export function TrustPanel({
                     : ""
                 }`}
                 action={
-                  summary.state === "stale" ? (
-                    <CatchUp
-                      corpusId={info.id}
-                      onAccepted={() =>
-                        setPending((p) => ({ ...p, [info.id]: Date.now() }))
-                      }
-                    />
-                  ) : undefined
+                  <div className="flex items-center gap-2">
+                    {summary.state === "stale" ? (
+                      <CatchUp
+                        corpusId={info.id}
+                        onAccepted={() =>
+                          setPending((p) => ({ ...p, [info.id]: Date.now() }))
+                        }
+                      />
+                    ) : null}
+                    <ActionChip
+                      aria-label={`what ministr did for ${info.display_name}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenFeed(info);
+                      }}
+                    >
+                      What it did
+                    </ActionChip>
+                  </div>
                 }
                 footer={
                   summary.state === "updating" &&

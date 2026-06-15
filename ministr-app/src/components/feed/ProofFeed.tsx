@@ -5,7 +5,7 @@ import { usePoll } from "../../lib/usePoll";
 import { ConnectionNote } from "../ui/ConnectionNote";
 import { aggregate, buildFeed, clock } from "../../lib/receipts";
 import { Receipt } from "../ui/Receipt";
-import { ActionChip } from "../ui/ActionChip";
+import { BackButton } from "../ui/BackButton";
 import { Screen } from "../ui/Screen";
 
 /**
@@ -17,9 +17,12 @@ import { Screen } from "../ui/Screen";
 export function ProofFeed({
   corpus,
   onBack,
+  backLabel = "Back",
 }: {
   corpus: CorpusInfo;
   onBack: () => void;
+  /** Where the back affordance returns to, e.g. "All projects". */
+  backLabel?: string;
 }) {
   const { data, error: connError } = usePoll(() => fetchFeed(corpus.id), 4_000);
 
@@ -33,9 +36,7 @@ export function ProofFeed({
       align="center"
       header={
         <div className="flex items-center gap-3">
-          <ActionChip onClick={onBack} aria-label="back">
-            ‹
-          </ActionChip>
+          <BackButton onClick={onBack} label={backLabel} />
           <h1 className="text-xl font-semibold tracking-tight text-ink">
             {corpus.display_name}
             <span className="ml-2 text-sm font-normal text-dim">

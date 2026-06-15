@@ -13,7 +13,9 @@ type View =
   | { kind: "home" }
   | { kind: "connect"; firstRun?: boolean }
   | { kind: "mirror"; corpus: CorpusInfo }
-  | { kind: "feed"; corpus: CorpusInfo };
+  // `from` records where the feed was entered so "back" returns there:
+  // Home (the per-card "What it did" entry) or the project Mirror.
+  | { kind: "feed"; corpus: CorpusInfo; from: "home" | "mirror" };
 
 /**
  * App shell — hub-and-spoke, two levels (UX-BLUEPRINT navigation):
@@ -56,7 +58,9 @@ export default function App() {
       if (e.key !== "Escape" || e.defaultPrevented) return;
       setView((v) =>
         v.kind === "feed"
-          ? { kind: "mirror", corpus: v.corpus }
+          ? v.from === "home"
+            ? { kind: "home" }
+            : { kind: "mirror", corpus: v.corpus }
           : v.kind === "mirror" || v.kind === "connect"
             ? { kind: "home" }
             : v,
@@ -84,17 +88,27 @@ export default function App() {
         <TrustPanel
           onOpenProject={(corpus) => setView({ kind: "mirror", corpus })}
           onAddProject={() => setView({ kind: "connect" })}
+          onOpenFeed={(corpus) => setView({ kind: "feed", corpus, from: "home" })}
         />
       ) : view.kind === "mirror" ? (
         <ProjectMirror
           corpus={view.corpus}
           onBack={() => setView({ kind: "home" })}
-          onOpenFeed={() => setView({ kind: "feed", corpus: view.corpus })}
+          onOpenFeed={() =>
+            setView({ kind: "feed", corpus: view.corpus, from: "mirror" })
+          }
         />
       ) : (
         <ProofFeed
           corpus={view.corpus}
-          onBack={() => setView({ kind: "mirror", corpus: view.corpus })}
+          onBack={() =>
+            setView(
+              view.from === "home"
+                ? { kind: "home" }
+                : { kind: "mirror", corpus: view.corpus },
+            )
+          }
+          backLabel={view.from === "home" ? "All projects" : view.corpus.display_name}
         />
       )}
     </div>

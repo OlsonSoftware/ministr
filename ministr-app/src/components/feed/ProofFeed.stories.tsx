@@ -80,11 +80,11 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Working: Story = {
-  args: { corpus: CORPUS, onBack: () => {} },
+  args: { corpus: CORPUS, onBack: () => {}, backLabel: "All projects" },
 };
 
 export const Empty: Story = {
-  args: { corpus: CORPUS, onBack: () => {} },
+  args: { corpus: CORPUS, onBack: () => {}, backLabel: "All projects" },
   decorators: [
     withTauriMock({
       recent_activity: [],
