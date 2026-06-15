@@ -48,17 +48,22 @@ const RAIL: Record<TrustState, string> = {
 
 export function ProjectCard({
   data,
+  headingLevel = 3,
   onOpen,
   onReindex,
   onConfigure,
   onRemove,
 }: {
   data: ProjectCardData;
+  /** The name's heading level — 3 in the Home list; 2 when the card is a
+   *  page summary under an h1 (keeps the heading order valid). */
+  headingLevel?: 2 | 3;
   onOpen?: () => void;
   onReindex?: () => void;
   onConfigure?: () => void;
   onRemove?: () => void;
 }) {
+  const Heading = `h${headingLevel}` as "h2" | "h3";
   const { name, status, files, sections, size, indexedAgo, behind, stack, agents, progress } =
     data;
   const indexing = status === "updating" && progress?.running;
@@ -92,7 +97,7 @@ export function ProjectCard({
           >
             {meta.glyph}
           </span>
-          <h3 className="truncate text-base font-semibold text-ink">{name}</h3>
+          <Heading className="truncate text-base font-semibold text-ink">{name}</Heading>
 
           {/* Count/label chips stay NEUTRAL — the status COLOR is carried
               accessibly by the rail + the role=img glyph (a 12px tone-tinted

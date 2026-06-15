@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { TrustPanel } from "./components/home/TrustPanel";
-import { ProjectMirror } from "./components/mirror/ProjectMirror";
+import { ProjectManage } from "./components/manager/ProjectManage";
 import { ProofFeed } from "./components/feed/ProofFeed";
 import { ConnectFlow } from "./components/connect/ConnectFlow";
 import { Screen } from "./components/ui/Screen";
@@ -90,12 +90,9 @@ export default function App() {
           onAddProject={() => setView({ kind: "connect" })}
         />
       ) : view.kind === "mirror" ? (
-        <ProjectMirror
+        <ProjectManage
           corpus={view.corpus}
           onBack={() => setView({ kind: "home" })}
-          onOpenFeed={() =>
-            setView({ kind: "feed", corpus: view.corpus, from: "mirror" })
-          }
         />
       ) : (
         <ProofFeed
