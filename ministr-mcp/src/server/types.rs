@@ -1247,3 +1247,82 @@ pub(crate) fn tool_output_schema<T: schemars::JsonSchema + 'static>()
         .or_insert_with(|| serde_json::Value::String("object".into()));
     std::sync::Arc::new(schema)
 }
+
+/// JSON Schema `format` annotations that `schemars` stamps onto Rust numeric
+/// types (`u32` → `"uint32"`, `usize` → `"uint"`, `u64` → `"uint64"`,
+/// `f64` → `"double"`, …) but which are **not** part of the standard JSON
+/// Schema format vocabulary.
+///
+/// MCP clients that validate served schemas with a strict validator (notably
+/// opencode, which runs Ajv) log `unknown format "<x>" ignored …` for every
+/// one — once per numeric field, per tool, across both input and output
+/// schemas. With ministr's ~30 tools that floods the host terminal with
+/// hundreds of lines at connection time. The annotations carry no validation
+/// value to any MCP client (nothing enforces `uint32`), so they are stripped
+/// from every schema served via `tools/list`.
+fn is_schemars_numeric_format(fmt: &str) -> bool {
+    matches!(
+        fmt,
+        "uint"
+            | "uint8"
+            | "uint16"
+            | "uint32"
+            | "uint64"
+            | "uint128"
+            | "int8"
+            | "int16"
+            | "int32"
+            | "int64"
+            | "int128"
+            | "float"
+            | "double"
+    )
+}
+
+/// Recursively strip [`is_schemars_numeric_format`] `format` annotations from a
+/// JSON Schema object, in place.
+///
+/// Only a `"format"` key whose value is a non-standard numeric format *string*
+/// is removed. A property literally named `format` (whose schema is an object,
+/// e.g. `properties.format = { "type": "string" }`) is left untouched, as is a
+/// standard format such as `"date-time"` or `"uri"`.
+pub(crate) fn strip_schemars_numeric_formats(
+    schema: &mut serde_json::Map<String, serde_json::Value>,
+) {
+    if let Some(serde_json::Value::String(fmt)) = schema.get("format")
+        && is_schemars_numeric_format(fmt)
+    {
+        schema.remove("format");
+    }
+    for value in schema.values_mut() {
+        strip_numeric_formats_value(value);
+    }
+}
+
+fn strip_numeric_formats_value(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => strip_schemars_numeric_formats(map),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                strip_numeric_formats_value(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Return `tool` with its input and output schemas cleaned of non-standard
+/// `schemars` numeric `format` annotations before it is served to a client.
+/// See [`strip_schemars_numeric_formats`].
+pub(crate) fn sanitize_tool_schemas(mut tool: rmcp::model::Tool) -> rmcp::model::Tool {
+    let mut input = (*tool.input_schema).clone();
+    strip_schemars_numeric_formats(&mut input);
+    tool.input_schema = std::sync::Arc::new(input);
+
+    if let Some(output) = tool.output_schema.as_deref() {
+        let mut output = output.clone();
+        strip_schemars_numeric_formats(&mut output);
+        tool.output_schema = Some(std::sync::Arc::new(output));
+    }
+    tool
+}

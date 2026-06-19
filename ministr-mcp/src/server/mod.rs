@@ -808,6 +808,38 @@ impl ServerHandler for MinistrServer {
         .with_instructions(instructions)
     }
 
+    /// Serve the tool catalog with schemas cleaned of non-standard `format`
+    /// annotations.
+    ///
+    /// `schemars` stamps Rust numeric types with `format: "uint32"` /
+    /// `"uint64"` / `"uint"` / `"double"` etc. Those are not part of the
+    /// standard JSON Schema format vocabulary, so MCP clients that validate
+    /// schemas (notably opencode, via Ajv) emit `unknown format … ignored`
+    /// once per numeric field, per tool, across input **and** output schemas —
+    /// hundreds of lines flooding the host terminal at connection time.
+    ///
+    /// This mirrors the `#[tool_handler]`-generated `list_tools` exactly (same
+    /// `Self::tool_router()` source, same result shape) but strips those
+    /// value-free annotations first. The macro defers to this definition
+    /// because the impl block already provides a `list_tools`. See
+    /// [`types::sanitize_tool_schemas`].
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<rmcp::model::ListToolsResult, McpError> {
+        let tools = Self::tool_router()
+            .list_all()
+            .into_iter()
+            .map(types::sanitize_tool_schemas)
+            .collect();
+        Ok(rmcp::model::ListToolsResult {
+            tools,
+            next_cursor: None,
+            meta: None,
+        })
+    }
+
     // ── Extension Negotiation (SEP-1724) ─────────────────────────────
 
     async fn initialize(
@@ -5806,6 +5838,69 @@ mod tests {
         assert!(
             missing.is_empty(),
             "tools missing output_schema: {missing:?}"
+        );
+    }
+
+    /// Schemas served via `tools/list` must not carry the non-standard numeric
+    /// `format` annotations `schemars` stamps onto Rust integers/floats
+    /// (`uint32`, `uint64`, `uint`, `double`, …). Strict MCP clients (e.g.
+    /// opencode via Ajv) log a warning per occurrence, flooding the terminal.
+    /// Guards the `list_tools` sanitization in `types::sanitize_tool_schemas`.
+    #[tokio::test]
+    async fn served_schemas_have_no_nonstandard_numeric_formats() {
+        fn collect_bad(node: &serde_json::Value, path: &str, bad: &mut Vec<String>) {
+            match node {
+                serde_json::Value::Object(map) => {
+                    if let Some(serde_json::Value::String(fmt)) = map.get("format")
+                        && matches!(
+                            fmt.as_str(),
+                            "uint"
+                                | "uint8"
+                                | "uint16"
+                                | "uint32"
+                                | "uint64"
+                                | "uint128"
+                                | "int8"
+                                | "int16"
+                                | "int32"
+                                | "int64"
+                                | "int128"
+                                | "float"
+                                | "double"
+                        )
+                    {
+                        bad.push(format!("{path}/format = {fmt}"));
+                    }
+                    for (k, v) in map {
+                        collect_bad(v, &format!("{path}/{k}"), bad);
+                    }
+                }
+                serde_json::Value::Array(items) => {
+                    for (i, v) in items.iter().enumerate() {
+                        collect_bad(v, &format!("{path}/{i}"), bad);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let server = setup_server().await;
+        let (client, _server_handle) = wrap_test_client(server).await;
+        let tools = client.list_all_tools().await.unwrap();
+        assert!(!tools.is_empty(), "expected a non-empty tool surface");
+
+        let mut bad = Vec::new();
+        for t in &tools {
+            let input = serde_json::Value::Object((*t.input_schema).clone());
+            collect_bad(&input, &format!("{}.input", t.name), &mut bad);
+            if let Some(out) = &t.output_schema {
+                let output = serde_json::Value::Object((**out).clone());
+                collect_bad(&output, &format!("{}.output", t.name), &mut bad);
+            }
+        }
+        assert!(
+            bad.is_empty(),
+            "served schemas still carry non-standard numeric formats: {bad:?}"
         );
     }
 
