@@ -1,9 +1,6 @@
 import Link from 'next/link';
-import { GrepVsMinistr } from '../../components/landing/grep-vs-ministr';
-import { TokenEconomics } from '../../components/landing/token-economics';
-import { CrossLanguageBridge } from '../../components/landing/cross-language-bridge';
-import { FourThingsGrid } from '../../components/landing/four-things-grid';
-import { PipelineFigure } from '../../components/landing/pipeline-figure';
+
+const REPO_URL = 'https://github.com/OlsonSoftware/ministr';
 
 export default function HomePage() {
   return (
@@ -11,83 +8,47 @@ export default function HomePage() {
       {/* ── Hero ─────────────────────────────────────────── */}
       <section className="v2-hero">
         <h1 className="v2-wordmark">ministr<span className="v2-dot">.</span></h1>
-        <p className="v2-lead">Give your AI agent eyes for code.</p>
+        <p className="v2-lead">Code intelligence for your AI coding agent.</p>
         <p className="v2-sub">
-          Claude Code, Cursor, and Copilot search code with grep, rg, and find.
-          ministr gives them <em className="v2-offer">symbols</em>,{' '}
-          <em className="v2-offer">references</em>, and{' '}
-          <em className="v2-offer">cross-language calls</em>, indexed on{' '}
-          <em className="v2-offer">bare metal</em> and answered in milliseconds.
+          ministr helps AI coding assistants — Claude Code, Cursor, Copilot, and
+          any MCP client — actually understand your codebase. Instead of guessing
+          from plain-text search, your agent can jump to where something is
+          defined, find everything that uses it, and follow calls across
+          languages. It runs entirely on your machine.
         </p>
         <div className="v2-cta">
-          <Link href="/install" className="v2-btn v2-btn-primary">Install ministr →</Link>
-          <Link href="/docs" className="v2-btn">Read the docs</Link>
+          <a
+            href={REPO_URL}
+            className="v2-btn v2-btn-primary"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            View the source on GitHub →
+          </a>
         </div>
-
-        {/* The thesis, shown not told: grep's noise vs ministr's answer. */}
-        <GrepVsMinistr />
       </section>
 
       <hr className="v2-rule" />
 
-      {/* ── Features ─────────────────────────────────────── */}
+      {/* ── What it does for you ─────────────────────────── */}
       <section className="v2-section">
-        <h2 className="v2-h2" style={{ maxWidth: "20ch" }}>Four things grep can&apos;t do.</h2>
-        <FourThingsGrid />
-      </section>
-
-      <hr className="v2-rule" />
-
-      {/* ── Cross-language ───────────────────────────────── */}
-      <section className="v2-section">
-        <h2 className="v2-h2" style={{ maxWidth: "20ch" }}>One call, three languages.</h2>
-        <CrossLanguageBridge />
-      </section>
-
-      <hr className="v2-rule" />
-
-      {/* ── Why ──────────────────────────────────────────── */}
-      <section className="v2-section">
-        <h2 className="v2-h2" style={{ maxWidth: "20ch" }}>Why ministr.</h2>
-        <p className="v2-why-stat">
-          <em className="v2-num">66%</em> fewer tokens per lookup — measured, not
-          modelled — with answers that are{' '}
-          <em className="v2-num">structurally correct</em> instead of
-          grep-approximated.
-        </p>
-
-        {/* The headline number, proven with the real benchmark. */}
-        <TokenEconomics />
-      </section>
-
-      <hr className="v2-rule" />
-
-      {/* ── How it works ─────────────────────────────────── */}
-      <section className="v2-section">
-        <h2 className="v2-h2" style={{ maxWidth: "20ch" }}>Indexed once. Answered in milliseconds.</h2>
-        <PipelineFigure />
-      </section>
-
-      <hr className="v2-rule" />
-
-      {/* ── Install ──────────────────────────────────────── */}
-      <section className="v2-section" id="install">
-        <h2 className="v2-h2" style={{ maxWidth: "20ch" }}>One installer. Every platform.</h2>
-        <div className="v2-install-block">
-          <div className="v2-install-step">
-            <div className="v2-step-num">1.</div>
-            <div className="v2-step-body">
-              <p>Download and double-click. macOS, Windows, Linux. The <code>ministr</code> CLI lands on your PATH automatically.</p>
-              <Link href="/install" className="v2-btn v2-btn-primary" style={{ alignSelf: 'flex-start' }}>Download installer →</Link>
-            </div>
-          </div>
-          <div className="v2-install-step">
-            <div className="v2-step-num">2.</div>
-            <div className="v2-step-body">
-              <p>Run <code>ministr init</code> in your project. It wires up Claude Code, Cursor, and Copilot for you.</p>
-            </div>
-          </div>
-        </div>
+        <h2 className="v2-h2" style={{ maxWidth: '20ch' }}>What it does for you.</h2>
+        <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '1.25rem', maxWidth: '60ch' }}>
+          <li>
+            <strong>Fewer wrong guesses.</strong> Your agent works from real
+            definitions and references instead of grep approximations, so it
+            reads and edits the right code.
+          </li>
+          <li>
+            <strong>Works with the tools you already use.</strong> ministr speaks
+            MCP, so Claude Code, Cursor, Copilot, and other MCP clients can all
+            use it — no new workflow to learn.
+          </li>
+          <li>
+            <strong>Stays on your machine.</strong> Your code is indexed locally.
+            Nothing is uploaded.
+          </li>
+        </ul>
       </section>
 
       {/* ── Footer ───────────────────────────────────────── */}
@@ -108,10 +69,7 @@ export default function HomePage() {
           <div className="v2-meta">100% local, open over MCP</div>
         </div>
         <div className="v2-footer-links">
-          <Link href="/docs/quickstart">Getting started</Link>
-          <Link href="/docs/tools">Tool reference</Link>
-          <Link href="/docs/concepts/architecture">Architecture</Link>
-          <Link href="/stewardship">Stewardship</Link>
+          <a href={REPO_URL} target="_blank" rel="noopener noreferrer">GitHub</a>
         </div>
       </footer>
     </>
