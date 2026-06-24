@@ -2,74 +2,94 @@
 
 **Real codebase understanding for AI coding agents.**
 
-ministr is a code intelligence MCP server. It gives AI coding agents
-AST-level understanding of your codebase — semantic search across code and
-docs, symbol-level navigation, real reference graphs, and cross-language
-bridge detection across 40+ languages. It runs locally, embeds locally, and
-works with any MCP client — Claude Code, Cursor, VS Code / Copilot.
+ministr is a local, MIT-licensed code intelligence MCP server. It gives AI
+coding agents AST-level understanding of your codebase — semantic search across
+code and docs, symbol-level navigation, real reference graphs, and
+cross-language bridge detection across 40+ languages. It runs locally, embeds
+locally, and works with any MCP client — Claude Code, Cursor, VS Code / Copilot.
 
 ## What it solves
 
-Agents explore code with `grep` and `read`. Grep matches text, not meaning,
-and floods the window with near-misses; reading a whole file to answer a
-narrow question wastes most of what comes back. Neither tool knows that a
-function has three callers, that a trait has two implementations, or that a
-Rust `#[pyfunction]` is what Python calls across the boundary.
+Agents explore code with `grep` and `read`. Grep matches text, not meaning, and
+floods the window with near-misses; reading a whole file to answer a narrow
+question wastes most of what comes back. Neither tool knows that a function has
+three callers, that a trait has two implementations, or that a Rust
+`#[pyfunction]` is what Python calls across the boundary.
 
 ministr replaces that with structure. It parses the codebase into an AST,
 indexes it at multiple resolutions (document, section, claim, symbol, full
 source), and answers in terms of symbols, references, and language bridges —
 returning the exact slice that matters instead of a file dump.
 
-## How it compares
+## Install from source
 
-| | ministr | semble | code-graph-mcp | Claude Context |
-|---|---|---|---|---|
-| Languages parsed | **40+** | 19 | 16 | 14 |
-| AST symbol graph | ✅ | — | ✅ | partial |
-| Reference graph (callers / implementors) | ✅ | — | ✅ | — |
-| Cross-language bridges (Tauri / NAPI / PyO3 / wasm-bindgen / JNI / UniFFI / cgo / gRPC / FFI) | **✅ — 13 kinds** | — | HTTP only | — |
-| Multi-resolution (doc / section / claim / symbol / source) | ✅ | chunk only | chunk only | chunk only |
-| Docs + code in one corpus | ✅ | code only | code only | code + md |
-| Local-only (no cloud, no API key) | ✅ | ✅ | ✅ | cloud-leaning (Milvus + OpenAI) |
-| Desktop app | ✅ (Tauri v2) | — | — | — |
-| Git URL on demand | ✅ (`GitInclude` + `ministr_clone`) | ✅ | — | — |
+ministr builds from source with one command on macOS, Linux, and Windows.
 
-## Install
+**Prerequisites**
 
-The desktop app is the primary way to run ministr. Go to
-**[ministr.ai/install](https://ministr.ai/install)**; the page detects your OS
-and leads with the matching double-click installer — `.pkg` on macOS, `.exe` on
-Windows, `.deb` / `.rpm` / `.AppImage` on Linux. The same bundles are attached
-to every [GitHub release](https://github.com/OlsonSoftware/ministr/releases) if
-you prefer to download them directly.
+- [Rust](https://rustup.rs) (the toolchain is pinned to 1.95.0 via
+  `rust-toolchain.toml`; rustup installs it automatically on first build).
+- A C toolchain for native dependencies: Xcode Command Line Tools on macOS
+  (`xcode-select --install`), `build-essential` on Debian/Ubuntu (or the
+  equivalent `gcc`/`clang` + `make` on other distros), and the
+  [Visual Studio C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+  on Windows.
 
-Every installer does the same two things: it places the desktop app and it adds
-the `ministr` CLI to your PATH. On first launch the app opens a short Setup
-screen — identical on macOS, Windows, and Linux — that confirms the CLI is wired
-up (with one-click repair if it isn't), then walks you through indexing a
-project and connecting your agent. No terminal step is required.
+**One line — macOS / Linux**
 
-For headless or scripted installs, a CLI one-liner is available below the
-installer on the [install page](https://ministr.ai/install).
+```sh
+cargo install --git https://github.com/OlsonSoftware/ministr --locked ministr-cli
+```
+
+**One line — Windows (PowerShell)**
+
+```powershell
+cargo install --git https://github.com/OlsonSoftware/ministr --locked ministr-cli
+```
+
+That builds the workspace and installs the `ministr` binary into Cargo's bin
+directory (`~/.cargo/bin` on macOS/Linux, `%USERPROFILE%\.cargo\bin` on
+Windows), which rustup already puts on your `PATH`. Confirm it:
+
+```sh
+ministr --version
+```
+
+**From a local clone** (any OS — handy if you're hacking on ministr):
+
+```sh
+git clone https://github.com/OlsonSoftware/ministr
+cd ministr
+cargo install --path ministr-cli --locked
+```
+
+On Windows you can opt into DirectML GPU acceleration by adding
+`--features directml` to either command.
+
+> Verified by build: `cargo install` from source compiles the MIT workspace and
+> installs a working `ministr 0.7.0` (validated on macOS / Apple Silicon with the
+> pinned Rust 1.95.0 toolchain). The local-clone form and the `--git` form share
+> the same compile path.
+
+Prebuilt binaries and the desktop app are also attached to each
+[GitHub release](https://github.com/OlsonSoftware/ministr/releases) when one is
+published.
 
 ### As a Claude Code plugin
 
-If you only need the MCP server (and not the desktop app), install ministr as a
-Claude Code plugin — this registers the MCP server and adds slash commands
-(`/ministr:survey`, `/ministr:symbols`, `/ministr:references`, `/ministr:bridges`,
-`/ministr:impact`, `/ministr:dead`, `/ministr:route`):
+If you only need the MCP server, install ministr as a Claude Code plugin — this
+registers the MCP server and adds slash commands (`/ministr:survey`,
+`/ministr:symbols`, `/ministr:references`, `/ministr:bridges`, `/ministr:impact`,
+`/ministr:dead`, `/ministr:route`):
 
 ```sh
 claude /plugin install https://github.com/OlsonSoftware/ministr
 ```
 
-You still need the `ministr` CLI on your `PATH` — install via the CLI one-liner
-above. The plugin manifest is at [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json).
+You still need the `ministr` CLI on your `PATH` (install from source above). The
+plugin manifest is at [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json).
 
 ## Use it in a project
-
-From the app's guided Setup, or from a terminal:
 
 ```sh
 cd your-project
@@ -94,41 +114,35 @@ agent connects.
 
 ## What it does
 
-**Cross-language bridge detection** — the sharpest reason ministr exists. ministr
+**Cross-language bridge detection** — the sharpest reason ministr exists. It
 links cross-language bindings automatically across **13 kinds**: Tauri commands
 and events, napi-rs, PyO3, wasm-bindgen, JNI, UniFFI, cgo (Go ↔ C), Electron
 IPC, Flutter platform channels, gRPC, HTTP routes (axum / actix-web / rocket /
 Express / Flask / Gin), and raw FFI. When you have a Rust `#[tauri::command]`,
 ministr knows the TypeScript `invoke("…")` that calls it; when you have a
 `#[pyfunction]`, ministr knows the Python import that crosses the PyO3 boundary.
-No other code-search tool covers this surface — they stop at the FFI line.
 
 **Symbol navigation and reference graphs** find and trace structs, functions,
 traits, and their callers / implementors / importers across 40+ languages via
 tree-sitter — Rust, Python, JS/TS, Go, Java, C/C++, C#, Ruby, Swift, Kotlin,
 PHP, Scala, Bash, Lua, Elixir, Haskell, OCaml, Dart, R, HCL/Terraform, SQL,
-Zig, Protobuf, Svelte, plus CSS, GraphQL, Groovy, Nix, Erlang, PowerShell,
-Solidity, Objective-C, Julia, CMake, Make, and JSON/YAML/TOML.
+Zig, Protobuf, Svelte, and more.
 
 **Semantic search** runs across docs and code and returns results at the
-granularity the agent needs — a summary, a section, or a single claim (one
-sentence of fact pulled from a section). Code adds two more levels: a symbol
-stub (signature plus doc) and full source. Same index serves all five
-resolutions; the agent picks the right one instead of getting a whole file
-dump.
+granularity the agent needs — a summary, a section, or a single claim. Code adds
+two more levels: a symbol stub (signature plus doc) and full source. The same
+index serves all five resolutions; the agent picks the right one instead of
+getting a whole file dump.
 
 **Local embeddings** use Candle with the Metal GPU on Apple Silicon by default,
 FastEmbed + DirectML on Windows DirectX 12 GPUs (with the `directml` feature),
 and FastEmbed + CPU ONNX everywhere else. Nothing leaves the machine.
 
-**Desktop app** provides a dashboard, a live tool-call activity stream, a `⌘K`
-command palette, and system-tray controls (Tauri v2; macOS, Windows, Linux).
-
 ## For agents
 
-Drop this into your project's `CLAUDE.md` / `AGENTS.md` / `.cursorrules` (or
-let `ministr init` write it for you) so the agent reaches for the right tool
-instead of grepping:
+Drop this into your project's `CLAUDE.md` / `AGENTS.md` / `.cursorrules` (or let
+`ministr init` write it for you) so the agent reaches for the right tool instead
+of grepping:
 
 ```markdown
 ## ministr — code intelligence
@@ -152,27 +166,25 @@ Use ministr tools instead of grep / find / Read-to-explore.
 - Don't shell out to grep / rg / find — use `ministr_survey` or `ministr_symbols`
 ```
 
-## Documentation
+## Repository
 
-- [Docs home](https://ministr.ai/) — full overview
-- [Install](https://ministr.ai/install) — desktop installers and CLI scripts
-- [Tool reference](https://ministr.ai/docs/tools/) — every MCP tool, with parameters and examples
-- [Architecture](https://ministr.ai/docs/architecture/) — how ministr is put together
-- [Configuration](https://ministr.ai/docs/configuration/) — `.ministr.toml` options and CLI flags
-- [Changelog](CHANGELOG.md)
+- [`CHANGELOG.md`](CHANGELOG.md) — release history
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to build, test, and contribute
+- [`SECURITY.md`](SECURITY.md) — reporting vulnerabilities
+- [`STEWARDSHIP.md`](STEWARDSHIP.md) — the open-core thesis and our commitments
+- [`AGENTS.md`](AGENTS.md) — agent-facing project notes
 
 ## License and open-core posture
 
-ministr follows an open-core model: the **local stack is MIT-licensed** and
-runs entirely on your machine; the hosted **ministr Cloud** service at
-`mcp.ministr.ai` and the **Enterprise** on-prem image are paid products built
-on proprietary crates that live in a separate private sibling repository
-(`github.com/OlsonSoftware/ministr-private`, owner-only).
+ministr follows an open-core model: the **local stack is MIT-licensed** and runs
+entirely on your machine. The six MIT-licensed workspace crates — `ministr-core`,
+`ministr-api`, `ministr-daemon`, `ministr-mcp`, `ministr-cli`, and
+`ministr-app/src-tauri` — build a complete, fully-functional `ministr` binary
+from this repo via `cargo build --workspace`; they have no cloud or proprietary
+dependencies.
 
-The six MIT-licensed workspace crates — `ministr-core`, `ministr-api`,
-`ministr-daemon`, `ministr-mcp`, `ministr-cli`, and `ministr-app/src-tauri` —
-are the local stack and build a complete, fully-functional `ministr` binary
-from this repo via `cargo build --workspace`. See [LICENSE-MIT](LICENSE-MIT)
-for the canonical text and [STEWARDSHIP.md](STEWARDSHIP.md) for the open-core
-thesis, the dual-repo release pipeline, and our commitment that **a feature
-that ships open source will not be moved to a paid tier**.
+A hosted cloud service and an on-prem Enterprise image are separate paid products
+built on proprietary crates in a private sibling repository. See
+[LICENSE-MIT](LICENSE-MIT) for the canonical text and [STEWARDSHIP.md](STEWARDSHIP.md)
+for the open-core thesis and our commitment that **a feature that ships open
+source will not be moved to a paid tier**.
