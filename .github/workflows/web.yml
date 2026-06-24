@@ -1,7 +1,7 @@
-name: Deploy Documentation
+name: Deploy Website
 
-# Builds and publishes the Fumadocs-based web/ site to GitHub Pages
-# on every push to main that touches it. PRs get build + type-check only.
+# Builds and publishes the web/ landing site to GitHub Pages on every push to
+# main that touches it. PRs get build + type-check only.
 
 on:
   push:
@@ -46,42 +46,9 @@ jobs:
       - name: Type-check
         run: npm run types:check
 
-      - name: Docs parity gate
-        # Tool-reference pages + internal links must match the committed
-        # tool manifest (regenerated from ministr-mcp by cargo test's
-        # tool_manifest_parity gate). See web/scripts/gen-tool-docs.mjs.
-        run: npm run docs:check
-
       - name: Build static export
-        # Site now serves at https://ministr.ai/ via the CNAME in
-        # web/public/CNAME — no sub-path prefix needed.
+        # Site serves at https://ministr.ai/ via the CNAME in web/public/CNAME.
         run: npm run build
-
-      - name: Maintenance mode
-        # When web/.maintenance exists (non-empty — hashFiles() returns ''
-        # for zero-byte files), publish the coming-soon page on every
-        # route EXCEPT the closed-beta flow: /beta plus the /login +
-        # /auth pages it signs in through (and /_next assets they load)
-        # stay live so testers can request access + download while the
-        # rest of the site is dark. Delete the flag file to bring the
-        # full site back. NB: named .maintenance because web/MAINTENANCE
-        # collides with web/maintenance/ on case-insensitive macOS
-        # filesystems.
-        if: ${{ hashFiles('web/.maintenance') != '' }}
-        run: |
-          keep=$(mktemp -d)
-          for d in beta login auth _next; do
-            [ -e "out/$d" ] && mv "out/$d" "$keep/$d"
-          done
-          rm -rf out
-          mkdir out
-          cp maintenance/index.html out/index.html
-          cp maintenance/index.html out/404.html
-          cp public/CNAME out/CNAME
-          for d in beta login auth _next; do
-            [ -e "$keep/$d" ] && mv "$keep/$d" "out/$d"
-          done
-          true
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
