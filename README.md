@@ -185,6 +185,6 @@ dependencies.
 
 A hosted cloud service and an on-prem Enterprise image are separate paid products
 built on proprietary crates in a private sibling repository. See
-[LICENSE-MIT](LICENSE-MIT) for the canonical text and [STEWARDSHIP.md](STEWARDSHIP.md)
+[LICENSE](LICENSE) for the canonical MIT text and [STEWARDSHIP.md](STEWARDSHIP.md)
 for the open-core thesis and our commitment that **a feature that ships open
 source will not be moved to a paid tier**.
