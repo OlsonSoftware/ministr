@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use ministr_core::session::{DropPolicy, WindowEstimator};
 
-/// FE1 regression — under FSRS, the just-inserted entry must NOT evict
+/// Regression — under FSRS, the just-inserted entry must NOT evict
 /// itself when it's missing from the scores map. Previously
 /// `evict_to_capacity` gave unknown IDs an implicit R=0.0, which made
 /// the just-inserted entry the minimum (since the caller hadn't had a
@@ -40,7 +40,7 @@ fn fe1_fresh_entry_is_not_self_evicted_under_fsrs() {
     assert!(est.is_in_window("old_but_tracked"));
 }
 
-/// FE1 regression — the protection is strictly scoped to the eviction
+/// Regression — the protection is strictly scoped to the eviction
 /// pass of the `record_with_scores` call. An UNKNOWN pre-existing
 /// entry (from an earlier call, NOT the one being inserted now) still
 /// defaults to R=0.0 and is preferred for eviction over tracked
@@ -67,7 +67,7 @@ fn fe1_protection_does_not_extend_to_pre_existing_untracked_entries() {
     );
 }
 
-/// FE1 regression — if the caller explicitly supplies a score for the
+/// Regression — if the caller explicitly supplies a score for the
 /// newly-inserted entry, that explicit value wins (caller knows best).
 /// Pathological case: caller says "the new entry is stale, please
 /// evict it" — the fix should respect that.
@@ -101,7 +101,7 @@ fn fe1_caller_supplied_low_score_for_new_entry_still_evicts_it() {
     assert!(est.is_in_window("fresh"));
 }
 
-/// FE2 (documented behavior, not a bug) — re-recording with a
+/// Documented behavior (not a bug) — re-recording with a
 /// `token_count` larger than capacity cascade-evicts everything,
 /// including the re-recorded entry itself. This is intentional: the
 /// window honors capacity strictly. Pinned as a regression guard

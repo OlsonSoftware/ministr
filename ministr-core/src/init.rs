@@ -513,7 +513,7 @@ pub fn render_toml(detection: &ProjectDetection) -> String {
         let _ = writeln!(out, "]");
     }
 
-    // sparse_weight — per-corpus-type hybrid retrieval default (rq4c/W5).
+    // sparse_weight — per-corpus-type hybrid retrieval default.
     // VISIBLE default, never silent: code projects get the measured 0.6 in
     // the generated file where the user reviews it before the first index;
     // docs-only projects get the keep-it-off guidance as a comment. The
@@ -1298,7 +1298,7 @@ mod tests {
 
     #[test]
     fn generated_config_ships_the_code_corpus_sparse_default_visibly() {
-        // W5: a detected CODE project gets the measured hybrid default as an
+        // A detected CODE project gets the measured hybrid default as an
         // ACTIVE, visible line in the generated file (the user reviews it
         // before the first index); a project with no code gets guidance as a
         // comment only — never a silent behavior change.

@@ -385,12 +385,12 @@ impl FastEmbedder {
         // Rebuilt per try_new attempt — InitOptions is consumed by try_new,
         // and the parsed model handle isn't Clone on all fastembed versions,
         // so we re-parse (cheap — just string matching) for each attempt.
-        // Sequence-length cap as a model-driven property (RQ1). Without an
+        // Sequence-length cap as a model-driven property. Without an
         // explicit `with_max_length`, fastembed silently applies its own
         // default of 512 — which for all-MiniLM-L6-v2 is *above* the model's
         // documented 256-token context and inconsistent with the Candle path.
         // Setting it from `model_max_seq_len` keeps both backends (and the
-        // rq0 eval, which runs on FastEmbedder) on the model's real max.
+        // eval, which runs on FastEmbedder) on the model's real max.
         let max_len = model_max_seq_len(&parse_model_name(model_name)?);
 
         let make_base_options = || -> Result<InitOptions, IndexError> {
@@ -902,7 +902,7 @@ fn model_dimension(model: &EmbeddingModel) -> usize {
 /// This is the cap above which inputs are truncated at tokenization. We set it
 /// explicitly (`InitOptions::with_max_length`) rather than inheriting
 /// fastembed's blanket 512 default, so that the cap is a property of the model
-/// — e.g. all-MiniLM-L6-v2's documented 256, not 512 (RQ1). Unmatched variants
+/// — e.g. all-MiniLM-L6-v2's documented 256, not 512. Unmatched variants
 /// fall back to 512, fastembed's own default, so behaviour never regresses for
 /// a model we haven't explicitly characterized.
 fn model_max_seq_len(model: &EmbeddingModel) -> usize {
@@ -984,7 +984,7 @@ mod tests {
     #[test]
     fn max_seq_len_is_model_driven() {
         // The default model's cap must be its documented 256 — NOT fastembed's
-        // blanket 512 default (the RQ1 fix; the eval runs on this model).
+        // blanket 512 default; the eval runs on this model.
         let minilm = parse_model_name("all-MiniLM-L6-v2").unwrap();
         assert_eq!(model_max_seq_len(&minilm), 256);
 

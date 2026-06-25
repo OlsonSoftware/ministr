@@ -43,7 +43,7 @@ pub(super) async fn embed_document<
     // Heuristic Contextual Retrieval (rq) is opt-in and exposed on the
     // streaming pipeline via `IngestionPipeline::with_contextual_embeddings`.
     // This immediate (all-three-levels) path has no pipeline handle, so it
-    // always embeds verbatim — the rq0 A/B measured the prefix as a mixed lever
+    // always embeds verbatim — the A/B measured the prefix as a mixed lever
     // (kept default-OFF), so the immediate path matches the production default.
     collect_embeddable_items(&doc.sections, &mut ids, &mut texts, false);
 
@@ -369,7 +369,7 @@ fn contextualize_text(heading_path: &[String], text: &str) -> String {
 
 /// Delete all vectors associated with a document from the index.
 ///
-/// When a sparse (hybrid) index is in play (rq4b), the same vector ids are
+/// When a sparse (hybrid) index is in play, the same vector ids are
 /// tombstoned there too — dense and sparse views of a document never disagree.
 pub(crate) async fn delete_document_vectors<S: Storage + ?Sized, I: VectorIndex + ?Sized>(
     doc_id: &crate::types::ContentId,
@@ -469,7 +469,7 @@ pub(crate) async fn delete_document_vectors<S: Storage + ?Sized, I: VectorIndex 
         let _ = storage.delete_symbols_for_file(&doc.source_path).await;
     }
 
-    // rq4b: mirror every removed id into the sparse index so hybrid search
+    // Mirror every removed id into the sparse index so hybrid search
     // never surfaces a tombstoned document. Best-effort per id — a sparse
     // miss is normal for ids ingested before sparse indexing was enabled.
     if let Some(sparse) = sparse_index {

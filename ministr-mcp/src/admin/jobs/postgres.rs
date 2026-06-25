@@ -152,22 +152,25 @@ impl PostgresJobQueue {
     }
 }
 
-#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selectorfn make_rustls_connector() -> MakeRustlsConnect {
+#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector
+fn make_rustls_connector() -> MakeRustlsConnect {
     // Workspace-standard trust policy (Mozilla roots + optional
     // MINISTR_PG_CA_CERT) — see `crate::pg_tls`. The original local
     // copy here lacked the CA hook and silently disabled the cloud
-    // WorkerLoop on DO (exodus-workerloop-pg-ca).
+    // WorkerLoop on DigitalOcean.
     crate::pg_tls::make_rustls_connector()
 }
 
-#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selectorfn redact_url_host(url: &str) -> String {
+#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector
+fn redact_url_host(url: &str) -> String {
     tokio_postgres::Config::from_str(url)
         .ok()
         .and_then(|cfg| cfg.get_hosts().first().cloned())
         .map_or_else(|| "<unknown>".to_owned(), |h| format!("{h:?}"))
 }
 
-#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selectorasync fn ensure_schema(pool: &Pool) -> JobResult<()> {
+#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector
+async fn ensure_schema(pool: &Pool) -> JobResult<()> {
     let client = pool
         .get()
         .await

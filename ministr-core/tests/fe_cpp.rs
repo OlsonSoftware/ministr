@@ -1,4 +1,4 @@
-//! FE1 harness proof — C++ end-to-end.
+//! C++ end-to-end harness proof.
 //!
 //! Proves the shared `langtest` harness on a real multi-file C++ project:
 //! ingest → symbol extraction → reference-graph query. C++ is deliberately the

@@ -461,7 +461,7 @@ pub struct BridgeLinkDetail {
     pub export_language: String,
     /// Export line number.
     pub export_line: u32,
-    /// F3.6-c-ii-b — symbol id when the export endpoint matches an
+    /// Symbol id when the export endpoint matches an
     /// indexed symbol on `(file, name)` whose line range contains
     /// `export_line`. `None` when the symbol indexer hadn't covered
     /// the file or no row matched.
@@ -477,7 +477,7 @@ pub struct BridgeLinkDetail {
     pub import_language: String,
     /// Import line number.
     pub import_line: u32,
-    /// F3.6-c-ii-b — symbol id for the import side (same heuristic
+    /// Symbol id for the import side (same heuristic
     /// as `export_symbol_id`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub import_symbol_id: Option<String>,

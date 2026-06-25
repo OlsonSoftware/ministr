@@ -578,13 +578,13 @@ pub struct IngestionPipeline {
     /// text is prefixed with a compact structural breadcrumb (heading path)
     /// before embedding. Default `false` — production embed text is
     /// byte-identical to the verbatim section, so flipping this forces a full
-    /// re-index. The rq0 real-embedder A/B (`just eval-quality`, all-MiniLM,
+    /// re-index. The real-embedder A/B (`just eval-quality`, all-MiniLM,
     /// 72 queries) measured this prefix as a *mixed* lever: MRR +0.017,
     /// nDCG@5 +0.010, P@5 +0.011, but R@5 −0.007 (the breadcrumb tokens push a
     /// borderline doc out of top-5). Kept default-OFF on that net; exposed as
     /// an opt-in so per-corpus callers + future code-corpus evals can measure it.
     contextualize_embeddings: bool,
-    /// Optional sparse (SPLADE-style) embedder for hybrid retrieval (rq4b).
+    /// Optional sparse (SPLADE-style) embedder for hybrid retrieval.
     /// When set together with `sparse_index`, the embed stage also
     /// sparse-embeds every `(VectorId, text)` pair and populates the inverted
     /// index, making the RRF hybrid query path real. `None` (default) keeps
@@ -665,7 +665,7 @@ impl IngestionPipeline {
         self
     }
 
-    /// rq4b: persist the sparse sidecar next to the HNSW files at the end of
+    /// Persist the sparse sidecar next to the HNSW files at the end of
     /// a successful ingest (when both a sparse index and a corpus dir are
     /// configured). The dense index is persisted by the caller / the mid-run
     /// checkpoint; the sparse sidecar is cheap (JSON) so end-of-ingest is
@@ -680,7 +680,7 @@ impl IngestionPipeline {
         Ok(())
     }
 
-    /// Enable sparse (hybrid) indexing during ingestion (rq4b).
+    /// Enable sparse (hybrid) indexing during ingestion.
     ///
     /// When set, the embed stage sparse-embeds every `(VectorId, text)` pair
     /// it dense-embeds — on BOTH the single and dual (Matryoshka) paths — and
@@ -722,7 +722,7 @@ impl IngestionPipeline {
     ///
     /// Default is `false` (verbatim embed text). Turning this on changes the
     /// embedded text, so an existing corpus must be **fully re-indexed** to
-    /// benefit. The rq0 real-embedder A/B measured the prefix as a *mixed*
+    /// benefit. The real-embedder A/B measured the prefix as a *mixed*
     /// lever (MRR/nDCG/P@5 up, R@5 slightly down) on the doc-heavy eval corpus,
     /// which is why it ships opt-in rather than default-on. See the
     /// `contextualize_embeddings` field docs for the measured deltas.
@@ -1104,7 +1104,7 @@ impl IngestionPipeline {
         // Embed all resolution levels (immediate)
         embed_document(&doc, embedder, index, storage).await?;
 
-        // rq4b parity for the immediate path (sparse-watcher-delete-wiring):
+        // Sparse index parity for the immediate path (sparse-watcher-delete-wiring):
         // the batched embed stage sparse-embeds every pair the dense path
         // embeds; mirror that here so per-file re-ingests (the coherence
         // watcher) keep the sparse index coherent. Same pair set as
@@ -1513,7 +1513,7 @@ impl IngestionPipeline {
             .collect()
     }
 
-    /// Orphan-GC stale-doc sweep (F32) — a keying-aware global diff.
+    /// Orphan-GC stale-doc sweep — a keying-aware global diff.
     ///
     /// Enumerates *every* document (a NULL-`root_id` doc is invisible to
     /// `list_documents_by_root` and would orphan forever) but scopes
@@ -1589,7 +1589,7 @@ impl IngestionPipeline {
             //   namespaced under our rid → ours.
             //   namespaced under another → a sibling root, skip.
             //   bare-relative (NULL-keyed) → ours only on an unrooted reindex,
-            //     or when no sibling root shares the index (the F32.1 fix).
+            //     or when no sibling root shares the index.
             let attributable = if strip_root_prefix(&doc.source_path).is_some() {
                 this_prefix
                     .as_deref()
@@ -2055,7 +2055,7 @@ impl IngestionPipeline {
             .dual_embedder
             .as_ref()
             .zip(self.full_dim_storage.as_ref());
-        // rq4b: sparse (hybrid) indexing rides the same embed channel — the
+        // Sparse (hybrid) indexing rides the same embed channel — the
         // consumer sparse-embeds every flushed batch into the inverted index.
         let sparse = self
             .sparse_embedder
@@ -2820,7 +2820,7 @@ mod rooted_helper_tests {
     //! [`NullVectorIndex`]) — no real embedder, no on-disk corpus.
     //!
     //! The crown jewel is the [`IngestionPipeline::sweep_stale_documents`]
-    //! attribution matrix (F32 / F32.1): the data-loss-critical logic where a
+    //! attribution matrix: the data-loss-critical logic where a
     //! wrong call would delete a *sibling corpus's* documents. `sweep` builds
     //! its `discovered` set from `files` + `dir` by pure string ops, so these
     //! tests need no filesystem — only crafted `source_path`s in storage.
@@ -2955,7 +2955,7 @@ mod rooted_helper_tests {
         );
     }
 
-    // ── sweep_stale_documents — the F32 / F32.1 attribution matrix ────────
+    // ── sweep_stale_documents — attribution matrix ────────────────────────
 
     #[tokio::test]
     async fn sweep_deletes_only_undiscovered_owned_docs() {
@@ -3018,7 +3018,7 @@ mod rooted_helper_tests {
 
     #[tokio::test]
     async fn sweep_keeps_bare_docs_when_a_foreign_root_shares_the_index() {
-        // F32.1: a bare/NULL-keyed doc carries no attribution, so when a
+        // A bare/NULL-keyed doc carries no attribution, so when a
         // foreign explicit root shares the index we must NOT reclaim it.
         let storage = SqliteStorage::open_in_memory().expect("open");
         let index = NullVectorIndex;
@@ -3052,7 +3052,7 @@ mod rooted_helper_tests {
 
     #[tokio::test]
     async fn sweep_reclaims_bare_docs_when_no_foreign_root_present() {
-        // F32.1: a single-corpus index (no foreign root) is the only place
+        // A single-corpus index (no foreign root) is the only place
         // NULL-keyed docs legitimately arise, so the bare orphan IS reclaimed.
         let storage = SqliteStorage::open_in_memory().expect("open");
         let index = NullVectorIndex;

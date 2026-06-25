@@ -1,6 +1,6 @@
-//! FE5 — index invariants: the corpus stat-merkle short-circuit.
+//! Index invariants: the corpus stat-merkle short-circuit.
 //!
-//! Scope note (honest coverage map): FE5's other two acceptance areas are
+//! Scope note (honest coverage map): the other two acceptance areas are
 //! already covered elsewhere and are NOT duplicated here —
 //!
 //! - **Occurrence index** (extract byte/col spans + resolve to `symbol_id`):

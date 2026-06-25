@@ -62,7 +62,7 @@ fn min_max_normalize(scores: &mut [f32]) {
 
 /// Decay applied to a 1-hop ref-graph neighbour's inherited score, so an
 /// expanded neighbour ranks *below* the hit that pulled it in. The reranker
-/// (rq5) can lift a genuinely relevant neighbour back up; on its own,
+/// can lift a genuinely relevant neighbour back up; on its own,
 /// expansion never displaces a primary hit (RepoGraph / LocAgent pattern).
 const GRAPH_EXPAND_DECAY: f32 = 0.5;
 
@@ -149,7 +149,7 @@ impl QueryService {
         if let (Some(se), Some(si)) = (&self.sparse_embedder, &self.sparse_index) {
             searcher = searcher.with_sparse(se.as_ref(), si.as_ref());
         }
-        // rq4c: the per-corpus configured weight (with_sparse); <= 0 or no
+        // The per-corpus configured weight (with_sparse); <= 0 or no
         // components attached behaves dense-only.
         let sparse_weight = if self.sparse_embedder.is_some() {
             self.sparse_weight.max(0.0)
@@ -234,7 +234,7 @@ impl QueryService {
         if let (Some(se), Some(si)) = (&self.sparse_embedder, &self.sparse_index) {
             searcher = searcher.with_sparse(se.as_ref(), si.as_ref());
         }
-        // rq4c: the per-corpus configured weight (with_sparse); <= 0 or no
+        // The per-corpus configured weight (with_sparse); <= 0 or no
         // components attached behaves dense-only.
         let sparse_weight = if self.sparse_embedder.is_some() {
             self.sparse_weight.max(0.0)

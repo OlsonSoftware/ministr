@@ -160,7 +160,7 @@ async fn individual_file_and_directory_mixed_paths() {
 }
 
 /// Orphan GC: a file deleted out-of-band (mirrors a `git rm`, branch
-/// switch, or a crate moved to another repo — exactly the F31 split) must
+/// switch, or a crate moved to another repo) must
 /// have its document, sections, vectors and `file_hashes` row pruned on
 /// the next reindex, not survive forever.
 #[tokio::test]
@@ -266,7 +266,7 @@ async fn empty_discovery_does_not_wipe_the_index() {
     );
 }
 
-/// F32.1 — a NULL-root document (ingested through the unrooted entry point,
+/// A NULL-root document (ingested through the unrooted entry point,
 /// by the CLI/worker, or before roots existed) must be reclaimed when its
 /// file is deleted and the corpus is later reindexed through the *rooted*
 /// path. The old per-root `list_documents_by_root(rid)` scan never saw
@@ -321,7 +321,7 @@ async fn rooted_reindex_prunes_null_root_orphan() {
     );
 }
 
-/// F32.1 — the global sweep scopes deletion by ownership: reindexing one
+/// The global sweep scopes deletion by ownership: reindexing one
 /// root may prune that root's own orphan but must NEVER delete a sibling
 /// root's documents sharing the same (multi-root) index. Without the scope
 /// guard a naive global diff would wipe every other root on each reindex.
@@ -411,7 +411,7 @@ async fn rooted_reindex_preserves_sibling_root_documents() {
     );
 }
 
-/// F32.3 — the rooted entry point must register its corpus root so
+/// The rooted entry point must register its corpus root so
 /// `set_document_root`'s FK to `corpus_roots` is satisfied and
 /// `documents.root_id` is actually persisted. Before this, the rooted path
 /// never registered the root (only `ingest_paths_with_embeddings` did), so

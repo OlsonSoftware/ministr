@@ -3,7 +3,7 @@
 //! A deliberately self-contained reference implementation used by the ministr
 //! retrieval-quality evaluation corpus. It exercises the long-content regime
 //! (functions whose embedded section text exceeds 128 and 256 tokens) so the
-//! truncation (RQ1), AST-chunking (RQ3), and late-chunking (RQ6) levers become
+//! truncation, AST-chunking, and late-chunking levers become
 //! measurable on the golden set.
 
 /// Unnormalized dot product of two equal-length vectors.

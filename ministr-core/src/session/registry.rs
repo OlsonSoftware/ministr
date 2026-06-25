@@ -61,7 +61,7 @@ pub struct SessionEntry {
     /// SessionDashboard tell e.g. `claude-code` from `claude-subagent`
     /// from `mcp-inspector` apart. `None` until the handshake completes.
     pub client_name: Option<String>,
-    /// F6.2-e-followup — tenant subject this session belongs to.
+    /// Tenant subject this session belongs to.
     /// `None` for self-hosted serve / stdio (no tenant scope) and
     /// for unauthenticated in-process calls. Cloud paths stamp this
     /// from `tenant_scope::current()` the first time
@@ -80,13 +80,13 @@ pub struct SessionRegistry {
     sessions: HashMap<String, SessionEntry>,
     /// Default budget configuration for new sessions.
     default_budget_config: UsageConfig,
-    /// F6.1-b — optional durable-snapshot backend. `Some` when the
+    /// Optional durable-snapshot backend. `Some` when the
     /// cloud has wired `PostgresSessionStorage`; `None` for
     /// self-hosted serve (sessions remain in-memory). The
     /// [`Self::persist_snapshot`] helper collapses to a no-op when
     /// this is `None` — caller-site checkpoint code can be unconditional.
     storage: Option<Arc<dyn SessionStorage>>,
-    /// F6.1-d-b — optional drops ledger backend. `Some` when the
+    /// Optional drops ledger backend. `Some` when the
     /// cloud has wired `PostgresDropsLedger`; `None` for self-hosted
     /// serve. The [`Self::record_drops`] helper collapses to a no-op
     /// when this is `None`. Restore-side hydration ([`Self::try_restore`])
@@ -95,7 +95,7 @@ pub struct SessionRegistry {
     drops_ledger: Option<Arc<dyn DropsLedger>>,
 }
 
-/// F6.1-d-b — return shape for [`SessionRegistry::try_restore`].
+/// Return shape for [`SessionRegistry::try_restore`].
 /// Carries both the snapshot (where the session was) and the drops
 /// ledger (what got evicted before the snapshot was written). The
 /// caller is free to ignore `drops` if it doesn't yet have a way to
@@ -121,7 +121,7 @@ impl SessionRegistry {
         }
     }
 
-    /// F6.1-b — wire a durable [`SessionStorage`] backend so the
+    /// Wire a durable [`SessionStorage`] backend so the
     /// registry can checkpoint live sessions to persistent storage.
     /// Self-hosted serve leaves the field `None` and sessions remain
     /// in-memory. The cloud's `cmd_serve_http` calls this with a
@@ -129,7 +129,7 @@ impl SessionRegistry {
     /// state.
     ///
     /// The registry itself does NOT decide when to snapshot — that's
-    /// a caller-side concern (F6.1-c will wire the choke point at
+    /// a caller-side concern (the choke point can be wired at
     /// `MinistrServer::ensure_session_mut` or the equivalent). This
     /// method only opens the seam; callers invoke
     /// [`Self::persist_snapshot`] when they want a checkpoint to fire.
@@ -139,7 +139,7 @@ impl SessionRegistry {
         self
     }
 
-    /// F6.1-g — post-construction setter for the storage backend.
+    /// Post-construction setter for the storage backend.
     /// Mirrors [`Self::with_storage`] but takes `&mut self` so callers
     /// that hold the registry behind an `Arc<Mutex<...>>` (e.g. the
     /// MCP server's async builder path) can attach a backend at boot
@@ -148,7 +148,7 @@ impl SessionRegistry {
         self.storage = Some(storage);
     }
 
-    /// F6.1-d-b — wire a durable [`DropsLedger`] backend so the
+    /// Wire a durable [`DropsLedger`] backend so the
     /// registry can persist eviction events and hydrate them on
     /// resume. Self-hosted serve leaves this `None` and drops live
     /// only in the in-memory tracker. Mirrors [`Self::with_storage`]'s
@@ -159,14 +159,14 @@ impl SessionRegistry {
         self
     }
 
-    /// F6.1-g — post-construction setter for the drops ledger backend.
+    /// Post-construction setter for the drops ledger backend.
     /// Mirrors [`Self::with_drops_ledger`] for the same reason as
     /// [`Self::set_storage`].
     pub fn set_drops_ledger(&mut self, ledger: Arc<dyn DropsLedger>) {
         self.drops_ledger = Some(ledger);
     }
 
-    /// F6.1-d-b — fire-and-forget batch append of drop events.
+    /// Fire-and-forget batch append of drop events.
     /// Spawns one tokio task per claim id; failures log at warn but
     /// never propagate. The caller is the eventual MCP server tool
     /// handler (or wherever the WindowEstimator returns non-empty
@@ -213,7 +213,7 @@ impl SessionRegistry {
         }
     }
 
-    /// F6.1-c — consult the durable backend for a previously-snapshotted
+    /// Consult the durable backend for a previously-snapshotted
     /// session, and if found, materialise an in-memory `SessionEntry`
     /// shell for it. Returns the loaded [`SessionSnapshot`] so the
     /// caller can apply restoration logic that the registry doesn't
@@ -236,7 +236,7 @@ impl SessionRegistry {
     ///   (fail-graceful — the caller falls through to fresh creation
     ///   rather than the request hard-failing).
     ///
-    /// **Scope note (F6.1-c v0):** the returned `SessionSnapshot`
+    /// **Scope note:** the returned `SessionSnapshot`
     /// carries the persisted `budget_used` and `coherence_score`, but
     /// the freshly-created `SessionEntry` does NOT yet have those
     /// values seeded — `UsageTracker` doesn't expose a pre-seed
@@ -270,7 +270,7 @@ impl SessionRegistry {
             }
         };
 
-        // F6.1-d-b — best-effort drops hydration. Empty vec on
+        // Best-effort drops hydration. Empty vec on
         // miss / error keeps the caller's match arm simple; a real
         // ledger outage doesn't block the restore.
         let drops = match self.drops_ledger.as_ref() {
@@ -292,11 +292,11 @@ impl SessionRegistry {
         // create_session — the caller-visible side effect is "the
         // session id now resolves on this pod".
         let entry = self.create_session(id, budget_config, access_mode);
-        // F6.2-e-followup — stamp tenant_id from the snapshot so the
+        // Stamp tenant_id from the snapshot so the
         // restored shell carries the same multi-tenant identity it
         // had pre-pod-recycle. `GET /api/v1/sessions` filters on this.
         entry.tenant_id = Some(snapshot.tenant_id.clone());
-        // F6.1-c-followup — seed the budget tracker with the
+        // Seed the budget tracker with the
         // persisted consumption so the resumed session resumes with
         // the same pressure level it had pre-restore. The snapshot
         // stores `budget_used` as i64 (Postgres BIGINT); the tracker
@@ -320,7 +320,7 @@ impl SessionRegistry {
         Some(RestoredSession { snapshot, drops })
     }
 
-    /// F6.1-b — fire-and-forget snapshot save. The caller builds the
+    /// Fire-and-forget snapshot save. The caller builds the
     /// [`SessionSnapshot`] (it has the tenant + corpus context the
     /// registry doesn't carry today) and hands it off; this method
     /// spawns a tokio task that calls the backend's `save`. Failures
@@ -328,7 +328,7 @@ impl SessionRegistry {
     /// not break a live tool call.
     ///
     /// No-op when no storage backend has been wired (self-hosted serve
-    /// or pre-F6.1 cloud deployments). Callers can invoke
+    /// or earlier cloud deployments). Callers can invoke
     /// unconditionally.
     pub fn persist_snapshot(&self, snapshot: SessionSnapshot) {
         let Some(storage) = self.storage.as_ref() else {
@@ -463,11 +463,11 @@ impl SessionRegistry {
     }
 }
 
-/// F6.1-d-b — capture wall-clock as an ISO-8601 UTC string for
+/// Capture wall-clock as an ISO-8601 UTC string for
 /// drop-ledger entries. Delegates to the workspace-shared formatter
 /// in `ministr_api::iso8601` so the format matches what
-/// `PostgresSessionStorage`'s `to_char`, the F5.5-b `/sla` endpoint,
-/// and the F5.4-e mint-audit log all emit.
+/// `PostgresSessionStorage`'s `to_char`, the `/sla` endpoint,
+/// and the mint-audit log all emit.
 fn iso8601_now() -> String {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -504,7 +504,7 @@ mod tests {
         assert!(registry.session_ids().is_empty());
     }
 
-    // ── F6.1-b/d — durable-snapshot + drops plumbing ────────────────
+    // ── durable-snapshot + drops plumbing ───────────────────────────
 
     use ministr_api::{
         AppendDropFuture, DropsLedgerError, ListDropsFuture, LoadSessionFuture, SaveSessionFuture,
@@ -690,7 +690,7 @@ mod tests {
             }),
         );
         // The in-memory tracker should reflect the persisted
-        // consumption — F6.1's "budget preserved across pods" criterion.
+        // consumption — the "budget preserved across pods" criterion.
         let entry = registry
             .get_session(&snap.session_id)
             .expect("shell exists");
@@ -825,7 +825,7 @@ mod tests {
         assert_eq!(saves[0], snap, "round-trip captured the snapshot fields");
     }
 
-    // ── F6.1-d-b — drops ledger plumbing + restore hook ─────────────
+    // ── drops ledger plumbing + restore hook ─────────────────────────
 
     #[derive(Debug, Default)]
     struct StubLedger {

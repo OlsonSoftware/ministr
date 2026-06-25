@@ -2,7 +2,7 @@
 //!
 //! The core of the language suite: for every import shape, a 2+-file fixture
 //! where one file imports + uses a symbol defined in another, asserting the
-//! cross-file edge resolves. Built on the FE1 harness and the `js_ts`
+//! cross-file edge resolves. Built on the shared harness and the `js_ts`
 //! ref-family fix (`.tsx`/`.ts`/`.js` are one resolution family).
 //!
 //! Resolution is tested in BOTH file ingest orders for the headline cases —

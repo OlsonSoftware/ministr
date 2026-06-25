@@ -228,8 +228,8 @@ impl CandleEmbedder {
         // Override the tokenizer's truncation to the model's real max sequence
         // length. Without this the loaded tokenizer.json silently dictates the
         // cap — for all-MiniLM-L6-v2 that file ships max_length=128, dropping
-        // every input beyond 128 tokens even though the model supports 256
-        // (RQ1). Setting it explicitly makes the cap a model-driven property
+        // every input beyond 128 tokens even though the model supports 256.
+        // Setting it explicitly makes the cap a model-driven property
         // (`CandleModelInfo::max_seq_len`) rather than a silent file default.
         tokenizer
             .with_truncation(Some(TruncationParams {

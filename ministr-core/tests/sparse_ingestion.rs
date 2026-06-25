@@ -1,4 +1,4 @@
-//! rq4b — sparse (hybrid) population during ingestion.
+//! Sparse (hybrid) population during ingestion.
 //!
 //! With `IngestionPipeline::with_sparse_indexing`, every `(VectorId, text)`
 //! pair the embed stage dense-embeds is also sparse-embedded into the

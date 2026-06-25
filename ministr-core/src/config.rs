@@ -38,12 +38,12 @@ pub struct MinistrConfig {
     /// Prefetch configuration.
     pub prefetch: PrefetchConfig,
 
-    /// Cross-encoder reranker model for the query path (rq5b). `None` (the
+    /// Cross-encoder reranker model for the query path. `None` (the
     /// default) leaves reranking OFF — the dense/hybrid path is unchanged.
     /// When set to a supported model name (e.g. `"bge-reranker-base"`), the
     /// daemon attaches a `FastReranker` to every corpus's `QueryService` so
     /// `survey()` rescoring runs the cross-encoder. Flipping this on by
-    /// default is gated by the rq5-eval win/regress measurement.
+    /// default is gated by the win/regress measurement.
     ///
     /// Supported: `bge-reranker-base`, `bge-reranker-v2-m3`,
     /// `jina-reranker-v1-turbo-en`, `jina-reranker-v2-base-multilingual`.
@@ -432,7 +432,7 @@ pub struct CorpusSpec {
     /// Defaults to 100. Set to 0 to disable two-stage reranking while still
     /// using truncated embeddings.
     pub rerank_depth: Option<usize>,
-    /// Hybrid (sparse + dense) retrieval weight for this corpus (rq4c).
+    /// Hybrid (sparse + dense) retrieval weight for this corpus.
     ///
     /// When set > 0, ingestion also builds a sparse (SPLADE) inverted index
     /// and surveys fuse dense + sparse results via weighted RRF, with this
@@ -1059,7 +1059,7 @@ fn expand_tilde(path: &str) -> String {
 mod tests {
     use super::*;
 
-    // ── rq5b: cross-encoder reranker config flag (default OFF) ───────────────
+    // ── cross-encoder reranker config flag (default OFF) ─────────────────────
 
     #[test]
     fn reranker_model_defaults_off() {

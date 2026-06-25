@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::types::DropPolicy;
 
-/// F6.1-c-followup — sentinel `content_id` used by
+/// Sentinel `content_id` used by
 /// [`WindowEstimator::record_prior_consumption`] to mark synthetic
 /// pre-seeded budget consumption restored from a [`SessionStorage`]
 /// snapshot. The leading double underscores match the
@@ -110,7 +110,7 @@ impl WindowEstimator {
         self.record_with_scores(content_id, token_count, None)
     }
 
-    /// F6.1-c-followup — record a synthetic "prior consumption" entry
+    /// Record a synthetic "prior consumption" entry
     /// against a sentinel content id. Used by
     /// [`crate::session::SessionRegistry::try_restore`] to seed the
     /// budget tracker with the snapshot's `budget_used` value so a

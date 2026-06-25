@@ -11,7 +11,7 @@ pub mod cache;
 mod candle_impl;
 mod fastembed_impl;
 pub mod hybrid;
-// F31.2b-ii-O — Azure OpenAI embedder moved here from ministr-cloud
+// Azure OpenAI embedder moved here from ministr-cloud
 // so the MIT serve infrastructure (build_server in ministr-cli/infra.rs)
 // no longer depends on a proprietary crate for the embedder selection.
 #[cfg(feature = "candle")]

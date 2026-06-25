@@ -110,9 +110,9 @@ const MATRIX: &[Row] = &[
         cli_one_shot: Honored::Yes,
         daemon_registry: Honored::Yes,
     },
-    // sparse_weight — repo `[corpus] sparse_weight` (rq4c). When > 0 both
+    // sparse_weight — repo `[corpus] sparse_weight`. When > 0 both
     // surfaces build the SPLADE embedder + load the sparse sidecar, populate
-    // the inverted index during ingestion (rq4b seam), and fuse dense +
+    // the inverted index during ingestion (sparse-embed path), and fuse dense +
     // sparse at query time via `QueryService::with_sparse` with this weight.
     Row {
         knob: "sparse_weight",
@@ -229,7 +229,7 @@ fn model_is_honored_end_to_end_via_the_shared_seam() {
 
 #[test]
 fn sparse_weight_is_honored_via_the_shared_seam() {
-    // rq4c: the hybrid knob resolves through the same seam both surfaces
+    // The hybrid knob resolves through the same seam both surfaces
     // route through; absent → None (dense-only), set → carried verbatim.
     let global = MinistrConfig::default();
     let eff = resolve_effective_corpus_config(None, None, &global);

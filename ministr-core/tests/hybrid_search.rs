@@ -6,7 +6,7 @@
 //! deterministically with mock embedders and crafted indices (no model
 //! download): a query whose exact identifier lives in one section is ranked #1
 //! only once sparse fusion is enabled — the exact-identifier recovery that
-//! hybrid retrieval buys for code (rq4).
+//! hybrid retrieval buys for code.
 
 use ministr_core::embedding::{Embedder, SparseEmbedder, SparseVector};
 use ministr_core::error::IndexError;
@@ -186,13 +186,13 @@ impl SparseEmbedder for ContentSparseEmbedder {
     }
 }
 
-/// rq4c — the production `QueryService::survey` path honors the configured
+/// The production `QueryService::survey` path honors the configured
 /// `sparse_weight`: the SAME ingested corpus answers differently with hybrid
 /// fusion on (the exact-identifier doc wins) vs dense-only (the dense
 /// tie-break picks the alphabetically-first content id, NOT the target).
 ///
 /// The dense embedder returns one fixed vector for everything, so all dense
-/// scores tie and the W2 deterministic tie-break (`content_id` ascending)
+/// scores tie and the deterministic tie-break (`content_id` ascending)
 /// decides — `aaa.md`'s sections sort before `zzz.md`'s. Only the sparse
 /// signal distinguishes the `TokenBucket` doc.
 #[tokio::test]

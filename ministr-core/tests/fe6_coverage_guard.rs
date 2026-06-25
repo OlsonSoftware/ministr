@@ -1,6 +1,6 @@
-//! FE6 — the single cross-suite language-coverage GA gate.
+//! The single cross-suite language-coverage GA gate.
 //!
-//! The FE2–FE5 suites each carry a *local* coverage guard:
+//! The language test suites each carry a *local* coverage guard:
 //!
 //! - `fe2_extraction::every_code_grammar_has_an_extraction_fixture`
 //! - `fe3_refs::every_extract_refs_language_has_a_both_orders_fixture`
@@ -11,7 +11,7 @@
 //! **cross-dimension consistency**: a single canonical [`CODE_LANGUAGES`] list
 //! drives BOTH the extraction and the reference dimensions, so adding a
 //! language to one suite but forgetting the other is impossible without this
-//! gate failing too. All FE2–FE5 suites (and this guard) are ordinary
+//! gate failing too. All language test suites (and this guard) are ordinary
 //! `tests/*.rs` integration tests, so they run under `cargo test` / `just
 //! validate` / CI automatically.
 //!
@@ -22,7 +22,7 @@ use ministr_core::code::GrammarRegistry;
 use ministr_core::code::bridge::BridgeKind;
 
 /// The canonical set of "code" languages the suite covers in depth: each has a
-/// symbol-extraction fixture (FE2) AND a cross-file reference fixture (FE3). The
+/// symbol-extraction fixture AND a cross-file reference fixture. The
 /// extraction and reference matrices MUST cover exactly this set — that shared
 /// invariant is what makes the two suites stay in lockstep.
 const CODE_LANGUAGES: &[&str] = &[
@@ -120,7 +120,7 @@ fn every_registered_grammar_is_categorized() {
     );
 }
 
-/// Bridge kinds with an e2e link fixture in `bridge_fixtures.rs` (FE4).
+/// Bridge kinds with an e2e link fixture in `bridge_fixtures.rs`.
 const BRIDGE_COVERED: &[&str] = &[
     "tauri_command",
     "tauri_event",

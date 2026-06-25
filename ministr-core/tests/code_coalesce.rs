@@ -1,4 +1,4 @@
-//! Regression test for rq3b: tiny adjacent CODE symbols coalesce.
+//! Regression test: tiny adjacent CODE symbols coalesce.
 //!
 //! `coalesce_small_sections` is applied in the shared `store_enriched_document`
 //! ingestion path (with `min_section_tokens = 50` by default) and recurses into

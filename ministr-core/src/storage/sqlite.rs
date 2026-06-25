@@ -2446,7 +2446,7 @@ impl Storage for SqliteStorage {
         let file_path = file_path.map(ToString::to_string);
         let kind = kind.map(ToString::to_string);
         self.with_conn(move |conn| {
-            // F3.6-c-ii-b — correlated subqueries resolve each
+            // Correlated subqueries resolve each
             // endpoint to a matching `symbols.id` when one exists.
             // Subqueries (rather than LEFT JOIN) avoid Cartesian
             // duplication when multiple symbols share `(file, name)`

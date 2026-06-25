@@ -1,6 +1,6 @@
-//! `FE3b` — per-language import edge cases for the cross-file reference graph.
+//! Per-language import edge cases for the cross-file reference graph.
 //!
-//! Where `FE3a` (`fe3_refs.rs`) covers the *core* both-orders matrix (a call by
+//! Where `fe3_refs.rs` covers the *core* both-orders matrix (a call by
 //! the symbol's ORIGINAL name), this file covers the import *shapes* that
 //! rename, re-export, or splat names: aliased imports, star/glob imports,
 //! re-export hops, Go dot/blank imports, and embedded-struct promoted methods.

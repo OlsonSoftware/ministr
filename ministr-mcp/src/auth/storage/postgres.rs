@@ -34,11 +34,13 @@ use super::{OAuthStorage, StorageError, StorageResult};
 
 /// Persistent OAuth storage, deadpool-pooled.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selectorpub(crate) struct PostgresStorage {
+#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector
+pub(crate) struct PostgresStorage {
     pool: Pool,
 }
 
-#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selectorimpl PostgresStorage {
+#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector
+impl PostgresStorage {
     /// Open (or attach to) the OAuth tables in the database referenced by
     /// `url`. Creates the schema idempotently. The URL must be a
     /// standard libpq connection string (`postgres://user:pw@host/db`).
@@ -70,7 +72,8 @@ use super::{OAuthStorage, StorageError, StorageResult};
     }
 }
 
-#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selectorfn make_rustls_connector() -> MakeRustlsConnect {
+#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector
+fn make_rustls_connector() -> MakeRustlsConnect {
     // Workspace-standard trust policy (Mozilla roots + optional
     // MINISTR_PG_CA_CERT) — see `crate::pg_tls`.
     crate::pg_tls::make_rustls_connector()
@@ -78,14 +81,16 @@ use super::{OAuthStorage, StorageError, StorageResult};
 
 /// Best-effort host extraction for log messages — never includes the
 /// password.
-#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selectorfn redact_url_host(url: &str) -> String {
+#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector
+fn redact_url_host(url: &str) -> String {
     tokio_postgres::Config::from_str(url)
         .ok()
         .and_then(|cfg| cfg.get_hosts().first().cloned())
         .map_or_else(|| "<unknown>".to_owned(), |h| format!("{h:?}"))
 }
 
-#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selectorasync fn ensure_schema(pool: &Pool) -> StorageResult<()> {
+#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector
+async fn ensure_schema(pool: &Pool) -> StorageResult<()> {
     let client = pool
         .get()
         .await

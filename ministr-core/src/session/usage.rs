@@ -162,7 +162,7 @@ impl UsageTracker {
         Self { config, window }
     }
 
-    /// F6.1-c-followup — seed the tracker with prior consumption
+    /// Seed the tracker with prior consumption
     /// recovered from a [`SessionStorage`] snapshot. The bookkeeping
     /// uses [`crate::session::window::PRIOR_CONSUMPTION_CONTENT_ID`]
     /// as a sentinel content id so the entry is identifiable but

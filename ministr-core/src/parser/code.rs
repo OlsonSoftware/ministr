@@ -17,11 +17,11 @@ use crate::token::count_tokens;
 use crate::types::{ContentId, DocumentTree, Section, SectionId};
 
 /// Token budget for a single code chunk before it is split at inner AST
-/// boundaries (cAST-style). Set to the default embedder's max sequence length
-/// (rq1's model-driven cap): a symbol whose source exceeds this was previously
+/// boundaries (cAST-style). Set to the default embedder's max sequence length:
+/// a symbol whose source exceeds this was previously
 /// emitted whole and then silently truncated by the embedder. Counted in
 /// [`count_tokens`] (cl100k BPE) units — the same proxy the rest of the pipeline
-/// budgets against. Per-embedder budgeting (rq2 per-corpus routing) can make
+/// budgets against. Per-embedder budgeting (per-corpus routing) can make
 /// this dynamic later.
 const CODE_CHUNK_BUDGET: usize = 256;
 
@@ -750,7 +750,7 @@ fn internal_helper() {}
         assert!(child.text.contains("pub fn documented"));
     }
 
-    // RQ3 — cAST size-aware splitting of over-budget symbols.
+    // cAST size-aware splitting of over-budget symbols.
 
     /// A function with enough statements to exceed [`CODE_CHUNK_BUDGET`].
     /// Intentionally has NO doc comment so the part texts tile the source

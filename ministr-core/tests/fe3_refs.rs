@@ -1,4 +1,4 @@
-//! `FE3a` — Core cross-file reference-graph matrix (every `extract_refs` language).
+//! Core cross-file reference-graph matrix (every `extract_refs` language).
 //!
 //! For each supported language, a 2-file fixture where file B references a
 //! symbol `target` defined in file A, asserting the cross-file edge resolves in
@@ -17,7 +17,7 @@
 //!
 //! Resolution of `Calls`/`Uses` edges is by symbol NAME (per the edge-graph
 //! rollout), so the assertions accept any ref kind (`None`). Per-language import
-//! *edge cases* (aliased/re-export/star/namespace/dynamic) live in `FE3b` and the
+//! *edge cases* (aliased/re-export/star/namespace/dynamic) live in `fe3b_import_edges.rs` and the
 //! existing `fe_ts_refs.rs`; this file is the systematic both-orders core.
 //!
 //! A coverage guard ([`every_extract_refs_language_has_a_both_orders_fixture`])

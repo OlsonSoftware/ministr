@@ -1,6 +1,6 @@
-//! Shared multi-language e2e graph-test harness (FE1).
+//! Shared multi-language e2e graph-test harness.
 //!
-//! This is the foundation the FE2–FE5 matrices build on. It ingests a
+//! This is the foundation the language test matrices build on. It ingests a
 //! multi-file fixture project end-to-end through the real
 //! [`IngestionPipeline`] into in-memory storage, then exposes the resulting
 //! **symbol + reference graph** for cheap, declarative assertions.
@@ -27,7 +27,7 @@
 //!    projects shared across tests).
 //!
 //! One directory per language/case keeps fixtures discoverable and lets the
-//! FE6 coverage guard cross-check the fixture tree against the supported
+//! coverage guard cross-check the fixture tree against the supported
 //! language set.
 
 // Different FE test crates (fe_cpp, fe2_extraction, fe3_refs, …) each compile

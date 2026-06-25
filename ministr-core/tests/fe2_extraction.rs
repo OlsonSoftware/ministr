@@ -1,6 +1,6 @@
-//! FE2 — Symbol-extraction edge-case matrix (every supported language).
+//! Symbol-extraction edge-case matrix (every supported language).
 //!
-//! Built on the shared FE1 [`langtest`] harness: each test ingests a
+//! Built on the shared [`langtest`] harness: each test ingests a
 //! self-contained, edge-case-focused fixture end-to-end through the real
 //! ingestion pipeline, then asserts on the **stored** symbol graph
 //! ([`SymbolRecord`], which carries the 1-based `line_start`/`line_end` the
@@ -906,7 +906,7 @@ function standalone(int $x): int
 // extraction fixture. Every language this suite exercises in depth — one
 // `<lang>_extraction_edge_cases` test apiece — is listed in `FE2_COVERED`. The
 // remaining registered grammars are config/data/markup or niche languages
-// where the FE2 edge-case taxonomy (nested classes, overloads, generics,
+// where the extraction edge-case taxonomy (nested classes, overloads, generics,
 // decorators) does not apply; each is parked in `EXTRACTION_DEFERRED` with its
 // category so the omission is explicit, not silent.
 //
@@ -934,7 +934,7 @@ const FE2_COVERED: &[&str] = &[
     "php",        // php_extraction_edge_cases
 ];
 
-/// Registered grammars intentionally NOT in the FE2 edge-case matrix, with the
+/// Registered grammars intentionally NOT in the extraction edge-case matrix, with the
 /// reason. Adding a grammar here is the documented way to defer it; the guard
 /// enforces that every registered grammar is in exactly one of the two lists.
 const EXTRACTION_DEFERRED: &[(&str, &str)] = &[
@@ -990,7 +990,7 @@ fn every_code_grammar_has_an_extraction_fixture() {
     let registry = GrammarRegistry::global();
     let registered: Vec<&'static str> = registry.language_names().collect();
 
-    // 1. Every FE2-covered language must actually be registered (catches a
+    // 1. Every extraction-covered language must actually be registered (catches a
     //    typo or a grammar that was removed/feature-gated out).
     for lang in FE2_COVERED {
         assert!(

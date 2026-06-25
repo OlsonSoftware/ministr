@@ -43,7 +43,7 @@ pub struct SurveyResult {
     /// Heading path for section-level results.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub heading_path: Option<Vec<String>>,
-    /// F6.3-a — corpus that produced this hit. `None` for single-corpus
+    /// Corpus that produced this hit. `None` for single-corpus
     /// queries (the existing path; the agent already knows which
     /// corpus it queried). `Some(corpus_id)` for cross-corpus
     /// `corpus_ids` fan-out so the agent can disambiguate hits with

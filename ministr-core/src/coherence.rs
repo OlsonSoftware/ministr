@@ -183,8 +183,8 @@ pub struct CoherenceEngine {
     corpus_dir: PathBuf,
     embedder: Option<Arc<dyn Embedder>>,
     index: Option<Arc<dyn VectorIndex>>,
-    /// The corpus's sparse (hybrid) index, when hybrid retrieval is on
-    /// (rq4c). Set via [`Self::with_sparse`]; used by the remove path so a
+    /// The corpus's sparse (hybrid) index, when hybrid retrieval is on.
+    /// Set via [`Self::with_sparse`]; used by the remove path so a
     /// watcher-deleted file's postings are tombstoned immediately.
     sparse_index: Option<Arc<dyn SparseIndex>>,
     /// Per-root exclusion matchers (watcher-ignore-filtering). When set,
@@ -233,7 +233,7 @@ impl CoherenceEngine {
     /// Attach the corpus's sparse (hybrid) components so watcher events keep
     /// the sparse index coherent (sparse-watcher-delete-wiring). Covers BOTH
     /// event kinds: Created/Modified re-ingests sparse-embed through the
-    /// pipeline's rq4b seam, and Removed tombstones the file's postings via
+    /// pipeline's sparse-embed path, and Removed tombstones the file's postings via
     /// `delete_document_vectors`. Per-event updates mutate the in-memory
     /// sparse index only — the on-disk sidecar persists on the next full
     /// ingest, exactly like the dense index's per-event behavior.
@@ -1093,7 +1093,7 @@ mod tests {
         );
 
         // Created events drive the engine's own re-ingest path, which must
-        // populate the sparse index through the pipeline's rq4b seam.
+        // populate the sparse index through the pipeline's sparse-embed path.
         engine
             .process_events(
                 &[

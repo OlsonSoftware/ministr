@@ -51,7 +51,7 @@ impl Embedder for HashEmbedder {
 }
 
 /// Wraps an inner embedder and records the exact text of every input it is
-/// asked to embed — i.e. one string per embedded section. Used by the RQ1
+/// asked to embed — i.e. one string per embedded section. Used by the
 /// truncation content-loss measurement to recover, faithfully, the units that
 /// actually get embedded (rather than re-deriving them from raw files).
 struct CapturingEmbedder {
@@ -164,7 +164,7 @@ async fn eval_retrieval_regression_gate() {
 /// ```
 ///
 /// SEEDING / TIGHTENING THE GATE: the eval runs on the deterministic
-/// `ExactScanIndex` (W1, 2026-06-12), so two runs of the same configuration
+/// `ExactScanIndex` (seeded 2026-06-12), so two runs of the same configuration
 /// are byte-identical — any metric movement is a real change, not index
 /// noise. The `BASELINE_*` floors sit ~0.01 under the observed values; after
 /// an INTENTIONAL change (model swap, corpus edit, scorer change), run
@@ -175,10 +175,10 @@ async fn eval_retrieval_regression_gate() {
 async fn eval_retrieval_real_embedder() {
     use ministr_core::embedding::FastEmbedder;
 
-    // Re-seeded 2026-06-12 (W2 max-pool scoring): P@5=0.603, R@5=0.811,
-    // MRR=0.957, nDCG@5=0.888-0.890 (see flicker note below). W2 deleted the
-    // resolution weight table in favor of raw-cosine max-pool per content_id;
-    // vs the W1 baseline (P@5=0.573, R@5=0.820, MRR=0.934, nDCG@5=0.870)
+    // Re-seeded 2026-06-12 (max-pool scoring): P@5=0.603, R@5=0.811,
+    // MRR=0.957, nDCG@5=0.888-0.890 (see flicker note below). The max-pool
+    // scoring update deleted the resolution weight table in favor of raw-cosine max-pool per content_id;
+    // vs the prior baseline (P@5=0.573, R@5=0.820, MRR=0.934, nDCG@5=0.870)
     // that moved P@5 +0.030, MRR +0.023, nDCG +0.020, and R@5 −0.009 — the
     // recall dip is a duplicate-credit metric artifact (collapsing
     // resolutions removes hits the metric used to count twice), accepted by
@@ -196,7 +196,7 @@ async fn eval_retrieval_real_embedder() {
     // signal. CPU-EP observed values: P@5=0.603, R@5=0.811, MRR=0.957,
     // nDCG@5=0.890; floors sit ~0.01 under.
     //
-    // rq3-eval-confirm A/B (2026-06-02): the cAST split (rq3a) is NEUTRAL on this
+    // A/B eval (2026-06-02): the cAST split is NEUTRAL on this
     // doc-heavy corpus. CODE_CHUNK_BUDGET=256 (split ON): R@5 0.812 / MRR 0.939 /
     // nDCG 0.870; budget=1_000_000 (split OFF): R@5 0.819 / MRR 0.939 / nDCG 0.872
     // — within ±0.01 jitter (the OFF arm reproduces the seeded baseline exactly).
@@ -212,15 +212,15 @@ async fn eval_retrieval_real_embedder() {
     // cAST A/B re-run: the split now FIRES (sections 50 ON vs 42 OFF; the fn
     // splits into ~8 lossless parts), and the model truncates the whole-chunk
     // when OFF — yet the 3 tail queries score R@5=1.00/RR=1.00 in BOTH arms.
-    // FINDING (inconclusive, deeper than the rq3 note): recall@5/MRR on this
+    // FINDING (inconclusive): recall@5/MRR on this
     // tiny single-domain corpus is COMPETITION-INSENSITIVE — the over-budget
     // symbol is the only topical match for "shard watermark / phantom replica /
     // quorum lease", so even a truncated, head-dominated embedding ranks #1.
     // Top-k recall cannot isolate tail-recovery here; a discriminating
     // measurement needs distractor code sections OR a direct embedding-similarity
     // probe cosine(query, tail_part) vs cosine(query, whole_truncated). The
-    // fixture is kept (first over-budget code symbol in the corpus; enables rq1
-    // truncation + rq6 too); both arms stay above floors (aggregate R@5 0.820 ON
+    // fixture is kept (first over-budget code symbol in the corpus; enables
+    // truncation measurement too); both arms stay above floors (aggregate R@5 0.820 ON
     // / 0.809 OFF over 75 q). Floors left as-is (the 3 tail queries are trivially
     // satisfied on this corpus and must not be read as a cAST win).
     // DOCS-CORPUS SPARSE DECISION (rq-docs-sparse-metric-decision, decided by
@@ -232,7 +232,7 @@ async fn eval_retrieval_real_embedder() {
     // drop is substantially a duplicate-credit artifact — the pre-collapse
     // baseline filled top-5 slots with multiple resolutions of ONE relevant
     // section and the metric counted each as a distinct hit (the same
-    // artifact accepted-by-design in W2's max-pool, R@5 .820->.811) — but
+    // artifact accepted-by-design in the max-pool scoring, R@5 .820->.811) — but
     // the conservative call governs until the floors rest on more than 75
     // queries. Re-decision is gated on rq-eval-synthetic-groundtruth.
     // Consequence for THIS gate: it runs dense-only by design; the floors
@@ -361,7 +361,7 @@ async fn eval_ast_hybrid_code() {
     );
 }
 
-/// RQ2 — embedder bake-off: benchmark candidate embedding models against the
+/// Embedder bake-off: benchmark candidate embedding models against the
 /// eval golden set and print a comparison table (dim + P@5/R@5/MRR/nDCG@5).
 ///
 /// Use the printed spread to pick a default; the production swap is a separate
@@ -392,7 +392,7 @@ async fn eval_model_bakeoff() {
     .await;
 }
 
-/// RQ2-followup — the SAME bake-off run against the code-heavy corpus
+/// Embedder bake-off (code-heavy corpus follow-up) — the SAME bake-off run against the code-heavy corpus
 /// (`eval/corpus-code` + `eval/ground-truth-code.json`: 26 text-to-code queries
 /// over Rust/Python/Go/TypeScript/Java/C++).
 ///
@@ -447,7 +447,7 @@ async fn eval_model_bakeoff_code() {
 /// The candidate set is the fastembed-runnable 2026 field. `nomic-embed-code`
 /// (7B) and `voyage-code-3` (API-only) are not locally runnable and excluded;
 /// `bge-m3` is listed (2026 general SOTA) but currently fails to load via
-/// fastembed — tracked by the rq2-bge-m3-candle-runner chunk.
+/// fastembed — tracked by the bge-m3-candle-runner chunk.
 async fn run_model_bakeoff(corpus_path: &Path, ground_truth: &GroundTruth, title: &str) {
     use ministr_core::embedding::FastEmbedder;
 
@@ -491,7 +491,7 @@ async fn run_model_bakeoff(corpus_path: &Path, ground_truth: &GroundTruth, title
     );
 }
 
-/// RQ1 — quantify how much section content the embedding truncation cap
+/// Quantify how much section content the embedding truncation cap
 /// silently drops.
 ///
 /// Ingests the committed eval corpus through the real ingestion pipeline with a
@@ -872,7 +872,7 @@ fn ndcg_never_exceeds_one_on_duplicate_matches() {
     // Two DISTINCT result ids that both contain the same expected section_id
     // (loose substring matching). Each expected item must be credited at most
     // once, so nDCG stays within [0, 1] — the regression for the observed
-    // Mean nDCG@5 = 1.612 (rq0-eval-hardening).
+    // Mean nDCG@5 = 1.612 (eval-hardening regression).
     let results = vec![
         "src/foo.rs#bar".to_string(),
         "src/foo.rs#bar-helper".to_string(),
