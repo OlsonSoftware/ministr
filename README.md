@@ -171,20 +171,16 @@ Use ministr tools instead of grep / find / Read-to-explore.
 - [`CHANGELOG.md`](CHANGELOG.md) — release history
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to build, test, and contribute
 - [`SECURITY.md`](SECURITY.md) — reporting vulnerabilities
-- [`STEWARDSHIP.md`](STEWARDSHIP.md) — the open-core thesis and our commitments
+- [`STEWARDSHIP.md`](STEWARDSHIP.md) — the open-core split and our commitments
 - [`AGENTS.md`](AGENTS.md) — agent-facing project notes
 
-## License and open-core posture
+## License
 
-ministr follows an open-core model: the **local stack is MIT-licensed** and runs
-entirely on your machine. The six MIT-licensed workspace crates — `ministr-core`,
+ministr is open-core. The local stack — the six workspace crates `ministr-core`,
 `ministr-api`, `ministr-daemon`, `ministr-mcp`, `ministr-cli`, and
-`ministr-app/src-tauri` — build a complete, fully-functional `ministr` binary
-from this repo via `cargo build --workspace`; they have no cloud or proprietary
-dependencies.
+`ministr-app/src-tauri` — is MIT-licensed and builds a complete `ministr` binary
+with no cloud or proprietary dependencies (`cargo build --workspace`). A hosted
+cloud service and an enterprise edition are separate paid products.
 
-A hosted cloud service and an on-prem Enterprise image are separate paid products
-built on proprietary crates in a private sibling repository. See
-[LICENSE](LICENSE) for the canonical MIT text and [STEWARDSHIP.md](STEWARDSHIP.md)
-for the open-core thesis and our commitment that **a feature that ships open
-source will not be moved to a paid tier**.
+See [LICENSE](LICENSE) for the MIT text and [STEWARDSHIP.md](STEWARDSHIP.md) for
+the open-core split and our commitments.

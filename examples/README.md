@@ -47,4 +47,4 @@ ministr auto-detects cross-language bindings when both sides of the boundary are
 - **napi-rs** — index both the Rust source and the JS/TS consumer
 - **HTTP routes** — index both the server and client code
 
-See [`ministr_bridge`](https://ministr.ai/docs/tools/bridge/) for querying detected bindings.
+Use `ministr_bridge` to query the detected bindings (see the [README](../README.md#what-it-does)).

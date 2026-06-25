@@ -8,7 +8,7 @@ If you're looking for a place to begin, check the [issues labeled `good first is
 
 ### Prerequisites
 
-- **Rust 1.88+** (edition 2024) — install via [rustup](https://rustup.rs)
+- **Rust 1.95** (edition 2024) — pinned via `rust-toolchain.toml`; rustup installs it automatically. Get rustup at [rustup.rs](https://rustup.rs)
 - **just** — task runner (`cargo install just` or `brew install just`)
 - **cargo-deny** — license and advisory checks (`cargo install cargo-deny`)
 - **Python 3** — runs the black-box lint (part of `just validate`); `python3` on Linux/macOS, `python` on Windows
@@ -40,15 +40,9 @@ ministr index             # Pre-warm the index
 ministr serve             # Start MCP server (stdio)
 ```
 
-This builds the **local-only** `ministr` binary — every MCP tool, every
-parser, every detector, full self-hosted serve. It does NOT include
-the cloud-tier surface (multi-tenant Postgres, Stripe billing, GitHub
-App / OIDC / SAML, Atlas curated index, license signing) — those live
-in the private `ministr-private` workspace and are only built into
-the cloud-capable `ministr` binary that
-[`install.sh`](install.sh) downloads from this repo's GitHub Releases
-page. Contributors don't need the proprietary code to develop here;
-all MIT crates compile + test + ship the same way they always have.
+This builds the `ministr` binary with the full MCP tool surface, all parsers
+and detectors, and self-hosted serve. The cloud service is a separate product
+whose code lives in a private repository; you don't need it to develop here.
 
 ## Architecture overview
 
@@ -59,18 +53,14 @@ ministr-daemon/        — HTTP API over Unix domain socket
 ministr-mcp/           — MCP server adapter (rmcp)
 ministr-cli/           — binary entry point (the `ministr` CLI you build here)
 ministr-app/src-tauri/ — Tauri v2 desktop app with system tray
-web/                   — Next.js marketing site + fumadocs developer docs
-deploy/                — Helm chart, Docker Compose, macOS installer
+web/                   — Next.js landing site (static export to GitHub Pages)
+deploy/                — self-host reverse-proxy configs + macOS installer
 examples/              — sample .ministr.toml configs for different project types
 ```
 
-The proprietary cloud surface (`ministr-cloud`, `ministr-atlas`,
-`ministr-cloud-tools`) lives in a separate private sibling workspace
-(`github.com/OlsonSoftware/ministr-private`, owner-only) per the F31
-open-core split. The MIT crates above are everything a contributor
-needs to build a fully-functional **local-only** `ministr` binary
-from this repo. See [STEWARDSHIP.md](STEWARDSHIP.md) for the open-core
-thesis and which crates live where.
+The MIT crates above are everything you need to build a fully-functional
+`ministr` from this repository. The cloud service's code lives in a separate
+private repository. See [STEWARDSHIP.md](STEWARDSHIP.md) for the open-core split.
 
 ### Layered architecture
 
@@ -150,8 +140,8 @@ chore: bump fastembed to 5.1
 
 ### Adding a language to the code-intelligence test matrix
 
-The multi-language e2e suite (FE2–FE6, in `ministr-core/tests/`) is gated so a
-new language can't land with silent coverage holes. The shared FE1 harness is
+The multi-language test suite under `ministr-core/tests/` is gated so a new
+language can't land with silent coverage holes. The shared harness is
 `tests/langtest/mod.rs` (`IngestedProject::from_files` + `assert_symbol` /
 `assert_cross_file_ref` / `assert_range_invariant`). When you add a grammar to
 `GrammarRegistry` (or a `BridgeKind`), work this checklist — the coverage
@@ -200,30 +190,9 @@ CI runs these automatically on every PR.
 
 ## Releases
 
-Release authoring lives in this repo; the release **build** lives in
-the private sibling. The flow (F31.5, 2026-05-27):
-
-1. Land changes on `main` using [Conventional Commits](#commit-messages).
-2. The Copilot coding agent (triggered by
-   `.github/workflows/release-automation.yml`) detects releasable
-   commits, bumps every crate's `version`, writes a CHANGELOG section,
-   and opens a `chore: release vX.Y.Z` PR.
-3. Reviewing + merging the PR triggers `release-automation.yml` to
-   push the `vX.Y.Z` tag here and fire a `repository_dispatch` event
-   into `OlsonSoftware/ministr-private`.
-4. The private workspace's `release.yml` clones BOTH repos as
-   siblings, builds the cloud-capable `ministr` binary (signed +
-   notarized on macOS), and uploads the artifacts to **this repo's**
-   release page at `v<X.Y.Z>` via a cross-repo PAT.
-5. `install.sh` + the Homebrew tap fetch from this repo's releases as
-   before — they see no change.
-
-For the detailed checklist, secret requirements, and rollback
-procedures see [RELEASE.md](RELEASE.md). The high-level open-core
-framing lives in the
-[Release pipeline](STEWARDSHIP.md#release-pipeline) section of
-STEWARDSHIP.md. macOS signing and notarization details live in
-[ministr-app/SIGNING.md](ministr-app/SIGNING.md).
+Releases are cut from this repository's tags using Conventional Commit
+messages. See [RELEASE.md](RELEASE.md) for details, and
+[ministr-app/SIGNING.md](ministr-app/SIGNING.md) for macOS signing.
 
 ## Reporting issues
 

@@ -43,22 +43,14 @@ name: Release automation
 # ====================================================================
 
 on:
-  push:
-    branches: [main]
-    # Docs / markdown / asset / workflow-only pushes never bump a
-    # version (Conventional Commits: only feat/fix/perf/revert or any
-    # breaking `!` release), so don't spin the release runner for them.
-    paths-ignore:
-      - '**.md'
-      - 'web/**'
-      - 'assets/**'
-      - '.github/**'
-  # Manual lever: re-run release detection on demand (e.g. after a
-  # push-trigger was path-ignored, or to retry once the detect/agent
-  # path is fixed). `paths-ignore` does not apply to dispatch, so this
-  # always evaluates. The deterministic gate→build→tag still no-ops
-  # unless HEAD is the `chore: release vX.Y.Z` commit, so a manual run
-  # on a non-release commit only (re-)engages the release-PR agent.
+  # PAUSED (2026-06-24): the release lane is shelved while the project
+  # focuses on the open-source cutover. This workflow no longer fires on
+  # every push to `main` — that was producing failed runs + tracking-issue
+  # noise because the Copilot release-PR agent path is currently inactive
+  # (see the roadmap: release-copilot-lane-stalled / release-dispatch-secret
+  # -missing). It is MANUAL-ONLY for now: trigger it from the Actions tab
+  # when you're ready to cut a release. To restore automatic releases,
+  # re-add the `push:` trigger below.
   workflow_dispatch:
 
 permissions:

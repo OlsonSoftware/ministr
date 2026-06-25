@@ -71,20 +71,10 @@ via `codesign` and `productbuild`.
 
 ## Building
 
-Signed + notarized `.pkg` artifacts are built in **CI**, not locally.
-Local signed builds were retired in F31: `scripts/build-pkg.sh` and the
-`just pkg` / `just pkg-dev` recipes are gone.
-
-The release flow (see [RELEASE.md](../RELEASE.md)):
-
-- A `chore: release vX.Y.Z` PR merged here pushes tag `v<X.Y.Z>` and
-  fires a `repository_dispatch` into **ministr-private**'s `release.yml`.
-- That workflow clones both repos as siblings, builds the cloud-capable
-  `ministr` against the MIT crates here, then runs
-  `python3 scripts/ci/ci.py pkg` for the macOS packaging step:
-  `pkgbuild` (component + postinstall CLI symlink) → `productbuild`
-  (signed) → `notarytool --wait` → `stapler`, and uploads the artifacts
-  to this repo's Release via a cross-repo PAT.
+Signed + notarized `.pkg` artifacts are built in CI, not locally. The macOS
+packaging step runs `python3 scripts/ci/ci.py pkg`: `pkgbuild` (component +
+postinstall CLI symlink) → `productbuild` (signed) → `notarytool --wait` →
+`stapler`.
 
 `ci.py pkg` checks the result with `pkgutil --check-signature`; anything
 other than "signed by a developer certificate issued by Apple …
@@ -105,9 +95,7 @@ imports the runner keychain needs — 9 secrets total:
 - `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` — notarization
   (`notarytool`).
 
-These are the same values this repo used pre-F31.5; F31.5 copied them to
-the private repo. See [RELEASE.md](../RELEASE.md) for the cross-repo
-release pipeline.
+See [RELEASE.md](../RELEASE.md) for the release process.
 
 ## Troubleshooting
 
