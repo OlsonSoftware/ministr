@@ -8,7 +8,7 @@
 //! # Pooling
 //!
 //! deadpool-postgres holds the connection pool. The default config
-//! (10 max connections) suits a B1ms Postgres Flex; F5 Enterprise tiers
+//! (10 max connections) suits a B1ms Postgres Flex; Enterprise tiers
 //! retune via the connection-string `?pool_max_size=N` (we read it
 //! here so the operator owns sizing).
 //!
@@ -34,13 +34,11 @@ use super::{OAuthStorage, StorageError, StorageResult};
 
 /// Persistent OAuth storage, deadpool-pooled.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector in F1.2
-pub(crate) struct PostgresStorage {
+#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selectorpub(crate) struct PostgresStorage {
     pool: Pool,
 }
 
-#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector in F1.2
-impl PostgresStorage {
+#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selectorimpl PostgresStorage {
     /// Open (or attach to) the OAuth tables in the database referenced by
     /// `url`. Creates the schema idempotently. The URL must be a
     /// standard libpq connection string (`postgres://user:pw@host/db`).
@@ -72,8 +70,7 @@ impl PostgresStorage {
     }
 }
 
-#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector in F1.2
-fn make_rustls_connector() -> MakeRustlsConnect {
+#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selectorfn make_rustls_connector() -> MakeRustlsConnect {
     // Workspace-standard trust policy (Mozilla roots + optional
     // MINISTR_PG_CA_CERT) — see `crate::pg_tls`.
     crate::pg_tls::make_rustls_connector()
@@ -81,16 +78,14 @@ fn make_rustls_connector() -> MakeRustlsConnect {
 
 /// Best-effort host extraction for log messages — never includes the
 /// password.
-#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector in F1.2
-fn redact_url_host(url: &str) -> String {
+#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selectorfn redact_url_host(url: &str) -> String {
     tokio_postgres::Config::from_str(url)
         .ok()
         .and_then(|cfg| cfg.get_hosts().first().cloned())
         .map_or_else(|| "<unknown>".to_owned(), |h| format!("{h:?}"))
 }
 
-#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector in F1.2
-async fn ensure_schema(pool: &Pool) -> StorageResult<()> {
+#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selectorasync fn ensure_schema(pool: &Pool) -> StorageResult<()> {
     let client = pool
         .get()
         .await

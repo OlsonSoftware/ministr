@@ -331,7 +331,7 @@ ministr_definition for a symbol.
 /// to read it — the survey ranking signal is already noisy in that range.
 const TOP_HIT_FOLLOWUP_THRESHOLD: f32 = 0.5;
 
-/// F6.3-a — cross-corpus survey fan-out.
+/// Cross-corpus survey fan-out.
 ///
 /// Runs the query against each corpus in `corpus_ids` sequentially,
 /// tags each result with `source_corpus = Some(corpus_id)`, merges
@@ -401,7 +401,7 @@ async fn cross_corpus_survey(
     Ok(merge_cross_corpus_results(per_corpus, corpus_boost, top_k))
 }
 
-/// F6.3-b — clamp / sanitise a single user-supplied boost multiplier.
+/// Clamp / sanitise a single user-supplied boost multiplier.
 ///
 /// Non-finite values (NaN, ±∞) fall back to the unboosted default of
 /// 1.0 so a malformed map entry can't silently zero a corpus.
@@ -416,7 +416,7 @@ fn sanitise_boost(raw: f32) -> f32 {
     raw.clamp(0.0, MAX_CORPUS_BOOST)
 }
 
-/// Cap on the F6.3-b per-corpus boost multiplier. Picked to be a
+/// Cap on the per-corpus boost multiplier. Picked to be a
 /// generous-but-bounded "10× weight" ceiling; an agent that wants
 /// to suppress other corpora should set their boost to 0.0 rather
 /// than crank one above 10.0.
@@ -425,12 +425,12 @@ const MAX_CORPUS_BOOST: f32 = 10.0;
 /// Pure merge-sort-truncate helper extracted so the cross-corpus
 /// fan-out semantics can be unit-tested without spinning up a real
 /// [`crate::backend::Backend`]. Tags each result with its source
-/// corpus, applies the F6.3-b `corpus_boost` multiplier (when set)
+/// corpus, applies the `corpus_boost` multiplier (when set)
 /// to the per-hit score, sorts by score descending (stable), and
 /// truncates to `top_k`. Sums `deduplicated_count` across all
 /// per-corpus calls.
 ///
-/// # F6.3-b boost semantics
+/// # Boost semantics
 ///
 /// - Map keys match per-corpus `corpus_id`; absent keys → 1.0
 ///   (unboosted).
@@ -695,7 +695,7 @@ pub struct MinistrServer {
     registry: Arc<Mutex<SessionRegistry>>,
     /// ID of the active session for this MCP connection.
     active_session_id: String,
-    /// F7.3 — per-request session ID override for stateless MCP.
+    /// Per-request session ID override for stateless MCP.
     ///
     /// In stateless mode (no `initialize`, no `Mcp-Session-Id`), rmcp
     /// calls the factory per-request, giving each request a random
@@ -756,19 +756,19 @@ pub struct MinistrServer {
     /// Tenant subject captured during the `initialize` handshake from
     /// the axum `Tenant` extension that rmcp's `StreamableHttpService`
     /// injects into `RequestContext::extensions` as
-    /// `http::request::Parts`. F-Test-3b-blocker workaround: rmcp's
-    /// internal request dispatcher loses the tokio task-local set by
-    /// the outer `scope_tenant` middleware, so `tenant_scope::current()`
-    /// returns `None` inside handlers. The Parts extension survives the
-    /// spawn boundary, so capturing once on initialize and storing here
-    /// lets `ensure_session_mut` and other handlers recover the tenant.
-    /// Reset per-fork in `fork_for_new_session` so concurrent connections
-    /// from different tenants don't race on the hint.
+    /// `http::request::Parts`. rmcp's internal request dispatcher loses
+    /// the tokio task-local set by the outer `scope_tenant` middleware,
+    /// so `tenant_scope::current()` returns `None` inside handlers.
+    /// The Parts extension survives the spawn boundary, so capturing
+    /// once on initialize and storing here lets `ensure_session_mut` and
+    /// other handlers recover the tenant. Reset per-fork in
+    /// `fork_for_new_session` so concurrent connections from different
+    /// tenants don't race on the hint.
     pub(crate) tenant_id_hint: Arc<std::sync::Mutex<Option<String>>>,
     /// Bridge to the daemon's multi-corpus registry. `Some` when
     /// `cmd_serve_http` wires the same `Arc<CorpusRegistry>` into both
     /// the MCP server *and* the daemon's REST router so the two surfaces
-    /// agree on what's indexed (F1.2 sub-bullet 3). `None` for stdio /
+    /// agree on what's indexed. `None` for stdio /
     /// proxy transports where the daemon REST router is not mounted.
     pub(crate) corpus_registry: Option<Arc<ministr_daemon::registry::CorpusRegistry>>,
     /// State behind the `ministr_run` exec tool family (exec-mcp-tools):
@@ -869,15 +869,13 @@ impl ServerHandler for MinistrServer {
             *guard = Some(client_name);
         }
 
-        // F-Test-3b-fix-1 — capture tenant via `context.extensions`.
-        // rmcp's `StreamableHttpService` injects `axum::http::request::Parts`
-        // into `RequestContext::extensions` (rmcp 0.14
-        // streamable_http_server/tower.rs:326), and the Parts include
-        // the axum request's `extensions` field where
-        // `validate_scope_middleware` set the `Tenant`. The earlier
-        // task-local path (via `tenant_scope::current()`) is silently
-        // lost across rmcp's spawn boundary; the Parts extension path
-        // survives.
+        // Capture tenant via `context.extensions`. rmcp's
+        // `StreamableHttpService` injects `axum::http::request::Parts`
+        // into `RequestContext::extensions`, and the Parts include the
+        // axum request's `extensions` field where
+        // `validate_scope_middleware` set the `Tenant`. The task-local
+        // path (via `tenant_scope::current()`) is silently lost across
+        // rmcp's spawn boundary; the Parts extension path survives.
         if let Some(parts) = context.extensions.get::<axum::http::request::Parts>()
             && let Some(tenant) = parts.extensions.get::<crate::auth::tenant::Tenant>()
             && let Ok(mut guard) = self.tenant_id_hint.lock()
@@ -1215,17 +1213,17 @@ impl ServerHandler for MinistrServer {
 
 #[tool_router]
 impl MinistrServer {
-    // F7.2 + F7.3 — per-request tenant + session capture for stateless MCP.
+    // Per-request tenant + session capture for stateless MCP.
     //
     // The macro-generated `call_tool` is suppressed when we define our
-    // own. We capture the tenant from the HTTP `Parts` that rmcp 1.7
-    // injects into every `RequestContext::extensions`, then delegate to
-    // the macro-generated router. This makes `current_tenant_subject()`
-    // work on EVERY tool call regardless of whether `initialize` ran
+    // own. We capture the tenant from the HTTP `Parts` that rmcp injects
+    // into every `RequestContext::extensions`, then delegate to the
+    // macro-generated router. This makes `current_tenant_subject()` work
+    // on EVERY tool call regardless of whether `initialize` ran
     // (stateless mode) or whether the tokio task-local survived rmcp's
     // internal `tokio::spawn` boundary.
     //
-    // F7.3: derive a deterministic session ID from the tenant subject
+    // Also derives a deterministic session ID from the tenant subject
     // so the same agent gets the same session across stateless requests.
     // In stateful mode (with initialize), the fork-assigned uuid_v4
     // still wins because the override stays None until a tenant is
@@ -1241,7 +1239,7 @@ impl MinistrServer {
             if let Ok(mut guard) = self.tenant_id_hint.lock() {
                 *guard = Some(tenant.subject.clone());
             }
-            // F7.3 — deterministic session ID for stateless continuity.
+            // Deterministic session ID for stateless continuity:
             // SHA-256 of the tenant subject, truncated to 32 hex chars,
             // prefixed with "ministr-" to match the existing session ID
             // format from infra.rs::generate_session_id.
@@ -1287,24 +1285,23 @@ impl MinistrServer {
             // before truncating to top_k (prevents the over-fetch buffer
             // from being wasted by premature truncation).
             //
-            // F-Test-3b-fix-1-shared-bootstrap: use ensure_session_mut
-            // so the session is get-or-created on the first tool call.
-            // The pre-fork-per-connection world relied on the bootstrap
-            // session being pre-created at MinistrServer init; with
-            // server.fork_for_new_session() each /mcp connection has a
-            // fresh uuid_v4 active_session_id that doesn't exist until
-            // first touched. ensure_session_mut creates if missing and
-            // also runs the tenant_id_hint stamping path early.
+            // Use ensure_session_mut so the session is get-or-created on
+            // the first tool call. The pre-fork-per-connection world
+            // relied on the bootstrap session being pre-created at
+            // MinistrServer init; with server.fork_for_new_session() each
+            // /mcp connection has a fresh uuid_v4 active_session_id that
+            // doesn't exist until first touched. ensure_session_mut
+            // creates if missing and also runs the tenant_id_hint stamping
+            // path early.
             let exclude_ids = {
                 let mut reg = self.registry.lock().await;
                 let entry = self.ensure_session_mut(&mut reg);
                 entry.session.delivered_ids()
             };
 
-            // F6.3-a — branch on `corpus_ids`. When set + non-empty,
-            // fan the query across each corpus and merge by score.
-            // Otherwise run the existing single-corpus path through
-            // `project`.
+            // Branch on `corpus_ids`. When set + non-empty, fan the
+            // query across each corpus and merge by score. Otherwise run
+            // the existing single-corpus path through `project`.
             let is_cross_corpus = params.corpus_ids.as_ref().is_some_and(|v| !v.is_empty());
 
             // Run the survey through the backend trait.
@@ -2261,7 +2258,7 @@ impl MinistrServer {
                     paths: params.paths.clone().unwrap_or_default(),
                     branch: params.branch.clone(),
                     label: None,
-                    // F2.1 — MCP tool path is the local-stack clone surface;
+                    // MCP tool path is the local-stack clone surface;
                     // GitHub App federation is cloud-only. PAT-in-URL flow
                     // remains for self-hosted users.
                     github_installation_id: None,
@@ -3354,9 +3351,9 @@ impl MinistrServer {
     )]
     async fn session_summary(&self) -> Result<GetPromptResult, McpError> {
         let mut reg = self.registry.lock().await;
-        // F-Test-3b-fix-1-shared-bootstrap: get-or-create so a fresh
-        // /mcp connection that opens the session-summary prompt before
-        // any tool call gets an empty session rather than a panic.
+        // Get-or-create so a fresh /mcp connection that opens the
+        // session-summary prompt before any tool call gets an empty
+        // session rather than a panic.
         let entry = self.ensure_session_mut(&mut reg);
         let status = entry.budget.usage_status();
         let prefetch = self.prefetch.lock().await;
@@ -3424,9 +3421,9 @@ impl MinistrServer {
     )]
     async fn what_next(&self) -> Result<GetPromptResult, McpError> {
         let mut reg = self.registry.lock().await;
-        // F-Test-3b-fix-1-shared-bootstrap: get-or-create so a fresh
-        // /mcp connection that opens the what-next prompt before any
-        // tool call gets an empty session rather than a panic.
+        // Get-or-create so a fresh /mcp connection that opens the
+        // what-next prompt before any tool call gets an empty session
+        // rather than a panic.
         let entry = self.ensure_session_mut(&mut reg);
         let prefetch = self.prefetch.lock().await;
         let status = entry.budget.usage_status();
@@ -3637,7 +3634,7 @@ mod tests {
         assert!(!DEFAULT_INSTRUCTIONS.contains("drop_suggestions"));
     }
 
-    // ── F6.3-a cross-corpus survey tests ──────────────────────────────
+    // ── Cross-corpus survey tests ──────────────────────────────────────
 
     fn make_sr(content_id: &str, score: f32) -> ministr_core::service::SurveyResult {
         ministr_core::service::SurveyResult {
@@ -3758,7 +3755,7 @@ mod tests {
         assert_eq!(merged[0].source_corpus.as_deref(), Some("alpha"));
     }
 
-    // ── F6.3-b corpus_boost tests ─────────────────────────────────────
+    // ── Corpus_boost tests ────────────────────────────────────────────
 
     fn boost_map(entries: &[(&str, f32)]) -> std::collections::HashMap<String, f32> {
         entries
@@ -3810,7 +3807,7 @@ mod tests {
         let boost = boost_map(&[("my-app", 1.0)]);
         let (merged, _) = merge_cross_corpus_results(per_corpus, Some(&boost), 10);
         let ids: Vec<&str> = merged.iter().map(|r| r.content_id.as_str()).collect();
-        // No effective change — same scores → same order as F6.3-a default.
+        // No effective change — same scores → same order as the default.
         assert_eq!(ids, vec!["a1", "b1"]);
     }
 
@@ -3856,7 +3853,7 @@ mod tests {
     #[test]
     fn boost_none_means_no_change_from_f63a_behavior() {
         // Regression guard: passing None for the boost map must produce
-        // byte-identical output to the F6.3-a path.
+        // byte-identical output to the cross-corpus path.
         let per_corpus = vec![
             (
                 "alpha".to_string(),
@@ -5417,10 +5414,10 @@ mod tests {
         assert!(server.git_fetcher.is_some());
     }
 
-    /// F1.2 sub-bullet 3 — the MCP server holds the same
-    /// `Arc<CorpusRegistry>` instance the daemon REST router uses.
-    /// `cmd_serve_http` constructs the Arc once and hands it to both;
-    /// the seam below is what makes that sharing possible.
+    /// The MCP server holds the same `Arc<CorpusRegistry>` instance the
+    /// daemon REST router uses. `cmd_serve_http` constructs the Arc once
+    /// and hands it to both; the seam below is what makes that sharing
+    /// possible.
     #[test]
     fn with_corpus_registry_bridges_to_daemon_registry() {
         let dim = 8;

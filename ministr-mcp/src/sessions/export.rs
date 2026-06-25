@@ -1,4 +1,4 @@
-//! F6.2-a — session bundle export endpoint.
+//! Session bundle export endpoint.
 //!
 //! Builds a deterministic `.tar` archive from a live [`SessionEntry`]
 //! and ships it over `POST /api/v1/sessions/{id}/export`. Archive
@@ -10,24 +10,23 @@
 //! └── delivered.jsonl    (one DeliveredItem per line, ordered by turn_delivered)
 //! ```
 //!
-//! # Honest scope (F6.2-a v0)
+//! # Honest scope (v0)
 //!
 //! - **No `asked` events** — the `Session` shadow doesn't journal
 //!   tool calls today; only the deliveries that produced content land
 //!   in `delivered_items`. A future Session-side journal would land
 //!   first; this module would then emit `asked.jsonl` alongside.
 //! - **No `drops.jsonl`** — drops live in the Postgres
-//!   `session_drops` ledger (F6.1-d) rather than in the in-memory
-//!   `SessionEntry`. Querying the ledger here would make the bundle
-//!   async-heavy; F6.2-b adds that integration once the wire shape is
-//!   stable.
+//!   `session_drops` ledger rather than in the in-memory `SessionEntry`.
+//!   Querying the ledger here would make the bundle async-heavy; a
+//!   future pass adds that integration once the wire shape is stable.
 //! - **No blob storage / signed URL** — the route streams the tar
-//!   back inline as `application/x-tar`. F6.2-c moves the artefact
-//!   under `sessions/{tenant}/{id}/{ts}.tar` in blob storage and
-//!   returns a 24h-TTL signed URL per the roadmap spec.
+//!   back inline as `application/x-tar`. A later pass moves the
+//!   artefact under `sessions/{tenant}/{id}/{ts}.tar` in blob storage
+//!   and returns a 24h-TTL signed URL per the roadmap spec.
 //! - **No Tauri "Session inspector" tab** — debugging today is via
 //!   `curl POST /api/v1/sessions/{id}/export -o session.tar && tar tf
-//!   session.tar`. Tauri UI lands in F6.2-d.
+//!   session.tar`.
 //!
 //! Why `tar`, not `zip`: matches the existing `.ministr-index`
 //! corpus-bundle convention (see `ministr-core/src/bundle.rs`); no
@@ -135,8 +134,8 @@ pub fn build_session_bundle(session_id: &str, entry: &SessionEntry) -> Result<Ve
     assemble_bundle_tar(session_id, entry, None)
 }
 
-/// F6.2-b — async wrapper that augments the bundle with `drops.jsonl`
-/// when a [`DropsLedger`] backend is wired and a tenant is in scope.
+/// Async wrapper that augments the bundle with `drops.jsonl` when a
+/// [`DropsLedger`] backend is wired and a tenant is in scope.
 ///
 /// Behaviour matrix:
 /// - `ledger=Some` + `tenant_id=Some` → queries the ledger via
@@ -256,12 +255,11 @@ fn append_tar_entry<W: std::io::Write>(
 }
 
 /// State the export route needs — the shared session registry, an
-/// optional drops ledger (F6.2-b), and an optional bundle store
-/// (F6.2-c). `cmd_serve_http` threads the same
-/// `Arc<Mutex<SessionRegistry>>` through `MinistrServer`; the export
-/// router clones that Arc. The ledger + store are `None` on
-/// self-hosted serve (no Postgres / no blob backend) and the bundle
-/// falls back to the F6.2-a inline-tar shape.
+/// optional drops ledger, and an optional bundle store. `cmd_serve_http`
+/// threads the same `Arc<Mutex<SessionRegistry>>` through
+/// `MinistrServer`; the export router clones that Arc. The ledger +
+/// store are `None` on self-hosted serve (no Postgres / no blob
+/// backend) and the bundle falls back to the inline-tar shape.
 #[derive(Clone)]
 pub struct SessionExportState {
     pub registry: Arc<Mutex<SessionRegistry>>,
@@ -279,22 +277,21 @@ impl SessionExportState {
         }
     }
 
-    /// F6.2-b — attach a drops ledger so `handle_export` augments the
-    /// bundle with `drops.jsonl`. Cloud `cmd_serve_http` wires
-    /// `PostgresDropsLedger` here when `cloud_pool` `is_some`; self-
-    /// hosted leaves the field `None`.
+    /// Attach a drops ledger so `handle_export` augments the bundle with
+    /// `drops.jsonl`. Cloud `cmd_serve_http` wires `PostgresDropsLedger`
+    /// here when `cloud_pool` `is_some`; self-hosted leaves the field
+    /// `None`.
     #[must_use]
     pub fn with_drops_ledger(mut self, ledger: Arc<dyn DropsLedger>) -> Self {
         self.ledger = Some(ledger);
         self
     }
 
-    /// F6.2-c — attach a bundle store so `handle_export` uploads the
-    /// tar to blob storage and returns a signed URL (JSON) instead of
-    /// streaming inline. Cloud `cmd_serve_http` wires
-    /// `CloudSessionBundleStore` when the Azure account + signing
-    /// secret are configured; otherwise the field stays `None` and
-    /// the inline-tar shape continues to ship.
+    /// Attach a bundle store so `handle_export` uploads the tar to blob
+    /// storage and returns a signed URL (JSON) instead of streaming
+    /// inline. Cloud `cmd_serve_http` wires `CloudSessionBundleStore`
+    /// when the Azure account + signing secret are configured; otherwise
+    /// the field stays `None` and the inline-tar shape continues to ship.
     #[must_use]
     pub fn with_bundle_store(mut self, store: Arc<dyn SessionBundleStore>) -> Self {
         self.bundle_store = Some(store);
@@ -302,15 +299,14 @@ impl SessionExportState {
     }
 }
 
-/// Mount the F6.2-a + F6.2-e + F6.2-c routes. Paths mirror the
-/// roadmap spec:
-/// - `POST /api/v1/sessions/{id}/export` (F6.2-a/b/c): tar bundle, or
-///   JSON `{url, expires_at}` when a bundle store is wired.
-/// - `GET /api/v1/sessions` (F6.2-e): list in-memory session summaries.
-/// - `GET /api/v1/sessions/bundles/{*path}` (F6.2-c): download a signed
-///   bundle. Mounted unconditionally; returns 404 when no store is
-///   wired (the route only resolves for clients that received a
-///   signed URL, which only the upload path mints).
+/// Mount the session export routes. Paths mirror the roadmap spec:
+/// - `POST /api/v1/sessions/{id}/export`: tar bundle, or JSON
+///   `{url, expires_at}` when a bundle store is wired.
+/// - `GET /api/v1/sessions`: list in-memory session summaries.
+/// - `GET /api/v1/sessions/bundles/{*path}`: download a signed bundle.
+///   Mounted unconditionally; returns 404 when no store is wired (the
+///   route only resolves for clients that received a signed URL, which
+///   only the upload path mints).
 pub fn session_export_routes(state: SessionExportState) -> Router {
     Router::new()
         .route("/api/v1/sessions/{id}/export", post(handle_export))
@@ -322,7 +318,7 @@ pub fn session_export_routes(state: SessionExportState) -> Router {
         .with_state(state)
 }
 
-/// F6.2-e — one in-memory session summary returned by `GET /api/v1/sessions`.
+/// One in-memory session summary returned by `GET /api/v1/sessions`.
 /// Subset of [`SessionBundleManifest`] minus the export-time fields
 /// (`exported_at`, `schema_version`) since this is a live snapshot, not
 /// a packaged artefact. Future cross-pod listing will merge against
@@ -354,9 +350,9 @@ impl SessionSummary {
     }
 }
 
-/// F6.2-e-followup — admit predicate keyed on the tenant scope and
-/// the entry's own `tenant_id`. Shared between `handle_list` (filter
-/// the listing) and `handle_export` (gate access to a specific id).
+/// Admit predicate keyed on the tenant scope and the entry's own
+/// `tenant_id`. Shared between `handle_list` (filter the listing) and
+/// `handle_export` (gate access to a specific id).
 ///
 /// Behaviour matrix:
 /// - `scope = None` (self-hosted / stdio): admit all entries.
@@ -373,8 +369,8 @@ fn admit_session_for_scope(scope: Option<&str>, entry_tenant: Option<&str>) -> b
 }
 
 async fn handle_list(State(state): State<SessionExportState>) -> Response {
-    // F6.2-e-followup — read the tenant scope before locking so the
-    // filter is computed once per request.
+    // Read the tenant scope before locking so the filter is computed
+    // once per request.
     let scope = crate::tenant_scope::current();
     let reg = state.registry.lock().await;
     let mut summaries: Vec<SessionSummary> = reg
@@ -404,9 +400,9 @@ async fn handle_export(
     State(state): State<SessionExportState>,
     Path(session_id): Path<String>,
 ) -> Response {
-    // F6.2-b — read the tenant scope BEFORE locking the registry so
-    // we don't hold the mutex across a `tenant_scope::current` call
-    // (cheap today but keeps the lock window minimal).
+    // Read the tenant scope BEFORE locking the registry so we don't
+    // hold the mutex across a `tenant_scope::current` call (cheap today
+    // but keeps the lock window minimal).
     let tenant_id = crate::tenant_scope::current();
 
     let reg = state.registry.lock().await;
@@ -415,12 +411,12 @@ async fn handle_export(
         return (StatusCode::NOT_FOUND, "session not found").into_response();
     };
 
-    // F6.2-e-followup-ii — gate access by tenant. Cross-tenant fetches
-    // return 404 (existence-leak-resistant — mirrors the "session not
-    // found" shape so an attacker can't enumerate id space across
-    // tenants). Self-hosted (no scope) admits all; cloud admits only
-    // the calling tenant's sessions. Pre-stamping legacy entries are
-    // invisible to scoped callers.
+    // Gate access by tenant. Cross-tenant fetches return 404
+    // (existence-leak-resistant — mirrors the "session not found" shape
+    // so an attacker can't enumerate id space across tenants).
+    // Self-hosted (no scope) admits all; cloud admits only the calling
+    // tenant's sessions. Pre-stamping legacy entries are invisible to
+    // scoped callers.
     if !admit_session_for_scope(tenant_id.as_deref(), entry.tenant_id.as_deref()) {
         drop(reg);
         return (StatusCode::NOT_FOUND, "session not found").into_response();
@@ -443,10 +439,9 @@ async fn handle_export(
     };
     drop(reg);
 
-    // F6.2-c — when a bundle store is wired AND a tenant is in scope,
-    // upload to blob and return JSON `{url, expires_at}`. Otherwise
-    // (self-hosted, dev, or no signing secret configured) keep the
-    // F6.2-a inline-tar shape.
+    // When a bundle store is wired AND a tenant is in scope, upload to
+    // blob and return JSON `{url, expires_at}`. Otherwise (self-hosted,
+    // dev, or no signing secret configured) use the inline-tar shape.
     if let (Some(store), Some(tid)) = (state.bundle_store.as_deref(), tenant_id.as_deref()) {
         match store.put_and_sign(tid, &session_id, bundle).await {
             Ok(signed) => {
@@ -504,7 +499,7 @@ fn inline_tar_response(session_id: &str, bundle: Vec<u8>) -> Response {
         .into_response()
 }
 
-/// F6.2-c — `GET /api/v1/sessions/bundles/{*path}?expires=...&sig=...`.
+/// `GET /api/v1/sessions/bundles/{*path}?expires=...&sig=...`.
 ///
 /// The signed URL minted by `put_and_sign` points back at this handler.
 /// We extract the path (everything after `/bundles/`) and the raw
@@ -688,7 +683,7 @@ mod tests {
         assert_eq!(parsed, manifest);
     }
 
-    // ── F6.2-b drops integration tests ─────────────────────────────────
+    // ── Drops integration tests ─────────────────────────────────────────
 
     use ministr_api::{AppendDropFuture, DropEntry, DropsLedgerError, ListDropsFuture};
     use std::sync::Mutex as StdMutex;
@@ -742,8 +737,8 @@ mod tests {
         }
     }
 
-    /// F6.2-b — when both a ledger and a tenant scope are present, the
-    /// bundle gains a `drops.jsonl` with one line per ledger entry.
+    /// When both a ledger and a tenant scope are present, the bundle
+    /// gains a `drops.jsonl` with one line per ledger entry.
     #[tokio::test]
     async fn bundle_includes_drops_when_ledger_wired_and_tenant_scoped() {
         let mut reg = fresh_registry();
@@ -784,8 +779,7 @@ mod tests {
         assert!(lines[1].contains("\"claim_id\":\"docs/b.md#y\""));
     }
 
-    /// F6.2-b — no ledger wired ⇒ bundle matches the F6.2-a shape
-    /// (no `drops.jsonl` entry).
+    /// No ledger wired ⇒ bundle has no `drops.jsonl` entry.
     #[tokio::test]
     async fn bundle_omits_drops_when_no_ledger() {
         let mut reg = fresh_registry();
@@ -805,9 +799,8 @@ mod tests {
         );
     }
 
-    /// F6.2-b — ledger wired but no tenant scope ⇒ bundle omits drops
-    /// (can't look up by PK without a tenant id). Self-hosted serve
-    /// lands here.
+    /// Ledger wired but no tenant scope ⇒ bundle omits drops (can't
+    /// look up by PK without a tenant id). Self-hosted serve lands here.
     #[tokio::test]
     async fn bundle_omits_drops_when_no_tenant_scope() {
         let mut reg = fresh_registry();
@@ -830,10 +823,10 @@ mod tests {
         );
     }
 
-    /// F6.2-b — ledger returns zero entries for the session ⇒ bundle
-    /// still ships a `drops.jsonl` entry (just empty). Matches the
-    /// shape of the `delivered.jsonl` empty case from F6.2-a so the
-    /// inspector can branch on file-present rather than file-content.
+    /// Ledger returns zero entries for the session ⇒ bundle still ships
+    /// a `drops.jsonl` entry (just empty). Matches the shape of the
+    /// `delivered.jsonl` empty case so the inspector can branch on
+    /// file-present rather than file-content.
     #[tokio::test]
     async fn bundle_includes_empty_drops_jsonl_when_ledger_returns_zero() {
         let mut reg = fresh_registry();
@@ -861,7 +854,7 @@ mod tests {
         );
     }
 
-    // ── F6.2-e session-list tests ───────────────────────────────────────
+    // ── Session-list tests ──────────────────────────────────────────────
 
     #[test]
     fn session_summary_from_entry_carries_live_fields() {
@@ -897,7 +890,7 @@ mod tests {
         );
     }
 
-    /// F6.2-e-followup — `handle_list` filters entries by `tenant_scope::current`.
+    /// `handle_list` filters entries by `tenant_scope::current`.
     /// `handle_list` + `handle_export` both delegate to
     /// [`admit_session_for_scope`]; this test exercises the predicate
     /// directly across the 4-corner matrix so both endpoints benefit
@@ -915,9 +908,8 @@ mod tests {
         assert!(!admit_session_for_scope(Some("tenant-x"), None));
     }
 
-    /// F6.2-e-followup — applied to the registry side: the list iter
-    /// uses `admit_session_for_scope` to filter. Confirms the predicate
-    /// produces the right session subset on a 3-entry registry.
+    /// Confirms the `admit_session_for_scope` predicate produces the
+    /// right session subset on a 3-entry registry.
     #[test]
     fn list_endpoint_filter_subsets_via_admit_helper() {
         let mut reg = fresh_registry();
@@ -964,7 +956,7 @@ mod tests {
         assert_eq!(s, parsed);
     }
 
-    // ── F6.2-c bundle store tests ───────────────────────────────────────
+    // ── Bundle store tests ──────────────────────────────────────────────
 
     use ministr_api::{
         PutAndSignFuture, SessionBundleStore, SessionBundleStoreError, SignedBundleUrl,
@@ -1032,10 +1024,10 @@ mod tests {
         }
     }
 
-    /// F6.2-c — bundle-store wired + tenant scoped ⇒ `handle_export`
-    /// uploads to the store rather than streaming inline. We exercise
-    /// the upload via `put_and_sign` directly because spinning up axum
-    /// + `scope_for_test` against a real request is heavier than the
+    /// Bundle-store wired + tenant scoped ⇒ `handle_export` uploads to
+    /// the store rather than streaming inline. We exercise the upload
+    /// via `put_and_sign` directly because spinning up axum +
+    /// `scope_for_test` against a real request is heavier than the
     /// helper-call exercise itself; the dispatch-mode regression guard
     /// is the integration via `state.bundle_store.is_some()`.
     #[tokio::test]
@@ -1057,9 +1049,9 @@ mod tests {
         assert_eq!(captures[0].2, bundle);
     }
 
-    /// F6.2-c — store error ⇒ the upload path falls back to the inline
-    /// shape. Exercises the `force_error` branch in the helper rather
-    /// than the route; the route's else-arm just calls `inline_tar_response`.
+    /// Store error ⇒ the upload path falls back to the inline shape.
+    /// Exercises the `force_error` branch in the helper rather than the
+    /// route; the route's else-arm just calls `inline_tar_response`.
     #[tokio::test]
     async fn put_and_sign_error_surfaces_to_caller() {
         let store = Arc::new(StubBundleStore::default());
@@ -1072,9 +1064,9 @@ mod tests {
         assert!(matches!(err, SessionBundleStoreError::Storage(_)));
     }
 
-    /// F6.2-c — `SessionExportState::with_bundle_store` attaches the
-    /// store and `bundle_store.is_some()` flips. Regression guard for
-    /// the builder chain.
+    /// `SessionExportState::with_bundle_store` attaches the store and
+    /// `bundle_store.is_some()` flips. Regression guard for the builder
+    /// chain.
     #[test]
     fn with_bundle_store_attaches_backend() {
         let reg = Arc::new(Mutex::new(fresh_registry()));
@@ -1085,8 +1077,8 @@ mod tests {
         assert!(state.bundle_store.is_some());
     }
 
-    /// F6.2-c — verify path: a valid token round-trips the captured
-    /// bytes; an invalid token surfaces `InvalidToken`.
+    /// Verify path: a valid token round-trips the captured bytes; an
+    /// invalid token surfaces `InvalidToken`.
     #[tokio::test]
     async fn verify_and_get_validates_token() {
         let store = Arc::new(StubBundleStore::default());

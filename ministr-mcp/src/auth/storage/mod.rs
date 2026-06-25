@@ -86,7 +86,7 @@ pub(crate) trait OAuthStorage: Send + Sync {
 
 /// Concrete backend dispatcher. Add a variant to support a new storage type.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Postgres variant constructed by `cmd_serve_http` in F1.2
+#[allow(dead_code)] // Postgres variant constructed by `cmd_serve_http`
 pub(crate) enum OAuthBackend {
     InMemory(InMemoryStorage),
     Sqlite(SqliteStorage),

@@ -29,17 +29,17 @@ use super::util::{epoch_now, generate_id};
 pub struct OAuthStore {
     config: OAuthConfig,
     backend: OAuthBackend,
-    /// F3.4a — optional fall-through resolver for service-account API
-    /// keys. When `Some`, [`Self::resolve_tenant`] tries OAuth first
-    /// and falls back to this resolver on miss. Self-hosted serve
-    /// leaves it `None`; only OAuth tokens authenticate there.
+    /// Optional fall-through resolver for service-account API keys.
+    /// When `Some`, [`Self::resolve_tenant`] tries OAuth first and
+    /// falls back to this resolver on miss. Self-hosted serve leaves it
+    /// `None`; only OAuth tokens authenticate there.
     api_key_resolver: Option<Arc<dyn ApiKeyResolver>>,
-    /// F5.5-a-plan-lookup — optional plan resolver. When `Some`, the
-    /// OAuth-path [`Self::resolve_tenant`] looks up the validated
-    /// subject's `users.plan_id` so the constructed `Tenant.plan`
-    /// reflects the real billing tier instead of `Tenant::local()`'s
-    /// `Plan::Pro` default. Self-hosted serve leaves it `None` and the
-    /// existing local-tenant shape is preserved.
+    /// Optional plan resolver. When `Some`, the OAuth-path
+    /// [`Self::resolve_tenant`] looks up the validated subject's
+    /// `users.plan_id` so the constructed `Tenant.plan` reflects the
+    /// real billing tier instead of `Tenant::local()`'s `Plan::Pro`
+    /// default. Self-hosted serve leaves it `None` and the existing
+    /// local-tenant shape is preserved.
     plan_resolver: Option<Arc<dyn PlanResolver>>,
 }
 
@@ -55,24 +55,23 @@ impl OAuthStore {
         }
     }
 
-    /// F3.4a — install an [`ApiKeyResolver`] so service-account API
-    /// keys authenticate alongside OAuth tokens. Cloud deployments call
-    /// this with a `PostgresApiKeyResolver` from `ministr-cloud`;
-    /// self-hosted serve leaves the field `None`.
+    /// Install an [`ApiKeyResolver`] so service-account API keys
+    /// authenticate alongside OAuth tokens. Cloud deployments call this
+    /// with a `PostgresApiKeyResolver` from `ministr-cloud`; self-hosted
+    /// serve leaves the field `None`.
     #[must_use]
     pub fn with_api_key_resolver(mut self, resolver: Arc<dyn ApiKeyResolver>) -> Self {
         self.api_key_resolver = Some(resolver);
         self
     }
 
-    /// F5.5-a-plan-lookup — install a [`PlanResolver`] so the OAuth
-    /// path resolves the real `users.plan_id` instead of defaulting
-    /// every OAuth-authenticated request to `Plan::Pro`. Cloud
-    /// deployments call this with a `PostgresPlanResolver` from
-    /// `ministr-cloud`; self-hosted serve leaves the field `None` and
-    /// the existing `Tenant::local()` shape is preserved (the
-    /// resolver isn't useful there — `validate_token` returns OAuth
-    /// `client_ids`, not user UUIDs).
+    /// Install a [`PlanResolver`] so the OAuth path resolves the real
+    /// `users.plan_id` instead of defaulting every OAuth-authenticated
+    /// request to `Plan::Pro`. Cloud deployments call this with a
+    /// `PostgresPlanResolver` from `ministr-cloud`; self-hosted serve
+    /// leaves the field `None` and the existing `Tenant::local()` shape
+    /// is preserved (the resolver isn't useful there — `validate_token`
+    /// returns OAuth `client_ids`, not user UUIDs).
     #[must_use]
     pub fn with_plan_resolver(mut self, resolver: Arc<dyn PlanResolver>) -> Self {
         self.plan_resolver = Some(resolver);
@@ -100,7 +99,7 @@ impl OAuthStore {
     }
 
     /// Construct a store backed by Postgres at `url` — the cloud default
-    /// for `mcp.ministr.ai` (F1.2 sub-bullet 4). The OAuth schema is
+    /// for `mcp.ministr.ai`. The OAuth schema is
     /// created idempotently on first use; multiple pods sharing the same
     /// database all participate in the same OAuth state without any
     /// coordination beyond the connection string.
@@ -169,10 +168,10 @@ impl OAuthStore {
     /// string is the opaque token value — clients use it as the `Bearer`
     /// header on subsequent requests.
     ///
-    /// Cloud-side federation flows (F1.3 GitHub `IdP`) call this after
-    /// resolving the user's identity to deliver a token without going
-    /// through the RFC 6749 §4.1 code-grant dance. The local-stack OAuth
-    /// handlers continue to use the existing private path.
+    /// Cloud-side federation flows (GitHub IdP) call this after resolving
+    /// the user's identity to deliver a token without going through the
+    /// RFC 6749 §4.1 code-grant dance. The local-stack OAuth handlers
+    /// continue to use the existing private path.
     ///
     /// # Errors
     ///
@@ -218,12 +217,11 @@ impl OAuthStore {
     /// Resolve the [`Tenant`] for a bearer token.
     ///
     /// Order: try the OAuth path first (the hot path — short-lived
-    /// access tokens minted via the OAuth code grant or the F1.3 GitHub
-    /// federation). On miss, fall through to the F3.4a service-account
-    /// API key resolver if one is installed. The fall-through never
-    /// runs for self-hosted serve (which leaves `api_key_resolver` as
-    /// `None`) so the existing `Tenant::local` shape is preserved
-    /// there.
+    /// access tokens minted via the OAuth code grant or GitHub
+    /// federation). On miss, fall through to the service-account API
+    /// key resolver if one is installed. The fall-through never runs
+    /// for self-hosted serve (which leaves `api_key_resolver` as `None`)
+    /// so the existing `Tenant::local` shape is preserved there.
     pub(crate) async fn resolve_tenant(&self, token: &str) -> Option<Tenant> {
         if let Some(client_id) = self.validate_token(token).await {
             return Some(self.tenant_from_oauth_subject(client_id).await);
@@ -245,11 +243,11 @@ impl OAuthStore {
         self.resolve_api_key(token, Some(required_scope)).await
     }
 
-    /// F5.5-a-plan-lookup — build a [`Tenant`] from an OAuth-validated
-    /// subject. When a [`PlanResolver`] is wired (cloud mode), looks up
-    /// the subject's `users.plan_id` and constructs a `Tenant` whose
-    /// `plan` reflects the real billing tier; otherwise falls back to
-    /// [`Tenant::local`] (`Plan::Pro` default — self-hosted shape).
+    /// Build a [`Tenant`] from an OAuth-validated subject. When a
+    /// [`PlanResolver`] is wired (cloud mode), looks up the subject's
+    /// `users.plan_id` and constructs a `Tenant` whose `plan` reflects
+    /// the real billing tier; otherwise falls back to [`Tenant::local`]
+    /// (`Plan::Pro` default — self-hosted shape).
     ///
     /// Resolver errors are logged at warn and treated as "no plan
     /// known" → fall back to Pro. Returning Pro on a transient
@@ -275,12 +273,12 @@ impl OAuthStore {
         }
     }
 
-    /// F3.4a — fall-through resolver: hash the candidate token, look it
-    /// up in `api_keys`, optionally check the required scope, and
+    /// Fall-through resolver: hash the candidate token, look it up in
+    /// `api_keys`, optionally check the required scope, and
     /// fire-and-forget a `last_used_at` touch on success. Returns
     /// `None` when no resolver is installed, the lookup misses, the
-    /// scope check fails, or the storage layer errors out (fail
-    /// closed, mirroring the OAuth-path posture).
+    /// scope check fails, or the storage layer errors out (fail closed,
+    /// mirroring the OAuth-path posture).
     async fn resolve_api_key(
         &self,
         raw_token: &str,
@@ -392,9 +390,9 @@ mod tests {
         OAuthStore::new(OAuthConfig::default())
     }
 
-    /// F5.5-a-plan-lookup — stub resolver that returns a fixed value
-    /// for one subject and Ok(None) for everything else, plus a synth
-    /// error path so the resolver-error fallback can be exercised.
+    /// Stub resolver that returns a fixed value for one subject and
+    /// `Ok(None)` for everything else, plus a synth error path so the
+    /// resolver-error fallback can be exercised.
     #[derive(Debug)]
     struct StubPlanResolver {
         known: (String, String),

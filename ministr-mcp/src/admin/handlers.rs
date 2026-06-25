@@ -39,18 +39,17 @@ pub(super) async fn healthz(State(state): State<AdminState>) -> Json<HealthRespo
     })
 }
 
-/// F5.5-b-sla-skeleton — `/sla` response shape. Reported as JSON for
-/// status-page scrapers (the future `status.ministr.ai`) and richer
-/// load-balancer probes.
+/// `/sla` response shape. Reported as JSON for status-page scrapers
+/// (the future `status.ministr.ai`) and richer load-balancer probes.
 ///
 /// `uptime_secs` is `u64` so 6+ years of uptime fits without overflow
 /// (the underlying `Instant::elapsed().as_secs()` returns `u64` too).
 /// `started_at_iso` lets a scraper compute the boot moment without
 /// needing to invert the wall-clock delta itself.
 ///
-/// F5.5-b-latency — `latency` carries p50/p95/p99 over the rolling
-/// in-process window. `None` until at least one request has been
-/// recorded (the boot's very first `/sla` poll sees `null`).
+/// `latency` carries p50/p95/p99 over the rolling in-process window.
+/// `None` until at least one request has been recorded (the boot's
+/// very first `/sla` poll sees `null`).
 #[derive(Debug, Serialize)]
 pub(super) struct SlaResponse {
     status: &'static str,
@@ -60,16 +59,16 @@ pub(super) struct SlaResponse {
     latency: Option<LatencyEmission>,
 }
 
-/// F5.5-b-latency — JSON-rendered latency envelope. Microseconds get
-/// converted to milliseconds at the seam so consumers (status pages,
-/// dashboards) read the SLA contract's native unit directly. `count`
-/// is the rolling-window sample count for callers that want to
-/// understand how warmed-up the percentiles are.
+/// JSON-rendered latency envelope. Microseconds get converted to
+/// milliseconds at the seam so consumers (status pages, dashboards)
+/// read the SLA contract's native unit directly. `count` is the
+/// rolling-window sample count for callers that want to understand how
+/// warmed-up the percentiles are.
 ///
-/// F5.5-b-persist-read — `window_30d_max_p95_ms` carries the
-/// historical worst p95 over the last 30 days from
-/// `request_latency_snapshots`. `None` in self-hosted (no DB-backed
-/// store wired) or when the rolling window happens to be empty.
+/// `window_30d_max_p95_ms` carries the historical worst p95 over the
+/// last 30 days from `request_latency_snapshots`. `None` in
+/// self-hosted (no DB-backed store wired) or when the rolling window
+/// happens to be empty.
 #[derive(Debug, Serialize)]
 struct LatencyEmission {
     count: usize,
@@ -95,14 +94,10 @@ fn latency_emission(
     }
 }
 
-/// F5.5-b-sla-skeleton — unauthenticated SLA / uptime probe. Foundation
-/// for the eventual `status.ministr.ai` dashboard (which polls this
-/// endpoint) and for load balancers that want richer state than
-/// `/healthz`'s binary up/down.
-///
-/// Honest scope: this chunk ships uptime only. Latency percentiles
-/// (F5.5-b-latency) and cross-pod persistent metrics (F5.5-b-persist)
-/// are separate follow-ups.
+/// Unauthenticated SLA / uptime probe. Foundation for the eventual
+/// `status.ministr.ai` dashboard (which polls this endpoint) and for
+/// load balancers that want richer state than `/healthz`'s binary
+/// up/down.
 pub(super) async fn sla_status(State(state): State<AdminState>) -> Json<SlaResponse> {
     use std::time::{SystemTime, UNIX_EPOCH};
     let uptime_secs = state.uptime_secs();
@@ -111,10 +106,10 @@ pub(super) async fn sla_status(State(state): State<AdminState>) -> Json<SlaRespo
         .map_or(0, |d| d.as_secs());
     let started_at = now_secs.saturating_sub(uptime_secs);
     let started_at_iso = ministr_api::format_unix_secs_iso(started_at);
-    // F5.5-b-persist-read — pull the historical 30d max p95 from the
-    // wired store (cloud mode only). 30 days = 30 × 86_400 secs.
-    // i64 fits centuries of unix-epoch comfortably; saturating_sub
-    // defends against the unlikely sub-30d-old epoch boundary.
+    // Pull the historical 30d max p95 from the wired store (cloud mode
+    // only). 30 days = 30 × 86_400 secs. i64 fits centuries of
+    // unix-epoch comfortably; saturating_sub defends against the
+    // unlikely sub-30d-old epoch boundary.
     let window_30d_max_p95_us = if let Some(store) = state.sla_window_store() {
         let since = i64::try_from(now_secs)
             .unwrap_or(i64::MAX)
@@ -142,13 +137,11 @@ pub(super) async fn sla_status(State(state): State<AdminState>) -> Json<SlaRespo
     })
 }
 
-/// F5.4-e-revoke-api-serve — public HTTP endpoint serving the
-/// operator's revocation JSONL.
+/// Public HTTP endpoint serving the operator's revocation JSONL.
 ///
-/// On-prem customers (F5.4-c Helm / F5.4-d Docker Compose) can
-/// optionally fetch the operator's `revoke-license`-managed JSONL
-/// from this endpoint instead of mounting the file directly. Three
-/// states:
+/// On-prem customers can optionally fetch the operator's
+/// `revoke-license`-managed JSONL from this endpoint instead of
+/// mounting the file directly. Three states:
 ///
 /// - `MINISTR_LICENSE_REVOCATIONS_SERVE_PATH` unset → 404 +
 ///   plain-text body explaining the operator hasn't opted in.
@@ -165,8 +158,8 @@ pub(super) async fn sla_status(State(state): State<AdminState>) -> Json<SlaRespo
 /// **Unauthenticated**: the revocation list is non-secret. A
 /// `jwt_id_hash` reveals "this license is revoked" but nothing
 /// about the bearer, the customer, or the original mint context.
-/// Customers need to fetch it without bearer tokens for the
-/// F5.4-e-revoke-api-fetch (deferred) flow to work.
+/// Customers need to fetch it without bearer tokens for the deferred
+/// revocation-api-fetch flow to work.
 pub(super) async fn serve_revocation_list() -> Response {
     let Ok(path) = std::env::var("MINISTR_LICENSE_REVOCATIONS_SERVE_PATH") else {
         return (
@@ -208,9 +201,8 @@ pub(super) async fn serve_revocation_list() -> Response {
         HeaderValue::from_static("application/x-ndjson"),
     );
     // 5-minute cache is a thundering-herd guard; the customer-side
-    // fetcher (F5.4-e-revoke-api-fetch, deferred) handles freshness
-    // by polling more often if it has reason to. Public because the
-    // list is non-secret and CDN-friendly.
+    // fetcher handles freshness by polling more often if it has reason
+    // to. Public because the list is non-secret and CDN-friendly.
     response.headers_mut().insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("public, max-age=300"),

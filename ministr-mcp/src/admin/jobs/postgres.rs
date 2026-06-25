@@ -13,8 +13,8 @@
 //! idiom that lets N workers race for the head of the queue and each
 //! receive a *different* row (or `None`). The `SQLite` version can't
 //! express this; it relies on a serialised transaction that scales to
-//! one writer. F2.2's priority-queue cross-pool draining and F5.5's
-//! Enterprise dedicated lane both depend on this primitive.
+//! one writer. Priority-queue cross-pool draining and the Enterprise
+//! dedicated lane both depend on this primitive.
 
 use std::str::FromStr;
 
@@ -152,8 +152,7 @@ impl PostgresJobQueue {
     }
 }
 
-#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector in F1.2
-fn make_rustls_connector() -> MakeRustlsConnect {
+#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selectorfn make_rustls_connector() -> MakeRustlsConnect {
     // Workspace-standard trust policy (Mozilla roots + optional
     // MINISTR_PG_CA_CERT) — see `crate::pg_tls`. The original local
     // copy here lacked the CA hook and silently disabled the cloud
@@ -161,16 +160,14 @@ fn make_rustls_connector() -> MakeRustlsConnect {
     crate::pg_tls::make_rustls_connector()
 }
 
-#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector in F1.2
-fn redact_url_host(url: &str) -> String {
+#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selectorfn redact_url_host(url: &str) -> String {
     tokio_postgres::Config::from_str(url)
         .ok()
         .and_then(|cfg| cfg.get_hosts().first().cloned())
         .map_or_else(|| "<unknown>".to_owned(), |h| format!("{h:?}"))
 }
 
-#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selector in F1.2
-async fn ensure_schema(pool: &Pool) -> JobResult<()> {
+#[allow(dead_code)] // wired into `cmd_serve_http` cloud-mode selectorasync fn ensure_schema(pool: &Pool) -> JobResult<()> {
     let client = pool
         .get()
         .await
@@ -187,8 +184,8 @@ async fn ensure_schema(pool: &Pool) -> JobResult<()> {
              );
              CREATE INDEX IF NOT EXISTS idx_indexer_jobs_status_created
                  ON indexer_jobs (status, created_at);
-             -- F2.2: priority lane. `ALTER TABLE ADD COLUMN IF NOT EXISTS`
-             -- is idempotent in Postgres 9.6+; safe to run on every pod
+             -- Priority lane. `ALTER TABLE ADD COLUMN IF NOT EXISTS` is
+             -- idempotent in Postgres 9.6+; safe to run on every pod
              -- boot. The matching index covers the `(status, priority,
              -- created_at)` drain order used by claim_next so the
              -- planner picks an index scan over a seq scan on busy
@@ -323,9 +320,9 @@ impl JobQueue for PostgresJobQueue {
             // workers haven't acquired in *their* in-flight tx; the
             // FOR UPDATE keeps our row locked until commit.
             //
-            // F2.2: ORDER BY priority DESC, created_at ASC — Team jumps
-            // Pro; Enterprise jumps both. Ties on priority fall back to
-            // FIFO submission order. The composite index
+            // ORDER BY priority DESC, created_at ASC — Team jumps Pro;
+            // Enterprise jumps both. Ties on priority fall back to FIFO
+            // submission order. The composite index
             // `idx_indexer_jobs_status_priority_created` covers this
             // ordering for an index-only scan.
             let row = tx

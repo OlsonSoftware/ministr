@@ -229,21 +229,21 @@ pub enum Backend {
     Local(Arc<LocalBackend>),
     Daemon(Arc<DaemonBackend>),
     DaemonMulti(Arc<DaemonMultiBackend>),
-    /// F2.x-a — cloud mode. `default_service` answers calls with no
-    /// `project` argument (compatibility with single-corpus tools);
-    /// `registry` resolves a `project = corpus_id` argument through the
-    /// shared daemon registry, including the lazy blob-restore path
-    /// wired by `cmd_serve_http`. Restoring a corpus on demand means
-    /// every `/mcp` tool call observes the same source of truth the
-    /// REST surface does — without this variant the MCP layer routes
-    /// every call through `default_service`, which is bound to an
-    /// empty placeholder corpus on a fresh pod.
+    /// Cloud mode. `default_service` answers calls with no `project`
+    /// argument (compatibility with single-corpus tools); `registry`
+    /// resolves a `project = corpus_id` argument through the shared
+    /// daemon registry, including the lazy blob-restore path wired by
+    /// `cmd_serve_http`. Restoring a corpus on demand means every `/mcp`
+    /// tool call observes the same source of truth the REST surface does
+    /// — without this variant the MCP layer routes every call through
+    /// `default_service`, which is bound to an empty placeholder corpus
+    /// on a fresh pod.
     ///
-    /// F2.x-b — `tenant_filter`, when wired, gates the `project →
-    /// corpus_id` lookup. When the caller threads a `tenant_subject` and
-    /// the filter denies, the resolver returns `Err(default_service)`
-    /// (same shape as a typo) so the cross-tenant probe does not leak
-    /// corpus existence. `None` filter ⇒ legacy permissive behaviour
+    /// `tenant_filter`, when wired, gates the `project → corpus_id`
+    /// lookup. When the caller threads a `tenant_subject` and the filter
+    /// denies, the resolver returns `Err(default_service)` (same shape
+    /// as a typo) so the cross-tenant probe does not leak corpus
+    /// existence. `None` filter ⇒ legacy permissive behaviour
     /// (self-hosted / single-tenant serve).
     Registry {
         default_service: Arc<QueryService>,
@@ -289,10 +289,9 @@ impl Backend {
         }
     }
 
-    /// Construct a cloud-mode backend with a tenant-isolation filter
-    /// (F2.x-b). Dispatch calls that pass a `tenant_subject` will be
-    /// rejected via the typo-tolerance fallback when the filter denies
-    /// access.
+    /// Construct a cloud-mode backend with a tenant-isolation filter.
+    /// Dispatch calls that pass a `tenant_subject` will be rejected via
+    /// the typo-tolerance fallback when the filter denies access.
     #[must_use]
     pub fn registry_with_filter(
         default_service: Arc<QueryService>,
@@ -353,11 +352,11 @@ impl Backend {
     /// so a cross-tenant probe leaks no more information than a typo
     /// would.
     ///
-    /// F2.x-c — when `project = None` AND the caller threaded a
-    /// `tenant_subject` AND a `tenant_filter` is wired, ask the filter
-    /// for the tenant's default corpus (currently: most-recently-created).
-    /// If found, `ensure_present` that `corpus_id` and dispatch through
-    /// its `QueryService`. If the filter returns `None` (or the lookup
+    /// When `project = None` AND the caller threaded a `tenant_subject`
+    /// AND a `tenant_filter` is wired, ask the filter for the tenant's
+    /// default corpus (currently: most-recently-created). If found,
+    /// `ensure_present` that `corpus_id` and dispatch through its
+    /// `QueryService`. If the filter returns `None` (or the lookup
     /// errors), continue the existing fallback to `default_service`.
     ///
     /// The returned `Ok` arm carries the `Arc<CorpusHandle>` so the
@@ -370,10 +369,10 @@ impl Backend {
         tenant_subject: Option<&str>,
         project: Option<&str>,
     ) -> Result<Arc<ministr_daemon::registry::CorpusHandle>, &'a Arc<QueryService>> {
-        // F2.x-c — None project, tenant in scope: ask the filter for
-        // the tenant's default corpus. Allocate a String so the rest of
-        // the resolver works against a borrowed `&str` uniformly,
-        // without forcing the trait method to hand out a borrowed Cow.
+        // None project, tenant in scope: ask the filter for the tenant's
+        // default corpus. Allocate a String so the rest of the resolver
+        // works against a borrowed `&str` uniformly, without forcing the
+        // trait method to hand out a borrowed Cow.
         let resolved_owned: Option<String>;
         let corpus_id: &str = if let Some(id) = project {
             id
@@ -405,16 +404,16 @@ impl Backend {
                 }
             }
         };
-        // F2.x-b — gate the lookup behind the tenant filter when one is
-        // wired AND the caller threaded its tenant identity. A missing
+        // Gate the lookup behind the tenant filter when one is wired AND
+        // the caller threaded its tenant identity. A missing
         // tenant_subject in cloud mode is itself a deny: handlers that
         // accept a `project` argument MUST extract the Tenant from
         // RequestContext and pass its subject. A `None` arrives only on
         // self-hosted serve (where tenant_filter is None too). The
-        // F2.x-c default-resolution branch above already used the
-        // filter to pick the corpus_id, but we re-check `allowed` here
-        // for uniform treatment — the same filter implementation
-        // will obviously approve its own choice.
+        // default-resolution branch above already used the filter to pick
+        // the corpus_id, but we re-check `allowed` here for uniform
+        // treatment — the same filter implementation will obviously
+        // approve its own choice.
         if let Some(filter) = tenant_filter {
             let Some(subject) = tenant_subject else {
                 tracing::warn!(
@@ -1056,16 +1055,16 @@ impl Backend {
 
 #[cfg(test)]
 mod tests {
-    //! F2.x-b/c — tenant-filter behaviour tests for `Backend::Registry`.
+    //! Tenant-filter behaviour tests for `Backend::Registry`.
     //!
     //! These exercise `resolve_registry_handle` in isolation so they don't
     //! need a live `CorpusRegistry` fixture (that's covered by the
     //! daemon's `tests/common`). The tests focus on what the resolver
     //! decides given the filter alone:
-    //! - F2.x-b: `tenant_filter = Some` + `tenant_subject = None` denies.
-    //! - F2.x-b: `tenant_filter = Some` + filter returns `Ok(false)` denies.
-    //! - F2.x-b: `tenant_filter = Some` + filter returns `Err` denies (fail closed).
-    //! - F2.x-c: `project = None` consults `default_corpus_for_tenant`; falls
+    //! - `tenant_filter = Some` + `tenant_subject = None` denies.
+    //! - `tenant_filter = Some` + filter returns `Ok(false)` denies.
+    //! - `tenant_filter = Some` + filter returns `Err` denies (fail closed).
+    //! - `project = None` consults `default_corpus_for_tenant`; falls
     //!   back to `default_service` when that returns `None` or `Err`.
 
     use super::*;
@@ -1077,7 +1076,7 @@ mod tests {
     #[derive(Debug)]
     struct MockFilter {
         decision: Mutex<Result<bool, &'static str>>,
-        /// F2.x-c — configurable response for `default_corpus_for_tenant`.
+        /// Configurable response for `default_corpus_for_tenant`.
         /// `None` (the default) preserves the trait's default impl
         /// behaviour. `Some(Ok(...))` returns a `corpus_id`, `Some(Err(_))`
         /// simulates a storage failure.
@@ -1156,8 +1155,8 @@ mod tests {
         }
     }
 
-    /// F2.x-c: `project = None` consults `default_corpus_for_tenant`. With
-    /// no override set, the trait's default impl returns `None`, so the
+    /// `project = None` consults `default_corpus_for_tenant`. With no
+    /// override set, the trait's default impl returns `None`, so the
     /// resolver falls back to `default_service`. `allowed` is never
     /// called because there's no `corpus_id` to gate against.
     #[tokio::test]
@@ -1186,8 +1185,8 @@ mod tests {
         );
     }
 
-    /// F2.x-c: `project = None` + no `tenant_subject` → fall back without
-    /// calling either filter method.
+    /// `project = None` + no `tenant_subject` → fall back without calling
+    /// either filter method.
     #[tokio::test]
     async fn project_none_no_tenant_skips_filter_entirely() {
         let concrete: Arc<MockFilter> = Arc::new(MockFilter::allow());
@@ -1201,8 +1200,8 @@ mod tests {
         assert!(concrete.calls().is_empty());
     }
 
-    /// F2.x-c: `project = None` + no filter → fall back without any
-    /// filter call (preserves self-hosted / single-tenant behaviour).
+    /// `project = None` + no filter → fall back without any filter call
+    /// (preserves self-hosted / single-tenant behaviour).
     #[tokio::test]
     async fn project_none_no_filter_falls_back() {
         let default = dummy_default_service();
@@ -1212,11 +1211,11 @@ mod tests {
         assert!(outcome.is_err());
     }
 
-    /// F2.x-c: when `default_corpus_for_tenant` returns `Some(id)`,
-    /// the resolver re-checks `allowed` for the chosen corpus, then
-    /// proceeds to `ensure_present`. In tests `ensure_present` errors
-    /// (empty registry), so the outcome is Err — but BOTH filter
-    /// methods were exercised.
+    /// When `default_corpus_for_tenant` returns `Some(id)`, the resolver
+    /// re-checks `allowed` for the chosen corpus, then proceeds to
+    /// `ensure_present`. In tests `ensure_present` errors (empty
+    /// registry), so the outcome is Err — but BOTH filter methods were
+    /// exercised.
     #[tokio::test]
     async fn project_none_default_corpus_drives_lookup() {
         let concrete: Arc<MockFilter> =
@@ -1241,8 +1240,8 @@ mod tests {
         );
     }
 
-    /// F2.x-c: storage error on `default_corpus_for_tenant` → fall
-    /// back to `default_service` (don't crash, don't leak the error).
+    /// Storage error on `default_corpus_for_tenant` → fall back to
+    /// `default_service` (don't crash, don't leak the error).
     #[tokio::test]
     async fn project_none_default_corpus_error_falls_back() {
         let concrete: Arc<MockFilter> = Arc::new(

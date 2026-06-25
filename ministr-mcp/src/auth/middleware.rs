@@ -77,13 +77,13 @@ pub async fn validate_scope_middleware(
         return unauthorized_response(state.store.config());
     };
 
-    // F3.4a — resolve_tenant_with_scope walks BOTH paths: OAuth token
-    // first, then the API-key resolver (mst_pk_…) on miss. The earlier
-    // shape pre-checked `validate_token` (OAuth-only) and 401'd before
-    // ever reaching the api-key fall-through — so a valid API key was
-    // rejected as "invalid or expired token". Surfaced by F-Test-1's
-    // harness. We distinguish three outcomes by calling the unified
-    // resolver and inspecting the failure mode:
+    // `resolve_tenant_with_scope` walks BOTH paths: OAuth token first,
+    // then the API-key resolver (mst_pk_…) on miss. The earlier shape
+    // pre-checked `validate_token` (OAuth-only) and 401'd before ever
+    // reaching the api-key fall-through — so a valid API key was
+    // rejected as "invalid or expired token". We distinguish three
+    // outcomes by calling the unified resolver and inspecting the failure
+    // mode:
     //   - resolve_tenant: scope-agnostic check first to disambiguate
     //     "token unknown" (401) from "token known but lacks scope" (403).
     if state.store.resolve_tenant(token).await.is_none() {

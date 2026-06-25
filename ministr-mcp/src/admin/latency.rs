@@ -1,10 +1,9 @@
-//! F5.5-b-latency — in-memory rolling-window latency histogram.
+//! In-memory rolling-window latency histogram.
 //!
 //! Captures the elapsed time of every request the cloud serves and
 //! exposes p50/p95/p99 percentiles via the `/sla` endpoint. The SLA
-//! contract (F5.5: p95 ≤200ms query latency) is meaningless without
-//! a number to measure it against; this module ships the data
-//! source.
+//! contract (p95 ≤200ms query latency) is meaningless without a number
+//! to measure it against; this module ships the data source.
 //!
 //! # Storage choice
 //!
@@ -27,9 +26,8 @@
 //! - Per-route or per-method buckets — every request lands in one
 //!   pool. `/sla` and `/healthz` are sub-millisecond and don't shift
 //!   the p95 of real query workloads at 1024-sample window depth.
-//! - Cross-pod aggregation — restart drops the buffer. The
-//!   `F5.5-b-persist` chunk adds a DB-backed metrics table for
-//!   30-day rolling windows.
+//! - Cross-pod aggregation — restart drops the buffer. A separate
+//!   DB-backed metrics table covers 30-day rolling windows.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -127,7 +125,7 @@ pub struct LatencySnapshot {
     /// 50th percentile (median) in microseconds.
     pub p50_us: u32,
     /// 95th percentile in microseconds. The SLA contract is
-    /// expressed against this number (F5.5: ≤200ms = `200_000`µs).
+    /// expressed against this number (≤200ms = `200_000`µs).
     pub p95_us: u32,
     /// 99th percentile in microseconds.
     pub p99_us: u32,
@@ -150,10 +148,10 @@ fn percentile(sorted: &[u32], q: f64) -> u32 {
     sorted[idx]
 }
 
-/// F5.5-b-latency — axum middleware that records every request's
-/// total elapsed time. Mount via `axum::middleware::from_fn_with_state`
-/// on the final composed router so it sees every route. The /sla
-/// handler reads from the same tracker via `AdminState`.
+/// Axum middleware that records every request's total elapsed time.
+/// Mount via `axum::middleware::from_fn_with_state` on the final
+/// composed router so it sees every route. The /sla handler reads from
+/// the same tracker via `AdminState`.
 ///
 /// Elapsed time is clamped to `u32::MAX` microseconds (~71min) which
 /// is generous — any single request taking longer than that is

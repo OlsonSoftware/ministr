@@ -261,15 +261,14 @@ pub(crate) fn iso8601_now() -> String {
     format_timestamp(secs)
 }
 
-/// F6.2-a — render an arbitrary Unix-epoch seconds value as an
-/// ISO-8601 UTC string. Used by the session export to derive the
-/// session's `opened_at` from `Session::elapsed()` since
-/// `Session::created_at` is a monotonic `Instant`.
+/// Render an arbitrary Unix-epoch seconds value as an ISO-8601 UTC
+/// string. Used by the session export to derive the session's
+/// `opened_at` from `Session::elapsed()` since `Session::created_at`
+/// is a monotonic `Instant`.
 ///
-/// F6.2-c promoted to `pub` so the cloud-side
-/// `CloudSessionBundleStore` can format signed-URL expiry timestamps
-/// in the same shape (the inspector compares `expires_at` strings
-/// lexically).
+/// Promoted to `pub` so the cloud-side `CloudSessionBundleStore` can
+/// format signed-URL expiry timestamps in the same shape (the inspector
+/// compares `expires_at` strings lexically).
 #[must_use]
 pub fn iso8601_from_secs(secs: u64) -> String {
     format_timestamp(secs)

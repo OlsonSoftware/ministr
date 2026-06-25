@@ -1,4 +1,4 @@
-//! F2.x-b — tenant scoping for MCP tool dispatch.
+//! Tenant scoping for MCP tool dispatch.
 //!
 //! Tool handlers (`#[tool]` methods in `MinistrServer`) cannot take a
 //! `RequestContext<RoleServer>` parameter without breaking the unit
@@ -28,12 +28,11 @@ tokio::task_local! {
     /// single HTTP request. Set by [`scope_tenant`], read by [`current`].
     static TENANT_SUBJECT: Option<String>;
 
-    /// F5.5-a-priority — task-local billing plan, set alongside
-    /// `TENANT_SUBJECT` by [`scope_tenant`]. Read by [`current_plan`]
-    /// so producer-side code (e.g. `PostgresIndexJobSink::create_pending`)
-    /// can derive a queue priority via
-    /// [`crate::auth::tenant::queue_priority`] without needing the
-    /// `Tenant` extension on its own call surface.
+    /// Task-local billing plan, set alongside `TENANT_SUBJECT` by
+    /// [`scope_tenant`]. Read by [`current_plan`] so producer-side code
+    /// (e.g. `PostgresIndexJobSink::create_pending`) can derive a queue
+    /// priority via [`crate::auth::tenant::queue_priority`] without
+    /// needing the `Tenant` extension on its own call surface.
     static TENANT_PLAN: Option<Plan>;
 }
 
@@ -45,8 +44,8 @@ pub fn current() -> Option<String> {
     TENANT_SUBJECT.try_with(Clone::clone).ok().flatten()
 }
 
-/// F5.5-a-priority — return the current request's billing plan, or
-/// `None` when called outside a [`scope_tenant`] scope.
+/// Return the current request's billing plan, or `None` when called
+/// outside a [`scope_tenant`] scope.
 #[must_use]
 pub fn current_plan() -> Option<Plan> {
     TENANT_PLAN.try_with(|p| *p).ok().flatten()
@@ -118,8 +117,8 @@ mod tests {
 
     #[tokio::test]
     async fn current_plan_round_trips_via_scope_for_test() {
-        // F5.5-a-priority — the producer-side wiring needs to recover
-        // the requesting tenant's plan from this task-local.
+        // The producer-side wiring needs to recover the requesting
+        // tenant's plan from this task-local.
         scope_for_test(Some("alice".to_string()), Some(Plan::Enterprise), async {
             assert_eq!(current().as_deref(), Some("alice"));
             assert_eq!(current_plan(), Some(Plan::Enterprise));

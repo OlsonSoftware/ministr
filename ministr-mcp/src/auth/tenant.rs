@@ -2,7 +2,7 @@
 //!
 //! Handlers read [`Tenant`] from axum's `Extension<Tenant>` after the
 //! token-validation middleware ([`super::middleware`]) succeeds. The
-//! struct mirrors ROADMAP §4 F1.2: `{ subject, org_id, plan }`.
+//! struct shape: `{ subject, org_id, plan }`.
 //!
 //! # The open-core seam
 //!
@@ -16,9 +16,9 @@
 //! # Resolution lane
 //!
 //! Self-hosted single-user MCP serve returns [`Tenant::local`] from a
-//! token's `client_id` — Pro tier, no org. Cloud (F1.2 sub-bullet 4 +
-//! F1.3) replaces this with a DB lookup against `users.plan_id` and
-//! `org_members` so handlers see the real tenant.
+//! token's `client_id` — Pro tier, no org. Cloud deployments replace
+//! this with a DB lookup against `users.plan_id` and `org_members` so
+//! handlers see the real tenant.
 
 use serde::{Deserialize, Serialize};
 
@@ -42,15 +42,12 @@ pub enum Plan {
 }
 
 /// Indexing-queue priority for a tier. Higher wins. The pool drains in
-/// `ORDER BY priority DESC, enqueued_at ASC`. F2.2 wired this into the
-/// queue schema + `claim_next` ordering; F5.5-a-priority finishes the
-/// producer side: customer-driven enqueues stamp this value so Team
-/// jumps Pro and Enterprise jumps both.
+/// `ORDER BY priority DESC, enqueued_at ASC`. Customer-driven enqueues
+/// stamp this value so Team jumps Pro and Enterprise jumps both.
 ///
-/// Enterprise sits at `4` (not `3`) to match the F5.5 roadmap line
-/// "otherwise a dedicated `priority=4` lane in the shared pool ahead
-/// of all multi-tenant traffic." `3` is reserved for future per-org
-/// boosts (e.g. paid SLA add-on for a Team customer).
+/// Enterprise sits at `4` (not `3`) to leave a dedicated lane in the
+/// shared pool ahead of all multi-tenant traffic. `3` is reserved for
+/// future per-org boosts (e.g. paid SLA add-on for a Team customer).
 ///
 /// Operator-driven enqueues (GitHub webhooks, Atlas weekly re-index)
 /// pass `0` directly — they're not customer-facing and shouldn't jump
@@ -90,7 +87,7 @@ pub struct Tenant {
 impl Tenant {
     /// Self-hosted / single-user default: Pro tier, no org, subject =
     /// the token's `client_id`. Cloud-side resolvers replace this with
-    /// a DB lookup once F1.2 sub-bullet 4 lands.
+    /// a DB lookup.
     #[must_use]
     pub fn local(subject: impl Into<String>) -> Self {
         Self {
@@ -111,11 +108,10 @@ mod tests {
     }
 
     #[test]
-    fn queue_priority_matches_roadmap_f55_lanes() {
-        // F5.5-a-priority — operator/unscoped enqueues sit at 0;
-        // paying tiers climb in order, with Enterprise at the roadmap-
-        // pinned `priority=4` lane (gap at 3 reserved for future
-        // per-org boosts on top of a Team subscription).
+    fn queue_priority_matches_tier_lanes() {
+        // Operator/unscoped enqueues sit at 0; paying tiers climb in
+        // order, with Enterprise at `priority=4` (gap at 3 reserved for
+        // future per-org boosts on top of a Team subscription).
         assert_eq!(queue_priority(Plan::Pro), 1);
         assert_eq!(queue_priority(Plan::Team), 2);
         assert_eq!(queue_priority(Plan::Enterprise), 4);

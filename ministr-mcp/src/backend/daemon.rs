@@ -154,8 +154,8 @@ impl QueryBackend for DaemonBackend {
                 kind: filter.kind.clone(),
                 module: filter.module.clone(),
                 visibility: filter.visibility.clone(),
-                // gd2c-2: the daemon now honors a file_path filter, so the
-                // daemon-backend forwards it instead of silently dropping it.
+                // The daemon honors a file_path filter, so the daemon-backend
+                // forwards it instead of silently dropping it.
                 file_path: filter.file_path.clone(),
                 limit: None,
                 session_id,

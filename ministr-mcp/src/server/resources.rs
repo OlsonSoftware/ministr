@@ -163,11 +163,11 @@ impl MinistrServer {
         // index stats — the agent can still inspect session + budget.
         let index = self.service.as_ref().map(|s| s.index());
         let mut reg = self.registry.lock().await;
-        // F-Test-3b-fix-1-shared-bootstrap: get-or-create so a fresh
-        // /mcp connection that reads ministr://status before any tool
-        // call gets an empty session rather than a panic. Snapshot the
-        // entry's fields into owned values so the &mut reg borrow can
-        // be released before the registry's own session_count/ids
+        // Get-or-create so a fresh /mcp connection that reads
+        // ministr://status before any tool call gets an empty session
+        // rather than a panic. Snapshot the entry's fields into owned
+        // values so the &mut reg borrow can be released before the
+        // registry's own session_count/ids
         // accessors are used.
         let (session_id_str, delivered_count, budget_status) = {
             let entry = self.ensure_session_mut(&mut reg);

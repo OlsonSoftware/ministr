@@ -125,12 +125,12 @@ pub struct Job {
     pub created_at: u64,
     pub updated_at: u64,
     pub error: Option<String>,
-    /// F2.2 — tier-derived scheduling priority. Higher wins. The
-    /// Postgres backend drains `ORDER BY priority DESC, created_at ASC`
-    /// so Team jumps Pro; in-memory + `SQLite` back-ends ignore the
-    /// value (single-worker self-hosted has no notion of priority).
-    /// Defaults to `0` to keep self-hosted enqueue calls source-stable
-    /// — they emit a single bucket and queue order remains FIFO.
+    /// Tier-derived scheduling priority. Higher wins. The Postgres
+    /// backend drains `ORDER BY priority DESC, created_at ASC` so Team
+    /// jumps Pro; in-memory + `SQLite` back-ends ignore the value
+    /// (single-worker self-hosted has no notion of priority). Defaults
+    /// to `0` to keep self-hosted enqueue calls source-stable — they
+    /// emit a single bucket and queue order remains FIFO.
     #[serde(default)]
     pub priority: i16,
 }

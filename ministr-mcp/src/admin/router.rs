@@ -18,15 +18,14 @@ use super::webhook::github_webhook;
 /// Build the public admin router: health probe, SLA probe, GitHub
 /// webhook, license-revocation list.
 ///
-/// `/sla` (F5.5-b-sla-skeleton) is mounted unauthenticated alongside
-/// `/healthz` so the eventual `status.ministr.ai` dashboard + richer
-/// load-balancer probes can poll uptime without a bearer token.
+/// `/sla` is mounted unauthenticated alongside `/healthz` so the
+/// eventual `status.ministr.ai` dashboard + richer load-balancer
+/// probes can poll uptime without a bearer token.
 ///
-/// `/api/v1/license-revocations.jsonl` (F5.4-e-revoke-api-serve) is
-/// unauthenticated because the revocation list is non-secret — a
-/// `jwt_id_hash` doesn't reveal anything about the bearer, customer,
-/// or mint context. Customers' on-prem serves fetch it without
-/// bearer tokens for the F5.4-e-revoke-api-fetch (deferred) flow.
+/// `/api/v1/license-revocations.jsonl` is unauthenticated because the
+/// revocation list is non-secret — a `jwt_id_hash` doesn't reveal
+/// anything about the bearer, customer, or mint context. Customers'
+/// on-prem serves fetch it without bearer tokens.
 pub fn admin_public_routes(state: AdminState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))

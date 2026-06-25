@@ -45,24 +45,21 @@ pub struct AdminState {
     queue: JobQueueBackend,
     webhook_secret: Option<Arc<String>>,
     corpus_count: Arc<AtomicUsize>,
-    /// F5.5-b-sla-skeleton — captured at construction time so the
-    /// `/sla` handler can report uptime via `Instant::elapsed`.
-    /// `Instant` is `Copy`, so embedding directly (no Arc) keeps
-    /// `AdminState`'s cheap-clone property intact.
+    /// Captured at construction time so the `/sla` handler can report
+    /// uptime via `Instant::elapsed`. `Instant` is `Copy`, so embedding
+    /// directly (no Arc) keeps `AdminState`'s cheap-clone property intact.
     boot_started_at: Instant,
-    /// F5.5-b-latency — shared latency tracker. The
-    /// `record_latency_middleware` mounted on the final composed
-    /// router records every request's elapsed micros here; the
-    /// `/sla` handler reads percentiles via [`LatencyTracker::snapshot`].
-    /// Cheap to clone (Arc-backed).
+    /// Shared latency tracker. The `record_latency_middleware` mounted
+    /// on the final composed router records every request's elapsed
+    /// micros here; the `/sla` handler reads percentiles via
+    /// [`LatencyTracker::snapshot`]. Cheap to clone (Arc-backed).
     latency: LatencyTracker,
-    /// F5.5-b-persist-read — optional historical SLA-window query.
-    /// `Some` in cloud mode (wired via [`Self::with_sla_window_store`]
-    /// with a [`ministr_cloud::PostgresSlaWindowStore`]); `None` on
-    /// self-hosted serve where the `request_latency_snapshots` table
-    /// doesn't exist. The `/sla` handler renders
-    /// `latency.window_30d_max_p95_ms` as `null` when this is `None`
-    /// or the store returns `Ok(None)`.
+    /// Optional historical SLA-window query. `Some` in cloud mode
+    /// (wired via [`Self::with_sla_window_store`] with a
+    /// [`ministr_cloud::PostgresSlaWindowStore`]); `None` on self-hosted
+    /// serve where the `request_latency_snapshots` table doesn't exist.
+    /// The `/sla` handler renders `latency.window_30d_max_p95_ms` as
+    /// `null` when this is `None` or the store returns `Ok(None)`.
     sla_window_store: Option<Arc<dyn SlaWindowStore>>,
 }
 
@@ -82,11 +79,10 @@ impl AdminState {
         }
     }
 
-    /// F5.5-b-persist-read — install a `SlaWindowStore` so the
-    /// `/sla` handler can render historical `window_30d_max_p95_ms`.
-    /// Cloud serve calls this with a `PostgresSlaWindowStore` from
-    /// `ministr-cloud`; self-hosted serve leaves the field `None`
-    /// and the JSON field renders as `null`.
+    /// Install a `SlaWindowStore` so the `/sla` handler can render
+    /// historical `window_30d_max_p95_ms`. Cloud serve calls this with
+    /// a `PostgresSlaWindowStore` from `ministr-cloud`; self-hosted
+    /// serve leaves the field `None` and the JSON field renders as `null`.
     #[must_use]
     pub fn with_sla_window_store(mut self, store: Arc<dyn SlaWindowStore>) -> Self {
         self.sla_window_store = Some(store);
@@ -125,25 +121,24 @@ impl AdminState {
         self.corpus_count.load(Ordering::Relaxed)
     }
 
-    /// F5.5-b-sla-skeleton — uptime since this `AdminState` was
-    /// constructed (which mirrors when the serve booted). Read by
-    /// the `/sla` handler.
+    /// Uptime since this `AdminState` was constructed (which mirrors
+    /// when the serve booted). Read by the `/sla` handler.
     pub(super) fn uptime_secs(&self) -> u64 {
         self.boot_started_at.elapsed().as_secs()
     }
 
-    /// F5.5-b-latency — clone the embedded tracker. Used by
-    /// `cmd_serve_http` to construct the `from_fn_with_state`
-    /// middleware that records every request's latency, and by the
-    /// `/sla` handler to read percentiles. Both clones share the same
-    /// backing buffer via the inner `Arc<Mutex<...>>`.
+    /// Clone the embedded tracker. Used by `cmd_serve_http` to construct
+    /// the `from_fn_with_state` middleware that records every request's
+    /// latency, and by the `/sla` handler to read percentiles. Both
+    /// clones share the same backing buffer via the inner
+    /// `Arc<Mutex<...>>`.
     #[must_use]
     pub fn latency_tracker(&self) -> LatencyTracker {
         self.latency.clone()
     }
 
-    /// F5.5-b-persist-read — borrow the optional `SlaWindowStore`.
-    /// Read by the `/sla` handler. `None` on self-hosted serve.
+    /// Borrow the optional `SlaWindowStore`. Read by the `/sla` handler.
+    /// `None` on self-hosted serve.
     pub(super) fn sla_window_store(&self) -> Option<&Arc<dyn SlaWindowStore>> {
         self.sla_window_store.as_ref()
     }

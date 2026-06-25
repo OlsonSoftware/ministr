@@ -1,10 +1,9 @@
-//! F6.2 — session bundles + export surface.
+//! Session bundles and export surface.
 //!
 //! The bundle layer adapts a live in-memory [`SessionEntry`] into a
 //! deterministic, portable archive an agent dev can download for
-//! replay / inspection. Today's scope is the export side (F6.2-a);
-//! import + signed-URL delivery + Tauri inspector follow in their
-//! own chunks.
+//! replay / inspection. The current scope is the export side; import,
+//! signed-URL delivery, and a Tauri inspector are deferred.
 //!
 //! Lives in `ministr-mcp` because the `SessionRegistry` (the source
 //! of truth for live session state) is held by `MinistrServer` here.

@@ -174,10 +174,10 @@ impl MinistrServer {
     pub fn fork_for_new_session(&self) -> Self {
         let mut forked = self.clone();
         forked.active_session_id = uuid_v4();
-        // F-Test-3b-fix-1 — reset the tenant_id_hint so a fresh
-        // /mcp connection from a different tenant doesn't inherit the
-        // previous tenant's captured subject through the shared Arc.
-        // Each connection re-stamps via its own `initialize` handler.
+        // Reset the tenant_id_hint so a fresh /mcp connection from a
+        // different tenant doesn't inherit the previous tenant's captured
+        // subject through the shared Arc. Each connection re-stamps via
+        // its own `initialize` handler.
         forked.tenant_id_hint = std::sync::Arc::new(std::sync::Mutex::new(None));
         forked.session_id_override = std::sync::Arc::new(std::sync::Mutex::new(None));
         forked
@@ -318,11 +318,10 @@ impl MinistrServer {
     /// it constructs a single `Arc<CorpusRegistry>` and hands the same
     /// clone to both. That way a corpus created via REST (or queried
     /// via REST) lands in the same state the MCP tools observe — a
-    /// prerequisite for the multi-tenant scoping work in F1.2 and the
-    /// quota middleware in F2.3.
+    /// prerequisite for multi-tenant scoping and quota middleware.
     ///
-    /// F2.x-a — when the server was constructed in `Backend::Local`
-    /// mode (the cloud HTTP path), this also swaps the backend to
+    /// When the server was constructed in `Backend::Local` mode (the
+    /// cloud HTTP path), this also swaps the backend to
     /// [`crate::backend::Backend::Registry`] so per-call dispatch
     /// resolves the `project = corpus_id` argument through the shared
     /// registry instead of always answering against the startup-bound
@@ -346,7 +345,7 @@ impl MinistrServer {
         self
     }
 
-    /// F2.x-b — like [`Self::with_corpus_registry`], but also wires a
+    /// Like [`Self::with_corpus_registry`], but also wires a
     /// tenant-isolation filter. Cross-tenant `corpus_id` probes return
     /// the same typo-tolerance shape (empty results, not 403) so an
     /// attacker cannot enumerate other tenants' corpus IDs.
@@ -371,12 +370,11 @@ impl MinistrServer {
         self
     }
 
-    /// F6.1-g — attach a durable [`SessionStorage`] backend to the
-    /// server's session registry. Self-hosted serve leaves this unset
-    /// (registry's `storage` field stays `None` and `persist_snapshot`
-    /// collapses to a no-op); the cloud `cmd_serve_http` wires this with
-    /// a `PostgresSessionStorage` so the F6.1-e snapshot helper actually
-    /// persists to durable storage.
+    /// Attach a durable [`SessionStorage`] backend to the server's
+    /// session registry. Self-hosted serve leaves this unset (registry's
+    /// `storage` field stays `None` and `persist_snapshot` collapses to
+    /// a no-op); the cloud `cmd_serve_http` wires this with a
+    /// `PostgresSessionStorage` so snapshot persists to durable storage.
     ///
     /// Async because the registry sits behind a `tokio::sync::Mutex`.
     /// Called once at server boot — before the factory closure is built —
@@ -392,12 +390,11 @@ impl MinistrServer {
         self
     }
 
-    /// F6.1-g — attach a durable [`DropsLedger`] backend to the
-    /// server's session registry. Mirrors [`Self::with_session_storage`]
-    /// for the eviction-event side: self-hosted serve leaves it unset
-    /// (registry's `drops_ledger` field stays `None`); cloud wires a
-    /// `PostgresDropsLedger` so the F6.1-d-c drops helper actually
-    /// persists.
+    /// Attach a durable [`DropsLedger`] backend to the server's session
+    /// registry. Mirrors [`Self::with_session_storage`] for the
+    /// eviction-event side: self-hosted serve leaves it unset (registry's
+    /// `drops_ledger` field stays `None`); cloud wires a
+    /// `PostgresDropsLedger` so the drops helper actually persists.
     ///
     /// [`DropsLedger`]: ministr_api::DropsLedger
     #[must_use = "the builder consumes self; assign the returned value"]
@@ -570,10 +567,10 @@ impl MinistrServer {
     /// The session ID tool handlers should use.
     ///
     /// In stateful mode (with `initialize`), this returns
-    /// `active_session_id` unchanged. In stateless mode (F7.3),
-    /// `call_tool` sets `session_id_override` to a deterministic ID
-    /// derived from the tenant subject so the same agent gets the same
-    /// session across requests. This method checks the override first.
+    /// `active_session_id` unchanged. In stateless mode, `call_tool`
+    /// sets `session_id_override` to a deterministic ID derived from the
+    /// tenant subject so the same agent gets the same session across
+    /// requests. This method checks the override first.
     #[must_use]
     pub(crate) fn effective_session_id(&self) -> String {
         self.session_id_override
@@ -586,14 +583,13 @@ impl MinistrServer {
     /// Resolve the calling tenant's subject — walks the tokio
     /// task-local first, then falls back to `tenant_id_hint`.
     ///
-    /// F-Test-3b-fix-1 + F-Test-3b-fix-2: the task-local set by the
-    /// outer `scope_tenant` axum middleware is lost across rmcp's
-    /// internal dispatch boundary, so `tenant_scope::current()`
-    /// returns `None` inside every `/mcp` tool handler. The hint is
-    /// captured in `MinistrServer::initialize` from the axum
-    /// `Tenant` extension that rmcp injects into
-    /// `RequestContext::extensions` (via `http::request::Parts`),
-    /// which DOES survive the spawn. Use this helper instead of
+    /// The task-local set by the outer `scope_tenant` axum middleware is
+    /// lost across rmcp's internal dispatch boundary, so
+    /// `tenant_scope::current()` returns `None` inside every `/mcp` tool
+    /// handler. The hint is captured in `MinistrServer::initialize` from
+    /// the axum `Tenant` extension that rmcp injects into
+    /// `RequestContext::extensions` (via `http::request::Parts`), which
+    /// DOES survive the spawn. Use this helper instead of
     /// `tenant_scope::current()` directly so cloud /mcp callers
     /// recover their tenant subject on every handler that needs it
     /// (default-corpus selection, cross-corpus survey, per-tenant

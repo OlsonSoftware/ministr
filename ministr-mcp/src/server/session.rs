@@ -17,7 +17,7 @@ use super::MinistrServer;
 use super::types::{NextAction, ToolResponse};
 use crate::task::iso8601_now;
 
-/// F6.1-d-c — emit a drops-ledger entry per evicted claim id.
+/// Emit a drops-ledger entry per evicted claim id.
 ///
 /// Skipped when no tenant is scoped (stdio / in-process / self-hosted serve);
 /// the ledger backend is also typically `None` in those modes, so
@@ -31,7 +31,7 @@ fn emit_section_drops(reg: &SessionRegistry, session_id: &str, evicted_ids: &[St
     }
 }
 
-/// F6.1-f — consult the durable storage for a previously-snapshotted
+/// Consult the durable storage for a previously-snapshotted
 /// session, hydrating an in-memory shell when found.
 ///
 /// Skipped when no tenant is scoped (stdio / in-process / self-hosted serve)
@@ -50,7 +50,7 @@ async fn try_restore_session(reg: &mut SessionRegistry, session_id: &str) {
         .await;
 }
 
-/// F6.1-e — emit a `SessionSnapshot` so the cloud's [`PostgresSessionStorage`]
+/// Emit a `SessionSnapshot` so the cloud's [`PostgresSessionStorage`]
 /// holds enough state to restore the session on the next pod.
 ///
 /// Skipped when no tenant is scoped (stdio / in-process / self-hosted serve);
@@ -58,14 +58,13 @@ async fn try_restore_session(reg: &mut SessionRegistry, session_id: &str) {
 /// [`SessionRegistry::persist_snapshot`] would collapse to a no-op anyway.
 ///
 /// `opened_at` and `last_seen_at` both carry the current wall-clock. The
-/// Postgres UPSERT preserves `opened_at` across re-saves (per F6.1-a's
-/// `save` contract) so the FIRST insert captures the actual opening time
-/// and later calls only advance `last_seen_at`. `corpus_id` is intentionally
-/// `None` for v0 — `record_section_delivery` doesn't carry the bound corpus;
-/// threading it through is a follow-up. `coherence_score` is 0.0 as a
-/// placeholder per F6.1-c-followup's "coherence-score restore deferred"
-/// note; the field is non-optional in the snapshot schema but no consumer
-/// reads it yet.
+/// Postgres UPSERT preserves `opened_at` across re-saves so the FIRST
+/// insert captures the actual opening time and later calls only advance
+/// `last_seen_at`. `corpus_id` is intentionally `None` for v0 —
+/// `record_section_delivery` doesn't carry the bound corpus; threading
+/// it through is a follow-up. `coherence_score` is 0.0 as a placeholder
+/// (the field is non-optional in the snapshot schema but no consumer
+/// reads it yet).
 ///
 /// [`PostgresSessionStorage`]: ministr_cloud::session_storage::PostgresSessionStorage
 fn emit_session_snapshot(reg: &SessionRegistry, session_id: &str, status: &UsageStatus) {
@@ -120,21 +119,20 @@ impl MinistrServer {
         {
             entry.client_name = Some(name);
         }
-        // F6.2-e-followup — stamp tenant_id from the request's
-        // tenant_scope task-local. `None` on self-hosted / stdio /
-        // in-process tests (no scope mounted); `Some(subject)` on
-        // every cloud request after `validate_token_middleware` and
-        // `scope_tenant`.
+        // Stamp tenant_id from the request's tenant_scope task-local.
+        // `None` on self-hosted / stdio / in-process tests (no scope
+        // mounted); `Some(subject)` on every cloud request after
+        // `validate_token_middleware` and `scope_tenant`.
         //
-        // F-Test-3b-fix-1 + fix-2: on the cloud `/mcp` path, the
-        // task-local set by the outer `scope_tenant` middleware doesn't
-        // survive rmcp's internal request dispatcher (its spawn loses
-        // tokio task-locals). `current_tenant_subject` walks the
-        // task-local first, then falls back to `self.tenant_id_hint`,
-        // which is captured at `initialize` time from
-        // `context.extensions`'s `axum::http::request::Parts` (the
-        // Parts extension path survives the spawn boundary). Mirrors
-        // the parent / client_name hint pattern.
+        // On the cloud `/mcp` path, the task-local set by the outer
+        // `scope_tenant` middleware doesn't survive rmcp's internal
+        // request dispatcher (its spawn loses tokio task-locals).
+        // `current_tenant_subject` walks the task-local first, then
+        // falls back to `self.tenant_id_hint`, which is captured at
+        // `initialize` time from `context.extensions`'s
+        // `axum::http::request::Parts` (the Parts extension path
+        // survives the spawn boundary). Mirrors the parent /
+        // client_name hint pattern.
         if entry.tenant_id.is_none()
             && let Some(subject) = self.current_tenant_subject()
         {
@@ -159,7 +157,7 @@ impl MinistrServer {
         let token_count = count_tokens(text);
         let content_id = ContentId(section_id.to_string());
         let mut reg = self.registry.lock().await;
-        // F6.1-f — hydrate from durable storage on first access this pod.
+        // Hydrate from durable storage on first access this pod.
         try_restore_session(&mut reg, &self.effective_session_id()).await;
         let entry = self.ensure_session_mut(&mut reg);
         let turn = entry.session.current_turn() + 1;
@@ -174,12 +172,12 @@ impl MinistrServer {
 
         let status = entry.budget.usage_status();
 
-        // F6.1-d-c — persist eviction events to the drops ledger before
-        // releasing the registry lock.
+        // Persist eviction events to the drops ledger before releasing
+        // the registry lock.
         emit_section_drops(&reg, &self.effective_session_id(), &evicted_ids);
 
-        // F6.1-e — checkpoint the session snapshot (budget_used + timestamps)
-        // so a fresh pod can lazy-restore it via SessionRegistry::try_restore.
+        // Checkpoint the session snapshot (budget_used + timestamps) so a
+        // fresh pod can lazy-restore it via SessionRegistry::try_restore.
         emit_session_snapshot(&reg, &self.effective_session_id(), &status);
 
         drop(reg);
@@ -266,7 +264,7 @@ impl MinistrServer {
         extra_next_actions: Vec<NextAction>,
     ) -> ToolResponse<T> {
         let mut reg = self.registry.lock().await;
-        // F6.1-f — hydrate from durable storage on first access this pod.
+        // Hydrate from durable storage on first access this pod.
         try_restore_session(&mut reg, &self.effective_session_id()).await;
         let entry = self.ensure_session_mut(&mut reg);
         let alerts = entry.session.drain_alerts();
@@ -347,7 +345,7 @@ mod tests {
     use ministr_core::session::{CoherenceAlert, UsageConfig, UsageLevel};
     use std::sync::{Arc, Mutex as StdMutex};
 
-    /// F6.1-d-c — test-only ledger that records every entry it receives.
+    /// Test-only ledger that records every entry it receives.
     #[derive(Debug, Default)]
     struct StubLedger {
         entries: StdMutex<Vec<DropEntry>>,
@@ -374,7 +372,7 @@ mod tests {
         }
     }
 
-    /// F6.1-d-c — when a tenant is scoped and evictions are non-empty,
+    /// When a tenant is scoped and evictions are non-empty,
     /// the wiring helper fires one ledger entry per evicted claim id.
     #[tokio::test]
     async fn emit_section_drops_fires_when_tenant_scoped() {
@@ -413,8 +411,8 @@ mod tests {
         assert!(claim_ids.contains(&"docs/b.md#y"));
     }
 
-    /// F6.1-d-c — without a tenant scope (stdio / self-hosted), the wiring
-    /// skips the ledger call. Mirrors the production no-op for those modes.
+    /// Without a tenant scope (stdio / self-hosted), the wiring skips the
+    /// ledger call. Mirrors the production no-op for those modes.
     #[tokio::test]
     async fn emit_section_drops_skips_when_no_tenant_scope() {
         let stub = Arc::new(StubLedger::default());
@@ -434,7 +432,7 @@ mod tests {
         );
     }
 
-    /// F6.1-e — test-only `SessionStorage` that captures every save.
+    /// Test-only `SessionStorage` that captures every save.
     #[derive(Debug, Default)]
     struct StubStorage {
         saves: StdMutex<Vec<SessionSnapshot>>,
@@ -453,9 +451,9 @@ mod tests {
         }
 
         fn load<'a>(&'a self, tenant_id: &'a str, session_id: &'a str) -> LoadSessionFuture<'a> {
-            // Mirrors the registry.rs F6.1-c StubStorage: return the
-            // most-recently-saved snapshot matching the `(tenant_id,
-            // session_id)` PK so round-trip tests can pre-seed via `save`.
+            // Return the most-recently-saved snapshot matching the
+            // `(tenant_id, session_id)` PK so round-trip tests can
+            // pre-seed via `save`.
             Box::pin(async move {
                 let saves = self
                     .saves
@@ -489,8 +487,8 @@ mod tests {
         }
     }
 
-    /// F6.1-e — when a tenant is scoped and storage is wired, the snapshot
-    /// helper fires one save carrying the live `tokens_used`.
+    /// When a tenant is scoped and storage is wired, the snapshot helper
+    /// fires one save carrying the live `tokens_used`.
     #[tokio::test]
     async fn emit_session_snapshot_fires_when_tenant_scoped() {
         let stub = Arc::new(StubStorage::default());
@@ -526,8 +524,8 @@ mod tests {
         assert_eq!(snap.opened_at, snap.last_seen_at);
     }
 
-    /// F6.1-e — without a tenant scope, the snapshot helper short-circuits
-    /// before building a snapshot or touching storage.
+    /// Without a tenant scope, the snapshot helper short-circuits before
+    /// building a snapshot or touching storage.
     #[tokio::test]
     async fn emit_session_snapshot_skips_when_no_tenant_scope() {
         let stub = Arc::new(StubStorage::default());
@@ -545,8 +543,8 @@ mod tests {
         );
     }
 
-    /// F6.1-e — when no storage backend is wired, the registry's
-    /// `persist_snapshot` collapses to a no-op even with a scoped tenant.
+    /// When no storage backend is wired, the registry's `persist_snapshot`
+    /// collapses to a no-op even with a scoped tenant.
     #[tokio::test]
     async fn emit_session_snapshot_is_noop_without_storage() {
         let registry = SessionRegistry::new(UsageConfig::default());
@@ -558,7 +556,7 @@ mod tests {
         // No assertion target — the point is the call doesn't panic.
     }
 
-    /// F6.1-f — when a tenant is scoped and storage has a matching snapshot,
+    /// When a tenant is scoped and storage has a matching snapshot,
     /// `try_restore_session` materialises the in-memory shell.
     #[tokio::test]
     async fn try_restore_session_hydrates_when_storage_hits() {
@@ -595,8 +593,8 @@ mod tests {
         );
     }
 
-    /// F6.1-f — without a tenant scope, `try_restore` is impossible (no PK
-    /// lookup key) and the helper short-circuits without touching storage.
+    /// Without a tenant scope, `try_restore` is impossible (no PK lookup
+    /// key) and the helper short-circuits without touching storage.
     #[tokio::test]
     async fn try_restore_session_skips_when_no_tenant_scope() {
         let stub = Arc::new(StubStorage::default());
@@ -611,7 +609,7 @@ mod tests {
         );
     }
 
-    /// F6.1-f — when the session already exists in-memory, `try_restore`
+    /// When the session already exists in-memory, `try_restore`
     /// short-circuits (per its own contract) and the helper is effectively
     /// a no-op.
     #[tokio::test]
@@ -635,9 +633,9 @@ mod tests {
         assert!(registry.get_session("agent-session-1").is_some());
     }
 
-    /// F6.1-f — without a storage backend wired, `try_restore` falls
-    /// through to its `None` branch (per F6.1-c contract). Helper must
-    /// not panic and must not leave a stray entry.
+    /// Without a storage backend wired, `try_restore` falls through to
+    /// its `None` branch. Helper must not panic and must not leave a
+    /// stray entry.
     #[tokio::test]
     async fn try_restore_session_is_noop_when_no_storage() {
         let mut registry = SessionRegistry::new(UsageConfig::default());
@@ -651,7 +649,7 @@ mod tests {
         assert!(registry.get_session("agent-session-1").is_none());
     }
 
-    /// F6.1-d-c — empty eviction list is a no-op even when scoped.
+    /// Empty eviction list is a no-op even when scoped.
     #[tokio::test]
     async fn emit_section_drops_skips_when_no_evictions() {
         let stub = Arc::new(StubLedger::default());

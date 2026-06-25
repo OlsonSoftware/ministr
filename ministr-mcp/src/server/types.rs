@@ -161,7 +161,7 @@ pub struct SurveyParams {
     )]
     pub project: Option<String>,
 
-    /// F6.3-a — cross-corpus fan-out. When set and non-empty, runs the
+    /// Cross-corpus fan-out. When set and non-empty, runs the
     /// query against each listed corpus (own corpora or Atlas slugs
     /// like `atlas/react`), tags each hit with `source_corpus`, and
     /// merges all results sorted by score descending — truncated to
@@ -176,7 +176,7 @@ pub struct SurveyParams {
     )]
     pub corpus_ids: Option<Vec<String>>,
 
-    /// F6.3-b — per-corpus score multipliers for cross-corpus ranking.
+    /// Per-corpus score multipliers for cross-corpus ranking.
     /// Keys are `corpus_id` strings matching `corpus_ids`; values are
     /// non-negative multipliers (1.0 = unboosted, 2.0 = double weight,
     /// 0.0 = suppressed). Absent corpora default to 1.0. Values are
