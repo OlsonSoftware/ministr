@@ -57,5 +57,12 @@
     "remark-gfm": "^4.0.0",
     "shiki": "^3.0.0",
     "simple-icons": "^16.23.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "vite": "^6.4.3",
+      "@babel/core": "^7.29.6",
+      "postcss": "^8.5.10"
+    }
   }
 }
