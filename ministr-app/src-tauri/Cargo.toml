@@ -45,7 +45,7 @@ sha2 = { workspace = true }
 # nanos shim did not meet that bar. `getrandom::fill` delegates to the
 # platform RNG (getrandom(2) on Linux, SecRandomCopyBytes on macOS,
 # BCryptGenRandom on Windows).
-getrandom = "0.3"
+getrandom = "0.4"
 # F1.3 OS-keychain carry-over — bearer token storage moves out of plain
 # `<data-dir>/cloud.json` and into the OS-native credential store
 # (Keychain on macOS, secret-service on Linux, Credential Manager on

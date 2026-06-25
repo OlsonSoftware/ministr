@@ -52,7 +52,7 @@ rustls.workspace = true
 # CSPRNG (RFC 7636 §4.1) and serialises a few small response
 # envelopes off the wire.
 serde = { workspace = true }
-getrandom = "0.3"
+getrandom = "0.4"
 clap.workspace = true
 rmcp.workspace = true
 axum.workspace = true

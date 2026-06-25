@@ -4684,7 +4684,7 @@ name = "ministr-app"
 version = "0.7.0"
 dependencies = [
  "fastembed",
- "getrandom 0.3.4",
+ "getrandom 0.4.2",
  "keyring",
  "ministr-api",
  "ministr-core",
@@ -4715,7 +4715,7 @@ dependencies = [
  "clap",
  "dialoguer",
  "futures",
- "getrandom 0.3.4",
+ "getrandom 0.4.2",
  "miette",
  "ministr-api",
  "ministr-core",
