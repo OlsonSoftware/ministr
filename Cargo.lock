@@ -4669,7 +4669,7 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "ministr-api"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "axum",
  "schemars 1.2.1",
@@ -4681,7 +4681,7 @@ dependencies = [
 
 [[package]]
 name = "ministr-app"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "fastembed",
  "getrandom 0.3.4",
@@ -4709,7 +4709,7 @@ dependencies = [
 
 [[package]]
 name = "ministr-cli"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "axum",
  "clap",
@@ -4740,7 +4740,7 @@ dependencies = [
 
 [[package]]
 name = "ministr-core"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "axum",
  "blake3",
@@ -4832,7 +4832,7 @@ dependencies = [
 
 [[package]]
 name = "ministr-daemon"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "async-stream",
  "axum",
@@ -4860,7 +4860,7 @@ dependencies = [
 
 [[package]]
 name = "ministr-mcp"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "axum",
  "blake3",

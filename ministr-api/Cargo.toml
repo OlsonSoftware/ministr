@@ -1,6 +1,6 @@
 [package]
 name = "ministr-api"
-version = "0.7.0"
+version = "0.7.1"
 publish = false
 edition.workspace = true
 rust-version.workspace = true
