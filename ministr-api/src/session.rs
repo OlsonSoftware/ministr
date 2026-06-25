@@ -41,7 +41,7 @@ pub struct SessionUsageResponse {
 }
 
 /// Full per-session economics + budget snapshot for the all-sessions list
-/// (gd2c-rest). The point-in-time form the desktop Sessions view renders,
+/// . The point-in-time form the desktop Sessions view renders,
 /// aggregated across every corpus by `GET /api/v1/sessions`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SessionInfo {
@@ -96,7 +96,7 @@ pub struct SessionInfo {
 }
 
 /// Response for `GET /api/v1/sessions` — every active session across all
-/// corpora (gd2c-rest).
+/// corpora.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ListSessionsResponse {
     /// Active sessions across all registered corpora.

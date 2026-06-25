@@ -467,8 +467,8 @@ pub fn bridge_link(l: ministr_core::storage::BridgeLinkDetail) -> query::BridgeL
     }
 }
 
-/// F3.6-a — pure helper that converts a flat list of bridge-link
-/// details into the `{nodes, edges}` wire shape the F3.6-b web
+/// pure helper that converts a flat list of bridge-link
+/// details into the `{nodes, edges}` wire shape the web
 /// visualizer expects.
 ///
 /// # Node identity
@@ -486,7 +486,7 @@ pub fn bridge_link(l: ministr_core::storage::BridgeLinkDetail) -> query::BridgeL
 /// Nodes are returned in **first-encounter order** across the input
 /// links (export-side of link 0, then import-side of link 0, then
 /// export-side of link 1, …). Edges follow the input order. Stable
-/// ordering matters for the F3.6-b visualizer's layout (Cytoscape /
+/// ordering matters for the visualizer's layout (Cytoscape /
 /// react-flow re-run physics on identity changes — same input must
 /// produce the same node order).
 #[must_use]
@@ -630,7 +630,7 @@ mod tests {
         )
     }
 
-    #[allow(clippy::too_many_arguments)] // test helper — extended variant carrying optional symbol_ids for F3.6-c-ii-b assertions
+    #[allow(clippy::too_many_arguments)] // test helper — extended variant carrying optional symbol_ids for assertions
     fn link_with_symbol_ids(
         kind: &str,
         export_file: &str,
@@ -813,7 +813,7 @@ mod tests {
         assert_eq!(graph.nodes[3].label, "t2");
     }
 
-    // ── F3.6-c-ii-b symbol_id flow ─────────────────────────────────
+    // ── symbol_id flow ─────────────────────────────────
 
     #[test]
     fn symbol_id_flows_through_to_node_when_present() {
@@ -848,7 +848,7 @@ mod tests {
         // When the symbol indexer hadn't run on the file, the
         // correlated subquery returns NULL → None on the Rust side
         // → None on the wire shape. The graph still ships the node;
-        // F3.6-c-ii-c renders a "no source available" hint when
+        // renders a "no source available" hint when
         // symbol_id is missing.
         let links = vec![link(
             "pyo3",

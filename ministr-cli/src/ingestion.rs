@@ -22,7 +22,7 @@ use crate::infra::InfrastructureContext;
 ///
 /// `streaming_persist_every: Some(n)` flips the pipeline into per-batch
 /// HNSW persistence mode — the index is flushed to `ctx.index_dir`
-/// every `n` files indexed (PHASE4 chunk 4 plumbing). Cloud-worker
+/// every `n` files indexed (plumbing). Cloud-worker
 /// callers opt in because they run on a 4 GiB pod and need to bound
 /// peak HNSW rss; local `ministr index` passes `None` and keeps the
 /// bundle-at-end shape, avoiding gratuitous fsyncs on developer disks.
@@ -48,8 +48,8 @@ fn build_corpus_pipeline(
     if let Some(dual) = &ctx.dual_embedder {
         pipeline = pipeline.with_dual_embedder(Arc::clone(dual), (*ctx.storage).clone());
     }
-    // rq4c: hybrid retrieval — populate the inverted index during ingestion
-    // (rq4b seam). The corpus dir is set so the pipeline persists the
+    // Hybrid retrieval — populate the inverted index during ingestion.
+    // The corpus dir is set so the pipeline persists the
     // sparse_index.json sidecar at end-of-ingest; dense mid-run persistence
     // still requires `persist_every` (streaming), so dense behavior is
     // unchanged.
@@ -157,7 +157,7 @@ pub(crate) async fn run_corpus_ingestion(
 
     // HNSW's tar dump fails on an empty index (`Hnsw nb point 0` →
     // rename trap), so skip the persist when nothing landed. This is
-    // the worker-side guard for chunk-4 enqueue flows where the
+    // the worker-side guard for cloud enqueue flows where the
     // requested paths can legitimately be empty (e.g. the demo's
     // parent-corpus placeholder pointing at an empty `/data/corpus`).
     // The query path reads via `index.len()` on the in-memory handle,

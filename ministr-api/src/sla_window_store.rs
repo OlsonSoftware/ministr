@@ -1,4 +1,4 @@
-//! F5.5-b-persist-read — historical SLA-window query seam.
+//! historical SLA-window query seam.
 //!
 //! Open-core boundary that lets `ministr-mcp`'s `/sla` handler emit
 //! "worst p95 in the last N seconds" without depending on
@@ -16,7 +16,7 @@
 //! `ministr-cloud` and is wired into `AdminState` via
 //! `with_sla_window_store` at cloud-serve startup.
 //!
-//! The write side (`F5.5-b-persist-write`) lives in `ministr-cloud`
+//! The write side lives in `ministr-cloud`
 //! directly (no trait) because no other crate writes snapshots. Only
 //! the read needs the seam.
 
@@ -40,7 +40,7 @@ pub type MaxP95Future<'a> =
     Pin<Box<dyn Future<Output = Result<Option<u32>, SlaWindowStoreError>> + Send + 'a>>;
 
 /// Query historical SLA snapshots persisted by the
-/// `F5.5-b-persist-write` flush task.
+/// flush task.
 ///
 /// Wired into `AdminState` via `with_sla_window_store`; the `/sla`
 /// handler calls [`max_p95_since`] with `now - 30 days` to render the

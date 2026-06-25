@@ -168,7 +168,7 @@ impl OAuthStore {
     /// string is the opaque token value — clients use it as the `Bearer`
     /// header on subsequent requests.
     ///
-    /// Cloud-side federation flows (GitHub IdP) call this after resolving
+    /// Cloud-side federation flows (GitHub identity provider) call this after resolving
     /// the user's identity to deliver a token without going through the
     /// RFC 6749 §4.1 code-grant dance. The local-stack OAuth handlers
     /// continue to use the existing private path.

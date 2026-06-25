@@ -1,10 +1,10 @@
-//! PHASE3 chunk 4 — serve-side enqueue hook for the indexer worker.
+//! serve-side enqueue hook for the indexer worker.
 //!
 //! When the cloud daemon receives `POST /api/v1/corpora` (or the
 //! clone-url route), it no longer runs `indexer::run` inline. Instead
 //! it routes through [`IndexJobSink::create_pending`], which performs
 //! both the `cloud_corpora` upsert and the `indexer_jobs` enqueue in
-//! one call. The worker (chunk 3) drains the queue and uploads the
+//! one call. The worker drains the queue and uploads the
 //! bundle; the serve pod's [`IndexJobSink::latest_for_corpus`] reads
 //! `JobProgress` from Postgres to power the per-corpus SSE.
 //!
@@ -41,10 +41,10 @@ pub enum IndexJobStatus {
 /// Snapshot of a queued indexing job — surface the daemon's progress
 /// SSE reads from Postgres in cloud mode.
 ///
-/// PHASE5 chunk 3 added the `sections_done` / `embeddings_*` fields so
+/// added the `sections_done` / `embeddings_*` fields so
 /// the streaming consumer's per-batch progress reaches the SSE
 /// instead of being clipped at the wire boundary. `serde(default)`
-/// keeps the snapshot deserialisable from PHASE4-era data blobs.
+/// keeps the snapshot deserialisable from -era data blobs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexJobSnapshot {
     pub job_id: String,
@@ -55,13 +55,13 @@ pub struct IndexJobSnapshot {
     pub processed_files: u64,
     pub current_file: Option<String>,
     pub error: Option<String>,
-    /// PHASE5 chunk 3 — see [`JobProgress::sections_done`].
+    /// see [`JobProgress::sections_done`].
     #[serde(default)]
     pub sections_done: u64,
-    /// PHASE5 chunk 3 — see [`JobProgress::embeddings_total`].
+    /// see [`JobProgress::embeddings_total`].
     #[serde(default)]
     pub embeddings_total: u64,
-    /// PHASE5 chunk 3 — see [`JobProgress::embeddings_done`]. The
+    /// see [`JobProgress::embeddings_done`]. The
     /// primary signal SSE consumers render as the live progress bar.
     #[serde(default)]
     pub embeddings_done: u64,

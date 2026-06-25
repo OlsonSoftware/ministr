@@ -1,5 +1,5 @@
 //! Shared `resolve_config` + `ResolvedConfig` exposed for reuse by
-//! `ministr-cloud-tools` (F31.2b-ii-B).
+//! `ministr-cloud-tools`.
 //!
 //! Previously inlined as private items in `src/main.rs`; relocated here
 //! so both the MIT `ministr` binary and the proprietary

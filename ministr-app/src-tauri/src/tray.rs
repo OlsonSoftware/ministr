@@ -98,7 +98,7 @@ fn build_menu(
 /// at 10s cadence so the user can hover the tray icon and see live
 /// counts (corpora, sessions, RSS) without opening the window.
 ///
-/// F2.7 — the tooltip now leads with a cloud-status dot
+/// the tooltip now leads with a cloud-status dot
 /// ([`cloud_status_dot`]) so a glance at the menu bar tells the user
 /// whether the cloud connection is healthy.
 pub fn spawn_refresh_loop(handle: AppHandle) {
@@ -136,7 +136,7 @@ pub fn spawn_refresh_loop(handle: AppHandle) {
 }
 
 /// Render the cloud-connection state as a single emoji dot, prefixed
-/// onto the tray tooltip (F2.7 carry-over).
+/// onto the tray tooltip (carry-over).
 ///
 /// State table:
 ///

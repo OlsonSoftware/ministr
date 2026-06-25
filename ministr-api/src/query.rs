@@ -37,7 +37,7 @@ pub struct SurveyResult {
     /// Heading path for section-level results.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub heading_path: Option<Vec<String>>,
-    /// F6.3-a — corpus that produced this hit. `None` for single-corpus
+    /// corpus that produced this hit. `None` for single-corpus
     /// queries; `Some(corpus_id)` for cross-corpus `corpus_ids` fan-out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_corpus: Option<String>,
@@ -787,8 +787,8 @@ pub struct BridgeResponse {
     pub links: Vec<BridgeLink>,
 }
 
-/// F3.6-a — one node in the bridge graph wire shape. Backs the
-/// `/api/v1/corpora/{id}/bridge/graph` endpoint that the F3.6-b web
+/// one node in the bridge graph wire shape. Backs the
+/// `/api/v1/corpora/{id}/bridge/graph` endpoint that the web
 /// visualizer consumes.
 ///
 /// `id` is unique within a single graph response (the daemon builds
@@ -805,14 +805,14 @@ pub struct BridgeNode {
     pub label: String,
     /// Source file path the symbol lives in.
     pub file: String,
-    /// Language slug — drives the node colour in F3.6-b.
+    /// Language slug — drives the node colour in.
     pub lang: String,
     /// Line number of the symbol's definition.
     pub line: u32,
-    /// F3.6-c-ii-b — symbol id when the bridge endpoint matches an
+    /// symbol id when the bridge endpoint matches an
     /// indexed symbol on `(file, name)` whose line range contains
     /// the endpoint line. Consumers can hand this to
-    /// `GET /api/v1/corpora/{id}/definition/{sym}` (F3.6-c-ii-c will
+    /// `GET /api/v1/corpora/{id}/definition/{sym}` (will
     /// wire the side-panel source viewer). `None` when the symbol
     /// indexer hadn't covered the file or no row matched.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -3597,7 +3597,7 @@ mod tests {
 
     /// Assert a tool result is a *soft* error (cascade-safe): it must never set
     /// `is_error: true` (which would cancel sibling tool calls in a parallel
-    /// batch — anthropics/claude-code#22264) and must carry the
+    /// batch — anthropics/claude-code) and must carry the
     /// `{ ok: false, error_kind, message }` envelope in `structured_content`.
     fn assert_soft_error(result: &CallToolResult, expected_kind: &str) {
         assert_eq!(

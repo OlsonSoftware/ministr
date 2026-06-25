@@ -109,7 +109,7 @@ pub(crate) async fn run_body(registry: &CorpusRegistry, corpus_id: &str, paths: 
             handle.data_dir.join("index"),
             Arc::clone(&handle.progress),
             Arc::clone(&handle.prefetch),
-            // rq4c: the handle's sparse pair (Some when `[corpus]
+            // the handle's sparse pair (Some when `[corpus]
             // sparse_weight` > 0). Ingest populates the SAME Arc the
             // QueryService reads, so surveys see new sparse postings live.
             handle
@@ -170,7 +170,7 @@ pub(crate) async fn run_body(registry: &CorpusRegistry, corpus_id: &str, paths: 
             // per-corpus embedding cache (content.db `embedding_cache` table)
             // — persistent cross-ingest hits + intra-batch exact-text dedup
             // (CachedEmbedder, W3). The CLI surface has done this since
-            // PHASE6 (infra.rs cache_model_key); this brings the daemon to
+            // (infra.rs cache_model_key); this brings the daemon to
             // parity. The cache key is dimension-qualified when Matryoshka
             // truncation is active, since truncated vectors live in a
             // different space than full-dim ones.
@@ -226,8 +226,8 @@ pub(crate) async fn run_body(registry: &CorpusRegistry, corpus_id: &str, paths: 
     if let Some(dual) = dual {
         pipeline = pipeline.with_dual_embedder(dual, (*storage).clone());
     }
-    // rq4c: hybrid retrieval — populate the inverted index during ingestion
-    // (rq4b seam), same wiring as the CLI's build_corpus_pipeline.
+    // Hybrid retrieval — populate the inverted index during ingestion.
+    // Same wiring as the CLI's build_corpus_pipeline.
     if let Some((se, si)) = &sparse {
         pipeline = pipeline.with_sparse_indexing(Arc::clone(se), Arc::clone(si));
     }
@@ -249,7 +249,7 @@ pub(crate) async fn run_body(registry: &CorpusRegistry, corpus_id: &str, paths: 
             if let Err(e) = index.persist(&index_dir) {
                 error!(corpus_id, error = %e, "failed to persist vector index");
             }
-            // rq4c: persist the sparse sidecar next to the HNSW files (the
+            // persist the sparse sidecar next to the HNSW files (the
             // daemon pipeline doesn't set a corpus_dir, so the pipeline's
             // own end-of-ingest hook doesn't fire here).
             if let Some((_, si)) = &sparse

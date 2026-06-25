@@ -314,7 +314,7 @@ pub(crate) fn build_instructions(router: &ToolRouter<MinistrServer>) -> String {
 /// Cascade-safe logical failure: a tool result that is **not** an MCP error.
 ///
 /// Claude Code cancels *every sibling tool call in a parallel batch* when one
-/// of them errors (anthropics/claude-code#22264). A tool reports an error two
+/// of them errors (anthropics/claude-code). A tool reports an error two
 /// ways: a JSON-RPC `-32602` (killed at the [`super::coerce`] layer) or a
 /// `CallToolResult` with `is_error: true` — which is what
 /// `CallToolResult::error` sets. So an ordinary logical failure ("section not

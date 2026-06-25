@@ -186,7 +186,7 @@ pub(super) async fn extract_code_symbols<S: Storage + ?Sized>(
         }
     };
 
-    // PHASE4 chunk 4: per-file bridge extraction was here. It was
+    // per-file bridge extraction was here. It was
     // expensive (extract_all parses every applicable language extractor
     // per file) and the result was accumulated into all_bridge_endpoints
     // and discarded — finalize_ingestion rebuilds bridges from

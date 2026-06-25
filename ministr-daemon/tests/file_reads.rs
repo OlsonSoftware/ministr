@@ -1,4 +1,4 @@
-//! gd2c-files-2 — daemon file-content + occurrences read endpoints.
+//! daemon file-content + occurrences read endpoints.
 //!
 //! Registers a real corpus, lets ingestion index a source file, then exercises
 //! `DaemonClient::read_file_content` (full contents + symbol spans) and

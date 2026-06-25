@@ -46,7 +46,7 @@ pub(super) struct ParseStageWiring<'a> {
     pub concurrency: usize,
     /// Optional progress sink (UI counters).
     pub progress: Option<&'a Arc<IngestionProgress>>,
-    /// Mid-run HNSW persist cadence (PHASE4 chunk 4); `None` disables it.
+    /// Mid-run HNSW persist cadence; `None` disables it.
     pub persist_every: Option<usize>,
     /// On-disk corpus dir to snapshot the HNSW into when `persist_every` fires.
     pub corpus_dir: Option<&'a Path>,
@@ -272,7 +272,7 @@ where
     }
 }
 
-/// Periodic mid-run HNSW snapshot (PHASE4 chunk 4 / PHASE5 chunk 2).
+/// Periodic mid-run HNSW snapshot (/).
 ///
 /// Fires only when *both* `persist_every` and a `corpus_dir` are configured
 /// (callers that bundle at end-of-ingest leave `corpus_dir` unset), the

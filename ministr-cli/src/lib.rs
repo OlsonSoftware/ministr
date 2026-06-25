@@ -3,7 +3,7 @@
 //! Most of the CLI's logic lives in modules under `src/`. The binary
 //! at `src/main.rs` is a thin clap-dispatch wrapper over these modules.
 //!
-//! F31.2b also exposes [`commands::cmd_serve_http`] as a library entry
+//! also exposes [`commands::cmd_serve_http`] as a library entry
 //! point so the proprietary `ministr-cloud-tools` binary can run the
 //! same serve flow with a [`ministr_api::CloudRouterMounter`] wired in
 //! (where the public `ministr` binary calls it with `mounter = None`).

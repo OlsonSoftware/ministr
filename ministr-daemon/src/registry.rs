@@ -113,7 +113,7 @@ pub struct CorpusRegistry {
     /// idempotent writes through the repo, and `restore` reads its
     /// entry list from the repo instead of the manifest file.
     corpora_repo: std::sync::OnceLock<Arc<dyn CorporaRepo>>,
-    /// PHASE3 chunk 5 — on-demand bundle restore hook. Wired in
+    /// on-demand bundle restore hook. Wired in
     /// cloud mode by `cmd_serve_http`. When a `get()` misses on the
     /// in-memory map and a `cloud_corpora` row exists for the id,
     /// `ensure_present` calls `restorer.download(...)` then inserts
@@ -178,10 +178,10 @@ pub struct CorpusHandle {
     /// `IngestionPipeline`; the freshness sweep applies them to its walk so
     /// ignored files never surface as "new" in the trust display.
     pub ignore: Vec<String>,
-    /// Sparse (SPLADE) embedder for hybrid retrieval (rq4c) — `Some` when the
+    /// Sparse (SPLADE) embedder for hybrid retrieval — `Some` when the
     /// corpus's `.ministr.toml` `[corpus] sparse_weight` is > 0. Shared by
     /// the query path (`service` already holds it) and `indexer::run`
-    /// (populates the inverted index via the rq4b seam).
+    /// (populates the inverted index via the seam).
     pub sparse_embedder: Option<Arc<dyn ministr_core::embedding::SparseEmbedder>>,
     /// The corpus's live inverted index (loaded from the `sparse_index.json`
     /// sidecar at handle creation; ingest repopulates the SAME Arc, so
@@ -428,7 +428,7 @@ impl CorpusRegistry {
         }
     }
 
-    /// Wire an on-demand bundle restorer (PHASE3 chunk 5, cloud mode).
+    /// Wire an on-demand bundle restorer (, cloud mode).
     /// Intended to be called exactly once, immediately after
     /// construction. A second call is a no-op (the first wins).
     pub fn set_corpus_restorer(&self, restorer: Arc<dyn CorpusRestorer>) {
@@ -447,7 +447,7 @@ impl CorpusRegistry {
             .clone()
     }
 
-    /// PHASE3 chunk 5 — on-demand bundle restore. If `corpus_id` is
+    /// on-demand bundle restore. If `corpus_id` is
     /// already in the in-memory map, returns its handle. Otherwise,
     /// when a [`CorpusRestorer`] is wired AND the corpus has a row in
     /// the durable [`CorporaRepo`], downloads the bundle and inserts
@@ -525,7 +525,7 @@ impl CorpusRegistry {
             .await
     }
 
-    /// PHASE3 chunk 5 — insert a corpus into the in-memory map from
+    /// insert a corpus into the in-memory map from
     /// already-on-disk data (the bundle import wrote
     /// `<data_dir>/corpora/<id>/{content.db,index}` already). Does NOT
     /// spawn `indexer::run` or a file watcher — the bundle is fully
@@ -1217,7 +1217,7 @@ impl CorpusRegistry {
         if let Some(handle) = self.corpora.read().await.get(corpus_id).cloned() {
             return Ok(handle);
         }
-        // PHASE3 chunk 5 — in cloud mode a `CorpusRestorer` is wired
+        // in cloud mode a `CorpusRestorer` is wired
         // so a miss can be served by downloading the bundle from blob
         // and inserting via `register_restored`. Without a restorer
         // (self-hosted serve) `ensure_present` immediately returns
@@ -1477,7 +1477,7 @@ impl CorpusRegistry {
         Ok(())
     }
 
-    /// rq4c: build the per-corpus sparse (hybrid) components when
+    /// build the per-corpus sparse (hybrid) components when
     /// `sparse_weight > 0` — the configured encoder (default: the zero-model
     /// AST/BM25F encoder; `sparse_encoder = "splade"` opts into the neural
     /// model) plus the inverted index loaded from the `sparse_index.json`
@@ -1576,7 +1576,7 @@ impl CorpusRegistry {
             );
         }
 
-        // rq4c: hybrid (sparse+dense) retrieval when the corpus's
+        // hybrid (sparse+dense) retrieval when the corpus's
         // `.ministr.toml` `[corpus] sparse_weight` is > 0 — mirrors the CLI's
         // `init_infrastructure` wiring. The SPLADE model downloads on first
         // use (opt-in knob, same contract as the dense model); the sidecar
@@ -1593,7 +1593,7 @@ impl CorpusRegistry {
             service = service.with_sparse(Arc::clone(se), Arc::clone(si), sparse_weight);
         }
 
-        // rq5b: attach a cross-encoder reranker to the production query path
+        // attach a cross-encoder reranker to the production query path
         // when one is configured (default OFF — `reranker_model = None`). A
         // reranker is an optional relevance enhancement, so a bad model name
         // or a failed load must NOT break the corpus: warn and serve the
@@ -2205,7 +2205,7 @@ mod tests {
         assert_eq!(merged.embeddings_count, 42);
     }
 
-    // -- Completion-channel wiring (PHASE2 chunk 3) --
+    // Completion-channel wiring --
     //
     // The cloud durability reactor consumes `(corpus_id, corpus_dir)`
     // tuples from this channel and uploads bundles to blob. On self-

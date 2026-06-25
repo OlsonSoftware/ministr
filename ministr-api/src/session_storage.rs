@@ -1,6 +1,6 @@
 //! Durable agent-session checkpoint seam.
 //!
-//! F6.1-a — open-core boundary for snapshotting agent-session state to
+//! open-core boundary for snapshotting agent-session state to
 //! durable storage so a pod restart or cross-pod load-balance doesn't
 //! reset a session. The trait lives in `ministr-api` (MIT) so
 //! `ministr-core`'s `SessionRegistry` can hold an
@@ -21,7 +21,7 @@
 //! The much larger in-memory state (claims, drops, invalidated
 //! sections, memory tracker) is reconstructed lazily on resume by
 //! re-reading from the corpus. Persisting that would multiply storage
-//! cost without obvious agent-visible benefit; F6.1-b can revisit if
+//! cost without obvious agent-visible benefit; can revisit if
 //! drops-ledger semantics demand it.
 //!
 //! # Open / save / load semantics

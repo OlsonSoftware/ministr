@@ -1,7 +1,7 @@
 //! ingest-embed-cache-wiring — the daemon ingest path routes embeds through
 //! the per-corpus embedding cache (`CachedEmbedder` over the corpus's
 //! `embedding_cache` table), bringing the daemon to parity with the CLI
-//! surface (which has cached since PHASE6).
+//! surface (which has cached since).
 //!
 //! The load-bearing assertion is the cache TABLE: after a daemon-driven
 //! ingest, the corpus's `content.db` must hold cached vectors. Before this

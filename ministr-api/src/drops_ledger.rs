@@ -1,6 +1,6 @@
 //! Append-only ledger of agent-session evictions.
 //!
-//! F6.1-d — open-core seam for persisting "this claim was evicted from
+//! open-core seam for persisting "this claim was evicted from
 //! the agent's context window at this timestamp" events. The trait
 //! lives in `ministr-api` (MIT) so `ministr-core`'s session/drops
 //! logic can fire append calls into a `dyn`-typed sink without

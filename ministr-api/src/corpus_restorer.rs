@@ -1,4 +1,4 @@
-//! PHASE3 chunk 5 — on-demand blob restore hook.
+//! on-demand blob restore hook.
 //!
 //! [`CorpusRestorer`] is the trait the daemon's [`CorpusRegistry::get`]
 //! consults when the in-memory map misses. Cloud deployments wire
@@ -7,7 +7,7 @@
 //! into `<data_dir>/corpora/<id>/`. Self-hosted serve leaves the slot
 //! `None` and a missing in-memory entry produces the usual `NotFound`.
 //!
-//! Replaces PHASE2's boot-time bulk download (which downloaded every
+//! Replaces the boot-time bulk download (which downloaded every
 //! corpus's bundle whether queried or not). On-demand is right-sized:
 //! a cold pod only pays the download cost for corpora the session
 //! actually touches.

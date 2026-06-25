@@ -10,7 +10,7 @@
 //! - [`ingestion`] — corpus ingestion orchestration and file watching
 //!
 //! Cloud-operator subcommands (atlas, audit, api-keys, cloud) moved to
-//! the `ministr-cloud-tools` crate in F31.2a — run `cargo run -p
+//! the `ministr-cloud-tools` crate in — run `cargo run -p
 //! ministr-cloud-tools -- <subcommand>` for the proprietary operator CLI.
 
 use std::path::PathBuf;
@@ -370,7 +370,7 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
                         rc.repo_config_dir.as_deref(),
                         rc.resolved_dimension,
                         rc.rerank_depth,
-                        // F31.2b-ii — MIT `ministr` binary passes None;
+                        // MIT `ministr` binary passes None;
                         // the inline cloud branch in cmd_serve_http
                         // still runs unchanged. `ministr-cloud-tools
                         // serve` (chunk B) passes Some(&mounter).

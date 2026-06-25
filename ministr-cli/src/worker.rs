@@ -1,4 +1,4 @@
-//! PHASE6 chunk 2 — long-lived in-process indexer worker.
+//! long-lived in-process indexer worker.
 //!
 //! Replaces the ACA-Job-driven `cmd_indexer_worker` (deleted in chunk
 //! 3). The serve pod itself runs this loop on a background tokio task:
@@ -10,10 +10,10 @@
 //!
 //! The ACA-Job model paid an image-pull + replica-startup + model-load
 //! cost on every job. With the embedder switched to Azure `OpenAI`
-//! (chunk 1) the model load is gone, so the only remaining startup
+//! the model load is gone, so the only remaining startup
 //! cost is the replica boot itself — and replica boots are expensive
 //! enough that amortising one replica over many jobs is the right
-//! shape. See `deploy/azure/PHASE6.md` for the full diagnosis.
+//! shape.
 //!
 //! # Concurrency
 //!
@@ -42,9 +42,9 @@ use ministr_mcp::admin::jobs::{Job, JobQueueBackend, JobStatus, JobTrigger};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-/// Default polling interval — matches the PHASE3 cron cadence so
+/// Default polling interval — matches the cron cadence so
 /// queued-then-immediate workloads see the same worst-case latency
-/// they did before PHASE6.
+/// they did before.
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Per-job execution surface. Production impl ([`IngestionRunner`])
@@ -159,7 +159,7 @@ impl WorkerLoop {
         };
         if let Err(e) = self.queue.finish(&job.id, status, error).await {
             // The job ran (success or fail), but we couldn't write the
-            // terminal status. PHASE4 chunk 2's reclaim_orphans path
+            // terminal status. The reclaim_orphans path
             // catches this: the row stays `running` past `claimed_at +
             // timeout`, gets reclaimed, runs again. Log loudly so the
             // operator notices the duplicate work risk.
@@ -194,7 +194,7 @@ pub struct IngestionRunner {
     pub resolved_model: Arc<str>,
     pub resolved_dimension: Option<usize>,
     pub rerank_depth: Option<usize>,
-    /// F31.2b-ii-R — was `Option<Arc<ministr_cloud::BlobBackend>>`;
+    /// was `Option<Arc<ministr_cloud::BlobBackend>>`;
     /// now goes through the MIT `ministr_api::BlobUploader` trait so
     /// ministr-cli no longer references `ministr_cloud::*`. The cloud
     /// impl (`ministr_cloud::cli::BlobBackendUploader`) wraps a
@@ -236,10 +236,10 @@ impl IngestionRunner {
 
         let progress = Arc::new(ministr_core::ingestion::IngestionProgress::new());
 
-        // PHASE3 fix B (preserved verbatim, ported from cmd_indexer_worker):
+        // fix B (preserved verbatim, ported from cmd_indexer_worker)
         // the 500ms reporter polls IngestionProgress and writes JobProgress
         // into the queue so the serve pod's SSE shows real per-file +
-        // per-batch numbers. PHASE5 chunk 3 added the embedding-side fields.
+        // per-batch numbers. added the embedding-side fields.
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
         let reporter = {
             use ministr_mcp::admin::jobs::JobProgress;
@@ -280,7 +280,7 @@ impl IngestionRunner {
             })
         };
 
-        // PHASE4 chunk 4 streaming opt-in: persist HNSW every 4 files.
+        // streaming opt-in: persist HNSW every 4 files.
         let ingest_result =
             crate::ingestion::run_corpus_ingestion(&sources, &[], &ctx, &progress, Some(4)).await;
 
@@ -298,7 +298,7 @@ impl IngestionRunner {
                 "no vectors after ingestion — skipping bundle upload",
             );
         } else if let Some(backend) = &self.blob_backend {
-            // F31.2b-ii-R — manifest build + upload now ride the
+            // manifest build + upload now ride the
             // MIT `BlobUploader` trait. The cloud impl
             // (`BlobBackendUploader`) walks the error source chain
             // for opaque Azure SDK errors and surfaces the real cause

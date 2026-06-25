@@ -70,7 +70,7 @@ pub async fn record(State(state): State<AppState>, req: Request<Body>, next: Nex
         .get("x-ministr-session-id")
         .and_then(|v| v.to_str().ok())
         .map(str::to_string);
-    // F1.4 sub-bullet 2 — pull the tenant id out of request extensions
+    // sub-bullet 2 — pull the tenant id out of request extensions
     // before `next.run(req)` consumes the request. The auth middleware
     // in `ministr-mcp::auth::middleware` populates this when running
     // in cloud mode; self-hosted serve never sets it.
@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn route_kind_maps_every_tool_to_query_served() {
-        // F1.4 sub-bullet 2 — every classified tool route bills as
+        // sub-bullet 2 — every classified tool route bills as
         // `query.served`. The Atlas + indexer paths emit other kinds
         // from their own call sites, not this middleware.
         for tool in [

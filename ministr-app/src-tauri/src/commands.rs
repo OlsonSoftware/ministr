@@ -923,7 +923,7 @@ pub struct SessionDetail {
 
 /// List all active sessions across all corpora.
 ///
-/// gd2c-rest: routed over UDS to the daemon's all-corpora sessions endpoint
+/// routed over UDS to the daemon's all-corpora sessions endpoint
 /// (`GET /api/v1/sessions`). The daemon owns the session registries now; the
 /// app maps the API `SessionInfo` onto the frontend DTO field-for-field.
 #[tauri::command]
@@ -972,7 +972,7 @@ pub struct FileInfo {
 
 /// List all indexed files for a corpus with section counts.
 ///
-/// gd2c: routed over UDS to the daemon's files endpoint (the daemon owns the
+/// routed over UDS to the daemon's files endpoint (the daemon owns the
 /// storage); maps the API `FileInfo` onto the frontend DTO field-for-field.
 #[tauri::command]
 pub async fn list_corpus_files(corpus_id: String) -> Result<Vec<FileInfo>, CommandError> {
@@ -1003,7 +1003,7 @@ pub struct SearchResult {
 
 /// Search a corpus by query.
 ///
-/// gd2c: routed over UDS to the daemon's survey endpoint (the single source
+/// routed over UDS to the daemon's survey endpoint (the single source
 /// of truth) rather than the GUI's in-process `QueryService`.
 #[tauri::command]
 pub async fn search_corpus(
@@ -1043,10 +1043,10 @@ pub struct SymbolInfo {
 
 /// Search symbols in a corpus.
 ///
-/// gd2c: routed over UDS to the daemon's symbols endpoint. The daemon encodes
+/// routed over UDS to the daemon's symbols endpoint. The daemon encodes
 /// `module_path` into the API `SymbolDefinition.heading_path` (split on `::`),
 /// so it is recovered here by re-joining. `file_path` is honored server-side
-/// (gd2c-2 added the filter to `SymbolsRequest`).
+/// (added the filter to `SymbolsRequest`).
 #[tauri::command]
 pub async fn search_symbols(
     corpus_id: String,
@@ -1159,7 +1159,7 @@ fn lang_from_path(path: &str) -> String {
 /// Read an indexed source file: full contents, a Shiki language id inferred
 /// from the extension, and the definition spans the symbol index knows for the
 /// file (so the UI can render clickable, navigable symbols).
-/// gd2c: routed over UDS — the daemon returns the file content + its symbol
+/// routed over UDS — the daemon returns the file content + its symbol
 /// spans (it owns the storage + path resolution); `lang_from_path` stays
 /// app-local (the Shiki language id is a pure function of the extension).
 #[tauri::command]
@@ -1206,7 +1206,7 @@ pub struct Occurrence {
 /// Empty unless the corpus was indexed with occurrence indexing enabled
 /// (`MINISTR_INDEX_OCCURRENCES`). When present it lets the Code surface
 /// resolve a click on *any* token, not just known definitions.
-/// gd2c: routed over UDS to the daemon's occurrences endpoint.
+/// routed over UDS to the daemon's occurrences endpoint.
 #[tauri::command]
 pub async fn file_occurrences(
     corpus_id: String,
@@ -1241,7 +1241,7 @@ pub struct SymbolRef {
 
 /// Get references (callers, importers, implementors) for a symbol.
 ///
-/// gd2c: routed over UDS to the daemon's references endpoint.
+/// routed over UDS to the daemon's references endpoint.
 #[tauri::command]
 pub async fn symbol_references(
     corpus_id: String,
@@ -1607,7 +1607,7 @@ pub struct BridgeLinkOut {
 
 /// Query cross-language bridge links (Tauri commands, `PyO3`, NAPI, FFI, HTTP routes).
 ///
-/// gd2c: routed over UDS to the daemon's bridge endpoint. The daemon applies
+/// routed over UDS to the daemon's bridge endpoint. The daemon applies
 /// the limit (default 500, matching the prior client-side cap). The API's
 /// `BridgeLink` carries binding keys as `source`/`target` and languages as
 /// `source_language`/`target_language`, mapped here onto the frontend's
@@ -1758,7 +1758,7 @@ pub async fn read_source_excerpt(
     line_start: u32,
     line_end: u32,
 ) -> Result<String, CommandError> {
-    // gd2c: the corpus's root paths (which bound the path-scope security
+    // the corpus's root paths (which bound the path-scope security
     // check below) come from the daemon over UDS, not the in-process
     // registry. The canonicalize + scope check + line read stay app-local.
     let roots: Vec<String> = ministr_api::client::DaemonClient::new()
@@ -1804,7 +1804,7 @@ pub async fn read_source_excerpt(
 
 /// Get the full definition of a symbol with surrounding source context.
 ///
-/// gd2c: routed over UDS to the daemon's definition endpoint.
+/// routed over UDS to the daemon's definition endpoint.
 #[tauri::command]
 pub async fn symbol_definition(
     corpus_id: String,
@@ -2058,10 +2058,10 @@ pub async fn indexing_progress_events(
 /// Phase events streamed from `ask_corpus` to the frontend so the UI can
 /// render retrieving → synthesizing → done without faking progress.
 ///
-/// gd2c-rest: `ask_corpus` now routes over the daemon's request/response ask
+/// `ask_corpus` now routes over the daemon's request/response ask
 /// endpoint, so only `Done` / `Error` are emitted today. The intermediate
 /// phase variants stay as the frontend wire contract — they're reconstructed
-/// when gd2c-ask restores phased streaming over a daemon SSE-ask endpoint.
+/// when restores phased streaming over a daemon SSE-ask endpoint.
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[allow(dead_code)]
@@ -2105,13 +2105,13 @@ pub enum AskPhase {
 
 /// Synthesize an answer for a natural-language question against a corpus.
 ///
-/// gd2c-rest: routed over UDS to the daemon's ask endpoint (the daemon owns the
+/// routed over UDS to the daemon's ask endpoint (the daemon owns the
 /// `QueryService` + inference backend now). That endpoint is request/response,
 /// so the intermediate phase skeletons (`CacheHit` / `Analyzed` /
 /// `RetrievedCandidates` / `Reranked` / `Retrieved` / `Verified`) are not
 /// streamed — only the final `Done` (or `Error`) fires; the synthesized answer
 /// is identical. Restoring the live phase stream over UDS is a dedicated
-/// follow-up (gd2c-ask: a daemon SSE-ask endpoint + a streaming client).
+/// follow-up (: a daemon SSE-ask endpoint + a streaming client).
 #[tauri::command]
 pub async fn ask_corpus(
     corpus_id: String,
@@ -2347,7 +2347,7 @@ pub struct SectionDetailOut {
 
 /// Read the full text of a section by its hierarchical content ID.
 ///
-/// gd2c: routed over UDS to the daemon's read-section endpoint.
+/// routed over UDS to the daemon's read-section endpoint.
 #[tauri::command]
 pub async fn read_section(
     corpus_id: String,

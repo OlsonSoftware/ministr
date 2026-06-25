@@ -55,7 +55,7 @@ pub struct ResolvedApiKey {
     /// request completes without re-hashing the token.
     pub key_id: String,
     /// Subject — either `owner_user_id` or `owner_org_id` rendered as a
-    /// UUID string. Mirrors the F1.2 tenant model where the subject is
+    /// UUID string. Mirrors the tenant model where the subject is
     /// whichever side of the polymorphic ownership is populated.
     pub subject: String,
     /// Org membership. `Some` when the key is owned by an org;

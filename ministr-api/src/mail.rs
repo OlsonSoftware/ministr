@@ -1,7 +1,7 @@
 //! Outbound mail-delivery hook.
 //!
-//! F3.1b-ii-a — `MailSender` is the open-core seam for sending
-//! transactional email (invite magic-links today; F3.4c-iii weekly
+//! `MailSender` is the open-core seam for sending
+//! transactional email (invite magic-links today; weekly
 //! stale-key digests in a follow-up). The trait lives here so
 //! `ministr-cloud`'s handlers can hold an `Arc<dyn MailSender>`
 //! without depending on a specific provider crate.
@@ -11,7 +11,7 @@
 //! - [`LogOnlyMailSender`] (in `ministr-cloud`) — logs the would-be
 //!   send at info level. Default for dev + self-hosted serve, and the
 //!   shipping safety net when no provider env vars are configured.
-//! - A `ResendMailSender` / `SesMailSender` (F3.1b-ii-b) lands once
+//! - A `ResendMailSender` / `SesMailSender` lands once
 //!   the operator picks a provider; threading a different concrete
 //!   into [`OrgsState::with_mailer`] is the entire wiring change.
 //!
@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 
 /// One transactional-mail payload, ready for a provider to deliver.
 ///
-/// v0 ships a single message kind: invite magic-links. F3.4c-iii will
+/// v0 ships a single message kind: invite magic-links. will
 /// extend `MailMessage` with a `kind` discriminant once the digest
 /// payload lands. Keeping the shape concrete (named fields, not
 /// `kind: MessageKind` enum) for now means the trait is testable

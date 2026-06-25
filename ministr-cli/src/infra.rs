@@ -35,8 +35,8 @@ pub(crate) struct InfrastructureContext {
     /// Number of coarse candidates to rescore with full-dim vectors.
     pub(crate) rerank_depth: usize,
     /// Sparse (SPLADE) embedder for hybrid retrieval — set when the repo
-    /// `[corpus] sparse_weight` knob is > 0 (rq4c). Used by BOTH ingestion
-    /// (populates the inverted index, rq4b seam) and the query path.
+    /// `[corpus] sparse_weight` knob is > 0. Used by BOTH ingestion
+    /// (populates the inverted index, seam) and the query path.
     pub(crate) sparse_embedder: Option<Arc<dyn ministr_core::embedding::SparseEmbedder>>,
     /// The shared inverted index (loaded from the `sparse_index.json` sidecar
     /// at open; ingest repopulates it and the pipeline re-persists).
@@ -97,7 +97,7 @@ pub(crate) async fn init_infrastructure(
     let model_name = resolved_model.map_or_else(|| config.default_model.clone(), String::from);
     tracing::info!(model = %model_name, "resolved embedding model");
 
-    // PHASE6 chunk 2 — embedder selection.
+    // embedder selection.
     //
     // When `MINISTR_EMBEDDER_KIND=openai` is set AND the Azure `OpenAI`
     // env (endpoint, deployment, auth) resolves, build an
@@ -161,7 +161,7 @@ pub(crate) async fn init_infrastructure(
         ministr_core::mem_profile::checkpoint("after embedding model init");
 
         // Backend-aware cache key matches the historical scheme so
-        // existing SQLite caches survive the PHASE6 refactor on local
+        // existing SQLite caches survive the refactor on local
         // CLI users' boxes.
         let key = format!("{model_name}{}", backend_info.cache_key_suffix());
 
@@ -244,7 +244,7 @@ pub(crate) async fn init_infrastructure(
         config,
     );
 
-    // rq4c: hybrid retrieval is opt-in via the repo `[corpus] sparse_weight`
+    // hybrid retrieval is opt-in via the repo `[corpus] sparse_weight`
     // knob. When > 0, build the configured sparse encoder (default: the
     // zero-model AST/BM25F encoder — deterministic, no download;
     // `sparse_encoder = "splade"` opts into the neural model) and load the
@@ -448,7 +448,7 @@ pub(crate) async fn build_server(
     if let Some(ref dual_emb) = ctx.dual_embedder {
         service = service.with_matryoshka_rerank(Arc::clone(dual_emb), ctx.rerank_depth);
     }
-    // rq4c: hybrid fusion on the survey path when the corpus opted in.
+    // hybrid fusion on the survey path when the corpus opted in.
     if let (Some(se), Some(si)) = (&ctx.sparse_embedder, &ctx.sparse_index) {
         service = service.with_sparse(Arc::clone(se), Arc::clone(si), ctx.sparse_weight);
     }

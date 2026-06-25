@@ -1,4 +1,4 @@
-//! F5.5-a-plan-lookup — billing-plan resolution seam.
+//! billing-plan resolution seam.
 //!
 //! Open-core boundary that lets `ministr-mcp`'s OAuth token-validation
 //! path reflect the requesting user's real billing tier without
@@ -15,9 +15,9 @@
 //! `users` schema into the open-core surface. The Postgres impl lives
 //! in `ministr-cloud` and is wired into `OAuthStore` via
 //! `with_plan_resolver` at cloud-serve startup. The OAuth path was
-//! previously a documented gap (F5.5-a-priority's honest caveat): the
+//! previously a documented gap ('s honest caveat): the
 //! resolved `Tenant.plan` always defaulted to `Plan::Pro`, so the
-//! `priority=4` Enterprise lane shipped in F5.5-a-priority was
+//! `priority=4` Enterprise lane shipped in was
 //! structurally unreachable through OAuth even though `queue_priority`
 //! and the producer-side stamp were in place.
 //!

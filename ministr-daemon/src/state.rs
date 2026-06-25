@@ -53,12 +53,12 @@ pub struct AppState {
     /// HTTP endpoint, and `DaemonClient::recent_coherence_events`.
     pub coherence: Arc<RwLock<VecDeque<CoherenceEvent>>>,
     /// Billable-usage emission sink. `Some` when cloud mode has wired
-    /// the closed `ministr_cloud::billing::PostgresUsageSink` (F1.4
+    /// the closed `ministr_cloud::billing::PostgresUsageSink` (
     /// sub-bullet 2); `None` for self-hosted serve where no usage is
     /// billed. The activity middleware fires this fire-and-forget
     /// whenever a tool route completes successfully.
     pub usage_sink: Option<Arc<dyn UsageSink>>,
-    /// GitHub App installation-token minter (F2.1). `Some` when cloud
+    /// GitHub App installation-token minter. `Some` when cloud
     /// mode has wired `ministr_cloud::github::GitHubAppClient`; `None`
     /// on self-hosted serve where the PAT-in-URL path is the only
     /// authenticated-clone option. The `clone_repo` handler awaits this
@@ -71,7 +71,7 @@ pub struct AppState {
     /// fire-and-forget whenever a corpus finishes ingesting so the
     /// bundle lands in Azure Blob Storage before the pod recycles.
     pub blob_sink: Option<Arc<dyn BlobSink>>,
-    /// PHASE3 chunk 4 — cloud serve-pod enqueue hook. `Some` when
+    /// cloud serve-pod enqueue hook. `Some` when
     /// `cmd_serve_http` has wired
     /// `ministr_cloud::PostgresIndexJobSink`; `None` on self-hosted
     /// serve. When wired, the `POST /api/v1/corpora` and clone
@@ -79,14 +79,14 @@ pub struct AppState {
     /// inline; the progress SSE polls `latest_for_corpus` against
     /// Postgres instead of the in-memory `IngestionProgress`.
     pub index_job_sink: Option<Arc<dyn IndexJobSink>>,
-    /// F3.2-iii — tenant-aware corpus visibility filter. `Some` when
+    /// tenant-aware corpus visibility filter. `Some` when
     /// cloud mode has wired `ministr_cloud::PostgresTenantCorpusFilter`
     /// (the same struct implements both `TenantCorpusFilter` for the
     /// MCP-side gate and this trait for the daemon-side list). `None`
     /// on self-hosted serve where every authenticated caller sees
     /// every corpus.
     pub corpus_visibility: Option<Arc<dyn TenantCorpusVisibility>>,
-    /// F3.7b — audit-log emission sink for corpus-mutation actions.
+    /// audit-log emission sink for corpus-mutation actions.
     /// `Some` in cloud mode wires `ministr_cloud::PostgresAuditSink`;
     /// the daemon's `register_corpus` / `clone_repo` / `unregister_corpus`
     /// handlers call `record` after a successful state change so
@@ -164,7 +164,7 @@ impl AppState {
         self
     }
 
-    /// Wire a GitHub App installation-token minter (F2.1 cloud mode).
+    /// Wire a GitHub App installation-token minter (cloud mode).
     /// Returns `self` for chainable construction.
     #[must_use]
     pub fn with_installation_minter(mut self, minter: Arc<dyn InstallationTokenMinter>) -> Self {
@@ -180,7 +180,7 @@ impl AppState {
         self
     }
 
-    /// Wire a cloud-mode index-job enqueue sink (PHASE3 chunk 4).
+    /// Wire a cloud-mode index-job enqueue sink.
     /// Returns `self` for chainable construction in `cmd_serve_http`.
     #[must_use]
     pub fn with_index_job_sink(mut self, sink: Arc<dyn IndexJobSink>) -> Self {
@@ -188,19 +188,19 @@ impl AppState {
         self
     }
 
-    /// F3.2-iii — wire a tenant-aware corpus visibility filter for
+    /// wire a tenant-aware corpus visibility filter for
     /// `GET /api/v1/corpora`. When set, the list handler reads the
     /// `Tenant` request extension + asks the filter for the set of
     /// visible `corpus_id`s, then intersects with `registry.list()`.
     /// When unset (self-hosted serve), the list returns every
-    /// in-memory corpus — matches the pre-F3.2-iii behaviour.
+    /// in-memory corpus — matches the behaviour.
     #[must_use]
     pub fn with_corpus_visibility(mut self, visibility: Arc<dyn TenantCorpusVisibility>) -> Self {
         self.corpus_visibility = Some(visibility);
         self
     }
 
-    /// F3.7b — wire an audit-log sink for corpus mutations. When set,
+    /// wire an audit-log sink for corpus mutations. When set,
     /// the daemon's `register_corpus`, `clone_repo`, and
     /// `unregister_corpus` handlers fire an `audit_events` row on
     /// success. Fire-and-forget inside the sink: a Postgres outage

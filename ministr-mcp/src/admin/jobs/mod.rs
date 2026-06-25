@@ -48,13 +48,13 @@ pub enum JobTrigger {
         reference: String,
         commit: String,
     },
-    /// PHASE3 — tenant-initiated cloud ingestion. Emitted by the serve
-    /// pod's `POST /api/v1/corpora` handler in chunk 4 so the indexer
-    /// worker (chunk 3) can pop the job, clone `clone_url` if set, run
+    /// tenant-initiated cloud ingestion. Emitted by the serve
+    /// pod's `POST /api/v1/corpora` handler, so the indexer
+    /// worker can pop the job, clone `clone_url` if set, run
     /// `indexer::run` against `paths`, upload the bundle, and mark the
     /// job done. The Job's `corpus_id` carries the deterministic id
     /// computed from the canonical paths.
-    #[allow(dead_code)] // wired in chunk 4 when serve enqueues replace inline register
+    #[allow(dead_code)] // wired when serve enqueues these jobs
     Tenant {
         paths: Vec<String>,
         clone_url: Option<String>,
@@ -84,14 +84,14 @@ impl JobStatus {
 /// `processed_files` is bumped per file as soon as parsing completes,
 /// which can race ahead of the embedder by minutes on a large corpus.
 /// `sections_done` / `embeddings_*` are the embedding-side counters
-/// added in PHASE5 chunk 3: the streaming consumer updates the
+/// added in : the streaming consumer updates the
 /// in-memory `IngestionProgress` per batch and the 500ms reporter
 /// snapshots all five into this struct. SSE clients render embedding
 /// progress as the primary signal during the long embedder phase, with
 /// `processed_files` as a secondary "parse phase done" indicator.
 ///
 /// `serde(default)` on the new fields keeps in-flight Postgres rows
-/// from PHASE4 deserialisable — old rows simply report zero for the
+/// from deserialisable — old rows simply report zero for the
 /// new fields until the next worker writes a fresh snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct JobProgress {
@@ -99,15 +99,15 @@ pub struct JobProgress {
     pub total_files: u64,
     pub processed_files: u64,
     pub current_file: Option<String>,
-    /// PHASE5 chunk 3 — section count bumped by the producer per file.
+    /// section count bumped by the producer per file.
     #[serde(default)]
     pub sections_done: u64,
-    /// PHASE5 chunk 3 — embedding-pairs *expected* across the run.
+    /// embedding-pairs *expected* across the run.
     /// Producer increments as it discovers them; reflects total work
     /// the embedder needs to do.
     #[serde(default)]
     pub embeddings_total: u64,
-    /// PHASE5 chunk 3 — embedding-pairs *flushed to HNSW*. Streaming
+    /// embedding-pairs *flushed to HNSW*. Streaming
     /// consumer bumps per `batch_embed_and_insert`. SSE renders this as
     /// the embedding-progress bar.
     #[serde(default)]

@@ -47,17 +47,17 @@ use crate::ingestion;
 /// matching signature.
 /// `MINISTR_STRIPE_SECRET_KEY` — Stripe API secret key (prefixed
 /// `sk_test_` or `sk_live_`) used for OUTBOUND calls to Stripe (Customer
-/// creation on signup in F1.5; Meter events later). When unset, the
+/// creation on signup; Meter events later). When unset, the
 /// cloud runs without ever calling Stripe; the GitHub sign-in flow
 /// still works, just without seeding a Stripe Customer.
 /// `MINISTR_STRIPE_PRICE_PRO` / `MINISTR_STRIPE_PRICE_TEAM` — Stripe
 /// price IDs configured in the dashboard for Pro / Team subscription
-/// products (F2.4). When unset, `POST /api/v1/billing/checkout` for
+/// products. When unset, `POST /api/v1/billing/checkout` for
 /// the corresponding plan returns 503 `price_not_configured`. Pricing
 /// matches §3 of the roadmap.
 /// `MINISTR_GITHUB_CLIENT_ID` / `MINISTR_GITHUB_CLIENT_SECRET` — the
 /// GitHub OAuth App credentials registered on github.com. Both must be
-/// present together for the F1.3 `/auth/github/*` sign-in routes to
+/// present together for the `/auth/github/*` sign-in routes to
 /// mount; absence keeps the cloud running on the OAuth-only code-grant
 /// path (self-hosted single-user serve).
 /// `MINISTR_CLOUD_BASE_URL` — absolute base URL the public Internet
@@ -66,12 +66,12 @@ use crate::ingestion;
 /// GitHub authorize endpoint must exactly match the value registered
 /// in the App's settings.
 /// `MINISTR_GITHUB_APP_ID` / `MINISTR_GITHUB_APP_PRIVATE_KEY` — the
-/// GitHub App credentials for private-repo cloning (F2.1). The private
+/// GitHub App credentials for private-repo cloning. The private
 /// key is the multi-line PEM downloaded from the App settings page —
 /// pass it verbatim (Container Apps secrets handle newlines correctly).
 /// Both must be present together. When unset, `clone_repo` requests
 /// carrying `github_installation_id` fail with 400.
-// F31.2b-ii — some fields lose their last reader as the inline cloud
+// some fields lose their last reader as the inline cloud
 // branch progressively migrates into `ministr_cloud::cli::mount_cloud_routes`.
 // Suppressed instead of pruning one-by-one — they'll all disappear when
 // the inline branch is deleted and CloudEnv shrinks to just the local-
@@ -90,12 +90,12 @@ struct CloudEnv {
     github_app_private_key: Option<String>,
     stripe_price_pro: Option<String>,
     stripe_price_team: Option<String>,
-    /// F3.6-b-ii-a — comma-separated CORS allowlist
+    /// comma-separated CORS allowlist
     /// (`MINISTR_CORS_ALLOWED_ORIGINS`). Unset (`None`) ⇒ no CORS
     /// layer mounted ⇒ self-hosted serve has zero browser exposure.
     /// Each entry is a full origin (`https://ministr.ai`).
     cors_allowed_origins: Option<String>,
-    /// F11.4 — comma-separated web-origin allowlist for the GitHub
+    /// comma-separated web-origin allowlist for the GitHub
     /// sign-in redirect (`MINISTR_WEB_ALLOWED_ORIGINS`). When set,
     /// `/auth/github/start` accepts `loopback_redirect` values whose
     /// origin matches an entry (alongside the RFC 8252 loopback
@@ -136,7 +136,7 @@ fn read_cloud_env() -> CloudEnv {
     }
 }
 
-/// F3.6-b-ii-a — parse a comma-separated CORS allowlist into
+/// parse a comma-separated CORS allowlist into
 /// validated origins. Each entry must look like a full origin
 /// (`scheme://host[:port]`). Malformed entries are dropped with a
 /// warn log so a typo in one slot doesn't disable CORS entirely.
@@ -173,7 +173,7 @@ fn parse_cors_allowed_origins(raw: Option<&str>) -> Option<Vec<String>> {
     Some(parsed)
 }
 
-/// F3.6-b-ii-a — build a `CorsLayer` from a parsed allowlist.
+/// build a `CorsLayer` from a parsed allowlist.
 ///
 /// Methods admitted: GET / POST / PUT / DELETE / OPTIONS — the union
 /// of methods the cloud HTTP surface exposes today.
@@ -255,13 +255,13 @@ async fn build_oauth_store(
 
 /// `ministr serve --transport http` — Streamable HTTP MCP server.
 ///
-/// F31.2b-ii — accepts an optional [`ministr_api::CloudRouterMounter`].
+/// accepts an optional [`ministr_api::CloudRouterMounter`].
 /// When `Some`, the mounter's `setup()` runs once at the top of this
 /// function and any returned adapters / cloud router are spliced into
 /// the locally-built state ADDITIVELY (the inline cloud branch below
 /// also runs as today — chunks B+ progressively migrate sub-routers
 /// out of the inline path into the mounter). When `None`, no setup
-/// call fires and behaviour is identical to pre-F31.2b-ii. The MIT
+/// call fires and behaviour is unchanged. The MIT
 /// `ministr` binary always passes `None`; `ministr-cloud-tools serve`
 /// (lands in chunk B) will pass `Some(&ClassicCloudMounter::new())`.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -283,7 +283,7 @@ pub async fn cmd_serve_http(
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     };
 
-    // F31.2b-ii — cloud setup. Runs once at top; the inline cloud
+    // cloud setup. Runs once at top; the inline cloud
     // branch below also runs (additive during the chunk B+ migration).
     // When `mounter` is `None` (the MIT `ministr` binary), `cloud`
     // stays `None` and every adapter-application block below is a
@@ -308,7 +308,7 @@ pub async fn cmd_serve_http(
         None => None,
     };
 
-    // F31.2b-ii-L+M — license validation + revocation handle migrated
+    // license validation + revocation handle migrated
     // to ClassicCloudMounter. The mounter returns the shutdown handle
     // via CloudMountOutput.shutdown; cmd_serve_http's chunk A serve
     // loop uses it for graceful shutdown.
@@ -323,28 +323,28 @@ pub async fn cmd_serve_http(
     )
     .await?;
 
-    // F31.2b-ii-R — inline blob_backend + cloud_pool construction (with
+    // inline blob_backend + cloud_pool construction (with
     // run_migrations + ensure_audit_partitions) MIGRATED to
     // `mount_cloud_routes`. `cloud_env` is the only thing still read
     // here — for CORS allowlist + AdminState webhook secret + the
     // OAuth-store backend selector.
     let cloud_env = read_cloud_env();
 
-    // F1.2 sub-bullet 3 — build the corpus registry once and hand the
+    // sub-bullet 3 — build the corpus registry once and hand the
     // same `Arc<CorpusRegistry>` to both the MCP server and the daemon
     // REST router below. Both surfaces therefore observe a single
     // source of truth for what's indexed; restore() runs once.
     let corpus_registry = infra::build_corpus_registry(&ctx, config);
 
-    // F31.2b-ii-J — PostgresCorporaRepo migrated to ClassicCloudMounter
+    // PostgresCorporaRepo migrated to ClassicCloudMounter
     // (CloudServerAdapters.corpora_repo). The chunk A adapter-
     // application stanza below applies it before `restore()`.
 
-    // F31.2b-ii-K — BlobCorpusRestorer migrated to ClassicCloudMounter
+    // BlobCorpusRestorer migrated to ClassicCloudMounter
     // (CloudServerAdapters.corpus_restorer). The chunk A adapter
     // stanza below applies it before `restore()`.
 
-    // F31.2b-ii — apply mounter-provided server adapters BEFORE
+    // apply mounter-provided server adapters BEFORE
     // restore(). Currently only fires when ClassicCloudMounter actually
     // populates these slots (chunks B+); empty output is a no-op.
     if let Some(c) = cloud.as_ref() {
@@ -375,7 +375,7 @@ pub async fn cmd_serve_http(
         });
     }
 
-    // F31.2b-ii-I — tenant_filter migrated to ClassicCloudMounter
+    // tenant_filter migrated to ClassicCloudMounter
     // (CloudServerAdapters.tenant_filter). When the mounter populates
     // it (cloud-mode `ministr-cloud-tools serve`), the MCP server is
     // built with `with_corpus_registry_and_filter`. Otherwise (MIT
@@ -394,17 +394,17 @@ pub async fn cmd_serve_http(
         None => server.with_corpus_registry(Arc::clone(&corpus_registry)),
     };
 
-    // F6.1-g — attach the Postgres-backed agent-session backends so the
-    // helpers landed in F6.1-d-c (drops), F6.1-e (snapshot persist), and
-    // F6.1-f (lazy restore) actually round-trip through durable storage.
+    // attach the Postgres-backed agent-session backends so the
+    // helpers landed in (drops), (snapshot persist), and
+    // (lazy restore) actually round-trip through durable storage.
     // Self-hosted serve leaves cloud_pool = None and both backends stay
-    // None on the registry; the F6.1-* helpers each collapse to a no-op
+    // None on the registry; the -* helpers each collapse to a no-op
     // in that branch.
-    // F31.2b-ii-K — PostgresSessionStorage + PostgresDropsLedger
+    // PostgresSessionStorage + PostgresDropsLedger
     // migrated to ClassicCloudMounter (CloudServerAdapters). The chunk
     // A stanza below applies them.
 
-    // F31.2b-ii — apply mounter-provided session_storage / drops_ledger.
+    // apply mounter-provided session_storage / drops_ledger.
     // Empty CloudMountOutput is a no-op.
     let server = if let Some(c) = cloud.as_ref() {
         let s = match c.server_adapters.session_storage.clone() {
@@ -440,16 +440,16 @@ pub async fn cmd_serve_http(
     // Each HTTP session gets its own MinistrServer fork — shares the
     // Arc'd infrastructure (registry, prefetch, storage) but gets a
     // fresh `active_session_id` (uuid_v4) AND a fresh tenant_id_hint
-    // Mutex<Option<String>>. Per F-Test-3b-fix-1-shared-bootstrap:
+    // Mutex<Option<String>>. Per
     // without the fork, all /mcp connections share the bootstrap
     // active_session_id → one SessionEntry → tenant A's first stamp
     // pins the entry to tenant A → tenant B's tool-call activity
-    // mutates A's session shadow (data leak on F6.2 export).
+    // mutates A's session shadow (data leak on export).
     //
     // The prior attempt at this fix hung tool calls because handlers
     // like ministr_survey called `get_session(...).expect("active
     // session exists")` — the fresh fork session id doesn't exist
-    // until first written. F-Test-3b-fix-1-shared-bootstrap Phase A
+    // until first written. Phase A
     // replaced those 5 panic sites with `ensure_session_mut` so
     // get-or-create happens automatically; this fork is now safe.
     let server_factory = move || Ok(server.fork_for_new_session());
@@ -507,19 +507,19 @@ pub async fn cmd_serve_http(
     };
     let bundle_router = ministr_mcp::bundle_routes::bundle_routes(bundle_state);
 
-    // F6.2-a — session bundle export. Shares the same
+    // session bundle export. Shares the same
     // `Arc<Mutex<SessionRegistry>>` already cloned for the A2A wiring
     // (line above this block), so all surfaces see the same live session
     // shadows. Mounted unconditionally (self-hosted users can also
     // export sessions for debugging); scope-gated as `ministr:read`
     // below alongside the orgs router.
     //
-    // F6.2-b — when `cloud_pool` is_some, attach the
+    // when `cloud_pool` is_some, attach the
     // `PostgresDropsLedger` so the bundle's `drops.jsonl` is
-    // populated from the persisted ledger (F6.1-d). Self-hosted serve
-    // leaves the ledger `None` and the bundle ships the F6.2-a shape
+    // populated from the persisted ledger. Self-hosted serve
+    // leaves the ledger `None` and the bundle ships the shape
     // (manifest + delivered only).
-    // F31.2b-ii-K — session_export_state drops_ledger + bundle_store
+    // session_export_state drops_ledger + bundle_store
     // migrated entirely to ClassicCloudMounter. No more inline cloud
     // wiring here — the chunk A stanza below handles the application.
     let session_export_state = {
@@ -540,13 +540,13 @@ pub async fn cmd_serve_http(
         }
         state
     };
-    // F-Test-3 finding: handle_list / handle_export read
-    // `tenant_scope::current()` for cross-tenant 404 + list-scoping
-    // (F6.2-e-followup-ii), but the task-local is only populated when
+    // finding: handle_list / handle_export read
+    // `tenant_scope::current()` for cross-tenant 404 + list-scoping,
+    // but the task-local is only populated when
     // `scope_tenant` middleware is layered on the router. Without it,
     // every authenticated tenant sees the bootstrap `ministr-<hash>`
     // session (and any other unstamped legacy entries) — a real
-    // cross-tenant leak surfaced by F-Test-3's session-isolation
+    // cross-tenant leak surfaced by the session-isolation
     // assertions. The daemon routers below already mount this layer;
     // session_export was the gap.
     let session_export_scope_tenant_layer =
@@ -555,19 +555,19 @@ pub async fn cmd_serve_http(
         .layer(session_export_scope_tenant_layer);
 
     let admin_state = build_admin_state(&cloud_env, corpus_paths.len())?;
-    // F5.5-b-latency — capture the shared LatencyTracker before
+    // capture the shared LatencyTracker before
     // admin_state is moved into the protected-routes constructor. The
     // tracker is Arc-backed so the middleware mounted at the outer
     // layer below sees the same buffer the /sla handler reads.
     let latency_tracker = admin_state.latency_tracker();
-    // F5.5-b-persist-read — wire the PostgresSlaWindowStore so /sla
+    // wire the PostgresSlaWindowStore so /sla
     // emits latency.window_30d_max_p95_ms. Cloud-only: self-hosted
     // serve (no cloud_pool) leaves the field unwired and the JSON
     // renders the historical field as null.
-    // F31.2b-ii-J — PostgresSlaWindowStore migrated to
+    // PostgresSlaWindowStore migrated to
     // ClassicCloudMounter (CloudAdminAdapters.sla_window_store).
     // The chunk A admin_adapters stanza below applies it.
-    // F31.2b-ii — mounter-provided sla_window_store takes precedence
+    // mounter-provided sla_window_store takes precedence
     // over inline. Empty CloudMountOutput is a no-op.
     let admin_state = if let Some(sla) = cloud
         .as_ref()
@@ -581,7 +581,7 @@ pub async fn cmd_serve_http(
     let admin_public = ministr_mcp::admin::admin_public_routes(admin_state.clone());
     let admin_protected = ministr_mcp::admin::admin_protected_routes(admin_state);
 
-    // F5.5-b-persist-write — when cloud Postgres is wired, spawn a
+    // when cloud Postgres is wired, spawn a
     // tokio task that flushes the in-process LatencyTracker snapshot
     // to `request_latency_snapshots` every MINISTR_SLA_FLUSH_SECS
     // (default 60s). Self-hosted serve (no cloud_pool) leaves this
@@ -590,7 +590,7 @@ pub async fn cmd_serve_http(
     // at warn and the loop continues; a snapshot with no samples is
     // silently skipped so the first row only lands after a request
     // has flowed.
-    // F31.2b-ii-Q — SLA latency flush task. The persister adapter
+    // SLA latency flush task. The persister adapter
     // (CloudAdminAdapters.sla_snapshot_persister) wraps the cloud's
     // Postgres `request_latency_snapshots` writer. When the mounter
     // populates the slot, spawn the cadenced flush task. Self-hosted
@@ -648,27 +648,27 @@ pub async fn cmd_serve_http(
     // observability spans authenticated calls only (auth check sits
     // outside the activity layer).
     //
-    // cloud_pool was constructed above (hoisted for PHASE3 chunk 1).
-    // PostgresUsageSink (F1.4 sub-bullet 2) and the billing endpoint
+    // cloud_pool was constructed above (hoisted for).
+    // PostgresUsageSink (sub-bullet 2) and the billing endpoint
     // (sub-bullet 4) share that same pool.
 
     let mut daemon_state = ministr_daemon::state::AppState::from_arc(Arc::clone(&corpus_registry));
-    // F31.2b-ii-I — daemon corpus_visibility / usage_sink / audit_sink
+    // daemon corpus_visibility / usage_sink / audit_sink
     // / index_job_sink migrated to ClassicCloudMounter
     // (CloudDaemonAdapters). The chunk A adapter-application stanza
     // below the BlobBackendSink block handles the actual wiring.
-    // F31.2b-ii-R — the PHASE6 in-process WorkerLoop spawn that was
+    // the in-process WorkerLoop spawn that was
     // here moved to `ministr-cloud-tools::serve`; only the cloud-tools
     // binary has the construction surface for IngestionRunner +
     // PostgresJobQueue + the BlobUploader trait impl.
 
-    // F31.2b-ii-J — GitHubAppClient migrated to ClassicCloudMounter
+    // GitHubAppClient migrated to ClassicCloudMounter
     // (CloudDaemonAdapters.installation_minter). The chunk A
     // adapter-application stanza below applies it.
 
-    // PHASE2 chunk 4 — durable corpus uploads. The BlobBackendSink
+    // durable corpus uploads. The BlobBackendSink
     // itself is now built inside ClassicCloudMounter
-    // (CloudDaemonAdapters.blob_sink, F31.2b-ii-K). cmd_serve_http
+    // (CloudDaemonAdapters.blob_sink,). cmd_serve_http
     // keeps ownership of the completion channel + reactor: it installs
     // the mpsc rx on the corpus_registry and spawns a task that drains
     // (corpus_id, corpus_dir) events into the mounter-provided sink.
@@ -688,7 +688,7 @@ pub async fn cmd_serve_http(
         tracing::info!("blob upload reactor spawned — bundles uploaded after every ingest");
     }
 
-    // F31.2b-ii — apply mounter-provided daemon adapters. These run
+    // apply mounter-provided daemon adapters. These run
     // AFTER the inline cloud-pool blocks above so a mounter that
     // provides the same adapter overrides the inline one. Empty
     // CloudMountOutput is a no-op. Chunks B+ progressively move the
@@ -762,23 +762,23 @@ pub async fn cmd_serve_http(
             cloud_env.pg_url.as_deref(),
         )
         .await?;
-        // F3.4a — wire the API-key resolver so the existing OAuth
+        // wire the API-key resolver so the existing OAuth
         // token-validation middleware also authenticates `mst_pk_…`
         // service-account tokens. Cloud-only: the resolver needs the
         // Postgres pool to consult `api_keys`. Self-hosted serve
         // leaves the store untouched and only OAuth tokens
         // authenticate there.
         //
-        // F5.5-a-plan-lookup — also wire the plan resolver so the
+        // also wire the plan resolver so the
         // OAuth-path resolve_tenant builds a Tenant whose `plan`
         // reflects the user's real `users.plan_id` instead of
         // defaulting to Plan::Pro. Same cloud-only gate; the resolver
         // is wasted on self-hosted serve (where validate_token returns
         // OAuth client_ids, not user UUIDs).
-        // F31.2b-ii-J — PostgresApiKeyResolver + PostgresPlanResolver
+        // PostgresApiKeyResolver + PostgresPlanResolver
         // migrated to ClassicCloudMounter (CloudOAuthAdapters). The
         // chunk A oauth_adapters stanza below applies both.
-        // F31.2b-ii — mounter-provided OAuth adapters take precedence
+        // mounter-provided OAuth adapters take precedence
         // over inline. Empty CloudMountOutput is a no-op.
         let store = if let Some(c) = cloud.as_ref() {
             let s = match c.oauth_adapters.api_key_resolver.clone() {
@@ -814,7 +814,7 @@ pub async fn cmd_serve_http(
             store.clone(),
             "ministr:read",
         );
-        // F31.2b-ii-P — F2.2 rate-limit + F2.3 quota middleware on
+        // rate-limit + quota middleware on
         // daemon_write_router moved into ClassicCloudMounter via
         // CloudMountOutput.daemon_write_layer. When the mounter
         // populates the slot, wrap the router with cloud layers;
@@ -844,11 +844,11 @@ pub async fn cmd_serve_http(
             store.clone(),
             "ministr:write",
         );
-        // F1.4 sub-bullet 4 — billing endpoint. Mounted only when
+        // sub-bullet 4 — billing endpoint. Mounted only when
         // a cloud Postgres pool exists; otherwise the route is absent
         // and clients see 404, matching the absence of any billable
         // surface on self-hosted serve.
-        // F6.2-a — session bundle export route, scope-gated as
+        // session bundle export route, scope-gated as
         // `ministr:read`. Mounted unconditionally so self-hosted users
         // can export sessions too; the cloud's scope guard is the
         // standard `validate_token_middleware` path.
@@ -883,7 +883,7 @@ pub async fn cmd_serve_http(
             .merge(session_export_router)
     };
 
-    // F31.2b-ii — merge the cloud-side Router that the mounter built.
+    // merge the cloud-side Router that the mounter built.
     // Empty CloudMountOutput.router is a no-op merge. Once chunks B+
     // migrate inline sub-routers into ClassicCloudMounter, the
     // corresponding inline `composed = composed.merge(...)` calls get
@@ -894,7 +894,7 @@ pub async fn cmd_serve_http(
         app
     };
 
-    // F5.5-b-latency — outermost middleware that records every
+    // outermost middleware that records every
     // request's elapsed time into the shared LatencyTracker the
     // /sla handler reads from. Mounted INSIDE the CORS layer (i.e.
     // CORS wraps this) so a CORS preflight that 204s doesn't
@@ -907,7 +907,7 @@ pub async fn cmd_serve_http(
         ministr_mcp::admin::record_latency_middleware,
     ));
 
-    // F3.6-b-ii-a — opt-in CORS layer. Mounted last so the headers
+    // opt-in CORS layer. Mounted last so the headers
     // wrap the final composed router (including OAuth-protected and
     // public surfaces). Default-off: missing/blank
     // `MINISTR_CORS_ALLOWED_ORIGINS` leaves the layer unmounted and
@@ -945,7 +945,7 @@ pub async fn cmd_serve_http(
         )
     });
 
-    // F31.2b-ii — graceful shutdown driven by the mounter's
+    // graceful shutdown driven by the mounter's
     // `RevocationHandle` (license revocation triggers shutdown so the
     // orchestrator restarts into the now-refused license). Inline
     // license validation was removed in chunk L; the mounter owns this
@@ -1336,7 +1336,7 @@ pub async fn cmd_index(
     .await?;
 
     let progress = Arc::new(ministr_core::ingestion::IngestionProgress::new());
-    // Local `ministr index` keeps the PHASE3 bundle-at-end shape;
+    // Local `ministr index` keeps the bundle-at-end shape;
     // streaming persist is opt-in via the cloud worker path below.
     ingestion::run_corpus_ingestion(corpus_paths, git_includes, &ctx, &progress, None).await?;
 

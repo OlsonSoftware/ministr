@@ -440,7 +440,7 @@ struct IngestContext<'a, S: ?Sized, E: ?Sized, I: ?Sized> {
 
 // ── BatchIngestionConfig ─────────────────────────────────────────────────────
 
-/// Tuning knobs for streaming ingestion (PHASE4 chunk 3 scaffolding).
+/// Tuning knobs for streaming ingestion (scaffolding).
 ///
 /// The pipeline conceptually runs in four phases:
 ///
@@ -457,7 +457,7 @@ struct IngestContext<'a, S: ?Sized, E: ?Sized, I: ?Sized> {
 /// 4. **Persist** — flush the HNSW graph to disk via
 ///    [`VectorIndex::persist`]. Today this happens **once**, after
 ///    ingestion ends; the resulting peak rss (everything held in
-///    memory until the very end) is what motivates PHASE4 chunk 4.
+///    memory until the very end) is what motivates streaming persistence.
 ///
 /// # HNSW + persistence
 ///
@@ -470,17 +470,17 @@ struct IngestContext<'a, S: ?Sized, E: ?Sized, I: ?Sized> {
 ///   in-memory graph untouched.
 ///
 /// So the substrate for "persist every N files" already exists in the
-/// trait surface and the HNSW backend. This struct just gives chunk 4
-/// a knob to read; today it's plumbed through but **not consumed**.
+/// trait surface and the HNSW backend. This struct just exposes a knob to
+/// read; today it's plumbed through but **not consumed**.
 ///
 /// # Defaults
 ///
-/// [`BatchIngestionConfig::default`] preserves PHASE3-era behaviour:
-/// `persist_every: None`, i.e. flush only at end-of-ingest. Chunk 4 will
-/// change the default to `Some(4)` once the per-batch persist hook
+/// [`BatchIngestionConfig::default`] preserves the original behaviour:
+/// `persist_every: None`, i.e. flush only at end-of-ingest. A future
+/// release may default to `Some(4)` once the per-batch persist hook
 /// lands and benchmarks settle.
 ///
-/// # Example (chunk-4-shape, not wired today)
+/// # Example (not wired today)
 ///
 /// ```no_run
 /// use ministr_core::ingestion::{BatchIngestionConfig, IngestionPipeline};
@@ -497,20 +497,20 @@ pub struct BatchIngestionConfig {
     /// Files per parse/embed batch. The producer is already
     /// `buffer_unordered(concurrency)` over per-file futures, so this
     /// is read as a hint for how many files' embedding pairs to gather
-    /// before flushing the consumer's HNSW insert. Defaults to 4 in
-    /// the chunk-4 spec; chunk 3 leaves it advisory.
+    /// before flushing the consumer's HNSW insert. Defaults to 4;
+    /// today it is advisory.
     pub batch_size: usize,
     /// When `Some(n)`, persist the HNSW index to disk after every `n`
-    /// files indexed. `None` preserves PHASE3 behaviour: persist once
-    /// at end-of-ingest. Chunk 4 will consume this; chunk 3 only
-    /// scaffolds the surface.
+    /// files indexed. `None` preserves the default behaviour: persist
+    /// once at end-of-ingest. The knob is plumbed through but not yet
+    /// consumed.
     pub persist_every: Option<usize>,
 }
 
 impl Default for BatchIngestionConfig {
     fn default() -> Self {
-        // Preserve PHASE3 behaviour by default: no mid-run persist.
-        // Chunk 4 will flip persist_every once the consume site lands.
+        // Preserve the default behaviour: no mid-run persist.
+        // persist_every stays `None` until the consume site lands.
         Self {
             batch_size: 4,
             persist_every: None,
@@ -558,7 +558,7 @@ pub struct IngestionPipeline {
     full_dim_storage: Option<crate::storage::SqliteStorage>,
     /// Streaming-ingestion knobs. See [`BatchIngestionConfig`] for the
     /// four-phase model + HNSW persistence notes; consumed by
-    /// `run_producer_consumer`'s per-batch persist hook (PHASE4 chunk 4).
+    /// `run_producer_consumer`'s per-batch persist hook.
     batch_config: BatchIngestionConfig,
     /// On-disk location to flush the HNSW index to when
     /// `batch_config.persist_every` fires. `None` (default) disables
@@ -2012,7 +2012,7 @@ impl IngestionPipeline {
 
         let (embed_tx, embed_rx) = tokio::sync::mpsc::channel::<Vec<(VectorId, String)>>(16);
 
-        // PHASE4 chunk 4: bridge endpoints used to be accumulated here,
+        // bridge endpoints used to be accumulated here,
         // returned, and immediately discarded by both callers —
         // `finalize_ingestion` rebuilds bridge data from `all_files` (see its
         // doc comment) so the per-file batch was dead weight. Removed entirely.
@@ -2748,10 +2748,10 @@ impl IngestionPipeline {
 
 #[cfg(test)]
 mod phase5_chunk2_persist_gate_tests {
-    //! PHASE5 chunk 2 — regression coverage for the empty-index persist
+    //! regression coverage for the empty-index persist
     //! gate added to `run_producer_consumer`. Driving the full pipeline
     //! here would require building Storage + Embedder + FileItems and a
-    //! cancellation token harness; PHASE4 chunk 4 explicitly noted that
+    //! cancellation token harness; explicitly noted that
     //! the persist hook is exercised by the broader test suite + the
     //! operator smoke. This module instead pins the two facts the gate
     //! relies on:
@@ -2787,7 +2787,7 @@ mod phase5_chunk2_persist_gate_tests {
 
     #[test]
     fn empty_persist_is_the_failure_we_avoid() {
-        // PHASE4 chunk 4 hit this in production: index.persist() on an
+        // hit this in production: index.persist on an
         // empty HNSW returns an error like "nb point 0", drowning the
         // demo log in WARNs until the embedder catches up. The gate's
         // job is to ensure persist() is never called in this state.

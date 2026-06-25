@@ -1,4 +1,4 @@
-//! gd2c-files-1 — daemon `GET /api/v1/corpora/{id}/files` endpoint.
+//! daemon `GET /api/v1/corpora/{id}/files` endpoint.
 //!
 //! Verifies the file-tree read the desktop code browser uses now works over
 //! UDS: register a real corpus, let ingestion write the file-hash + sections,

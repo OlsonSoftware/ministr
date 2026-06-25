@@ -35,7 +35,7 @@ const KEYRING_TOKEN_ACCOUNT: &str = "bearer_token";
 
 /// Persisted state for the cloud connection. Lives on disk as JSON at
 /// `<data-dir>/cloud.json` for the non-secret endpoint URL only — the
-/// bearer token moved to the OS keychain in F1.3 and is never written
+/// bearer token moved to the OS keychain in and is never written
 /// to this file.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CloudConfig {
@@ -53,7 +53,7 @@ impl CloudConfig {
 /// True when the OS keychain currently holds a non-empty cloud bearer
 /// token. Replaces the old `bearer_token`-on-disk check.
 ///
-/// `pub(crate)` so the tray cloud-status dot (F2.7) can peek at the
+/// `pub(crate)` so the tray cloud-status dot can peek at the
 /// auth state without going through the Tauri command surface.
 pub(crate) fn is_authenticated() -> bool {
     load_bearer_token().is_some_and(|t| !t.trim().is_empty())
@@ -150,7 +150,7 @@ fn load_config() -> CloudConfig {
         CloudConfig::default()
     });
 
-    // Pre-F1.3 builds wrote the bearer token alongside the endpoint in
+    // Pre- builds wrote the bearer token alongside the endpoint in
     // cloud.json. Detect that legacy shape and migrate the token into
     // the OS keychain, then rewrite the file without the secret field.
     // The migration is best-effort: if the keychain write fails we
@@ -240,7 +240,7 @@ pub async fn cloud_set_endpoint(endpoint: String) -> Result<(), CommandError> {
 
 /// Save a Bearer token issued by the remote OAuth flow. Empty clears
 /// the OS-keychain entry. Token lives in the platform credential
-/// store (F1.3 OS-keychain carry-over) — never on disk.
+/// store (OS-keychain carry-over) — never on disk.
 #[tauri::command]
 pub async fn cloud_set_bearer_token(token: String) -> Result<(), CommandError> {
     let trimmed = token.trim();
@@ -334,7 +334,7 @@ pub async fn cloud_authenticate(app: AppHandle) -> Result<(), CommandError> {
         st = url_encode(&state_nonce),
         sc = url_encode(scopes),
     );
-    // F2.7 — migrated to tauri-plugin-opener (Shell::open was
+    // migrated to tauri-plugin-opener (Shell::open was
     // deprecated in Tauri 2.x). Same one-call surface, tighter
     // capability scoping in `tauri.conf.json`.
     app.opener()
@@ -399,7 +399,7 @@ pub async fn cloud_authenticate(app: AppHandle) -> Result<(), CommandError> {
     Ok(())
 }
 
-/// Drive the F1.3 GitHub sign-in flow against the configured cloud
+/// Drive the GitHub sign-in flow against the configured cloud
 /// endpoint. Same RFC 8252 loopback-listener pattern as
 /// [`cloud_authenticate`], but instead of running the OAuth code-grant
 /// dance directly against `/oauth/*`, this command bounces through the
@@ -871,7 +871,7 @@ fn authed_client(timeout_secs: u64) -> Result<(reqwest::Client, String, String),
 }
 
 /// POST `/api/v1/billing/checkout` — mint a Stripe Checkout session
-/// for the requested plan (F2.4). Opens the returned URL in the
+/// for the requested plan. Opens the returned URL in the
 /// system browser so the user pays in Stripe-hosted UI; the cloud
 /// webhook flips `users.plan_id` once payment lands.
 #[tauri::command]
@@ -907,7 +907,7 @@ pub async fn cloud_billing_checkout(app: AppHandle, plan: String) -> Result<(), 
 }
 
 /// POST `/api/v1/billing/portal` — open the Stripe Customer Portal for
-/// invoices, card management, and cancellation (F2.4). Same browser-
+/// invoices, card management, and cancellation. Same browser-
 /// open pattern as the checkout flow.
 #[tauri::command]
 pub async fn cloud_billing_portal(app: AppHandle) -> Result<(), CommandError> {
@@ -941,8 +941,8 @@ pub async fn cloud_billing_portal(app: AppHandle) -> Result<(), CommandError> {
 }
 
 /// GET `/api/v1/billing/usage` — fetch the calling tenant's metered
-/// usage (F1.4 sub-bullet 4). Drives the overview-tile badges
-/// (F1.4 sub-bullet 5).
+/// usage (sub-bullet 4). Drives the overview-tile badges
+/// (sub-bullet 5).
 ///
 /// Returns the server's `UsageResponse` payload verbatim — the panel
 /// renders against the wire shape rather than a re-mapped local
@@ -1019,7 +1019,7 @@ pub async fn cloud_register_corpus(paths: Vec<String>) -> Result<serde_json::Val
 /// POST `/api/v1/corpora/{slug}/clone` — git-clone a remote repo and register
 /// it as a corpus. The `slug` is derived from the URL when not supplied.
 ///
-/// `github_installation_id`, when set, drives the F2.1 private-repo path:
+/// `github_installation_id`, when set, drives the private-repo path
 /// the cloud mints a short-lived GitHub App installation token and
 /// splices it into the clone URL server-side. The token never reaches
 /// this command.
@@ -1149,7 +1149,7 @@ pub async fn cloud_corpus_progress(
     Ok(())
 }
 
-// ── F3.2-ii — Share corpus with org ─────────────────────────────────────────
+// ── — Share corpus with org ─────────────────────────────────────────
 
 /// One org as returned by `GET /api/v1/orgs`. Mirrors
 /// `ministr_cloud::orgs::routes::OrgSummary`.
@@ -1321,7 +1321,7 @@ pub struct CloudTransferPersonalResponse {
 /// running Checkout for a Team plan on the org's Stripe Customer.
 /// Caller must be owner/admin of the target org. The cloud emits
 /// a `personal_sub.cancelled` audit event (delivered to the org's
-/// F3.5 webhook subscribers automatically) only on the `cancelled`
+/// webhook subscribers automatically) only on the `cancelled`
 /// outcome.
 #[tauri::command]
 pub async fn cloud_transfer_personal_sub(
@@ -1349,7 +1349,7 @@ pub async fn cloud_transfer_personal_sub(
 /// POST `/api/v1/corpora/{id}/transfer` — flip the corpus's tenant
 /// to a target org. Caller must own the corpus AND be owner/admin of
 /// the target org. The cloud emits a `corpus.transferred` audit event
-/// (delivered to the org's F3.5 webhook subscribers automatically).
+/// (delivered to the org's webhook subscribers automatically).
 #[tauri::command]
 pub async fn cloud_transfer_corpus_to_org(
     corpus_id: String,
@@ -1376,7 +1376,7 @@ pub async fn cloud_transfer_corpus_to_org(
         .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse transfer: {e}")))
 }
 
-// ── F3.4b — Service-account API keys ────────────────────────────────────────
+// ── — Service-account API keys ────────────────────────────────────────
 
 /// One API key as returned by GET `/api/v1/api_keys`. Mirrors
 /// `ministr_cloud::api_keys::ApiKeyRow`. `prefix` is the first 8 chars
@@ -1491,7 +1491,7 @@ pub async fn cloud_revoke_api_key(key_id: String) -> Result<(), CommandError> {
     Ok(())
 }
 
-// ── F3.5b-ii — Outbound webhook subscriptions ──────────────────────────────
+// ── — Outbound webhook subscriptions ──────────────────────────────
 
 /// One subscription row as returned by GET /api/v1/orgs/{id}/webhooks.
 /// Mirrors `ministr_cloud::webhooks::WebhookSubscription`. The signing
@@ -1642,7 +1642,7 @@ pub async fn cloud_test_webhook_sub(
         .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse test result: {e}")))
 }
 
-// ── F3.3b — Org usage dashboard ────────────────────────────────────────────
+// ── — Org usage dashboard ────────────────────────────────────────────
 
 /// One per-day, per-kind, per-member rollup row. Mirrors
 /// `ministr_cloud::orgs::OrgRollupRow`.
@@ -1705,7 +1705,7 @@ pub async fn cloud_get_org_usage(
         .map_err(|e| CommandError::new(ErrorKind::Io, format!("parse org usage: {e}")))
 }
 
-/// F3.3c — fetch the org's usage CSV from `/api/v1/orgs/{id}/usage.csv`,
+/// fetch the org's usage CSV from `/api/v1/orgs/{id}/usage.csv`,
 /// open a native Save dialog, and write the CSV to the chosen path.
 ///
 /// Returns the absolute path that was written, or `None` if the user
@@ -1822,7 +1822,7 @@ pub async fn cloud_trigger_reindex(corpus_id: String) -> Result<String, CommandE
         })
 }
 
-// ── F6.2-d — Session inspector ──────────────────────────────────────────────
+// ── — Session inspector ──────────────────────────────────────────────
 
 /// Mirrors `ministr_mcp::sessions::export::SessionBundleManifest`. Kept
 /// as a separate struct on the Tauri side so the JS/TS layer can
@@ -1878,7 +1878,7 @@ pub struct CloudSessionBundle {
     pub drops: Option<Vec<CloudSessionDrop>>,
 }
 
-/// F6.2-e — one in-memory session summary returned by
+/// one in-memory session summary returned by
 /// `GET /api/v1/sessions`. Mirrors
 /// `ministr_mcp::sessions::export::SessionSummary`. v0 is live
 /// in-memory state only (one pod); cross-pod listing via
@@ -1894,7 +1894,7 @@ pub struct CloudSessionSummary {
 }
 
 /// GET `/api/v1/sessions` — list session summaries from the live
-/// in-memory registry. Used by the F6.2-d inspector dropdown so users
+/// in-memory registry. Used by the inspector dropdown so users
 /// don't have to copy-paste `session_ids` from elsewhere.
 #[tauri::command]
 pub async fn cloud_list_sessions() -> Result<Vec<CloudSessionSummary>, CommandError> {
@@ -1921,7 +1921,7 @@ pub async fn cloud_list_sessions() -> Result<Vec<CloudSessionSummary>, CommandEr
 /// it locally, return a structured payload the React inspector can
 /// render without re-parsing the tar in JS.
 ///
-/// # F6.2-c dual-response handling
+/// # dual-response handling
 ///
 /// When the cloud has a `SessionBundleStore` wired, `handle_export`
 /// returns JSON `{url, expires_at}` instead of inline tar bytes — the
@@ -1956,7 +1956,7 @@ pub async fn cloud_fetch_session_bundle(
         .unwrap_or("")
         .to_ascii_lowercase();
     let bytes = if content_type.starts_with("application/json") {
-        // F6.2-c — cloud returned a signed URL. Follow it (no bearer;
+        // cloud returned a signed URL. Follow it (no bearer;
         // the signature is in the query). The URL points back at our
         // own `/api/v1/sessions/bundles/...` endpoint which streams
         // the tar bytes via the cloud's `verify_and_get`.
@@ -1990,7 +1990,7 @@ pub async fn cloud_fetch_session_bundle(
 }
 
 /// Shape of the JSON response returned by `handle_export` when the
-/// cloud-side bundle store is wired (F6.2-c). Mirrors
+/// cloud-side bundle store is wired. Mirrors
 /// `ministr_api::SignedBundleUrl`.
 #[derive(Debug, serde::Deserialize)]
 struct SignedBundleResponse {

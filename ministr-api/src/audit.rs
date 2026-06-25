@@ -1,6 +1,6 @@
 //! Audit-log emission hook.
 //!
-//! F3.7a — service-account API keys, org invites, ACL shares, and
+//! service-account API keys, org invites, ACL shares, and
 //! org create all emit one `audit_events` row per write. The trait
 //! lives here (MIT) so the open-core handlers in `ministr-cloud` can
 //! call into a `dyn`-typed sink; the concrete `PostgresAuditSink`
@@ -49,7 +49,7 @@ pub struct AuditEntry {
     pub actor: Option<String>,
     /// Source IP, if the handler has it. Optional because some
     /// handlers run server-side without a client request context
-    /// (none in F3.7a, but reserved for future cron-driven actions).
+    /// (none yet, but reserved for future cron-driven actions).
     pub ip: Option<String>,
     /// Client user-agent string, if present. Truncated to a sane
     /// length by the sink implementation.

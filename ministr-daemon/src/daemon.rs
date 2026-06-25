@@ -98,7 +98,7 @@ pub fn corpora_read_router(state: AppState) -> Router {
 ///
 /// Split out of [`corpora_read_router`] deliberately: on the daemon's
 /// own (UDS) surface this path lists agent sessions, but the public
-/// HTTP serve re-hosts the read router AND mounts the F6.2-e session
+/// HTTP serve re-hosts the read router AND mounts the session
 /// export router (`ministr_mcp::sessions::export`), which owns
 /// `GET /api/v1/sessions` there (the shape `cloudClient.ts` expects).
 /// Keeping this route in the shared read router made the two collide —
@@ -683,7 +683,7 @@ fn split_section_id(section: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// F3.7b — fire-and-forget audit emission helper. Emits an
+/// fire-and-forget audit emission helper. Emits an
 /// [`AuditEntry`] when the daemon's `AppState` has a sink wired
 /// (cloud mode); a no-op on self-hosted serve. `actor` comes from the
 /// per-request `TenantId` extension that auth middleware populates;
@@ -714,7 +714,7 @@ async fn register_corpus(
     tenant: Option<Extension<TenantId>>,
     Json(req): Json<RegisterCorpusRequest>,
 ) -> impl IntoResponse {
-    // PHASE3 chunk 4 — when an IndexJobSink is wired (cloud mode), do
+    // when an IndexJobSink is wired (cloud mode), do
     // NOT run ingestion inline. Compute the deterministic corpus_id
     // and use the sink to either upsert-only (paths-only registration:
     // serve pod has no local source files, so dispatching an indexer
@@ -759,7 +759,7 @@ async fn register_corpus(
             }
             false
         };
-        // F3.7b — audit corpus.created on the cloud-enqueue path.
+        // audit corpus.created on the cloud-enqueue path.
         audit_corpus_action(&state, tenant.as_ref(), "corpus.created", &corpus_id);
         return Json(RegisterCorpusResponse {
             corpus_id,
@@ -780,7 +780,7 @@ async fn register_corpus(
             {
                 handle.info.write().await.display_name = name;
             }
-            // F3.7b — audit corpus.created on the inline-register path.
+            // audit corpus.created on the inline-register path.
             audit_corpus_action(&state, tenant.as_ref(), "corpus.created", &corpus_id);
             Json(RegisterCorpusResponse {
                 corpus_id,
@@ -814,10 +814,10 @@ async fn clone_repo(
     tenant: Option<Extension<TenantId>>,
     Json(req): Json<CloneRepoRequest>,
 ) -> impl IntoResponse {
-    // PHASE3 chunk 4 — cloud-mode enqueue path. The serve pod no
+    // cloud-mode enqueue path. The serve pod no
     // longer clones inline; it computes a deterministic corpus_id
     // from the repo URL and enqueues a `Tenant{clone_url}` job. The
-    // worker (chunk 3) does the clone + index + upload. Parent
+    // worker does the clone + index + upload. Parent
     // lookup and parent .ministr.toml updates are skipped — the
     // linked-toml update only meaningful for self-hosted parents
     // and the worker doesn't ship a registry.
@@ -863,7 +863,7 @@ async fn clone_repo(
         {
             return err(StatusCode::INTERNAL_SERVER_ERROR, "enqueue_failed", e).into_response();
         }
-        // F3.7b — audit corpus.cloned on the cloud-enqueue path.
+        // audit corpus.cloned on the cloud-enqueue path.
         audit_corpus_action(&state, tenant.as_ref(), "corpus.cloned", &corpus_id);
         // Response carries placeholders for the worker-derived fields
         // (clone_dir, commit_sha, branch) — those are unknown until
@@ -892,7 +892,7 @@ async fn clone_repo(
         }
     };
 
-    // 1b. F2.1 — mint a GitHub App installation token when the caller
+    // 1b. Mint a GitHub App installation token when the caller
     //     supplies an `installation_id` AND a minter is wired. The
     //     resulting URL is identical in shape to a PAT URL
     //     (`https://x-access-token:<token>@github.com/...`), so the
@@ -1011,7 +1011,7 @@ async fn clone_repo(
         false
     };
 
-    // F3.7b — audit corpus.cloned on the inline clone path.
+    // audit corpus.cloned on the inline clone path.
     audit_corpus_action(&state, tenant.as_ref(), "corpus.cloned", &new_corpus_id);
 
     Json(CloneRepoResponse {
@@ -1150,7 +1150,7 @@ async fn list_corpora(
 ) -> impl IntoResponse {
     let all = state.registry.list().await;
 
-    // F3.2-iii — when cloud mode wires a visibility filter AND the
+    // when cloud mode wires a visibility filter AND the
     // auth middleware populated a TenantId, filter the list to own +
     // ACL-granted corpora. Self-hosted serve has no filter and no
     // TenantId; the list returns every in-memory corpus.
@@ -1183,7 +1183,7 @@ async fn list_corpora(
             _ => all,
         };
 
-    // Closes the F-Test-1 cloud-registry pending-corpus gap: in cloud
+    // Closes the cloud-registry pending-corpus gap: in cloud
     // mode `register_corpus` writes to `cloud_corpora` via
     // `IndexJobSink` but never updates the in-memory `CorpusRegistry`
     // until the worker indexes. Merge any direct-ownership rows the
@@ -1307,7 +1307,7 @@ async fn unregister_corpus(
                 tracing::error!(path = %dir.display(), error = %e, "purge after unregister failed");
                 return err(StatusCode::INTERNAL_SERVER_ERROR, "purge_failed", e).into_response();
             }
-            // F3.7b — audit corpus.deleted only on actual removal. A
+            // audit corpus.deleted only on actual removal. A
             // re-DELETE that misses falls through to the NotFound arm
             // below and never pollutes the audit feed.
             audit_corpus_action(&state, tenant.as_ref(), "corpus.deleted", &id);
@@ -2399,7 +2399,7 @@ async fn bridge(
     }
 }
 
-/// F3.6-a — query filters for the bridge graph endpoint.
+/// query filters for the bridge graph endpoint.
 #[derive(serde::Deserialize)]
 struct BridgeGraphQuery {
     /// Filter to links touching this file (export OR import side).
@@ -2413,10 +2413,10 @@ struct BridgeGraphQuery {
     language: Option<String>,
 }
 
-/// F3.6-a — `GET /api/v1/corpora/{id}/bridge/graph`.
+/// `GET /api/v1/corpora/{id}/bridge/graph`.
 ///
 /// Returns the cross-language bridge graph as `{nodes, edges}` for
-/// the F3.6-b web visualizer (and any other downstream renderer).
+/// the web visualizer (and any other downstream renderer).
 /// Query params `file`, `kind`, `language` pass through to
 /// `query_bridges` for server-side filtering.
 async fn bridge_graph(
@@ -2548,7 +2548,7 @@ async fn ingestion_progress(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    // PHASE3 chunk 4 — when an `IndexJobSink` is wired (cloud mode),
+    // when an `IndexJobSink` is wired (cloud mode),
     // poll `latest_for_corpus` against Postgres instead of reading the
     // in-memory `IngestionProgress` (which belongs to the worker pod,
     // not the serve pod, post-split).
@@ -2611,14 +2611,14 @@ fn progress_stream(
     }
 }
 
-/// PHASE3 chunk 4 — Postgres-backed progress stream. Polls
+/// Postgres-backed progress stream. Polls
 /// `latest_for_corpus` every 500ms, emits an [`IngestionProgressEvent`]
 /// matching the existing wire shape, and closes when the latest job is
 /// in a terminal state (`Completed` / `Failed`). On lookup error or
 /// `None` (no job yet), emits a `pending` placeholder so the demo
 /// client doesn't see a dead stream while the row is being written.
 ///
-/// PHASE4 chunk 6: the terminal event carries `status = "complete"` or
+/// the terminal event carries `status = "complete"` or
 /// `"failed"` (matching the doc'd wire shape and what `cloud_demo`
 /// already checks for), plus the snapshot's `error` field on failure
 /// so clients don't need a follow-up GET to surface the cause.
@@ -2653,9 +2653,9 @@ fn queue_progress_stream(
             } else {
                 None
             };
-            // PHASE5 chunk 3 — populate embeddings_* + sections_done
+            // populate embeddings_* + sections_done
             // from the snapshot now that JobProgress carries them.
-            // Pre-chunk-3 these were hardcoded to 0 because the wire
+            // These were previously hardcoded to 0 because the wire
             // shape clipped the embedder's per-batch updates.
             let event = ministr_api::corpus::IngestionProgressEvent {
                 status: status.to_string(),
@@ -3043,7 +3043,7 @@ async fn create_session(
 }
 
 /// `GET /api/v1/sessions` — full per-session economics across every registered
-/// corpus (gd2c-rest). The desktop Sessions view polls this over UDS; the
+/// corpus. The desktop Sessions view polls this over UDS; the
 /// daemon owns the session registries now, so it builds the snapshot the GUI
 /// previously assembled from its own in-process handles.
 async fn list_all_sessions(State(state): State<AppState>) -> impl IntoResponse {

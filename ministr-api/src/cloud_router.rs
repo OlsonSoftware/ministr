@@ -1,4 +1,4 @@
-//! F31.2b — `CloudRouterMounter` MIT seam between `ministr-cli` and the
+//! `CloudRouterMounter` MIT seam between `ministr-cli` and the
 //! proprietary `ministr-cloud` crate.
 //!
 //! `ministr-cli`'s `cmd_serve_http` accepts `Option<&dyn CloudRouterMounter>`.
@@ -123,7 +123,7 @@ pub struct CloudMountOutput {
     /// Adapters wired into `ministr_mcp::admin::AdminState`.
     pub admin_adapters: CloudAdminAdapters,
     /// Wraps daemon-mutation routes (POST /api/v1/corpora, clone, etc.)
-    /// with cloud-only Tower layers — F2.2 rate-limit + F2.3 quota
+    /// with cloud-only Tower layers — rate-limit + quota
     /// enforcement. When None, daemon routes mount unwrapped. When
     /// Some, the local serve calls [`DaemonWriteLayer::wrap`] on the
     /// `daemon_write_router` before scope-protecting it.
@@ -136,7 +136,7 @@ pub struct CloudMountOutput {
 }
 
 /// Wraps a Tower-layered router with cloud-only request middleware
-/// (F2.2 per-IP + per-tenant rate limit, F2.3 corpus-count + atlas-access
+/// (per-IP + per-tenant rate limit, corpus-count + atlas-access
 /// quota). Used by the daemon-write router so unwrapped self-hosted
 /// callers keep the open-core stack untouched.
 pub trait DaemonWriteLayer: Send + Sync + std::fmt::Debug {

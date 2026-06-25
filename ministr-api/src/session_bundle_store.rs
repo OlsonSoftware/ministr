@@ -1,4 +1,4 @@
-//! Session bundle blob storage — open-core seam (F6.2-c).
+//! Session bundle blob storage — open-core seam.
 //!
 //! Cloud impl uploads the tar artefact under
 //! `sessions/{tenant}/{session_id}/{ts}.tar` in blob storage and

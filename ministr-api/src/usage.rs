@@ -1,7 +1,7 @@
 //! Billable-usage emission hook.
 //!
 //! [`UsageSink`] is the trait the daemon's `record_activity`
-//! middleware (F1.4 sub-bullet 2) fires whenever a tool route
+//! middleware (sub-bullet 2) fires whenever a tool route
 //! completes successfully. The local stack ships no concrete
 //! implementation — self-hosted serve never bills anyone. Cloud
 //! deployments wire `ministr_cloud::billing::PostgresUsageSink`,

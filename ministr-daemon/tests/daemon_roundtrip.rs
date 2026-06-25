@@ -59,7 +59,7 @@ async fn test_ingestion_progress_snapshot() {
 
 #[tokio::test]
 async fn test_list_sessions_snapshot() {
-    // gd2c-rest — the all-corpora sessions list the desktop Sessions view polls
+    // the all-corpora sessions list the desktop Sessions view polls
     // over UDS. A freshly-started daemon has a registered corpus but no active
     // sessions, so the list is empty; this exercises the endpoint + the
     // SessionInfo serialization roundtrip.

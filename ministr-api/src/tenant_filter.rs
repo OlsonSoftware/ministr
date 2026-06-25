@@ -4,7 +4,7 @@
 //! code (`ministr-cloud`, proprietary) can register an implementation
 //! without `ministr-mcp` needing a hard dependency on the cloud crate.
 //! Mirrors the [`InstallationTokenMinter`](crate::InstallationTokenMinter)
-//! seam introduced in F2.1.
+//! seam introduced in.
 //!
 //! ## Semantics
 //!
@@ -56,7 +56,7 @@ pub type VisibleCorpusFuture<'a> =
 /// `list_corpora` handler to synthesise a `CorpusInfo` when the
 /// in-memory `CorpusRegistry` hasn't picked the corpus up yet.
 ///
-/// F-Test-1 finding: cloud-mode `register_corpus` writes to
+/// finding: cloud-mode `register_corpus` writes to
 /// `cloud_corpora` via `IndexJobSink` but never updates the in-memory
 /// `CorpusRegistry`, so `GET /api/v1/corpora` returned empty even for
 /// the corpus's owner until the worker indexed it. This shape carries
@@ -111,7 +111,7 @@ pub trait TenantCorpusFilter: Send + Sync + std::fmt::Debug {
     }
 }
 
-/// F3.2-iii — decide which `corpus_id`s a tenant is allowed to see
+/// decide which `corpus_id`s a tenant is allowed to see
 /// when enumerating corpora (the GET `/api/v1/corpora` list).
 ///
 /// Decoupled from [`TenantCorpusFilter`] because the cardinality is

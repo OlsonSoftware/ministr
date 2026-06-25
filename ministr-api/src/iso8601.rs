@@ -66,7 +66,7 @@ mod tests {
 
     #[test]
     fn known_2026_anchor() {
-        // 2026-05-22T12:00:00Z. Same anchor F5.3-d-iii-b-dispatch and
+        // 2026-05-22T12:00:00Z. Same anchor and
         // the previous handlers.rs tests use, after the off-by-5-days
         // fix that chunk documented.
         assert_eq!(format_unix_secs_iso(1_779_451_200), "2026-05-22T12:00:00Z");

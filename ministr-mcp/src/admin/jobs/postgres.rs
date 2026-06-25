@@ -81,7 +81,7 @@ impl PostgresJobQueue {
     /// acquired or any of the SQL statements fails.
     ///
     /// [`claim_next`]: JobQueue::claim_next
-    #[allow(dead_code)] // consumed by cmd_indexer_worker in PHASE4 chunk 2
+    #[allow(dead_code)] // consumed by cmd_indexer_worker
     pub async fn reclaim_orphans(&self, timeout_secs: i64) -> JobResult<usize> {
         let mut conn = self
             .pool
@@ -98,9 +98,9 @@ impl PostgresJobQueue {
         // replicaTimeout) and any reasonable timeout fits losslessly
         // in f64's 53-bit mantissa, but clippy's strict cast lint
         // doesn't know that, hence the allow. The
-        // `claimed_at IS NOT NULL` guard skips rows that pre-date
-        // PHASE4 chunk 2 — they were claimed before the column
-        // existed and we can't tell whether they're stale; leave
+        // `claimed_at IS NOT NULL` guard skips rows that pre-date the
+        // `claimed_at` column — they were claimed before it existed
+        // and we can't tell whether they're stale; leave
         // them alone rather than over-reclaim.
         #[allow(clippy::cast_precision_loss)]
         let timeout = timeout_secs as f64;
@@ -355,7 +355,7 @@ impl JobQueue for PostgresJobQueue {
             job.status = JobStatus::Running;
             job.updated_at = epoch_now();
             let updated = serialise(&job)?;
-            // PHASE4 chunk 2: stamp claimed_at = NOW() so the
+            // stamp claimed_at = NOW so the
             // reclaim sweeper can identify stale 'running' rows that
             // belong to a crashed worker. We use the server clock so
             // the timestamp is comparable to NOW()-INTERVAL in
@@ -534,7 +534,7 @@ mod tests {
         assert_eq!(got.progress.processed_files, 42);
     }
 
-    /// PHASE4 chunk 2 — a row in `running` with a stale `claimed_at`
+    /// a row in `running` with a stale `claimed_at`
     /// (simulating a crashed worker) must be reclaimed back to
     /// `pending`, both at the column level and inside the JSON blob.
     /// A row claimed within the timeout window must NOT be reclaimed.

@@ -397,7 +397,7 @@ pub struct CloneRepoRequest {
     /// `owner-repo`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    /// F2.1 — when set AND an
+    /// when set AND an
     /// [`InstallationTokenMinter`](crate::github_app::InstallationTokenMinter)
     /// is wired into the daemon's `AppState`, the daemon mints a short-lived
     /// installation access token and splices it into the clone URL as

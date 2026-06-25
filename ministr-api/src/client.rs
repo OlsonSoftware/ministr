@@ -453,7 +453,7 @@ impl DaemonClient {
     /// List every active session across all corpora with full economics.
     ///
     /// Backs the desktop Sessions view now that the daemon owns the session
-    /// registries (gd2c-rest).
+    /// registries.
     ///
     /// # Errors
     ///

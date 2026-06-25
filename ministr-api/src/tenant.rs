@@ -3,12 +3,12 @@
 //! The full `Tenant { subject, org_id, plan }` struct lives in
 //! `ministr-mcp::auth::tenant` (MIT) — but `ministr-daemon` cannot
 //! import from `ministr-mcp` (the dep arrow points the other way
-//! since F1.2 sub-bullet 3 made MCP depend on the daemon's
+//! since sub-bullet 3 made MCP depend on the daemon's
 //! `CorpusRegistry`).
 //!
 //! [`TenantId`] is the minimal newtype both sides can pass through
 //! axum's typed request extensions without crate-coupling: the auth
-//! middleware inserts it; the daemon's activity middleware (F1.4 sub-
+//! middleware inserts it; the daemon's activity middleware (sub-
 //! bullet 2) reads it to attribute billable usage events.
 
 use serde::{Deserialize, Serialize};

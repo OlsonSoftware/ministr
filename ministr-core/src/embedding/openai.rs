@@ -1,19 +1,18 @@
-//! PHASE6 chunk 1 — Azure `OpenAI`–backed [`Embedder`] for the cloud worker.
+//! Azure `OpenAI`–backed [`Embedder`] for the cloud worker.
 //!
 //! Replaces the local fastembed/ONNX path on the cloud serve pod. The
 //! local CLI (`ministr index`) continues to use [`FastEmbedder`]
 //! unchanged — only the cloud worker swaps in this implementation when
-//! `MINISTR_EMBEDDER_KIND=openai` (selector landed in PHASE6 chunk 2's
+//! `MINISTR_EMBEDDER_KIND=openai` (selector landed in
 //! `WorkerLoop` wiring; this module is the building block).
 //!
 //! # Why move embedding off the pod
 //!
-//! PHASE5's first live demo OOM-killed the indexer Job at the first
+//! first live demo OOM-killed the indexer Job at the first
 //! batch: `[mem] after embedder.embed() rss=3762 MB delta=+3637 MB` on
 //! a 4 GiB pod. `text-embedding-3-small` on Azure `OpenAI` returns vectors
 //! over the network for $0.02/1M tokens, dropping the worker's memory
-//! footprint by an order of magnitude. See `deploy/azure/PHASE6.md` for
-//! the full diagnosis.
+//! footprint by an order of magnitude.
 //!
 //! # Auth flow
 //!
@@ -65,7 +64,7 @@
 //!    just signals the scheduler to move other work off this worker
 //!    thread while we block. Lower overhead and no drop landmines.
 //!
-//! The worker runs one ingestion at a time per replica (PHASE6 chunk
+//! The worker runs one ingestion at a time per replica (chunk
 //! 2's `WorkerLoop` sets `concurrency=1`), so blocking the calling
 //! tokio thread for ~500ms–2s per batch is acceptable: at worst one
 //! worker thread is parked at a time per replica, and HTTP serve
@@ -98,7 +97,7 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DEFAULT_DIMENSIONS: usize = 384;
 
 /// Max times to retry a `429 Too Many Requests` before surfacing the
-/// failure to the caller. PHASE6 chunk 4b post-deploy: anyhow's
+/// failure to the caller. post-deploy: anyhow's
 /// ~466K-token burst against a (default-too-small) S0 deployment was
 /// rejected on the first batch; honouring the `Retry-After` header
 /// for up to ~2 minutes total recovers cleanly without breaking the
@@ -376,7 +375,7 @@ impl OpenAiEmbedder {
             dimensions: self.dimensions,
         };
 
-        // PHASE6 chunk 4b — honour `Retry-After` on 429 up to
+        // honour `Retry-After` on 429 up to
         // MAX_429_RETRIES. Azure's S0 tier emits this with the actual
         // recommended wait (~60s for ratelimit-reached errors); other
         // 4xx surface immediately. The retry loop rebuilds the request
@@ -582,7 +581,7 @@ mod tests {
         embed_body: Option<Value>,
         expect_api_key: bool,
         expect_mi_header: bool,
-        /// PHASE6 chunk 4b — when true, the FIRST embed call returns
+        /// when true, the FIRST embed call returns
         /// 429 with `Retry-After: 1`; subsequent calls return
         /// `embed_status` normally. Drives the
         /// `retries_429_then_succeeds` test.
@@ -856,7 +855,7 @@ mod tests {
 
     #[tokio::test]
     async fn retries_429_then_succeeds() {
-        // PHASE6 chunk 4b — anyhow's 466K-token burst hit S0's per-
+        // anyhow's 466K-token burst hit S0's per-
         // deployment TPM cap and got rejected with 429 + Retry-After.
         // The embedder must honor the header and recover. This test
         // uses `start_paused` so the simulated sleep doesn't actually

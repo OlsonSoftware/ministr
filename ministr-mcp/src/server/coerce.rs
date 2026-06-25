@@ -6,7 +6,7 @@
 //! The strict serde default rejects these with a `-32602 invalid type` /
 //! `missing field` JSON-RPC error — and in Claude Code that error
 //! cascade-cancels *every sibling tool call in the same parallel batch*
-//! (anthropics/claude-code#22264), stalling the whole turn.
+//! (anthropics/claude-code), stalling the whole turn.
 //!
 //! This module is the single home (SRP) for the "never reject an argument"
 //! discipline: every helper here returns a value or a sane fallback and is
