@@ -1,0 +1,1303 @@
+[
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Cross-language bridge links (Tauri commands, NAPI exports, PyO3 functions, FFI, HTTP routes, etc.). Call before modifying any IPC or FFI boundary so you see every cross-language call site.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for the `ministr_bridge` tool.",
+      "properties": {
+        "bridge_kind": {
+          "default": null,
+          "description": "Filter by bridge kind: 'tauri_command', 'tauri_event', 'napi', 'wasm_bindgen', 'pyo3', 'http_route', 'ffi', 'cgo', 'jni', 'uni_ffi', 'grpc', 'flutter_channel', 'electron_ipc'",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "file_path": {
+          "default": null,
+          "description": "Filter links where either endpoint is in this file path",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "language": {
+          "default": null,
+          "description": "Filter links involving this language (e.g. 'rust', 'typescript', 'javascript', 'python')",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project": {
+          "default": null,
+          "description": "Optional linked-project label. Omit for primary corpus.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "query": {
+          "default": null,
+          "description": "Search query to filter by binding key or symbol name (case-insensitive substring match)",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "BridgeParams",
+      "type": "object"
+    },
+    "name": "ministr_bridge"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    },
+    "description": "Clone a git repository and index its content. Supports sparse checkout. Cached clones are reused.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for the `ministr_clone` tool.",
+      "properties": {
+        "branch": {
+          "default": null,
+          "description": "Optional branch to clone (defaults to repository default)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "paths": {
+          "default": null,
+          "description": "Optional paths for sparse checkout (e.g. ['docs', 'src']). Omit for full checkout.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "repo": {
+          "default": "",
+          "description": "Remote git repository URL to clone (e.g. 'https://github.com/owner/repo.git')",
+          "type": "string"
+        }
+      },
+      "title": "CloneParams",
+      "type": "object"
+    },
+    "name": "ministr_clone"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Extractive TF-IDF summaries (roughly 60-80% shorter) for sections you want to keep referenceable without their full text. Pair with ministr_dropped after dropping the originals.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for the `ministr_compress` tool.",
+      "properties": {
+        "content_ids": {
+          "default": [],
+          "description": "Content IDs (section IDs) to generate compressed summaries for",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "project": {
+          "default": null,
+          "description": "Optional linked-project label. Omit for primary corpus.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "CompressParams",
+      "type": "object"
+    },
+    "name": "ministr_compress"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Find symbols with zero references — candidates for safe deletion. Filters out `pub` symbols, entry points, and trivial helpers. Double-check with `ministr_references` before deleting since dynamic dispatch isn't tracked.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for the `ministr_dead` tool.",
+      "properties": {
+        "kind": {
+          "default": null,
+          "description": "Optional symbol kind filter (e.g. 'function', 'struct')",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": null,
+          "description": "Maximum results to return. Default 50, capped at 500.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "min_lines": {
+          "default": null,
+          "description": "Skip symbols whose body is shorter than this many lines. Default 1.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "module": {
+          "default": null,
+          "description": "Optional module path prefix filter",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project": {
+          "default": null,
+          "description": "Optional linked-project label. Omit for primary corpus.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "DeadCodeParams",
+      "type": "object"
+    },
+    "name": "ministr_dead"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Full source of a code symbol by ID. Call ministr_references first if you intend to modify or delete the symbol. Pass blame=true for git authorship of the symbol's lines.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for the `ministr_definition` tool.",
+      "properties": {
+        "blame": {
+          "default": null,
+          "description": "When true, attach git blame metadata (per-author line counts + last commit) for the symbol's line range. Omitted when not a git repo.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "col": {
+          "default": null,
+          "description": "0-based byte column for position-addressed lookup (requires file+line)",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "file": {
+          "default": null,
+          "description": "Position-addressed alternative to symbol_id: file path (with line+col) to resolve the symbol under the cursor",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "line": {
+          "default": null,
+          "description": "1-based line for position-addressed lookup (requires file+col)",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "project": {
+          "default": null,
+          "description": "Optional linked-project label. Omit for primary corpus.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "symbol_id": {
+          "default": "",
+          "description": "Symbol ID to get the definition for (from ministr_symbols results)",
+          "type": "string"
+        }
+      },
+      "title": "DefinitionParams",
+      "type": "object"
+    },
+    "name": "ministr_definition"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Run the project's own toolchain(s) (cargo/tsc/eslint/ruff/go vet/…, plus any SARIF-emitting tool) and return bounded STRUCTURED diagnostics (file, range, severity, code, message), errors first, each cross-linked to the enclosing symbol. The agentic verify step — structured compiler/lint feedback as data, never raw build logs. Language-agnostic.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for the `ministr_diagnostics` tool.",
+      "properties": {
+        "languages": {
+          "default": null,
+          "description": "Restrict to these toolchain languages (e.g. 'rust','typescript','python','go'). Omit to run every detected toolchain.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": null,
+          "description": "Maximum diagnostics to return. Default 100, capped at 500.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "project": {
+          "default": null,
+          "description": "Optional linked-project label. Omit for primary corpus.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "DiagnosticsParams",
+      "type": "object"
+    },
+    "name": "ministr_diagnostics"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Call immediately after dropping content you previously received. Keeps ministr's view of what you still have accurate; without this, future ministr_read calls on dropped IDs return short 'already delivered' stubs instead of the full text.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for the `ministr_dropped` tool.",
+      "properties": {
+        "content_ids": {
+          "default": [],
+          "description": "Content IDs the agent has dropped from its context",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "title": "DroppedParams",
+      "type": "object"
+    },
+    "name": "ministr_dropped"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Atomic claims from a section, optionally query-filtered. Cheaper than ministr_read when you don't need full prose.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for the `ministr_extract` tool.",
+      "properties": {
+        "project": {
+          "default": null,
+          "description": "Optional linked-project label. Omit for primary corpus.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "query": {
+          "default": null,
+          "description": "Optional query to filter claims by relevance",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "section_id": {
+          "default": "",
+          "description": "Section ID to extract claims from",
+          "type": "string"
+        }
+      },
+      "title": "ExtractParams",
+      "type": "object"
+    },
+    "name": "ministr_extract"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    },
+    "description": "Fetch a URL from the web and index its content. Tries llms.txt first, falls back to direct page fetch.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for the `ministr_fetch` tool.",
+      "properties": {
+        "depth": {
+          "default": null,
+          "description": "Crawl depth for following links (default: 0 = single page only)",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_pages": {
+          "default": null,
+          "description": "Maximum number of pages to fetch when crawling (default: 50)",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "path_filter": {
+          "default": null,
+          "description": "Only fetch URLs whose path starts with this prefix (e.g. '/docs/')",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "default": "",
+          "description": "URL to fetch content from (e.g. 'https://docs.example.com/')",
+          "type": "string"
+        }
+      },
+      "title": "FetchParams",
+      "type": "object"
+    },
+    "name": "ministr_fetch"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Transitive blast radius of changing a symbol. Returns every caller / implementor / importer N levels deep, plus distinct files, distinct test files, and a low/medium/high risk score. Use BEFORE recommending a non-trivial refactor.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for the `ministr_impact` tool.",
+      "properties": {
+        "direction": {
+          "default": null,
+          "description": "Call-graph direction: 'incoming' = transitive callers / blast radius (default), 'outgoing' = transitive callees (what this symbol calls).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_depth": {
+          "default": null,
+          "description": "Maximum BFS depth to walk the call graph. Default 3, capped at 10.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "project": {
+          "default": null,
+          "description": "Optional linked-project label. Omit for primary corpus.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "range": {
+          "default": null,
+          "description": "Git revision range (e.g. 'main..HEAD', 'HEAD~3'). When set, analyzes the diff-aware blast radius: which indexed symbols the range touched and the union of what they can break. Overrides symbol_id.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repo_path": {
+          "default": null,
+          "description": "Path inside the git work tree to resolve `range` against. Defaults to the server's working directory. Only used with `range`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "symbol_id": {
+          "default": "",
+          "description": "Symbol ID whose blast radius should be analyzed (from ministr_symbols results)",
+          "type": "string"
+        },
+        "tests_only": {
+          "default": null,
+          "description": "When true, keep only nodes in test files. With direction 'incoming' this answers 'which tests transitively exercise this symbol' (the minimal test set for a change).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "title": "ImpactParams",
+      "type": "object"
+    },
+    "name": "ministr_impact"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "List the current project plus any linked projects you can query in this session. Pass a returned `label` as the `project` argument to other tools; omit `project` for the current one. Linked projects come from `.ministr.toml` `[[linked]]` entries (or `ministr_clone` results).",
+    "input_schema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "ministr_projects"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Full content of a section by ID. Call ministr_extract instead if you only need atomic claims.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for the `ministr_read` tool.",
+      "properties": {
+        "project": {
+          "default": null,
+          "description": "Optional linked-project label. Omit for primary corpus.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "section_id": {
+          "default": "",
+          "description": "Section ID to read (e.g. 'docs/auth.md#error-handling')",
+          "type": "string"
+        }
+      },
+      "title": "ReadParams",
+      "type": "object"
+    },
+    "name": "ministr_read"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "All callers, implementors, and importers of a code symbol. Call before deleting or significantly modifying any non-trivial public symbol — zero references means safe to delete.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for the `ministr_references` tool.",
+      "properties": {
+        "col": {
+          "default": null,
+          "description": "0-based byte column for position-addressed lookup (requires file+line)",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "file": {
+          "default": null,
+          "description": "Position-addressed alternative to symbol_id: file path (with line+col) to resolve the symbol under the cursor",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": null,
+          "description": "Maximum number of entries to return (default: 100)",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "line": {
+          "default": null,
+          "description": "1-based line for position-addressed lookup (requires file+col)",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "offset": {
+          "default": null,
+          "description": "Number of entries to skip (default: 0)",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "project": {
+          "default": null,
+          "description": "Optional linked-project label. Omit for primary corpus.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ref_kind": {
+          "default": null,
+          "description": "Optional reference kind filter: 'calls', 'implements', 'imports', 'uses', 'bridge'",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "symbol_id": {
+          "default": "",
+          "description": "Symbol ID to find references for (from ministr_symbols results)",
+          "type": "string"
+        },
+        "through_implementors": {
+          "default": null,
+          "description": "When true, also include callers of the same-named method on co-implementor types (LSP references-including-overrides / type hierarchy). Bounded; combine with ref_kind 'calls' or omit ref_kind.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "title": "ReferencesParams",
+      "type": "object"
+    },
+    "name": "ministr_references"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    },
+    "description": "Check cached web and git sources for staleness and re-fetch changed content.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for the `ministr_refresh` tool.",
+      "properties": {
+        "url": {
+          "default": null,
+          "description": "Optional URL (web) or repo URL (git) to check for staleness. If omitted, checks all cached sources.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "RefreshParams",
+      "type": "object"
+    },
+    "name": "ministr_refresh"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Follow relationship edges (references, contradicts, depends_on, updates) from a claim. Use when one claim's truth depends on another.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for the `ministr_related` tool.",
+      "properties": {
+        "claim_id": {
+          "default": "",
+          "description": "Claim ID to find related claims for",
+          "type": "string"
+        },
+        "project": {
+          "default": null,
+          "description": "Optional linked-project label. Omit for primary corpus.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "relation_types": {
+          "default": null,
+          "description": "Optional filter: 'references', 'contradicts', 'depends_on', 'updates'",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "title": "RelatedParams",
+      "type": "object"
+    },
+    "name": "ministr_related"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": false
+    },
+    "description": "Run a shell command (recorded + captured). Returns exit code + a token-lean digest with every error line; full log via ministr_run_logs. background:true returns a run_id immediately.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for `ministr_run`.",
+      "properties": {
+        "background": {
+          "default": null,
+          "description": "Run in background; poll with ministr_run_status",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "command": {
+          "description": "Shell command line to execute",
+          "type": "string"
+        },
+        "cwd": {
+          "default": null,
+          "description": "Working directory; defaults to the first corpus root",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timeout_secs": {
+          "default": null,
+          "description": "Timeout seconds (default 600, max 3600)",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "title": "RunParams",
+      "type": "object"
+    },
+    "name": "ministr_run"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Cancel a running run; kills the whole process group.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for `ministr_run_status` / `ministr_run_kill`.",
+      "properties": {
+        "run_id": {
+          "description": "Run id from ministr_run",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "title": "RunIdParams",
+      "type": "object"
+    },
+    "name": "ministr_run_kill"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Page a run's captured log (delta: only what you haven't seen) or filter it with query=substring.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for `ministr_run_logs`.",
+      "properties": {
+        "from_offset": {
+          "default": null,
+          "description": "Explicit byte offset (overrides the session cursor)",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_bytes": {
+          "default": null,
+          "description": "Max bytes per page (default 16384)",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "query": {
+          "default": null,
+          "description": "Substring filter: return matching lines instead of paging",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run_id": {
+          "description": "Run id from ministr_run",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "title": "RunLogsParams",
+      "type": "object"
+    },
+    "name": "ministr_run_logs"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Poll a run's status (running/exited/killed/timed_out, exit code, duration, bytes).",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for `ministr_run_status` / `ministr_run_kill`.",
+      "properties": {
+        "run_id": {
+          "description": "Run id from ministr_run",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "title": "RunIdParams",
+      "type": "object"
+    },
+    "name": "ministr_run_status"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Detect possible SOLID-principle violations across the codebase deterministically. Returns clusters / findings labelled by principle (dry_ocp, srp, isp, dip). Filter by kind/module and toggle principles via params. Pair with ministr_references before refactoring.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for the `ministr_solid` tool.",
+      "properties": {
+        "container_kinds": {
+          "default": [],
+          "description": "Override container kinds for SRP detection. Defaults: ['impl','struct','class','mod']",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "cyclic_min_edges_per_direction": {
+          "default": null,
+          "description": "CyclicDependency: minimum distinct cross-package edges per direction. Single-edge cycles are usually phantom name-resolution artefacts. Default 2.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "cyclic_skip_test_paths": {
+          "default": null,
+          "description": "CyclicDependency: skip edges touching test/fixture paths. Sample data shouldn't drive the workspace dependency graph. Default true.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "interface_kinds": {
+          "default": [],
+          "description": "Override interface kinds for ISP/DIP detection. Defaults: ['trait','interface','protocol']",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "isp_max_overlap_fraction": {
+          "default": null,
+          "description": "Implementor under-using cutoff (fraction of trait methods overlapped). Default 0.33.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "isp_min_methods": {
+          "default": null,
+          "description": "Minimum interface method count before ISP fires. Default 6.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "jaccard_threshold": {
+          "default": null,
+          "description": "Jaccard threshold over callee-sets for DRY/OCP. Default 0.4.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "kind": {
+          "default": null,
+          "description": "Optional symbol kind filter (e.g. 'function', 'struct')",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": null,
+          "description": "Maximum findings to return. Default 50, capped at 500.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_pairs": {
+          "default": null,
+          "description": "Hard cap on pairwise comparisons inside any DRY/OCP bucket. Default 100k.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "min_lines": {
+          "default": null,
+          "description": "Skip candidate symbols shorter than this many lines. Default 5.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "module": {
+          "default": null,
+          "description": "Optional module path prefix filter",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "principles": {
+          "default": [],
+          "description": "Principles to evaluate: 'dry_ocp', 'srp', 'isp', 'dip', 'shotgun_surgery', 'cyclic_dependency'. Omit or pass empty to run all six.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "project": {
+          "default": null,
+          "description": "Optional linked-project label. Omit for primary corpus.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "representative_count": {
+          "default": null,
+          "description": "Maximum representative members per component list. Larger arrays are truncated and reported via `*_omitted`. Default 5.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "shotgun_max_jaccard": {
+          "default": null,
+          "description": "Maximum callee-set Jaccard for ShotgunSurgery. Above this the group is treated as a Type-4 clone and handled by 'dry_ocp'. Default 0.5.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "shotgun_min_packages": {
+          "default": null,
+          "description": "Minimum distinct packages a Shotgun-Surgery group must span. Default 2.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "shotgun_min_sites": {
+          "default": null,
+          "description": "Minimum file count before a Shotgun-Surgery finding fires. Default 3.",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "shotgun_skip_conventional_names": {
+          "default": null,
+          "description": "Skip Shotgun-Surgery groups whose name is universally conventional (new/default/fmt/clone/as_str/parse/main/etc.). Default true.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "similarity_threshold": {
+          "default": null,
+          "description": "Cosine threshold for DRY/OCP clone detection. Default 0.86.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "srp_cohesion_threshold": {
+          "default": null,
+          "description": "Cosine threshold for SRP within-container cohesion edges. Default 0.7.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "title": "SolidParams",
+      "type": "object"
+    },
+    "name": "ministr_solid"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Search the indexed corpus by natural-language query. Start here for any vague question; follow up with ministr_read (full text) or ministr_extract (atomic claims) on top results.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for the `ministr_survey` tool.",
+      "properties": {
+        "corpus_boost": {
+          "additionalProperties": {
+            "format": "float",
+            "type": "number"
+          },
+          "default": null,
+          "description": "Optional per-corpus score multipliers for cross-corpus ranking. Map<corpus_id, multiplier>; absent corpora default to 1.0; clamped to [0, 10]. Use 2.0 to float your own repo above Atlas hits, 0.0 to suppress a corpus.",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "corpus_ids": {
+          "default": null,
+          "description": "Optional cross-corpus list. When set and non-empty, fans the query out across each corpus_id (own corpora or Atlas slugs), tags hits with source_corpus, and merges results by score. Omit to query a single corpus.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "project": {
+          "default": null,
+          "description": "Optional linked-project label (from .ministr.toml [[linked]]). Omit for the session's primary corpus. Call ministr_projects to list labels.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "query": {
+          "default": "",
+          "description": "Natural language query to search the corpus",
+          "type": "string"
+        },
+        "top_k": {
+          "default": null,
+          "description": "Maximum number of results to return",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "title": "SurveyParams",
+      "type": "object"
+    },
+    "name": "ministr_survey"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Find code symbols (functions, structs, traits, etc.) by name, kind, module, or visibility. Pair with ministr_definition for source and ministr_references before modifying.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for the `ministr_symbols` tool.",
+      "properties": {
+        "kind": {
+          "default": null,
+          "description": "Exact kind filter: 'function', 'struct', 'trait', 'enum', 'impl', 'const', 'static', 'type', 'mod'",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": null,
+          "description": "Maximum number of entries to return (default: 100)",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "module": {
+          "default": null,
+          "description": "Module path prefix filter (e.g. 'config' matches config::sub)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "offset": {
+          "default": null,
+          "description": "Number of entries to skip (default: 0)",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "project": {
+          "default": null,
+          "description": "Optional linked-project label. Omit for primary corpus.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "query": {
+          "default": null,
+          "description": "Fuzzy symbol name search (case-insensitive substring match)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "visibility": {
+          "default": null,
+          "description": "Exact visibility filter: 'pub', 'pub(crate)', 'pub(super)', ''",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "SymbolsParams",
+      "type": "object"
+    },
+    "name": "ministr_symbols"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Poll a background task status. Deprecated: prefer MCP tasks/get.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for the `ministr_task` tool.",
+      "properties": {
+        "task_id": {
+          "default": "",
+          "description": "Task ID to check status for",
+          "type": "string"
+        }
+      },
+      "title": "TaskParams",
+      "type": "object"
+    },
+    "name": "ministr_task"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Structural overview (table of contents) of the indexed corpus. Use to orient on an unfamiliar codebase before drilling in.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "Parameters for the `ministr_toc` tool.",
+      "properties": {
+        "document_id": {
+          "default": null,
+          "description": "Optional document ID to filter the table of contents to a single document",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "default": null,
+          "description": "Maximum number of entries to return (default: 100)",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "offset": {
+          "default": null,
+          "description": "Number of entries to skip (default: 0)",
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "project": {
+          "default": null,
+          "description": "Optional linked-project label. Omit for primary corpus.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "TocParams",
+      "type": "object"
+    },
+    "name": "ministr_toc"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Internal ministr accounting (a rough token estimate of what it has delivered so far). Advisory only and anchored to a configured window, not your real model context window — do NOT use it to decide you are low on context or to stop work. Safe to ignore.",
+    "input_schema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "ministr_usage"
+  }
+]

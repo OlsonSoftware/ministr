@@ -1,0 +1,37 @@
+# ministr_solid
+
+<!-- @generated tool-docs start — do not edit this block; regenerate: cargo run -p ministr-mcp --example gen_tool_docs -->
+
+> Detect possible SOLID-principle violations across the codebase deterministically. Returns clusters / findings labelled by principle (dry_ocp, srp, isp, dip). Filter by kind/module and toggle principles via params. Pair with ministr_references before refactoring.
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `container_kinds` | array of string | no | Override container kinds for SRP detection. Defaults: ['impl','struct','class','mod'] |
+| `cyclic_min_edges_per_direction` | integer | no | CyclicDependency: minimum distinct cross-package edges per direction. Single-edge cycles are usually phantom name-resolution artefacts. Default 2. |
+| `cyclic_skip_test_paths` | boolean | no | CyclicDependency: skip edges touching test/fixture paths. Sample data shouldn't drive the workspace dependency graph. Default true. |
+| `interface_kinds` | array of string | no | Override interface kinds for ISP/DIP detection. Defaults: ['trait','interface','protocol'] |
+| `isp_max_overlap_fraction` | number | no | Implementor under-using cutoff (fraction of trait methods overlapped). Default 0.33. |
+| `isp_min_methods` | integer | no | Minimum interface method count before ISP fires. Default 6. |
+| `jaccard_threshold` | number | no | Jaccard threshold over callee-sets for DRY/OCP. Default 0.4. |
+| `kind` | string | no | Optional symbol kind filter (e.g. 'function', 'struct') |
+| `limit` | integer | no | Maximum findings to return. Default 50, capped at 500. |
+| `max_pairs` | integer | no | Hard cap on pairwise comparisons inside any DRY/OCP bucket. Default 100k. |
+| `min_lines` | integer | no | Skip candidate symbols shorter than this many lines. Default 5. |
+| `module` | string | no | Optional module path prefix filter |
+| `principles` | array of string | no | Principles to evaluate: 'dry_ocp', 'srp', 'isp', 'dip', 'shotgun_surgery', 'cyclic_dependency'. Omit or pass empty to run all six. |
+| `project` | string | no | Optional linked-project label. Omit for primary corpus. |
+| `representative_count` | integer | no | Maximum representative members per component list. Larger arrays are truncated and reported via `*_omitted`. Default 5. |
+| `shotgun_max_jaccard` | number | no | Maximum callee-set Jaccard for ShotgunSurgery. Above this the group is treated as a Type-4 clone and handled by 'dry_ocp'. Default 0.5. |
+| `shotgun_min_packages` | integer | no | Minimum distinct packages a Shotgun-Surgery group must span. Default 2. |
+| `shotgun_min_sites` | integer | no | Minimum file count before a Shotgun-Surgery finding fires. Default 3. |
+| `shotgun_skip_conventional_names` | boolean | no | Skip Shotgun-Surgery groups whose name is universally conventional (new/default/fmt/clone/as_str/parse/main/etc.). Default true. |
+| `similarity_threshold` | number | no | Cosine threshold for DRY/OCP clone detection. Default 0.86. |
+| `srp_cohesion_threshold` | number | no | Cosine threshold for SRP within-container cohesion edges. Default 0.7. |
+
+Annotations: read-only · idempotent.
+
+<small>This block is generated from the live tool schema — the same definition agents receive.</small>
+
+<!-- @generated tool-docs end -->

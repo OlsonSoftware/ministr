@@ -3,7 +3,7 @@
 //! Regenerates the docs-parity manifest:
 //!
 //! ```sh
-//! cargo run -p ministr-mcp --example tool_manifest > web/content/tools-manifest.json
+//! cargo run -p ministr-mcp --example tool_manifest > docs/reference/tools-manifest.json
 //! ```
 
 fn main() {
