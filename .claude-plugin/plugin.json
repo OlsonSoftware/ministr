@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "homepage": "https://ministr.ai",
   "repository": "https://github.com/OlsonSoftware/ministr",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "keywords": [
     "code-intelligence",
     "mcp",
