@@ -33,8 +33,8 @@ connects.
 
 ## Learn more
 
-Full documentation — tools, configuration, guides — at
-[ministr.ai/docs](https://ministr.ai/docs).
+Configuration examples live in [examples/](examples/README.md); agent-facing
+usage notes in [AGENTS.md](AGENTS.md).
 
 [CHANGELOG](CHANGELOG.md) · [CONTRIBUTING](CONTRIBUTING.md) ·
 [SECURITY](SECURITY.md) · [STEWARDSHIP](STEWARDSHIP.md)
