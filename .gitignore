@@ -47,7 +47,6 @@ ministr-app/dist/
 
 # Internal planning (not shipped)
 launch/
-AGENTS.md
 PRESENTATION.md
 ROADMAP.md
 CI-RUNNER-SETUP.md

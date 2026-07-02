@@ -1,0 +1,37 @@
+# ministr
+
+> ministr is a local, MIT-licensed code intelligence MCP server. It gives AI
+> coding agents AST-level understanding of a codebase — semantic search across
+> code and docs, symbol navigation, real reference graphs, and cross-language
+> bridge detection — running and embedding entirely on the user's machine.
+
+## Getting started
+
+- [Installation](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/getting-started/installation.md): install the CLI from source
+- [Quickstart](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/getting-started/quickstart.md): point ministr at a project and connect an agent
+- [Client setup](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/getting-started/client-setup.md): Claude Code, Cursor, VS Code / Copilot, generic MCP, steering, headless
+
+## Guides
+
+- [Configuration](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/guides/configuration.md): .ministr.toml and the global config, in full
+
+## Reference
+
+- [Tool reference](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/reference/tools/README.md): the MCP tool surface, generated from the live schemas
+- [CLI](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/reference/cli.md): every ministr subcommand and flag
+- [Daemon HTTP API](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/reference/http-api.md): routes served to local clients
+
+## Concepts
+
+- [Architecture](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/concepts/architecture.md): the crates, the shared daemon, the open-core seam
+- [Indexing](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/concepts/indexing.md): how a repo becomes documents, sections, claims, and symbols
+- [Search](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/concepts/search.md): what ministr_survey actually does
+- [Cross-language bridges](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/concepts/bridges.md): linking calls across language boundaries
+- [Freshness](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/concepts/freshness.md): the hash-verified up-to-date contract
+- [Sessions](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/concepts/sessions.md): dedup, delta delivery, and honest accounting
+
+## Optional
+
+- [README](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/README.md): project overview and install one-liner
+- [CONTRIBUTING](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/CONTRIBUTING.md): development setup, architecture overview, quality gates
+- [CHANGELOG](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/CHANGELOG.md): release history
