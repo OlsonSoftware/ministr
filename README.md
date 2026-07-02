@@ -33,8 +33,10 @@ connects.
 
 ## Learn more
 
-Configuration examples live in [examples/](examples/README.md); agent-facing
-usage notes in [AGENTS.md](AGENTS.md).
+Documentation — installation, client setup, configuration, tool reference —
+lives in [docs/](docs/README.md). Configuration examples in
+[examples/](examples/README.md); agent-facing usage notes in
+[AGENTS.md](AGENTS.md).
 
 [CHANGELOG](CHANGELOG.md) · [CONTRIBUTING](CONTRIBUTING.md) ·
 [SECURITY](SECURITY.md) · [STEWARDSHIP](STEWARDSHIP.md)

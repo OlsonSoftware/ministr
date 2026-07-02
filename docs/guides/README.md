@@ -1,3 +1,3 @@
 # Guides
 
-Configuration and day-to-day workflows.
+- [Configuration](configuration.md) — `.ministr.toml` and the global config, in full
