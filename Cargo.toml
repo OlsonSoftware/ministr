@@ -102,7 +102,7 @@ quick-xml = "0.37"
 # Hashing
 sha2 = "0.10"
 # HMAC for GitHub webhook signature verification (admin module).
-hmac = "0.12"
+hmac = "0.13"
 # Constant-time byte comparison — `subtle::ConstantTimeEq` makes HMAC
 # verification immune to timing-channel attacks.
 subtle = "2"
