@@ -14,6 +14,9 @@
 ## Guides
 
 - [Configuration](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/guides/configuration.md): .ministr.toml and the global config, in full
+- [The desktop app](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/guides/desktop-app.md): the visual project and index manager
+- [Headless and CI](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/guides/headless-and-ci.md): scripted agent runs and the allowlist gotcha
+- [Recorded execution](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/guides/recorded-execution.md): the ministr_run family
 
 ## Reference
 
