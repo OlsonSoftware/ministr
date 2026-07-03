@@ -14,7 +14,7 @@ granularities:
 2. **Sections** — the retrieval unit. Prose sections follow headings; code
    files get one section per top-level symbol, split at inner AST boundaries
    when a symbol is too large for one section. Section IDs are hierarchical
-   and human-readable: `src/auth.rs#validate_token`,
+   and human-readable: `src/auth.rs#auth::validate_token`,
    `docs/auth.md#error-handling`.
 3. **Claims** — atomic factual assertions extracted per section. They power
    `ministr_extract` (cheaper than full text) and `ministr_related`

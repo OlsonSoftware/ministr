@@ -43,8 +43,8 @@ engine serving MCP over Streamable HTTP (see the
 
 Optional non-MIT features attach through exactly one seam: the
 `CloudRouterMounter` trait in `ministr-api`, consulted once at HTTP-serve
-boot. The MIT binary always passes `None` — no cloud code paths exist in it
-at compile time. See [STEWARDSHIP](../../STEWARDSHIP.md) for the split and
+boot. The MIT binary always passes `None`, and no proprietary crates are
+compiled into it. See [STEWARDSHIP](../../STEWARDSHIP.md) for the split and
 its commitments.
 
 ## Where data flows
