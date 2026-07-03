@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "Core domain logic for ministr — code intelligence for AI coding agents"
-readme = "../README.md"
+readme = "README.md"
 categories = ["development-tools", "text-processing"]
 keywords = ["mcp", "code-intelligence", "embeddings", "llm", "rag"]
 
