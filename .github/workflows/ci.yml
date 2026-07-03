@@ -424,6 +424,14 @@ jobs:
       - name: cargo test --doc
         run: cargo test --workspace --doc --locked
 
+      - name: Docs parity gate (tool manifest + generated reference pages)
+        # nextest above runs --lib --bins only, which skips integration
+        # tests — but this one is the docs-parity contract (the committed
+        # manifest + generated tool pages must match the code) and it is
+        # cheap, so it runs explicitly. Without this step a tool-schema
+        # change can merge with stale generated docs.
+        run: cargo test -p ministr-mcp --test tool_manifest_parity --locked
+
       - name: Retrieval quality gate
         # `just eval-gate` runs `cargo test --test eval_retrieval …`
         # on the dev profile, so it reuses the rlibs built by clippy
@@ -690,9 +698,44 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - run: python3 scripts/ci/blackbox_lint.py
 
+  # Docs freshness gate: tracked-ness link check, llms.txt coverage,
+  # style probes, version-literal lint. Always runs — like blackbox,
+  # the likeliest breakage is a docs-only edit, which the Rust path
+  # filters deliberately skip. Seconds, stdlib-only.
+  docs:
+    name: docs gate
+    needs: [changes]
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # Full history: the nudge step diffs against the PR merge-base.
+          fetch-depth: 0
+      - run: python3 scripts/ci/check_docs.py
+      - name: Docs-touch nudge (warn, never fail)
+        # Tool definitions or daemon routes changed without touching
+        # docs/ — the reference may need regenerating or the prose may
+        # be stale. Annotation only; the parity gate in rust-dev is the
+        # hard check for the generated pages.
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          CHANGED=$(git diff --name-only "$PR_BASE...$PR_HEAD")
+          touches_tools=$(printf '%s\n' "$CHANGED" | grep -Ec '^(ministr-mcp/src/server/|ministr-daemon/src/daemon\.rs)' || true)
+          touches_docs=$(printf '%s\n' "$CHANGED" | grep -Ec '^docs/' || true)
+          if [ "$touches_tools" -gt 0 ] && [ "$touches_docs" -eq 0 ]; then
+            echo "::warning::This PR changes MCP tool definitions or daemon routes without touching docs/ — check whether the reference needs regenerating (cargo run -p ministr-mcp --example gen_tool_docs) or prose needs updating."
+          else
+            echo "nudge: nothing to flag"
+          fi
+
   ci-complete:
     name: ci complete
-    needs: [changes, ci-image, fmt, blackbox, rust-dev, rust-release, security, docker-build]
+    needs: [changes, ci-image, fmt, blackbox, docs, rust-dev, rust-release, security, docker-build]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -703,6 +746,7 @@ jobs:
           CI_IMAGE_RESULT: ${{ needs.ci-image.result }}
           FMT_RESULT: ${{ needs.fmt.result }}
           BLACKBOX_RESULT: ${{ needs.blackbox.result }}
+          DOCS_RESULT: ${{ needs.docs.result }}
           RUST_DEV_RESULT: ${{ needs.rust-dev.result }}
           RUST_RELEASE_RESULT: ${{ needs.rust-release.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
@@ -712,6 +756,7 @@ jobs:
           echo "ci-image:      $CI_IMAGE_RESULT"
           echo "fmt:           $FMT_RESULT"
           echo "blackbox:      $BLACKBOX_RESULT"
+          echo "docs:          $DOCS_RESULT"
           echo "rust-dev:      $RUST_DEV_RESULT"
           echo "rust-release:  $RUST_RELEASE_RESULT"
           echo "security:      $SECURITY_RESULT"
@@ -728,6 +773,7 @@ jobs:
           ok "$CI_IMAGE_RESULT"     || { echo "::error::ci-image $CI_IMAGE_RESULT";           fail=1; }
           ok "$FMT_RESULT"          || { echo "::error::fmt $FMT_RESULT";                     fail=1; }
           ok "$BLACKBOX_RESULT"     || { echo "::error::blackbox $BLACKBOX_RESULT";           fail=1; }
+          ok "$DOCS_RESULT"         || { echo "::error::docs $DOCS_RESULT";                   fail=1; }
           ok "$RUST_DEV_RESULT"     || { echo "::error::rust-dev $RUST_DEV_RESULT";           fail=1; }
           ok "$RUST_RELEASE_RESULT" || { echo "::error::rust-release $RUST_RELEASE_RESULT";   fail=1; }
           ok "$SECURITY_RESULT"     || { echo "::error::security $SECURITY_RESULT";           fail=1; }
