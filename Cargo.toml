@@ -76,7 +76,7 @@ aws-config = { version = "1", default-features = false, features = ["behavior-ve
 scraper = "0.26"
 
 # PDF text extraction
-pdf-extract = "0.10"
+pdf-extract = "0.12"
 
 # Token counting
 tiktoken-rs = "0.6"
