@@ -565,7 +565,15 @@ impl DaemonClient {
         let req = SurveyRequest {
             query: query.to_string(),
             top_k,
+            limit: None,
+            offset: None,
+            cursor: None,
             session_id: None,
+            exclude: Vec::new(),
+            max_result_bytes: None,
+            max_result_tokens: None,
+            max_total_bytes: None,
+            max_total_tokens: None,
         };
         self.survey_req(corpus_id, &req).await
     }
@@ -610,14 +618,70 @@ impl DaemonClient {
         symbol_id: &str,
         session_id: Option<&str>,
     ) -> Result<SymbolDefinition, ClientError> {
-        let encoded = encode_path_component(symbol_id);
-        let path = match session_id {
-            Some(sid) => {
-                let sid_enc = encode_path_component(sid);
-                format!("/api/v1/corpora/{corpus_id}/definition/{encoded}?session_id={sid_enc}")
-            }
-            None => format!("/api/v1/corpora/{corpus_id}/definition/{encoded}"),
+        let req = crate::query::DefinitionRequest {
+            session_id: session_id.map(str::to_string),
+            ..Default::default()
         };
+        self.definition_req(corpus_id, symbol_id, &req).await
+    }
+
+    /// Get a bounded or outline-only symbol definition.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn definition_req(
+        &self,
+        corpus_id: &str,
+        symbol_id: &str,
+        req: &crate::query::DefinitionRequest,
+    ) -> Result<SymbolDefinition, ClientError> {
+        Ok(self
+            .definition_response_req(corpus_id, symbol_id, req)
+            .await?
+            .definition)
+    }
+
+    /// Get a bounded definition with completeness/status metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn definition_response_req(
+        &self,
+        corpus_id: &str,
+        symbol_id: &str,
+        req: &crate::query::DefinitionRequest,
+    ) -> Result<crate::query::DefinitionResponse, ClientError> {
+        let encoded = encode_path_component(symbol_id);
+        let mut qs = Vec::new();
+        if let Some(sid) = req.session_id.as_deref() {
+            qs.push(format!("session_id={}", encode_path_component(sid)));
+        }
+        if let Some(value) = req.max_lines {
+            qs.push(format!("max_lines={value}"));
+        }
+        if let Some(value) = req.context_lines {
+            qs.push(format!("context_lines={value}"));
+        }
+        if let Some(value) = req.include_body {
+            qs.push(format!("include_body={value}"));
+        }
+        if let Some(value) = req.outline_only {
+            qs.push(format!("outline_only={value}"));
+        }
+        if let Some(value) = req.start_line {
+            qs.push(format!("start_line={value}"));
+        }
+        if let Some(value) = req.start_byte {
+            qs.push(format!("start_byte={value}"));
+        }
+        let suffix = if qs.is_empty() {
+            String::new()
+        } else {
+            format!("?{}", qs.join("&"))
+        };
+        let path = format!("/api/v1/corpora/{corpus_id}/definition/{encoded}{suffix}");
         self.get(&path).await
     }
 
@@ -633,13 +697,44 @@ impl DaemonClient {
         session_id: Option<&str>,
         through_implementors: bool,
     ) -> Result<ReferencesResponse, ClientError> {
+        let req = crate::query::ReferencesRequest {
+            session_id: session_id.map(str::to_string),
+            through_implementors: Some(through_implementors),
+            ..Default::default()
+        };
+        self.references_req(corpus_id, symbol_id, &req).await
+    }
+
+    /// Get a bounded page of references to a symbol.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn references_req(
+        &self,
+        corpus_id: &str,
+        symbol_id: &str,
+        req: &crate::query::ReferencesRequest,
+    ) -> Result<ReferencesResponse, ClientError> {
         let encoded = encode_path_component(symbol_id);
         let mut qs: Vec<String> = Vec::new();
-        if let Some(sid) = session_id {
+        if let Some(sid) = req.session_id.as_deref() {
             qs.push(format!("session_id={}", encode_path_component(sid)));
         }
-        if through_implementors {
+        if req.through_implementors.unwrap_or(false) {
             qs.push("through_implementors=true".to_string());
+        }
+        if let Some(kind) = req.ref_kind.as_deref() {
+            qs.push(format!("ref_kind={}", encode_path_component(kind)));
+        }
+        if let Some(offset) = req.offset {
+            qs.push(format!("offset={offset}"));
+        }
+        if let Some(limit) = req.limit {
+            qs.push(format!("limit={limit}"));
+        }
+        if let Some(cursor) = req.cursor.as_deref() {
+            qs.push(format!("cursor={}", encode_path_component(cursor)));
         }
         let suffix = if qs.is_empty() {
             String::new()
@@ -648,6 +743,20 @@ impl DaemonClient {
         };
         let path = format!("/api/v1/corpora/{corpus_id}/references/{encoded}{suffix}");
         self.get(&path).await
+    }
+
+    /// Run the bounded compound symbol-inspection workflow.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn inspect(
+        &self,
+        corpus_id: &str,
+        req: &crate::query::InspectRequest,
+    ) -> Result<crate::query::InspectResponse, ClientError> {
+        self.post(&format!("/api/v1/corpora/{corpus_id}/inspect"), req)
+            .await
     }
 
     /// Compute the transitive impact (blast radius) of changing a symbol.
@@ -664,6 +773,38 @@ impl DaemonClient {
         tests_only: bool,
         session_id: Option<&str>,
     ) -> Result<ImpactResponse, ClientError> {
+        self.impact_page(
+            corpus_id,
+            symbol_id,
+            max_depth,
+            direction,
+            tests_only,
+            session_id,
+            None,
+            None,
+            Some(500),
+        )
+        .await
+    }
+
+    /// Fetch one impact page, optionally continuing after a stable cursor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn impact_page(
+        &self,
+        corpus_id: &str,
+        symbol_id: &str,
+        max_depth: Option<u32>,
+        direction: Option<&str>,
+        tests_only: bool,
+        session_id: Option<&str>,
+        offset: Option<usize>,
+        cursor: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<ImpactResponse, ClientError> {
         let encoded = encode_path_component(symbol_id);
         let mut qs: Vec<String> = Vec::new();
         if let Some(d) = max_depth {
@@ -677,6 +818,15 @@ impl DaemonClient {
         }
         if let Some(sid) = session_id {
             qs.push(format!("session_id={}", encode_path_component(sid)));
+        }
+        if let Some(offset) = offset {
+            qs.push(format!("offset={offset}"));
+        }
+        if let Some(cursor) = cursor {
+            qs.push(format!("cursor={}", encode_path_component(cursor)));
+        }
+        if let Some(limit) = limit {
+            qs.push(format!("limit={limit}"));
         }
         let suffix = if qs.is_empty() {
             String::new()
@@ -1431,6 +1581,9 @@ impl DaemonClient {
         )))
     }
 
+    // `ApiError` deliberately carries the complete status/completeness envelope
+    // inline so callers can inspect a failed response without another lookup.
+    #[allow(clippy::result_large_err)]
     fn parse_response<T: DeserializeOwned>(code: u16, body: &[u8]) -> Result<T, ClientError> {
         if (200..300).contains(&code) {
             // 2xx: parse body as the expected type. An empty 2xx body

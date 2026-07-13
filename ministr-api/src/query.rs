@@ -3,6 +3,10 @@
 //! These mirror the ministr MCP tool parameters and results in a
 //! transport-agnostic format suitable for HTTP JSON APIs.
 
+use crate::metadata::{
+    ContentProvenance, DeliveryIdentity, Pagination, QueryMetadata, ResultLocator,
+    ScoreExplanation, TextDeliveryMetadata,
+};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -17,9 +21,27 @@ pub struct SurveyRequest {
     /// Maximum number of results to return (default: 10).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_k: Option<usize>,
+    /// Preferred result limit; supersedes `top_k` when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
     /// Session ID for dedup and budget tracking (omit for stateless queries).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    /// Exact corpus/content/resolution deliveries to suppress.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<DeliveryIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_result_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_result_tokens: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_total_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_total_tokens: Option<usize>,
 }
 
 /// A single survey search result.
@@ -30,7 +52,7 @@ pub struct SurveyResult {
     /// Resolution level: `"summary"`, `"section"`, `"claim"`, `"symbol_stub"`, or `"symbol_full"`.
     /// Matches `Resolution`'s `snake_case` serialization in `ministr-core/src/types.rs`.
     pub resolution: String,
-    /// Relevance score (higher is better, 0.0-1.0).
+    /// Relative relevance score; higher is better. Ranking boosts may raise it above 1.0.
     pub score: f32,
     /// Content text at this resolution level.
     pub text: String,
@@ -41,6 +63,14 @@ pub struct SurveyResult {
     /// queries; `Some(corpus_id)` for cross-corpus `corpus_ids` fan-out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_corpus: Option<String>,
+    #[serde(default)]
+    pub locator: ResultLocator,
+    #[serde(default)]
+    pub text_metadata: TextDeliveryMetadata,
+    #[serde(default)]
+    pub provenance: ContentProvenance,
+    #[serde(default)]
+    pub score_explanation: ScoreExplanation,
 }
 
 /// Survey search response.
@@ -51,9 +81,23 @@ pub struct SurveyResponse {
     /// Number of results deduplicated (already delivered in this session).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deduplicated_count: Option<usize>,
+    /// Exact corpus/content/resolution identities suppressed by deduplication.
+    ///
+    /// Added after the aggregate count; old daemon/client payloads deserialize
+    /// this as an empty list for wire compatibility.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suppressed_identities: Vec<crate::metadata::DeliveryIdentity>,
     /// Budget status snapshot (present when `session_id` was provided).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage_status: Option<crate::session::SessionUsageResponse>,
+    #[serde(default)]
+    pub pagination: Pagination,
+    /// Survey totals describe the bounded discovery window, not every indexed
+    /// vector that could participate in ranking.
+    #[serde(default)]
+    pub total_is_exact: bool,
+    #[serde(default, flatten)]
+    pub metadata: QueryMetadata,
 }
 
 // ---------------------------------------------------------------------------
@@ -81,10 +125,31 @@ pub struct SymbolsRequest {
     /// Maximum results (default: 20).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
+    /// Pagination offset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<usize>,
     /// Session the call belongs to, if any. Included so the daemon can
     /// advance the session's turn counter on every tool call.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DefinitionRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_lines: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_lines: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_body: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline_only: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_byte: Option<usize>,
 }
 
 /// A code symbol definition with source context.
@@ -113,6 +178,60 @@ pub struct SymbolDefinition {
     pub heading_path: Vec<String>,
     /// Source code with surrounding context.
     pub source_context: String,
+    #[serde(default)]
+    pub truncated: bool,
+    #[serde(default)]
+    pub omitted_lines: usize,
+    #[serde(default)]
+    pub original_line_range: SourceLineRange,
+    #[serde(default)]
+    pub returned_line_range: SourceLineRange,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation: Option<DefinitionContinuation>,
+    #[serde(default)]
+    pub outline_only: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub child_symbols: Vec<DefinitionChild>,
+    #[serde(default)]
+    pub locator: ResultLocator,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_error: Option<String>,
+}
+
+/// Definition response envelope carrying index completeness/status.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DefinitionResponse {
+    pub definition: SymbolDefinition,
+    #[serde(default, flatten)]
+    pub metadata: QueryMetadata,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SourceLineRange {
+    pub start: u32,
+    pub end: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DefinitionContinuation {
+    pub symbol_id: String,
+    pub start_line: u32,
+    pub max_lines: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_byte: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DefinitionChild {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub file_path: String,
+    pub line_start: u32,
+    pub line_end: u32,
+    pub locator: ResultLocator,
 }
 
 /// Symbols search response.
@@ -120,6 +239,12 @@ pub struct SymbolDefinition {
 pub struct SymbolsResponse {
     /// Matching symbols.
     pub symbols: Vec<SymbolDefinition>,
+    #[serde(default)]
+    pub total: usize,
+    #[serde(default)]
+    pub pagination: Pagination,
+    #[serde(default, flatten)]
+    pub metadata: QueryMetadata,
 }
 
 // ---------------------------------------------------------------------------
@@ -149,11 +274,126 @@ pub struct SymbolReference {
     pub ref_kind: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ReferencesRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ref_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub through_implementors: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+
 /// References response.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReferencesResponse {
     /// All references to the queried symbol.
     pub references: Vec<SymbolReference>,
+    pub total: usize,
+    #[serde(default)]
+    pub pagination: Pagination,
+    #[serde(default, flatten)]
+    pub metadata: QueryMetadata,
+}
+
+// ---------------------------------------------------------------------------
+// Compound inspection
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InspectInclude {
+    Definition,
+    Callers,
+    Callees,
+    Implementors,
+    Imports,
+    Tests,
+    Bridges,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct InspectRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub col: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include: Vec<InspectInclude>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_per_group: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_source_lines: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct InspectReferenceGroup {
+    pub items: Vec<SymbolReference>,
+    pub total: usize,
+    pub omitted_count: usize,
+    #[serde(default)]
+    pub pagination: Pagination,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct InspectImpactSummary {
+    pub direct_callers: usize,
+    pub direct_callees: usize,
+    pub affected_files: usize,
+    pub relevant_tests: usize,
+    pub risk: ImpactRisk,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct InspectPartialError {
+    pub group: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct InspectNextAction {
+    pub action: String,
+    pub locator: ResultLocator,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct InspectResponse {
+    pub symbol_id: String,
+    pub locator: ResultLocator,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<SymbolDefinition>,
+    pub callers: InspectReferenceGroup,
+    pub callees: InspectReferenceGroup,
+    pub implementors: InspectReferenceGroup,
+    pub imports: InspectReferenceGroup,
+    pub tests: InspectReferenceGroup,
+    pub bridges: InspectReferenceGroup,
+    pub impact: InspectImpactSummary,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub partial_errors: Vec<InspectPartialError>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub next_actions: Vec<InspectNextAction>,
+    #[serde(default)]
+    pub truncated: bool,
+    #[serde(default)]
+    pub original_bytes: usize,
+    #[serde(default)]
+    pub returned_bytes: usize,
+    #[serde(default, flatten)]
+    pub metadata: QueryMetadata,
 }
 
 // ---------------------------------------------------------------------------
@@ -195,6 +435,10 @@ pub struct ImpactResponse {
     pub tests: usize,
     pub risk: ImpactRisk,
     pub callers: Vec<ImpactCaller>,
+    #[serde(default)]
+    pub pagination: Pagination,
+    #[serde(default, flatten)]
+    pub metadata: QueryMetadata,
 }
 
 /// Back-compat default for [`ImpactResponse::direction`] (older daemons that
@@ -253,6 +497,10 @@ pub struct DeadSymbol {
 pub struct DeadCodeResponse {
     pub symbols: Vec<DeadSymbol>,
     pub total: usize,
+    #[serde(default)]
+    pub pagination: Pagination,
+    #[serde(default, flatten)]
+    pub metadata: QueryMetadata,
 }
 
 /// Parameters for the `/dead` daemon endpoint (POST body).
@@ -262,6 +510,7 @@ pub struct DeadCodeRequest {
     pub module: Option<String>,
     pub min_lines: Option<u32>,
     pub limit: Option<usize>,
+    pub offset: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -316,6 +565,10 @@ pub struct Diagnostic {
 pub struct DiagnosticsResponse {
     pub diagnostics: Vec<Diagnostic>,
     pub total: usize,
+    #[serde(default)]
+    pub pagination: Pagination,
+    #[serde(default, flatten)]
+    pub metadata: QueryMetadata,
 }
 
 /// Parameters for the `/diagnostics` daemon endpoint (POST body).
@@ -326,6 +579,7 @@ pub struct DiagnosticsRequest {
     pub languages: Option<Vec<String>>,
     /// Maximum diagnostics to return.
     pub limit: Option<usize>,
+    pub offset: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -499,6 +753,8 @@ pub struct SolidRequest {
     pub cyclic_min_edges_per_direction: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cyclic_skip_test_paths: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<usize>,
 }
 
 /// SOLID-detection response.
@@ -506,6 +762,10 @@ pub struct SolidRequest {
 pub struct SolidResponse {
     pub findings: Vec<SolidFinding>,
     pub total: usize,
+    #[serde(default)]
+    pub pagination: Pagination,
+    #[serde(default, flatten)]
+    pub metadata: QueryMetadata,
 }
 
 // ---------------------------------------------------------------------------
@@ -532,6 +792,8 @@ pub struct SectionDetail {
     /// Budget status snapshot (present when `session_id` was provided).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage_status: Option<crate::session::SessionUsageResponse>,
+    #[serde(default, flatten)]
+    pub metadata: QueryMetadata,
 }
 
 // ---------------------------------------------------------------------------
@@ -549,6 +811,12 @@ pub struct ExtractRequest {
     /// Session ID for delivery tracking.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
 }
 
 /// A single extracted claim.
@@ -568,6 +836,13 @@ pub struct ClaimResult {
 pub struct ExtractResponse {
     /// Extracted claims.
     pub claims: Vec<ClaimResult>,
+    #[serde(default)]
+    pub total: usize,
+    #[serde(default)]
+    pub pagination: Pagination,
+    /// Index/transport state. Flattened for parity with other query responses.
+    #[serde(default, flatten)]
+    pub metadata: QueryMetadata,
 }
 
 // ---------------------------------------------------------------------------
@@ -676,6 +951,16 @@ pub struct TocResponse {
     pub entries: Vec<TocEntry>,
     /// Total number of entries (for pagination).
     pub total: usize,
+    /// Total distinct documents represented by the unpaginated TOC.
+    #[serde(default)]
+    pub documents: usize,
+    /// Total claims represented by the unpaginated TOC.
+    #[serde(default)]
+    pub claims: usize,
+    #[serde(default)]
+    pub pagination: Pagination,
+    #[serde(default, flatten)]
+    pub metadata: QueryMetadata,
 }
 
 // ---------------------------------------------------------------------------
@@ -693,6 +978,13 @@ pub struct RelatedRequest {
     /// Session ID for delivery tracking.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<usize>,
+    /// Stable cursor identifying the last edge returned by the previous page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
 }
 
 /// A related claim result.
@@ -715,6 +1007,11 @@ pub struct RelatedClaimResult {
 pub struct RelatedResponse {
     /// Related claims.
     pub claims: Vec<RelatedClaimResult>,
+    pub total: usize,
+    #[serde(default)]
+    pub pagination: Pagination,
+    #[serde(default, flatten)]
+    pub metadata: QueryMetadata,
 }
 
 // ---------------------------------------------------------------------------
@@ -739,6 +1036,8 @@ pub struct BridgeRequest {
     /// Maximum results.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<usize>,
     /// Session ID for delivery tracking.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
@@ -785,6 +1084,11 @@ pub struct BridgeLink {
 pub struct BridgeResponse {
     /// Bridge links.
     pub links: Vec<BridgeLink>,
+    pub total: usize,
+    #[serde(default)]
+    pub pagination: Pagination,
+    #[serde(default, flatten)]
+    pub metadata: QueryMetadata,
 }
 
 /// one node in the bridge graph wire shape. Backs the
@@ -875,4 +1179,28 @@ pub struct AskResponse {
     /// Model used for synthesis.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub model: String,
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_survey_response_defaults_suppressed_identities() {
+        let response: SurveyResponse =
+            serde_json::from_value(serde_json::json!({ "results": [] })).unwrap();
+        assert!(response.suppressed_identities.is_empty());
+        assert!(response.deduplicated_count.is_none());
+    }
+
+    #[test]
+    fn legacy_extract_response_defaults_query_metadata() {
+        let response: ExtractResponse =
+            serde_json::from_value(serde_json::json!({ "claims": [] })).unwrap();
+        assert_eq!(
+            response.metadata.status,
+            crate::metadata::ResponseStatus::Ok
+        );
+        assert!(response.metadata.completeness.absence_is_conclusive);
+    }
 }

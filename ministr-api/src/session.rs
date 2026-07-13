@@ -122,6 +122,46 @@ pub struct PrefetchMetricsResponse {
     pub survey_expand_hits: u64,
     /// Hits from agent intent prediction strategy.
     pub agent_plan_hits: u64,
+    /// Hits for definitions warmed by `ministr_symbols`.
+    #[serde(default)]
+    pub symbol_search_hits: u64,
+    /// Hits for definitions warmed by `ministr_references`.
+    #[serde(default)]
+    pub reference_follow_hits: u64,
+    /// Total speculative entries issued.
+    #[serde(default)]
+    pub prefetches_issued: u64,
+    /// Entries evicted or invalidated without a hit.
+    #[serde(default)]
+    pub prefetches_never_consumed: u64,
+    /// `prefetches_never_consumed / prefetches_issued` (0 when none issued).
+    #[serde(default)]
+    pub waste_rate: f64,
+    /// UTF-8 bytes served from warm entries.
+    #[serde(default)]
+    pub bytes_saved: u64,
+    /// Tokens served from warm entries.
+    #[serde(default)]
+    pub tokens_saved: u64,
+    /// Conservative modeled latency avoided.
+    #[serde(default)]
+    pub latency_saved_ms: u64,
+    #[serde(default)]
+    pub sequential_issued: u64,
+    #[serde(default)]
+    pub topical_issued: u64,
+    #[serde(default)]
+    pub structural_issued: u64,
+    #[serde(default)]
+    pub cross_session_issued: u64,
+    #[serde(default)]
+    pub survey_expand_issued: u64,
+    #[serde(default)]
+    pub agent_plan_issued: u64,
+    #[serde(default)]
+    pub symbol_search_issued: u64,
+    #[serde(default)]
+    pub reference_follow_issued: u64,
     /// Current number of entries in the prefetch cache.
     pub cache_size: usize,
     /// Maximum cache capacity.
@@ -132,7 +172,11 @@ pub struct PrefetchMetricsResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CompressRequest {
     /// Content IDs (section or symbol) to generate compressed summaries for.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub content_ids: Vec<String>,
+    /// Exact corpus/content/resolution deliveries to compress.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub identities: Vec<crate::metadata::DeliveryIdentity>,
     /// Session the call belongs to, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
@@ -141,6 +185,9 @@ pub struct CompressRequest {
 /// A single compressed content item.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CompressedItemApi {
+    /// Exact compressed delivery. Absent in responses from older daemons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<crate::metadata::DeliveryIdentity>,
     /// The original content ID that was compressed.
     pub original_id: String,
     /// The compressed summary text.
@@ -164,7 +211,11 @@ pub struct CompressResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DropRequest {
     /// Content IDs that have been dropped from the agent's context.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub content_ids: Vec<String>,
+    /// Exact corpus/content/resolution deliveries to make eligible again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub identities: Vec<crate::metadata::DeliveryIdentity>,
 }
 
 /// Response from the eviction endpoint.
@@ -174,4 +225,52 @@ pub struct DropResponse {
     pub dropped: Vec<String>,
     /// Content IDs that were not found in the session.
     pub not_found: Vec<String>,
+    /// Exact identities successfully removed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dropped_identities: Vec<crate::metadata::DeliveryIdentity>,
+    /// Exact identities not present in the session.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub not_found_identities: Vec<crate::metadata::DeliveryIdentity>,
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_compress_payloads_default_typed_identity_fields() {
+        let request: CompressRequest = serde_json::from_value(serde_json::json!({
+            "content_ids": ["doc.md#section"],
+            "session_id": "s1"
+        }))
+        .unwrap();
+        assert!(request.identities.is_empty());
+
+        let item: CompressedItemApi = serde_json::from_value(serde_json::json!({
+            "original_id": "doc.md#section",
+            "summary": "short",
+            "original_tokens": 12,
+            "compressed_tokens": 2,
+            "method": "extractive"
+        }))
+        .unwrap();
+        assert!(item.identity.is_none());
+    }
+
+    #[test]
+    fn exact_compression_identity_round_trips_without_string_concatenation() {
+        let identity = crate::metadata::DeliveryIdentity {
+            corpus_id: "tenant::corpus|one".into(),
+            content_id: "file.rs#item::with|delimiters".into(),
+            resolution: "section/full:v2".into(),
+        };
+        let request = CompressRequest {
+            content_ids: Vec::new(),
+            identities: vec![identity.clone()],
+            session_id: Some("session".into()),
+        };
+        let round_trip: CompressRequest =
+            serde_json::from_str(&serde_json::to_string(&request).unwrap()).unwrap();
+        assert_eq!(round_trip.identities, vec![identity]);
+    }
 }

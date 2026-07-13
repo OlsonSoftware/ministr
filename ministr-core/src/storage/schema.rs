@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 25;
+pub const CURRENT_SCHEMA_VERSION: usize = 26;
 
 /// Returns the migration set for the content database.
 ///
@@ -453,6 +453,47 @@ fn migrations() -> Migrations<'static> {
                 value INTEGER NOT NULL
             );
             INSERT INTO index_meta (key, value) VALUES ('vector_generation', 0);
+            ",
+        ),
+        // V26: corpus-aware delivery identity. V2 keyed deliveries by bare
+        // content_id, which collided across linked/Atlas corpora and also
+        // overwrote a survey excerpt when the same content was later read in
+        // full. Rebuild the table around the durable tuple
+        // (session, corpus, content, delivery resolution). Existing rows are
+        // intentionally migrated into the local `primary` corpus; treating
+        // them as wildcard identities would falsely suppress other corpora.
+        M::up(
+            "
+            DROP INDEX IF EXISTS idx_session_deliveries_session;
+            ALTER TABLE session_deliveries RENAME TO session_deliveries_v25;
+
+            CREATE TABLE session_deliveries (
+                session_id          TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                corpus_id           TEXT NOT NULL DEFAULT 'primary',
+                content_id          TEXT NOT NULL,
+                resolution          TEXT NOT NULL,
+                index_resolution    TEXT NOT NULL,
+                token_count         INTEGER NOT NULL,
+                turn_delivered      INTEGER NOT NULL,
+                content_hash        TEXT NOT NULL,
+                position            INTEGER NOT NULL,
+                compression_tier    TEXT NOT NULL DEFAULT 'full',
+                compressed_summary  TEXT,
+                PRIMARY KEY (session_id, corpus_id, content_id, resolution)
+            );
+
+            INSERT INTO session_deliveries
+                (session_id, corpus_id, content_id, resolution, index_resolution,
+                 token_count, turn_delivered, content_hash, position,
+                 compression_tier, compressed_summary)
+            SELECT session_id, 'primary', content_id, resolution, resolution,
+                   token_count, turn_delivered, content_hash, position,
+                   compression_tier, compressed_summary
+            FROM session_deliveries_v25;
+
+            DROP TABLE session_deliveries_v25;
+            CREATE INDEX idx_session_deliveries_session
+                ON session_deliveries(session_id);
             ",
         ),
     ])

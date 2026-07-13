@@ -22,7 +22,7 @@ const MAX_RECENT_QUERIES: usize = 10;
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{ContentId, Resolution};
+use crate::types::{ContentId, DeliveryIdentity, PRIMARY_CORPUS_ID, Resolution};
 
 /// Cumulative session metrics for token economics tracking.
 ///
@@ -47,13 +47,21 @@ pub struct SessionMetrics {
     pub delta_updates: u64,
     /// Number of deduplicated requests (content already delivered, same hash).
     pub dedup_hits: u64,
+    /// Tokens suppressed by deduplication.
+    #[serde(default)]
+    pub cumulative_tokens_deduplicated: u64,
+    /// UTF-8 bytes suppressed by deduplication.
+    #[serde(default)]
+    pub cumulative_bytes_deduplicated: u64,
 }
 
 impl SessionMetrics {
-    /// Net token savings: evicted + compressed.
+    /// Net token savings: evicted + compressed + deduplicated.
     #[must_use]
     pub fn total_tokens_saved(&self) -> u64 {
-        self.cumulative_tokens_evicted + self.cumulative_tokens_compressed
+        self.cumulative_tokens_evicted
+            + self.cumulative_tokens_compressed
+            + self.cumulative_tokens_deduplicated
     }
 
     /// Compression ratio: saved / delivered. Returns 0.0 if nothing delivered.
@@ -77,6 +85,10 @@ pub struct CoherenceAlert {
     pub changed_sections: Vec<String>,
     /// Content IDs in the session shadow that are now stale.
     pub stale_content_ids: Vec<String>,
+    /// Corpus-aware identities for modern clients. Legacy clients can keep
+    /// consuming `stale_content_ids`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stale_identities: Vec<DeliveryIdentity>,
 }
 
 /// Unique identifier for an agent session.
@@ -222,6 +234,13 @@ pub struct DeliveredItem {
     pub content_id: ContentId,
     /// Resolution level at which it was delivered.
     pub resolution: Resolution,
+    /// Canonical corpus namespace. Old serialized items default to primary.
+    #[serde(default = "primary_corpus_id")]
+    pub corpus_id: String,
+    /// Exact delivered representation. Old items derive this from
+    /// `resolution` when restored through SQLite.
+    #[serde(default)]
+    pub delivery_resolution: String,
     /// Token count of the delivered content.
     pub token_count: usize,
     /// The interaction turn when this content was delivered.
@@ -234,6 +253,27 @@ pub struct DeliveredItem {
     /// Present when tier is Extractive or Abstractive after background compression.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub compressed_summary: Option<String>,
+}
+
+fn primary_corpus_id() -> String {
+    PRIMARY_CORPUS_ID.to_string()
+}
+
+impl DeliveredItem {
+    /// Structured identity used for session maps, persistence, drops, and
+    /// cache keys.
+    #[must_use]
+    pub fn identity(&self) -> DeliveryIdentity {
+        DeliveryIdentity::new(
+            &self.corpus_id,
+            self.content_id.0.clone(),
+            if self.delivery_resolution.is_empty() {
+                self.resolution.to_string()
+            } else {
+                self.delivery_resolution.clone()
+            },
+        )
+    }
 }
 
 /// An agent interaction session tracking delivered content and access patterns.
@@ -276,14 +316,14 @@ pub struct Session {
     /// policy is stored here so callers can introspect it (telemetry,
     /// persistence) and so it isn't silently discarded by the constructor.
     eviction_policy: DropPolicy,
-    /// Map of delivered content, keyed by `ContentId`.
+    /// Map of delivered content, keyed by serialized [`DeliveryIdentity`].
     delivered: BTreeMap<String, DeliveredItem>,
-    /// Ordered trajectory of content accesses (content IDs in access order).
+    /// Ordered trajectory of corpus-aware content accesses.
     /// Capped at [`MAX_TRAJECTORY_LEN`] to bound memory; oldest entries are dropped.
-    trajectory: VecDeque<ContentId>,
+    trajectory: VecDeque<DeliveryIdentity>,
     /// Current interaction turn counter.
     current_turn: u32,
-    /// Content IDs that have been marked stale due to underlying file changes.
+    /// Structured delivery keys marked stale due to underlying file changes.
     stale: HashSet<String>,
     /// Pending coherence alerts waiting to be delivered to the agent.
     pending_alerts: VecDeque<CoherenceAlert>,
@@ -292,7 +332,7 @@ pub struct Session {
     recent_queries: VecDeque<String>,
     /// Cumulative token economics metrics.
     metrics: SessionMetrics,
-    /// Section IDs that have already been paired into the cross-session
+    /// Delivery identities already paired into the cross-session
     /// co-access table. Tracked incrementally so `persist_session` can
     /// flush new pairs on every call without double-counting pairs that
     /// were already recorded on earlier flushes. See
@@ -339,14 +379,38 @@ impl Session {
     /// it is clamped upward so downstream ranking code can safely compute
     /// `current_turn - turn_delivered` without underflow.
     #[must_use]
-    pub fn restore(
+    pub fn restore<T>(
         id: SessionId,
         agent_context_budget: usize,
         eviction_policy: DropPolicy,
         delivered: BTreeMap<String, DeliveredItem>,
-        trajectory: Vec<ContentId>,
+        trajectory: Vec<T>,
         current_turn: u32,
-    ) -> Self {
+    ) -> Self
+    where
+        T: Into<DeliveryIdentity>,
+    {
+        // Re-key old bare-id maps from pre-corpus persistence/callers using
+        // the structured identity carried by each item.
+        let delivered: BTreeMap<String, DeliveredItem> = delivered
+            .into_values()
+            .map(|item| (item.identity().storage_key(), item))
+            .collect();
+        let trajectory: Vec<DeliveryIdentity> = trajectory
+            .into_iter()
+            .map(Into::into)
+            .map(|mut identity| {
+                if identity.resolution == "legacy"
+                    && let Some(item) = delivered.values().find(|item| {
+                        item.corpus_id == identity.corpus_id
+                            && item.content_id.0 == identity.content_id
+                    })
+                {
+                    identity = item.identity();
+                }
+                identity
+            })
+            .collect();
         let max_delivered_turn = delivered
             .values()
             .map(|item| item.turn_delivered)
@@ -355,14 +419,16 @@ impl Session {
         let current_turn = current_turn.max(max_delivered_turn);
         // Convert to VecDeque, keeping only the most recent entries.
         let skip = trajectory.len().saturating_sub(MAX_TRAJECTORY_LEN);
-        let trajectory: VecDeque<ContentId> = trajectory.into_iter().skip(skip).collect();
+        let trajectory: VecDeque<DeliveryIdentity> = trajectory.into_iter().skip(skip).collect();
         // Treat every restored trajectory entry as already flushed — we
         // don't persist the flushed set today, so the safest assumption
         // is that any pair from restored state has already been recorded
         // (or would have been had the daemon not crashed). This may miss
         // a small number of pairs but never double-counts.
-        let co_access_flushed_ids: HashSet<String> =
-            trajectory.iter().map(|c| c.0.clone()).collect();
+        let co_access_flushed_ids: HashSet<String> = trajectory
+            .iter()
+            .map(DeliveryIdentity::storage_key)
+            .collect();
         Self {
             id,
             created_at: Instant::now(),
@@ -391,8 +457,23 @@ impl Session {
         turn: u32,
         content_hash: String,
     ) {
+        let identity = DeliveryIdentity::primary(content_id.0.clone(), resolution.to_string());
+        self.record_delivery_identity(&identity, resolution, token_count, turn, content_hash);
+    }
+
+    /// Record a delivery under a corpus-aware identity. The identity's
+    /// resolution is the exact transport representation and is independent
+    /// from the coarse index [`Resolution`] used for compression policy.
+    pub fn record_delivery_identity(
+        &mut self,
+        identity: &DeliveryIdentity,
+        resolution: Resolution,
+        token_count: usize,
+        turn: u32,
+        content_hash: String,
+    ) {
         self.current_turn = self.current_turn.max(turn);
-        self.trajectory.push_back(content_id.clone());
+        self.trajectory.push_back(identity.clone());
         if self.trajectory.len() > MAX_TRAJECTORY_LEN {
             self.trajectory.pop_front();
         }
@@ -401,8 +482,10 @@ impl Session {
         self.metrics.cumulative_tokens_delivered += token_count as u64;
 
         let item = DeliveredItem {
-            content_id: content_id.clone(),
+            content_id: ContentId(identity.content_id.clone()),
             resolution,
+            corpus_id: identity.corpus_id.clone(),
+            delivery_resolution: identity.resolution.clone(),
             token_count,
             turn_delivered: turn,
             content_hash,
@@ -410,20 +493,37 @@ impl Session {
             compressed_summary: None,
         };
 
-        self.delivered.insert(content_id.0.clone(), item);
-        self.stale.remove(&content_id.0);
+        let key = identity.storage_key();
+        self.delivered.insert(key.clone(), item);
+        self.stale.remove(&key);
     }
 
     /// Check whether content has already been delivered in this session.
     #[must_use]
     pub fn is_delivered(&self, content_id: &ContentId) -> bool {
-        self.delivered.contains_key(&content_id.0)
+        self.delivered
+            .values()
+            .any(|item| item.corpus_id == PRIMARY_CORPUS_ID && item.content_id == *content_id)
+    }
+
+    /// Check one exact corpus/content/resolution delivery.
+    #[must_use]
+    pub fn is_identity_delivered(&self, identity: &DeliveryIdentity) -> bool {
+        self.delivered.contains_key(&identity.storage_key())
     }
 
     /// Get the delivered item record for a content ID, if it exists.
     #[must_use]
     pub fn get_delivered(&self, content_id: &ContentId) -> Option<&DeliveredItem> {
-        self.delivered.get(&content_id.0)
+        self.delivered
+            .values()
+            .find(|item| item.corpus_id == PRIMARY_CORPUS_ID && item.content_id == *content_id)
+    }
+
+    /// Get one exact corpus/content/resolution delivery.
+    #[must_use]
+    pub fn get_delivered_identity(&self, identity: &DeliveryIdentity) -> Option<&DeliveredItem> {
+        self.delivered.get(&identity.storage_key())
     }
 
     /// Returns the set of all delivered content ID strings.
@@ -432,7 +532,19 @@ impl Session {
     /// from search results before truncation.
     #[must_use]
     pub fn delivered_ids(&self) -> HashSet<String> {
-        self.delivered.keys().cloned().collect()
+        self.delivered
+            .values()
+            .map(|item| item.content_id.0.clone())
+            .collect()
+    }
+
+    /// All exact delivered identities.
+    #[must_use]
+    pub fn delivered_identities(&self) -> HashSet<DeliveryIdentity> {
+        self.delivered
+            .values()
+            .map(DeliveredItem::identity)
+            .collect()
     }
 
     /// Check whether the content has changed since it was last delivered.
@@ -442,7 +554,8 @@ impl Session {
     #[must_use]
     pub fn has_changed(&self, content_id: &ContentId, current_hash: &str) -> bool {
         self.delivered
-            .get(&content_id.0)
+            .values()
+            .find(|item| item.corpus_id == PRIMARY_CORPUS_ID && item.content_id == *content_id)
             .is_some_and(|item| item.content_hash != current_hash)
     }
 
@@ -462,7 +575,7 @@ impl Session {
     ///
     /// Capped at the most recent [`MAX_TRAJECTORY_LEN`] entries.
     #[must_use]
-    pub fn trajectory(&self) -> &VecDeque<ContentId> {
+    pub fn trajectory(&self) -> &VecDeque<DeliveryIdentity> {
         &self.trajectory
     }
 
@@ -500,8 +613,39 @@ impl Session {
     /// its context window (via `ministr_dropped`). Returns the removed item
     /// if it existed.
     pub fn remove_delivered(&mut self, content_id: &ContentId) -> Option<DeliveredItem> {
-        self.stale.remove(&content_id.0);
-        let item = self.delivered.remove(&content_id.0)?;
+        self.remove_delivered_resolutions(content_id)
+            .into_iter()
+            .next()
+    }
+
+    /// Remove every primary-corpus resolution for a legacy bare content ID.
+    /// Exact identity drops remain available when only one representation
+    /// should become eligible again.
+    pub fn remove_delivered_resolutions(&mut self, content_id: &ContentId) -> Vec<DeliveredItem> {
+        let mut identities: Vec<DeliveryIdentity> = self
+            .delivered
+            .iter()
+            .filter(|(_, item)| {
+                item.corpus_id == PRIMARY_CORPUS_ID && item.content_id == *content_id
+            })
+            .map(|(_, item)| item.identity())
+            .collect();
+        identities.sort_by_key(DeliveryIdentity::storage_key);
+        identities
+            .iter()
+            .filter_map(|identity| self.remove_delivered_identity(identity))
+            .collect()
+    }
+
+    /// Remove one exact delivery so another corpus or resolution remains
+    /// suppressed independently.
+    pub fn remove_delivered_identity(
+        &mut self,
+        identity: &DeliveryIdentity,
+    ) -> Option<DeliveredItem> {
+        let key = identity.storage_key();
+        self.stale.remove(&key);
+        let item = self.delivered.remove(&key)?;
         self.metrics.total_evictions += 1;
         self.metrics.cumulative_tokens_evicted += item.token_count as u64;
         Some(item)
@@ -520,7 +664,18 @@ impl Session {
         content_id: &ContentId,
         heading_path: &[String],
     ) -> Option<usize> {
-        let item = self.delivered.get_mut(&content_id.0)?;
+        let key = self.primary_delivery_key(content_id)?;
+        let identity = DeliveryIdentity::from_storage_key(&key, "section_full");
+        self.mask_identity_to_bookmark(&identity, heading_path)
+    }
+
+    /// Corpus-aware bookmark compression.
+    pub fn mask_identity_to_bookmark(
+        &mut self,
+        identity: &DeliveryIdentity,
+        heading_path: &[String],
+    ) -> Option<usize> {
+        let item = self.delivered.get_mut(&identity.storage_key())?;
 
         // Don't re-mask items already at bookmark or evicted tier
         if item.compression_tier >= CompressionTier::Bookmark {
@@ -552,7 +707,19 @@ impl Session {
         tier: CompressionTier,
         new_token_count: usize,
     ) -> Option<usize> {
-        let item = self.delivered.get_mut(&content_id.0)?;
+        let key = self.primary_delivery_key(content_id)?;
+        let identity = DeliveryIdentity::from_storage_key(&key, "section_full");
+        self.set_identity_compression_tier(&identity, tier, new_token_count)
+    }
+
+    /// Corpus-aware compression-tier transition.
+    pub fn set_identity_compression_tier(
+        &mut self,
+        identity: &DeliveryIdentity,
+        tier: CompressionTier,
+        new_token_count: usize,
+    ) -> Option<usize> {
+        let item = self.delivered.get_mut(&identity.storage_key())?;
         let original_tokens = item.token_count;
         item.compression_tier = tier;
         item.token_count = new_token_count;
@@ -578,7 +745,20 @@ impl Session {
         tier: CompressionTier,
         new_token_count: usize,
     ) -> Option<usize> {
-        let item = self.delivered.get_mut(&content_id.0)?;
+        let key = self.primary_delivery_key(content_id)?;
+        let identity = DeliveryIdentity::from_storage_key(&key, "section_full");
+        self.set_identity_compressed_summary(&identity, summary, tier, new_token_count)
+    }
+
+    /// Corpus-aware compressed-summary update.
+    pub fn set_identity_compressed_summary(
+        &mut self,
+        identity: &DeliveryIdentity,
+        summary: String,
+        tier: CompressionTier,
+        new_token_count: usize,
+    ) -> Option<usize> {
+        let item = self.delivered.get_mut(&identity.storage_key())?;
         let original_tokens = item.token_count;
         item.compression_tier = tier;
         item.token_count = new_token_count;
@@ -613,8 +793,16 @@ impl Session {
     #[must_use]
     pub fn is_re_request(&self, content_id: &ContentId, current_hash: &str) -> bool {
         self.delivered
-            .get(&content_id.0)
+            .values()
+            .find(|item| item.corpus_id == PRIMARY_CORPUS_ID && item.content_id == *content_id)
             .is_some_and(|item| item.content_hash == current_hash)
+    }
+
+    fn primary_delivery_key(&self, content_id: &ContentId) -> Option<String> {
+        self.delivered
+            .iter()
+            .find(|(_, item)| item.corpus_id == PRIMARY_CORPUS_ID && item.content_id == *content_id)
+            .map(|(key, _)| key.clone())
     }
 
     // --- Coherence / stale tracking ---
@@ -625,8 +813,26 @@ impl Session {
     /// Returns `false` if the content was not in the session shadow.
     #[must_use]
     pub fn mark_stale(&mut self, content_id: &ContentId) -> bool {
-        if self.delivered.contains_key(&content_id.0) {
-            self.stale.insert(content_id.0.clone());
+        let keys: Vec<String> = self
+            .delivered
+            .iter()
+            .filter(|(_, item)| {
+                item.corpus_id == PRIMARY_CORPUS_ID && item.content_id == *content_id
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in &keys {
+            self.stale.insert(key.clone());
+        }
+        !keys.is_empty()
+    }
+
+    /// Mark one exact delivery stale.
+    #[must_use]
+    pub fn mark_identity_stale(&mut self, identity: &DeliveryIdentity) -> bool {
+        let key = identity.storage_key();
+        if self.delivered.contains_key(&key) {
+            self.stale.insert(key);
             true
         } else {
             false
@@ -636,18 +842,50 @@ impl Session {
     /// Check whether a delivered content item has been marked stale.
     #[must_use]
     pub fn is_stale(&self, content_id: &ContentId) -> bool {
-        self.stale.contains(&content_id.0)
+        self.delivered.iter().any(|(key, item)| {
+            item.corpus_id == PRIMARY_CORPUS_ID
+                && item.content_id == *content_id
+                && self.stale.contains(key)
+        })
+    }
+
+    /// Check whether one exact corpus/content/resolution delivery is stale.
+    #[must_use]
+    pub fn is_identity_stale(&self, identity: &DeliveryIdentity) -> bool {
+        self.stale.contains(&identity.storage_key())
     }
 
     /// Get all content IDs currently marked as stale.
     #[must_use]
     pub fn stale_content_ids(&self) -> Vec<String> {
-        self.stale.iter().cloned().collect()
+        self.stale_identities()
+            .into_iter()
+            .map(|identity| identity.content_id)
+            .collect()
+    }
+
+    /// Get exact identities currently marked stale.
+    #[must_use]
+    pub fn stale_identities(&self) -> Vec<DeliveryIdentity> {
+        self.stale
+            .iter()
+            .filter_map(|key| self.delivered.get(key).map(DeliveredItem::identity))
+            .collect()
     }
 
     /// Clear the stale mark for a content item (e.g. after re-delivery).
     pub fn clear_stale(&mut self, content_id: &ContentId) {
-        self.stale.remove(&content_id.0);
+        let keys: Vec<String> = self
+            .delivered
+            .iter()
+            .filter(|(_, item)| {
+                item.corpus_id == PRIMARY_CORPUS_ID && item.content_id == *content_id
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in keys {
+            self.stale.remove(&key);
+        }
     }
 
     /// Invalidate all delivered items that reference the given section IDs.
@@ -668,13 +906,63 @@ impl Session {
         let count = stale_ids.len();
 
         if !stale_ids.is_empty() {
+            let stale_identities = self.stale_identities();
             self.pending_alerts.push_back(CoherenceAlert {
                 changed_sections: changed_section_ids.to_vec(),
                 stale_content_ids: stale_ids,
+                stale_identities,
             });
         }
 
         count
+    }
+
+    /// Invalidate exact corpus-aware deliveries and enqueue a locator-rich
+    /// coherence alert. Multiple resolutions of the same changed section may
+    /// be supplied and remain independently tracked.
+    #[must_use]
+    pub fn invalidate_identities(&mut self, changed: &[DeliveryIdentity]) -> usize {
+        let stale_identities: Vec<DeliveryIdentity> = changed
+            .iter()
+            .filter(|identity| self.mark_identity_stale(identity))
+            .cloned()
+            .collect();
+        if stale_identities.is_empty() {
+            return 0;
+        }
+        let stale_content_ids = stale_identities
+            .iter()
+            .map(|identity| identity.content_id.clone())
+            .collect();
+        self.pending_alerts.push_back(CoherenceAlert {
+            changed_sections: stale_identities
+                .iter()
+                .map(|identity| identity.content_id.clone())
+                .collect(),
+            stale_content_ids,
+            stale_identities: stale_identities.clone(),
+        });
+        stale_identities.len()
+    }
+
+    /// Invalidate every delivered resolution of the changed content within
+    /// one corpus. A colliding content ID in another corpus remains current.
+    #[must_use]
+    pub fn invalidate_corpus_sections(
+        &mut self,
+        corpus_id: &str,
+        changed_section_ids: &[String],
+    ) -> usize {
+        let changed: HashSet<&str> = changed_section_ids.iter().map(String::as_str).collect();
+        let identities: Vec<DeliveryIdentity> = self
+            .delivered
+            .values()
+            .filter(|item| {
+                item.corpus_id == corpus_id && changed.contains(item.content_id.as_ref())
+            })
+            .map(DeliveredItem::identity)
+            .collect();
+        self.invalidate_identities(&identities)
     }
 
     /// Drain all pending coherence alerts.
@@ -709,18 +997,19 @@ impl Session {
     /// item AND with every `previously_flushed` item, then call
     /// [`Session::mark_co_access_flushed`] with the `new` set.
     #[must_use]
-    pub fn unflushed_co_access_items(&self) -> (Vec<ContentId>, Vec<ContentId>) {
+    pub fn unflushed_co_access_items(&self) -> (Vec<DeliveryIdentity>, Vec<DeliveryIdentity>) {
         let mut seen_new: HashSet<String> = HashSet::new();
         let mut new = Vec::new();
-        for cid in &self.trajectory {
-            if !self.co_access_flushed_ids.contains(&cid.0) && seen_new.insert(cid.0.clone()) {
-                new.push(cid.clone());
+        for identity in &self.trajectory {
+            let key = identity.storage_key();
+            if !self.co_access_flushed_ids.contains(&key) && seen_new.insert(key) {
+                new.push(identity.clone());
             }
         }
-        let prev: Vec<ContentId> = self
+        let prev: Vec<DeliveryIdentity> = self
             .co_access_flushed_ids
             .iter()
-            .map(|s| ContentId(s.clone()))
+            .map(|key| DeliveryIdentity::from_storage_key(key, "section_full"))
             .collect();
         (new, prev)
     }
@@ -730,10 +1019,10 @@ impl Session {
     /// will exclude them from the `new` list.
     pub fn mark_co_access_flushed<I>(&mut self, ids: I)
     where
-        I: IntoIterator<Item = ContentId>,
+        I: IntoIterator<Item = DeliveryIdentity>,
     {
-        for cid in ids {
-            self.co_access_flushed_ids.insert(cid.0);
+        for identity in ids {
+            self.co_access_flushed_ids.insert(identity.storage_key());
         }
     }
 
@@ -748,6 +1037,13 @@ impl Session {
     /// Record a dedup hit (agent requested content already delivered, same hash).
     pub fn record_dedup_hit(&mut self) {
         self.metrics.dedup_hits += 1;
+    }
+
+    /// Record one suppressed delivery and its token/byte savings.
+    pub fn record_dedup_savings(&mut self, token_count: usize, byte_count: usize) {
+        self.record_dedup_hit();
+        self.metrics.cumulative_tokens_deduplicated += token_count as u64;
+        self.metrics.cumulative_bytes_deduplicated += byte_count as u64;
     }
 
     /// Record a delta update (content changed since last delivery).
@@ -909,9 +1205,9 @@ mod tests {
 
         let traj = session.trajectory();
         assert_eq!(traj.len(), 3);
-        assert_eq!(traj[0], cid("s1"));
-        assert_eq!(traj[1], cid("s2"));
-        assert_eq!(traj[2], cid("s1"));
+        assert_eq!(traj[0].content_id, "s1");
+        assert_eq!(traj[1].content_id, "s2");
+        assert_eq!(traj[2].content_id, "s1");
     }
 
     #[test]
@@ -955,7 +1251,7 @@ mod tests {
     // --- Exhaustive deduplication tests ---
 
     #[test]
-    fn re_delivery_at_different_resolution_updates_record() {
+    fn deliveries_at_different_resolutions_are_independent() {
         let mut session = make_session();
 
         // First deliver as section
@@ -968,12 +1264,25 @@ mod tests {
         // Re-deliver as claim (e.g. after extract)
         session.record_delivery(&cid("s1"), Resolution::Claim, 30, 2, "h2".into());
 
-        // Should update resolution and token count
-        assert_eq!(session.delivered_count(), 1);
-        let item = session.get_delivered(&cid("s1")).unwrap();
-        assert_eq!(item.resolution, Resolution::Claim);
-        assert_eq!(item.token_count, 30);
-        assert_eq!(session.total_delivered_tokens(), 30);
+        assert_eq!(session.delivered_count(), 2);
+        assert_eq!(session.total_delivered_tokens(), 230);
+        assert!(session.is_identity_delivered(&DeliveryIdentity::primary("s1", "section")));
+        assert!(session.is_identity_delivered(&DeliveryIdentity::primary("s1", "claim")));
+    }
+
+    #[test]
+    fn colliding_content_ids_do_not_cross_deduplicate_or_drop() {
+        let mut session = make_session();
+        let left = DeliveryIdentity::new("left", "same", "section_excerpt");
+        let right = DeliveryIdentity::new("right", "same", "section_excerpt");
+        session.record_delivery_identity(&left, Resolution::Section, 10, 1, "left".into());
+        session.record_delivery_identity(&right, Resolution::Section, 20, 1, "right".into());
+
+        assert!(session.is_identity_delivered(&left));
+        assert!(session.is_identity_delivered(&right));
+        assert!(session.remove_delivered_identity(&left).is_some());
+        assert!(!session.is_identity_delivered(&left));
+        assert!(session.is_identity_delivered(&right));
     }
 
     #[test]
@@ -1100,6 +1409,8 @@ mod tests {
         let item = DeliveredItem {
             content_id: ContentId("test-id".into()),
             resolution: Resolution::Section,
+            corpus_id: "primary".into(),
+            delivery_resolution: "section_full".into(),
             token_count: 250,
             turn_delivered: 3,
             content_hash: "abc123".into(),
@@ -1149,6 +1460,29 @@ mod tests {
     fn remove_delivered_nonexistent_returns_none() {
         let mut session = make_session();
         assert!(session.remove_delivered(&cid("nonexistent")).is_none());
+    }
+
+    #[test]
+    fn legacy_drop_removes_all_primary_resolutions_only() {
+        let mut session = make_session();
+        let excerpt = DeliveryIdentity::new(PRIMARY_CORPUS_ID, "shared", "section_excerpt");
+        let full = DeliveryIdentity::new(PRIMARY_CORPUS_ID, "shared", "section_full");
+        let linked = DeliveryIdentity::new("linked", "shared", "section_full");
+        for (turn, identity) in [&excerpt, &full, &linked].into_iter().enumerate() {
+            session.record_delivery_identity(
+                identity,
+                Resolution::Section,
+                10,
+                u32::try_from(turn + 1).unwrap(),
+                format!("hash-{turn}"),
+            );
+        }
+
+        let removed = session.remove_delivered_resolutions(&cid("shared"));
+        assert_eq!(removed.len(), 2);
+        assert!(!session.is_identity_delivered(&excerpt));
+        assert!(!session.is_identity_delivered(&full));
+        assert!(session.is_identity_delivered(&linked));
     }
 
     #[test]
@@ -1321,6 +1655,7 @@ mod tests {
         let alert = CoherenceAlert {
             changed_sections: vec!["s1".into(), "s2".into()],
             stale_content_ids: vec!["s1".into()],
+            stale_identities: vec![],
         };
         let json = serde_json::to_string(&alert).unwrap();
         let back: CoherenceAlert = serde_json::from_str(&json).unwrap();
@@ -1649,12 +1984,15 @@ mod tests {
     #[test]
     fn metrics_dedup_and_delta() {
         let mut session = make_session();
-        session.record_dedup_hit();
+        session.record_dedup_savings(40, 160);
         session.record_dedup_hit();
         session.record_delta_update();
 
         let m = session.metrics();
         assert_eq!(m.dedup_hits, 2);
+        assert_eq!(m.cumulative_tokens_deduplicated, 40);
+        assert_eq!(m.cumulative_bytes_deduplicated, 160);
+        assert_eq!(m.total_tokens_saved(), 40);
         assert_eq!(m.delta_updates, 1);
     }
 

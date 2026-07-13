@@ -1061,6 +1061,7 @@ pub async fn search_symbols(
         visibility: None,
         file_path,
         limit: None,
+        offset: None,
         session_id: None,
     };
     let resp = ministr_api::client::DaemonClient::new()
@@ -1297,6 +1298,7 @@ pub async fn dead_code(
                 module,
                 min_lines,
                 limit,
+                offset: None,
             },
             None,
         )
@@ -1375,7 +1377,11 @@ pub async fn diagnostics(
     let resp = ministr_api::client::DaemonClient::new()
         .diagnostics(
             &corpus_id,
-            &ministr_api::query::DiagnosticsRequest { languages, limit },
+            &ministr_api::query::DiagnosticsRequest {
+                languages,
+                limit,
+                offset: None,
+            },
             None,
         )
         .await?;
@@ -1627,6 +1633,7 @@ pub async fn bridge_query(
         source_language,
         file_path,
         limit: Some(limit.unwrap_or(500)),
+        offset: None,
         session_id: None,
     };
     let resp = ministr_api::client::DaemonClient::new()

@@ -60,31 +60,20 @@ impl MinistrServer {
 
     /// Compute the total token overhead of all registered tool schemas.
     ///
-    /// Concatenates tool names, descriptions, and parameter descriptions,
-    /// then counts tokens using `cl100k_base`. Cached via `OnceLock` since
-    /// schemas are immutable after initialization.
+    /// Counts the literal serialized `tools/list` entries (including input
+    /// and output schemas) using `cl100k_base`. This is intentionally not a
+    /// process-global cache: runtime pruning gives different server instances
+    /// different catalogs.
     pub(super) fn schema_token_overhead(&self) -> (usize, usize) {
-        use std::sync::OnceLock;
-        static CACHED: OnceLock<(usize, usize)> = OnceLock::new();
-        *CACHED.get_or_init(|| {
-            let tools = self.tool_router.list_all();
-            let tool_count = tools.len();
-            let mut schema_text = String::new();
-            for tool in &tools {
-                schema_text.push_str(&tool.name);
-                schema_text.push(' ');
-                if let Some(desc) = &tool.description {
-                    schema_text.push_str(desc);
-                    schema_text.push(' ');
-                }
-                if let Ok(json) = serde_json::to_string(&*tool.input_schema) {
-                    schema_text.push_str(&json);
-                    schema_text.push(' ');
-                }
-            }
-            let tokens = count_tokens(&schema_text);
-            (tokens, tool_count)
-        })
+        let tools: Vec<_> = self
+            .tool_router
+            .list_all()
+            .into_iter()
+            .map(super::types::sanitize_tool_schemas)
+            .collect();
+        let tool_count = tools.len();
+        let wire = serde_json::to_string(&tools).unwrap_or_default();
+        (count_tokens(&wire), tool_count)
     }
 
     /// Build the `mcp://server-card.json` server card (SEP-1649).

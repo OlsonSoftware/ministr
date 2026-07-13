@@ -8,11 +8,28 @@
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `corpus_boost` | object | no | Optional per-corpus score multipliers for cross-corpus ranking. Map\<corpus_id, multiplier\>; absent corpora default to 1.0; clamped to [0, 10]. Use 2.0 to float your own repo above Atlas hits, 0.0 to suppress a corpus. |
-| `corpus_ids` | array of string | no | Optional cross-corpus list. When set and non-empty, fans the query out across each corpus_id (own corpora or Atlas slugs), tags hits with source_corpus, and merges results by score. Omit to query a single corpus. |
-| `project` | string | no | Optional linked-project label (from .ministr.toml [[linked]]). Omit for the session's primary corpus. Call ministr_projects to list labels. |
-| `query` | string | no | Natural language query to search the corpus |
-| `top_k` | integer | no | Maximum number of results to return |
+| `corpus_boost` | object | no | Corpus score multipliers (0..10). |
+| `corpus_ids` | array of string | no | Corpus IDs/Atlas slugs; overrides project. |
+| `cursor` | string | no | Cursor. |
+| `limit` | integer | no | Limit (cap 100). |
+| `offset` | integer | no | Offset. |
+| `project` | string | no | Linked project. |
+| `query` | string | no | Natural-language search query. |
+| `top_k` | integer | no | Legacy limit (default 10). |
+
+## Output
+
+| Field | Type | Description |
+|---|---|---|
+| `coherence_alerts` | array | Pending coherence alerts (present when underlying content has changed). |
+| `completeness` | any | Whether absence is conclusive for the index generation queried. |
+| `corpora` | array | Per-corpus status for fan-out/routed operations. |
+| `error` | … | Stable error detail for partial/error responses. |
+| `indexing_in_progress` | boolean | True when background corpus ingestion is still running. |
+| `indexing_message` | string | Human-readable ingestion status message (e.g. "Checking 12/42 files"). |
+| `next_actions` | array | Concrete next-tool-call suggestions, in priority order.  Coherence-driven (re-read changed sections) plus any per-handler hints (e.g. survey's top-result follow-up). Budget pressure no longer contributes entries here — see the struct-level note. |
+| `result` | … | The tool-specific result data (varying — placed last for prefix stability). |
+| `status` | any | Machine-readable operation status; empty successful results remain `ok`. |
 
 Annotations: read-only · idempotent.
 

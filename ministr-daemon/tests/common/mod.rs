@@ -63,6 +63,8 @@ impl Embedder for MockEmbedder {
 pub struct TestDaemon {
     pub addr: IpcAddr,
     pub corpus_id: String,
+    #[allow(dead_code)]
+    pub progress: Arc<IngestionProgress>,
     _tmp_dir: tempfile::TempDir,
 }
 
@@ -94,7 +96,36 @@ impl TestDaemon {
 
         populate_storage(&storage, &embedder, &index).await;
 
-        Self::spawn(tmp_dir, db_path, embedder, index, storage).await
+        Self::spawn(
+            tmp_dir,
+            db_path,
+            embedder,
+            index,
+            storage,
+            "test-corpus".to_string(),
+        )
+        .await
+    }
+
+    /// Start the standard corpus under a caller-selected corpus identity.
+    #[allow(dead_code)]
+    pub async fn start_named(corpus_id: &str) -> Self {
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let db_path = tmp_dir.path().join("content.db");
+        let dim = 16;
+        let embedder: Arc<dyn Embedder> = Arc::new(MockEmbedder { dim });
+        let index: Arc<dyn VectorIndex> = Arc::new(HnswIndex::new(dim, 1000).unwrap());
+        let storage = Arc::new(SqliteStorage::open(&db_path).unwrap());
+        populate_storage(&storage, &embedder, &index).await;
+        Self::spawn(
+            tmp_dir,
+            db_path,
+            embedder,
+            index,
+            storage,
+            corpus_id.to_string(),
+        )
+        .await
     }
 
     /// Start a daemon over a caller-supplied corpus (documents + sections
@@ -116,7 +147,15 @@ impl TestDaemon {
             storage.insert_document(doc).await.unwrap();
         }
 
-        Self::spawn(tmp_dir, db_path, embedder, index, storage).await
+        Self::spawn(
+            tmp_dir,
+            db_path,
+            embedder,
+            index,
+            storage,
+            "test-corpus".to_string(),
+        )
+        .await
     }
 
     /// Shared daemon spin-up: build the query service + corpus handle, register
@@ -127,6 +166,7 @@ impl TestDaemon {
         embedder: Arc<dyn Embedder>,
         index: Arc<dyn VectorIndex>,
         storage: Arc<SqliteStorage>,
+        corpus_id: String,
     ) -> Self {
         let addr = test_ipc_addr(&tmp_dir);
 
@@ -134,7 +174,6 @@ impl TestDaemon {
         let query_storage = SqliteStorage::open(&db_path).unwrap();
         let service = QueryService::new(query_storage, Arc::clone(&embedder), Arc::clone(&index));
 
-        let corpus_id = "test-corpus".to_string();
         let handle = build_corpus_handle(
             corpus_id.clone(),
             storage,
@@ -152,6 +191,7 @@ impl TestDaemon {
             "mock-model:test".to_string(),
             config,
         ));
+        let progress = Arc::clone(&handle.progress);
         registry
             .corpora()
             .write()
@@ -173,6 +213,7 @@ impl TestDaemon {
         Self {
             addr,
             corpus_id,
+            progress,
             _tmp_dir: tmp_dir,
         }
     }
@@ -354,6 +395,13 @@ fn build_corpus_handle(
 }
 
 fn build_corpus() -> Vec<DocumentTree> {
+    let large_token_section = format!(
+        "JWT tokens use RS256 signing. {} FINAL_UNICODE_MARKER_終🙂",
+        (0..2_000)
+            .map(|index| format!("token-policy-{index} café🙂"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
     vec![
         DocumentTree {
             id: ContentId("docs/auth.md".into()),
@@ -364,7 +412,7 @@ fn build_corpus() -> Vec<DocumentTree> {
                     id: SectionId("docs/auth.md#tokens".into()),
                     heading_path: vec!["Authentication".into(), "Tokens".into()],
                     depth: 2,
-                    text: "JWT tokens use RS256 signing. Tokens expire after 24 hours.".into(),
+                    text: large_token_section,
                     structural_nodes: vec![],
                     children: vec![],
                     claims: vec![
@@ -394,6 +442,23 @@ fn build_corpus() -> Vec<DocumentTree> {
                         section_id: SectionId("docs/auth.md#oauth".into()),
                     }],
                     summary: Some("OAuth 2.0 integration details.".into()),
+                },
+                Section {
+                    id: SectionId("docs/auth.md#many-claims".into()),
+                    heading_path: vec!["Authentication".into(), "Claim Catalog".into()],
+                    depth: 2,
+                    text: "A deterministic catalog used to exercise bounded claim extraction."
+                        .into(),
+                    structural_nodes: vec![],
+                    children: vec![],
+                    claims: (0..75)
+                        .map(|index| Claim {
+                            id: ClaimId(format!("catalog-c{index:03}")),
+                            text: format!("Catalog policy claim number {index:03}."),
+                            section_id: SectionId("docs/auth.md#many-claims".into()),
+                        })
+                        .collect(),
+                    summary: Some("Large deterministic claim catalog.".into()),
                 },
             ],
             summary: Some("Complete authentication reference.".into()),

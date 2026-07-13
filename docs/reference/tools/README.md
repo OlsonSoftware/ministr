@@ -16,6 +16,7 @@ Generated from the MCP tool manifest — the same schemas agents receive.
 | [`ministr_extract`](extract.md) | Atomic claims from a section, optionally query-filtered. |
 | [`ministr_fetch`](fetch.md) | Fetch a URL from the web and index its content. |
 | [`ministr_impact`](impact.md) | Transitive blast radius of changing a symbol. |
+| [`ministr_inspect`](inspect.md) | Bounded definition, callers, callees, implementations, tests, and bridges for one symbol. |
 | [`ministr_projects`](projects.md) | List the current project plus any linked projects you can query in this session. |
 | [`ministr_read`](read.md) | Full content of a section by ID. |
 | [`ministr_references`](references.md) | All callers, implementors, and importers of a code symbol. |

@@ -23,12 +23,22 @@ differ in **one** variable, the discovery tool:
 | **A — ministr** | ministr MCP (`survey`/`symbols`/`definition`/…) on a pre-indexed corpus | ✅ | ❌ |
 | **B — grep** | `Grep` + `Glob` | ❌ | ✅ |
 
-Isolation: each run uses a fresh copy of the task fixture in a throwaway `/tmp`
-dir, with `--strict-mcp-config` (host MCP servers never leak), `--setting-sources
-user` (no project hooks), `--no-session-persistence`, and `bypassPermissions`.
-Arm A pre-indexes the fixture with `ministr index --corpus .` (run from the
-fixture dir — a cwd `.ministr.toml` would otherwise override `--corpus`); the
-throwaway corpus is keyed by the tmp path and never touches your real corpora.
+Isolation: fixture tasks use fresh throwaway `/tmp` copies; real-repo tasks
+hard-reset a shared prebuilt base between arms. Both use `--strict-mcp-config`
+(host MCP servers never leak), project/local settings, and bypass permissions.
+Arm A persists its Claude session solely so the harness can mechanically prove
+that the treatment was received; arm B is non-persistent outside the fidelity
+probe (which persists both arms for protocol-level verification). Arm A pre-indexes the
+fixture with `ministr index --corpus .` (run from the fixture dir — a cwd
+`.ministr.toml` would otherwise override `--corpus`); the throwaway corpus is
+keyed by the tmp path and never touches your real corpora.
+
+Treatment accounting snapshots every transcript and subagent JSONL byte offset
+before each arm-A run, then counts unique `mcp__ministr__*` `tool_use` events
+written after that checkpoint. It polls for up to five seconds because Claude
+Code can print its final JSON response just before its persistence writer
+flushes. A model's prose claim that a tool succeeded is never accepted as the
+validity signal, and an earlier run in the shared worktree cannot satisfy it.
 
 ### Methodology v2 — deployment-faithful arms (2026-grounded)
 

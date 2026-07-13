@@ -277,7 +277,16 @@ async fn call_tool(client: &McpClient, name: &str, args: serde_json::Value) -> C
     if let Some(args) = arguments {
         params = params.with_arguments(args);
     }
-    client.peer().call_tool(params).await.unwrap()
+    let mut result = client.peer().call_tool(params).await.unwrap();
+    // Most historical assertions consume the textual JSON fallback. The real
+    // server now makes structuredContent canonical and sends only a compact
+    // text summary, so rehydrate the old test view from the canonical field.
+    // Dedicated payload-economics tests call the protocol directly and assert
+    // that the actual wire text remains compact.
+    if let Some(structured) = result.structured_content.as_ref() {
+        result.content = vec![Content::text(serde_json::to_string(structured).unwrap())];
+    }
+    result
 }
 
 /// Assert a tool response carries no agent-facing budget hints.
@@ -3319,6 +3328,65 @@ async fn ministr_symbols_finds_struct_by_name() {
         "should find MinistrConfig by name search"
     );
     assert!(symbols.iter().any(|s| s["name"] == "MinistrConfig"));
+}
+
+#[tokio::test]
+async fn symbols_then_definition_consumes_measured_prefetch() {
+    let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
+    let symbols = call_tool(
+        &client,
+        "ministr_symbols",
+        json!({"query": "MinistrConfig", "limit": 1}),
+    )
+    .await;
+    assert_eq!(symbols.is_error, Some(false));
+
+    let definition = call_tool(
+        &client,
+        "ministr_definition",
+        json!({"symbol_id": "sym-config::MinistrConfig"}),
+    )
+    .await;
+    assert_eq!(definition.is_error, Some(false));
+
+    let usage = call_tool(&client, "ministr_usage", json!({})).await;
+    let metrics = &usage
+        .structured_content
+        .as_ref()
+        .expect("usage structured content")["prefetch_metrics"];
+    assert_eq!(metrics["symbol_search_issued"], 1);
+    assert_eq!(metrics["symbol_search_hits"], 1);
+    assert!(metrics["tokens_saved"].as_u64().unwrap_or(0) > 0);
+    assert!(metrics["latency_saved_ms"].as_u64().unwrap_or(0) > 0);
+}
+
+#[tokio::test]
+async fn references_then_definition_consumes_measured_prefetch() {
+    let (client, _server) = wrap_as_client(setup_server_with_symbols().await).await;
+    let references = call_tool(
+        &client,
+        "ministr_references",
+        json!({"symbol_id": "sym-storage::Storage", "limit": 10}),
+    )
+    .await;
+    assert_eq!(references.is_error, Some(false));
+
+    let definition = call_tool(
+        &client,
+        "ministr_definition",
+        json!({"symbol_id": "sym-storage::Storage"}),
+    )
+    .await;
+    assert_eq!(definition.is_error, Some(false));
+
+    let usage = call_tool(&client, "ministr_usage", json!({})).await;
+    let metrics = &usage
+        .structured_content
+        .as_ref()
+        .expect("usage structured content")["prefetch_metrics"];
+    assert_eq!(metrics["reference_follow_issued"], 1);
+    assert_eq!(metrics["reference_follow_hits"], 1);
+    assert!(metrics["bytes_saved"].as_u64().unwrap_or(0) > 0);
 }
 
 // ---------------------------------------------------------------------------

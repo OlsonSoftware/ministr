@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use ministr_core::service::QueryError;
 use ministr_core::types::Resolution;
 use rmcp::handler::server::tool::ToolRouter;
+use rmcp::model::Content;
 
 use super::MinistrServer;
 
@@ -18,6 +19,9 @@ pub(crate) const MAX_RESPONSE_BYTES: usize = 100_000;
 
 /// Maximum number of survey results to prefetch via agent intent prediction.
 pub(crate) const MAX_INTENT_PREFETCH_SURVEY: usize = 5;
+
+/// Hard cap shared by collection-producing navigation tools.
+pub(crate) const MAX_COLLECTION_PAGE: usize = 500;
 
 /// Well-known progress token for ministr ingestion notifications.
 pub(crate) const INGESTION_PROGRESS_TOKEN: &str = "ministr/ingestion";
@@ -39,6 +43,72 @@ pub(crate) fn parse_resolution(s: &str) -> Resolution {
 /// Convert elapsed duration to milliseconds, saturating at `u64::MAX`.
 pub(crate) fn elapsed_millis(start: std::time::Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Resolve the applied offset/limit from compatible numeric cursors.
+///
+/// Cursors are deliberately opaque to clients. The `offset:` encoding keeps
+/// old offset pagination interoperable; mutable graph handlers may replace
+/// `next_cursor` with a stable item key while retaining the same metadata.
+pub(crate) fn page_request(
+    offset: Option<usize>,
+    cursor: Option<&str>,
+    requested_limit: Option<usize>,
+    default_limit: usize,
+) -> Result<(usize, usize), &'static str> {
+    let applied_limit = requested_limit
+        .unwrap_or(default_limit)
+        .clamp(1, MAX_COLLECTION_PAGE);
+    let applied_offset = match cursor {
+        None | Some("") => offset.unwrap_or(0),
+        Some(raw) => raw
+            .strip_prefix("offset:")
+            .unwrap_or(raw)
+            .parse::<usize>()
+            .map_err(|_| "invalid pagination cursor")?,
+    };
+    Ok((applied_offset, applied_limit))
+}
+
+/// Build complete, explicit pagination metadata for a bounded collection.
+#[must_use]
+pub(crate) fn page_metadata(
+    limit: usize,
+    offset: usize,
+    returned: usize,
+    total: usize,
+) -> ministr_api::metadata::Pagination {
+    let consumed = offset.saturating_add(returned).min(total);
+    let has_more = consumed < total;
+    ministr_api::metadata::Pagination {
+        limit,
+        offset: Some(offset),
+        cursor: None,
+        next_cursor: has_more.then(|| format!("offset:{consumed}")),
+        total,
+        has_more,
+        omitted_count: total.saturating_sub(consumed),
+    }
+}
+
+/// Build a deterministic opaque cursor from a stable item identity.
+#[must_use]
+pub(crate) fn stable_cursor<T: serde::Serialize>(prefix: &str, value: &T) -> String {
+    let encoded = serde_json::to_vec(value).unwrap_or_default();
+    format!("{prefix}:{}", blake3::hash(&encoded).to_hex())
+}
+
+/// Resolve a mutable collection cursor by the last stable item identity.
+pub(crate) fn stable_cursor_offset<T>(
+    items: &[T],
+    cursor: &str,
+    prefix: &str,
+    identity: impl Fn(&T) -> serde_json::Value,
+) -> Option<usize> {
+    items
+        .iter()
+        .position(|item| stable_cursor(prefix, &identity(item)) == cursor)
+        .map(|index| index + 1)
 }
 
 /// Extract a human-readable display name from a repository URL.
@@ -147,10 +217,60 @@ pub(crate) fn soft_backend_error(
         BackendError::Query(QueryError::SymbolNotFound { .. }) => "symbol_not_found",
         BackendError::Query(QueryError::Index(_)) => "index_error",
         BackendError::Query(QueryError::Storage(_)) => "storage_error",
+        BackendError::Query(QueryError::FileUnavailable { source, .. })
+            if source.kind() == std::io::ErrorKind::PermissionDenied =>
+        {
+            "permission_denied"
+        }
         BackendError::Query(QueryError::FileUnavailable { .. }) => "file_unavailable",
         BackendError::Client(_) => "daemon_error",
+        BackendError::UnknownProject(_) => "unavailable_corpus",
+        BackendError::PermissionDenied(_) => "permission_denied",
+        BackendError::InvalidParameters(_) => "invalid_parameters",
     };
     soft_error(kind, format_backend_error(err))
+}
+
+/// Make an absence-shaped soft error honest while local ingestion is active.
+///
+/// Navigation misses bypass the normal `ToolResponse` builder, so without this
+/// overlay a section/symbol not yet indexed looked like conclusive absence.
+#[must_use]
+pub(crate) fn apply_active_indexing_to_soft_error(
+    mut result: rmcp::model::CallToolResult,
+    progress: &ministr_core::ingestion::IngestionProgress,
+) -> rmcp::model::CallToolResult {
+    if !progress.is_running() {
+        return result;
+    }
+    let Some(structured) = result.structured_content.as_mut() else {
+        return result;
+    };
+    let absence_shaped = structured["error_kind"].as_str().is_some_and(|kind| {
+        matches!(
+            kind,
+            "section_not_found"
+                | "claim_not_found"
+                | "symbol_not_found"
+                | "no_symbol_at_position"
+                | "not_found"
+        )
+    });
+    if !absence_shaped {
+        return result;
+    }
+
+    structured["status"] = serde_json::json!("partial");
+    structured["error"]["retryable"] = serde_json::json!(true);
+    structured["completeness"] = serde_json::json!({
+        "completeness": "partial",
+        "indexed_items": progress.files_done(),
+        "estimated_total_items": progress.files_total(),
+        "affected_capabilities": ["search", "navigation"],
+        "absence_is_conclusive": false,
+        "retry_guidance": "Indexing is active; retry after completion before treating absence as conclusive.",
+    });
+    result
 }
 
 /// Format a [`crate::backend::BackendError`] into a user-friendly error
@@ -170,6 +290,13 @@ pub(crate) fn format_backend_error(err: &crate::backend::BackendError) -> String
                  error persists."
             )
         }
+        crate::backend::BackendError::UnknownProject(project) => format!(
+            "Corpus or linked project '{project}' is unavailable. Use ministr_projects or the corpus registry to discover valid routes."
+        ),
+        crate::backend::BackendError::PermissionDenied(project) => {
+            format!("Permission denied for corpus or linked project '{project}'.")
+        }
+        crate::backend::BackendError::InvalidParameters(message) => message.clone(),
     }
 }
 
@@ -229,86 +356,23 @@ pub(crate) fn has_code_files_in_dir(root: &std::path::Path) -> bool {
     false
 }
 
-/// Build the dynamic instructions string based on which tools are registered.
+/// Build a compact routing hint based on which tools are registered.
+///
+/// Some MCP hosts prepend server instructions to every tool description, so
+/// this text must stay deliberately short. Individual tool descriptions carry
+/// the detailed use/don't-use guidance.
 pub(crate) fn build_instructions(router: &ToolRouter<MinistrServer>) -> String {
-    // Map of tool name → description fragment for the instructions string
-    let tool_descriptions: &[(&str, &str)] = &[
-        (
-            "ministr_toc",
-            "ministr_toc to get a structural overview of the indexed corpus",
-        ),
-        (
-            "ministr_survey",
-            "ministr_survey to search for relevant content",
-        ),
-        ("ministr_read", "ministr_read to retrieve full section text"),
-        (
-            "ministr_extract",
-            "ministr_extract to get atomic claims from a section",
-        ),
-        (
-            "ministr_related",
-            "ministr_related to follow dependency chains between claims",
-        ),
-        // ministr_usage is intentionally not advertised here. It remains
-        // callable for deliberate use, but surfacing it in the agent
-        // instructions made agents proactively "check budget" and then
-        // wrongly conclude they were almost out of context. Context
-        // pressure is tracked internally for compression/dedup; it is no
-        // longer pushed at the agent.
-        (
-            "ministr_compress",
-            "ministr_compress to generate compressed summaries of content you want to evict",
-        ),
-        (
-            "ministr_dropped",
-            "ministr_dropped to signal when content has been dropped from your context window",
-        ),
-        (
-            "ministr_fetch",
-            "ministr_fetch to fetch web content by URL and add it to the corpus",
-        ),
-        (
-            "ministr_refresh",
-            "ministr_refresh to check cached web sources for staleness and re-fetch changed content",
-        ),
-        (
-            "ministr_clone",
-            "ministr_clone to clone a git repository and index its content",
-        ),
-        (
-            "ministr_task",
-            "ministr_task to poll background fetch/clone tasks (deprecated — prefer MCP tasks/get)",
-        ),
-        (
-            "ministr_symbols",
-            "ministr_symbols to search the code symbol index",
-        ),
-        (
-            "ministr_definition",
-            "ministr_definition to get the full source definition of a symbol",
-        ),
-        (
-            "ministr_references",
-            "ministr_references to find all references to a symbol",
-        ),
-        (
-            "ministr_bridge",
-            "ministr_bridge to query cross-language bridge links",
-        ),
-    ];
-
-    let mut parts: Vec<&str> = Vec::new();
-    for (name, desc) in tool_descriptions {
-        if router.has_route(name) {
-            parts.push(desc);
-        }
+    if router.has_route("ministr_inspect") {
+        "Start with ministr_survey for concepts, ministr_symbols for names, or ministr_toc for \
+         structure. Follow with ministr_read/ministr_extract for prose or \
+         ministr_definition/ministr_inspect for code; use ministr_references before changes."
+            .to_string()
+    } else {
+        "Start with ministr_survey for concepts, ministr_symbols for names, or ministr_toc for \
+         structure; follow with ministr_read, ministr_extract, ministr_definition, or \
+         ministr_references."
+            .to_string()
     }
-
-    format!(
-        "ministr is a code intelligence MCP server for AI coding agents. Use {}.",
-        parts.join(", "),
-    )
 }
 
 /// Cascade-safe logical failure: a tool result that is **not** an MCP error.
@@ -334,10 +398,41 @@ pub(crate) fn soft_error(
 ) -> rmcp::model::CallToolResult {
     use rmcp::model::{CallToolResult, Content};
     let message = message.into();
+    let nonconclusive = matches!(
+        error_kind,
+        "daemon_error"
+            | "index_error"
+            | "storage_error"
+            | "unavailable_corpus"
+            | "permission_denied"
+            | "file_unavailable"
+    );
+    let retryable = matches!(
+        error_kind,
+        "daemon_error"
+            | "index_error"
+            | "storage_error"
+            | "unavailable_corpus"
+            | "file_unavailable"
+    );
     let structured = serde_json::json!({
         "ok": false,
+        "status": "error",
         "error_kind": error_kind,
-        "message": message,
+        "message": message.clone(),
+        "error": {
+            "error_code": error_kind,
+            "retryable": retryable,
+            "message": message,
+        },
+        "completeness": {
+            "completeness": if nonconclusive { "unavailable" } else { "complete" },
+            "indexed_items": 0,
+            "affected_capabilities": if nonconclusive { vec!["query"] } else { Vec::<&str>::new() },
+            "absence_is_conclusive": !nonconclusive,
+            "retry_guidance": if retryable { Some("Retry after the backend or index becomes available.") } else { None },
+        },
+        "result": serde_json::Value::Null,
     });
     // Build via the structured constructor (which sets is_error:false) and
     // replace the default text with our loud "⚠ kind: message" line. The
@@ -349,8 +444,9 @@ pub(crate) fn soft_error(
 
 /// Serialize a value into a `CallToolResult` with structured content.
 ///
-/// Sets both `structured_content` (JSON object) and `content` (text fallback)
-/// for backward compatibility with clients that don't support structured output.
+/// Machine data is canonical in `structured_content`; `content` is a compact
+/// human-readable summary. Set `MINISTR_MCP_LEGACY_TEXT_CONTENT=1` to retain
+/// the historical full-JSON text fallback for older clients.
 ///
 /// Includes a response size guard: if the serialized JSON exceeds
 /// [`MAX_RESPONSE_BYTES`], a `_truncation_warning` is injected into the
@@ -369,7 +465,84 @@ pub(crate) fn structured_result(
     let v = super::condense::fit_to_budget(v, super::condense::output_budget_tokens());
     let v = apply_response_size_guard(v);
 
-    Ok(rmcp::model::CallToolResult::structured(v))
+    let mut result = rmcp::model::CallToolResult::structured(v.clone());
+    if legacy_text_content_enabled() {
+        let text = serde_json::to_string(&v).map_err(|e| {
+            rmcp::model::ErrorData::internal_error(format!("serialization failed: {e}"), None)
+        })?;
+        result.content = vec![Content::text(text)];
+    } else {
+        result.content = vec![Content::text(structured_summary(&v))];
+    }
+    Ok(result)
+}
+
+/// Serialize an explicitly requested full-content retrieval without applying
+/// the generic token condenser. `ministr_read` uses this path so a large
+/// section is never mistaken for a complete body after silent clipping.
+pub(crate) fn structured_full_result(
+    value: &impl serde::Serialize,
+) -> Result<rmcp::model::CallToolResult, rmcp::model::ErrorData> {
+    let value = serde_json::to_value(value).map_err(|error| {
+        rmcp::model::ErrorData::internal_error(format!("serialization failed: {error}"), None)
+    })?;
+    let value = apply_response_size_guard(value);
+    let mut result = rmcp::model::CallToolResult::structured(value.clone());
+    result.content = if legacy_text_content_enabled() {
+        vec![Content::text(serde_json::to_string(&value).map_err(
+            |error| {
+                rmcp::model::ErrorData::internal_error(
+                    format!("serialization failed: {error}"),
+                    None,
+                )
+            },
+        )?)]
+    } else {
+        vec![Content::text(structured_summary(&value))]
+    };
+    Ok(result)
+}
+
+fn legacy_text_content_enabled() -> bool {
+    // The large historical unit-test module parses the text fallback directly;
+    // integration/e2e builds exercise the production compact-text default.
+    cfg!(test)
+        || std::env::var("MINISTR_MCP_LEGACY_TEXT_CONTENT")
+            .is_ok_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+}
+
+fn structured_summary(value: &serde_json::Value) -> String {
+    let status = value
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("ok");
+    if let Some(error) = value.get("error") {
+        let code = error
+            .get("error_code")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("error");
+        return format!("ministr {status}: {code}; details are in structuredContent");
+    }
+
+    let result = value.get("result").unwrap_or(value);
+    let count = [
+        "results",
+        "symbols",
+        "references",
+        "entries",
+        "links",
+        "related",
+        "diagnostics",
+        "findings",
+        "callers",
+    ]
+    .iter()
+    .find_map(|key| result.get(key).and_then(serde_json::Value::as_array))
+    .map(Vec::len);
+    count.map_or_else(
+        || format!("ministr {status}; machine data is in structuredContent"),
+        |n| format!("ministr {status}: {n} item(s); machine data is in structuredContent"),
+    )
 }
 
 /// If the serialized JSON exceeds [`MAX_RESPONSE_BYTES`], inject a

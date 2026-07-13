@@ -70,7 +70,10 @@ label = "other"
 
 A linked project is not merged — it keeps its own index and identity. Agents
 target it with the `project: "other"` argument on any query tool
-(`ministr_projects` lists labels).
+(`ministr_projects` lists labels). Results and suggested next actions preserve
+that routing automatically. Delivery identity includes the linked corpus,
+content ID, and resolution, so equal content IDs in two projects do not
+deduplicate each other.
 
 ### `[agent]`
 

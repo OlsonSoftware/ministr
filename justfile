@@ -84,6 +84,18 @@ msrv:
 eval-gate $MINISTR_COREML="0":
     cargo test --test eval_retrieval eval_retrieval_regression_gate -p ministr-core -- --nocapture
 
+# Deterministic, model-free task-level gate over the real MCP call path. Scores
+# correct navigation task completion per 1,000 literal response tokens and
+# enforces dedup, status/completeness, collision, and inspect economics.
+eval-agent-efficiency:
+    cargo test -p ministr-mcp --test agent_efficiency_regression -- --nocapture
+
+# Explicit heavy companion: authenticated Claude Code, external repositories,
+# package installs, and paid model calls. Pass --dry-run to inspect the matrix
+# without spending; use --fidelity-probe before trusting a real comparison.
+eval-agent-efficiency-real *args:
+    cd benchmarks/agent-task && python3 run_sxs.py {{args}}
+
 # Pre-release: validate + MSRV + audit + eval gate + web build
 release-preflight: validate msrv eval-gate
     cargo audit
@@ -120,18 +132,20 @@ eval-truncation:
 
 # RQ2 embedder bake-off: benchmark candidate embedding models against the eval
 # golden set and print a dim / P@5 / R@5 / MRR / nDCG@5 comparison table.
-# Downloads several models on first run (some large, e.g. bge-m3). Use the
-# spread to pick a default; the production swap is a separate re-index step.
+# Downloads several models on first run (some large, e.g. bge-m3) and uses the
+# optimized release profile because inference under the debug test profile is
+# prohibitively slow. Use the spread to pick a default; the production swap is
+# a separate re-index step.
 # `--exact` so it doesn't also match eval_model_bakeoff_code.
 eval-bakeoff:
-    cargo test -p ministr-core --test eval_retrieval -- --ignored --nocapture --exact eval_model_bakeoff
+    cargo test --release -p ministr-core --test eval_retrieval -- --ignored --nocapture --exact eval_model_bakeoff
 
 # RQ2-followup CODE bake-off: the same comparison over the CODE-HEAVY corpus
 # (eval/corpus-code + eval/ground-truth-code.json, 26 text-to-code queries over
 # 6 languages). Decides jina-code vs MiniLM on a code-representative corpus —
 # what agents actually retrieve. Downloads the same models as eval-bakeoff.
 eval-bakeoff-code:
-    cargo test -p ministr-core --test eval_retrieval -- --ignored --nocapture eval_model_bakeoff_code
+    cargo test --release -p ministr-core --test eval_retrieval -- --ignored --nocapture eval_model_bakeoff_code
 
 # rq-ast-sparse-encoder gate: dense-only vs zero-model AST/BM25F hybrid
 # (sparse_weight 0.6) on the code corpus, same dense model, deterministic

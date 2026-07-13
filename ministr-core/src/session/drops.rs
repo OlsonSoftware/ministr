@@ -21,12 +21,15 @@ use std::collections::VecDeque;
 use serde::Serialize;
 
 use super::types::{DeliveredItem, Session};
+use crate::types::DeliveryIdentity;
 
 /// A candidate for eviction from the agent's context window.
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct DropCandidate {
     /// The content ID of the item to evict.
     pub content_id: String,
+    /// Exact corpus/content/resolution identity to pass to `ministr_dropped`.
+    pub identity: DeliveryIdentity,
     /// Human-readable reason for the eviction recommendation.
     pub reason: String,
     /// Token count that would be recovered by evicting this item.
@@ -193,6 +196,7 @@ impl DropRanker {
                     Self::describe_reason(item, current_turn, min_turn, max_turn, &task_keywords);
                 DropCandidate {
                     content_id: item.content_id.0.clone(),
+                    identity: item.identity(),
                     reason,
                     tokens_recoverable: item.token_count,
                     score: *score,
@@ -682,6 +686,7 @@ mod tests {
     fn candidate_serializes_to_json() {
         let candidate = DropCandidate {
             content_id: "test-id".into(),
+            identity: crate::types::DeliveryIdentity::primary("test-id", "section_full"),
             reason: "stale content".into(),
             tokens_recoverable: 200,
             score: 0.75,
@@ -706,6 +711,7 @@ mod tests {
     fn candidate_without_factors_omits_field() {
         let candidate = DropCandidate {
             content_id: "test-id".into(),
+            identity: crate::types::DeliveryIdentity::primary("test-id", "section_full"),
             reason: "stale content".into(),
             tokens_recoverable: 200,
             score: 0.75,

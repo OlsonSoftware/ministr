@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added `ministr_inspect`, a bounded compound symbol workflow for definitions, callers, callees, implementations, imports/type uses, tests, cross-language bridges, impact, and executable follow-up actions.
+- Added corpus-aware result locators, compact score explanations, content provenance, machine-readable response status/index completeness, and deterministic pagination metadata across navigation tools.
+- Added a deterministic task-level agent-efficiency gate that measures correct completion per delivered token, calls, literal MCP bytes, recall, repeated content, absence/status correctness, and inspect-versus-granular savings.
+
+### Changed
+- `ministr_survey` now returns bounded query-centered excerpts or representative stored summaries; full section retrieval remains in `ministr_read` and all truncation is explicit.
+- Large definitions return bounded source or an outline with child locators and continuation instructions instead of unbounded bodies.
+- MCP structured content is canonical and the text channel carries only a compact human summary, avoiding duplicate full JSON payloads.
+- Search selection diversifies logical symbol, parent section, file, module, resolution family, and provenance while preserving the best exact match.
+
+### Fixed
+- Delivery, deduplication, drop/re-request, compression, coherence, prefetch, persistence, daemon, linked-project, and cross-corpus accounting now distinguish the same content ID in different corpora and resolutions.
+- Generated next actions preserve project and corpus routing, so linked and cross-corpus follow-ups execute against the result's source.
+- Partial indexing and backend failures no longer masquerade as conclusive empty success.
+
+### Compatibility
+- Persisted legacy session deliveries with bare content IDs migrate into the primary corpus at their stored/legacy resolution. Existing granular MCP tools remain available alongside `ministr_inspect`.
+
 ## [0.7.0](https://github.com/OlsonSoftware/ministr/releases/tag/v0.7.0) - 2026-06-12
 
 ### Breaking

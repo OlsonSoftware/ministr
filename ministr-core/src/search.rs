@@ -12,7 +12,7 @@ use tracing::instrument;
 
 use crate::error::IndexError;
 use crate::index::{SearchResult as RawSearchResult, SparseIndex, VectorIndex};
-use crate::types::{Resolution, VectorId};
+use crate::types::{Resolution, ScoreExplanation, VectorId};
 
 /// Default number of raw candidates to retrieve before re-ranking.
 const DEFAULT_RAW_K: usize = 30;
@@ -33,6 +33,8 @@ pub struct ScoredResult {
     /// Final score: raw cosine similarity (or the RRF score on the hybrid
     /// path). Higher = better.
     pub score: f32,
+    /// Compact retrieval evidence preserved for downstream ranking.
+    pub explanation: ScoreExplanation,
 }
 
 /// Configuration for multi-resolution search.
@@ -173,13 +175,28 @@ where
             )?;
 
             // Build dense scored results
-            let dense_scored: Vec<ScoredResult> =
-                raw_results.iter().filter_map(score_result).collect();
+            let dense_scored: Vec<ScoredResult> = raw_results
+                .iter()
+                .filter_map(score_result)
+                .enumerate()
+                .map(|(rank, mut result)| {
+                    result.explanation.dense_rank = Some(rank + 1);
+                    result
+                })
+                .collect();
 
             // Fuse using RRF
             rrf_fuse(&dense_scored, &sparse_results, config.sparse_weight)
         } else {
-            raw_results.iter().filter_map(score_result).collect()
+            raw_results
+                .iter()
+                .filter_map(score_result)
+                .enumerate()
+                .map(|(rank, mut result)| {
+                    result.explanation.dense_rank = Some(rank + 1);
+                    result
+                })
+                .collect()
         };
 
         // Sort by score descending; ties break by content_id ascending for
@@ -233,15 +250,18 @@ fn rrf_fuse(
             let id = result.id.clone();
             let rrf_score = sparse_weight / (RRF_K + rank as f32 + 1.0);
             *rrf_scores.entry(id.clone()).or_default() += rrf_score;
-            result_map.entry(id).or_insert_with(|| {
+            let entry = result_map.entry(id).or_insert_with(|| {
                 let resolution = vid.resolution();
                 ScoredResult {
                     vector_id: vid,
                     raw_distance: 0.0, // not available from sparse search
                     resolution,
                     score: 0.0, // will be overwritten
+                    explanation: ScoreExplanation::default(),
                 }
             });
+            entry.explanation.sparse_rank = Some(rank + 1);
+            entry.explanation.sparse_score = Some(result.score);
         }
     }
 
@@ -251,6 +271,8 @@ fn rrf_fuse(
         .filter_map(|(id, rrf_score)| {
             result_map.remove(&id).map(|mut r| {
                 r.score = rrf_score;
+                r.explanation.rrf_score = Some(rrf_score);
+                r.explanation.final_score = rrf_score;
                 r
             })
         })
@@ -278,6 +300,11 @@ fn score_result(raw: &RawSearchResult) -> Option<ScoredResult> {
         raw_distance: raw.distance,
         resolution,
         score,
+        explanation: ScoreExplanation {
+            dense_score: Some(score),
+            final_score: score,
+            ..ScoreExplanation::default()
+        },
     })
 }
 
@@ -356,6 +383,9 @@ mod tests {
         for r in &results {
             assert!(r.score > 0.0);
             assert!(r.score <= 1.0);
+            assert!(r.explanation.dense_rank.is_some());
+            assert!(r.explanation.dense_score.is_some());
+            assert!((r.explanation.final_score - r.score).abs() < f32::EPSILON);
         }
     }
 
@@ -522,12 +552,14 @@ mod tests {
                 raw_distance: 0.2,
                 resolution: Resolution::Claim,
                 score: 0.9,
+                explanation: ScoreExplanation::default(),
             },
             ScoredResult {
                 vector_id: VectorId::parse("section::s1").unwrap(),
                 raw_distance: 0.3,
                 resolution: Resolution::Section,
                 score: 0.8,
+                explanation: ScoreExplanation::default(),
             },
         ];
         let sparse = vec![];
@@ -547,6 +579,12 @@ mod tests {
             raw_distance: 0.2,
             resolution: Resolution::Claim,
             score: 0.9,
+            explanation: ScoreExplanation {
+                dense_rank: Some(1),
+                dense_score: Some(0.9),
+                final_score: 0.9,
+                ..ScoreExplanation::default()
+            },
         }];
         let sparse = vec![crate::index::SparseSearchResult {
             id: "claim::c1".to_string(),
@@ -562,6 +600,10 @@ mod tests {
             score > dense_only_score,
             "fused score should exceed dense-only"
         );
+        assert_eq!(fused[0].explanation.dense_rank, Some(1));
+        assert_eq!(fused[0].explanation.sparse_rank, Some(1));
+        assert_eq!(fused[0].explanation.sparse_score, Some(5.0));
+        assert_eq!(fused[0].explanation.rrf_score, Some(score));
     }
 
     #[test]
@@ -571,6 +613,7 @@ mod tests {
             raw_distance: 0.2,
             resolution: Resolution::Claim,
             score: 0.9,
+            explanation: ScoreExplanation::default(),
         }];
         let sparse = vec![
             crate::index::SparseSearchResult {

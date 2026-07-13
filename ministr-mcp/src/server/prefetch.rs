@@ -7,12 +7,168 @@
 use tracing::warn;
 
 use ministr_core::analytics::Analytics;
+use ministr_core::service::DefinitionOptions;
+use ministr_core::session::prefetch::PrefetchStrategy;
 use ministr_core::storage::Storage;
-use ministr_core::types::{SectionId, VectorId};
+use ministr_core::types::{PRIMARY_CORPUS_ID, SectionId, VectorId};
 
 use super::MinistrServer;
 
 impl MinistrServer {
+    /// Warm likely follow-up reads through the routed backend. This covers
+    /// daemon-forwarded, linked-project, and cross-corpus surveys without
+    /// requiring direct access to their storage.
+    pub(super) async fn warm_survey_sections(
+        &self,
+        tenant_subject: Option<&str>,
+        results: &[ministr_core::service::SurveyResult],
+    ) {
+        let mut candidates = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for result in results {
+            let locator = result
+                .text_metadata
+                .continuation
+                .as_ref()
+                .unwrap_or(&result.locator);
+            if !locator.identity.resolution.starts_with("section")
+                || !seen.insert(locator.identity.clone())
+            {
+                continue;
+            }
+            candidates.push((
+                locator.identity.clone(),
+                locator
+                    .project
+                    .clone()
+                    .or_else(|| locator.source_corpus.clone()),
+            ));
+            if candidates.len() >= super::helpers::MAX_INTENT_PREFETCH_SURVEY {
+                break;
+            }
+        }
+
+        for (identity, project) in candidates {
+            let key = identity.storage_key();
+            let cache_warm = self.prefetch.lock().await.cache().peek(&key).is_some();
+            let metadata_warm = self
+                .prefetch_section_metadata
+                .lock()
+                .await
+                .contains_key(&key);
+            if cache_warm && metadata_warm {
+                continue;
+            }
+            let Ok(response) = self
+                .backend
+                .read_section(tenant_subject, project.as_deref(), &identity.content_id)
+                .await
+            else {
+                continue;
+            };
+            let metadata = response.metadata;
+            let detail = response.data;
+            self.prefetch.lock().await.prefetch_section_detail(
+                &identity.corpus_id,
+                detail,
+                PrefetchStrategy::AgentPlan,
+            );
+            self.prefetch_section_metadata
+                .lock()
+                .await
+                .insert(key, metadata);
+        }
+    }
+
+    /// Warm the normal bounded definition after a navigation result predicts
+    /// that it will be requested next. This deliberately runs through the
+    /// selected backend, so local, linked-project, and daemon-forward modes
+    /// populate the same proxy cache under the true corpus identity.
+    pub(super) async fn warm_symbol_definition(
+        &self,
+        tenant_subject: Option<&str>,
+        project: Option<&str>,
+        symbol_id: &str,
+        strategy: PrefetchStrategy,
+    ) {
+        let Ok(corpus_id) = self.backend.routed_corpus_id(project) else {
+            return;
+        };
+        if self
+            .prefetch
+            .lock()
+            .await
+            .has_definition(&corpus_id, symbol_id)
+        {
+            return;
+        }
+        let Ok(response) = self
+            .backend
+            .definition(
+                tenant_subject,
+                project,
+                symbol_id,
+                DefinitionOptions::default(),
+            )
+            .await
+        else {
+            return;
+        };
+        let metadata = response.metadata;
+        let mut definition = response.data;
+        definition.locator.identity.corpus_id.clone_from(&corpus_id);
+        definition.locator.project = project.map(str::to_owned);
+        self.prefetch
+            .lock()
+            .await
+            .prefetch_definition(&corpus_id, definition, strategy);
+        let key = ministr_core::types::DeliveryIdentity::new(
+            &corpus_id,
+            symbol_id,
+            "symbol_definition_default",
+        )
+        .storage_key();
+        self.prefetch_definition_metadata
+            .lock()
+            .await
+            .insert(key, metadata);
+    }
+
+    /// Consume a normal bounded definition from the route-aware warm cache.
+    pub(super) async fn try_prefetched_definition(
+        &self,
+        project: Option<&str>,
+        symbol_id: &str,
+        options: DefinitionOptions,
+    ) -> Option<crate::backend::BackendResponse<ministr_core::service::SymbolDefinition>> {
+        if options != DefinitionOptions::default() {
+            return None;
+        }
+        let corpus_id = self.backend.routed_corpus_id(project).ok()?;
+        let definition = self
+            .prefetch
+            .lock()
+            .await
+            .try_serve_definition(&corpus_id, symbol_id)?;
+        let key = ministr_core::types::DeliveryIdentity::new(
+            &corpus_id,
+            symbol_id,
+            "symbol_definition_default",
+        )
+        .storage_key();
+        let metadata = self
+            .prefetch_definition_metadata
+            .lock()
+            .await
+            .get(&key)
+            .cloned()
+            .unwrap_or_default();
+        Some(crate::backend::BackendResponse {
+            data: definition,
+            metadata,
+        })
+    }
+
     /// Trigger all prefetch strategies after a read operation.
     ///
     /// Runs four strategies in sequence:
@@ -38,7 +194,7 @@ impl MinistrServer {
 
             let mut prefetch = self.prefetch.lock().await;
             prefetch.advance_turn();
-            prefetch.prefetch_sequential(next_section, claims_count);
+            prefetch.prefetch_sequential_for(PRIMARY_CORPUS_ID, next_section, claims_count);
 
             // --- Structural prefetch (sibling sections) ---
             if let Some(ref doc) = doc_record
@@ -61,7 +217,13 @@ impl MinistrServer {
                         }
                     }
 
-                    prefetch.prefetch_structural(siblings, &claims_counts);
+                    prefetch.prefetch_sections_for(
+                        PRIMARY_CORPUS_ID,
+                        PrefetchStrategy::Structural,
+                        siblings,
+                        &claims_counts,
+                        3,
+                    );
                 }
             }
 
@@ -106,7 +268,13 @@ impl MinistrServer {
                         }
                     }
 
-                    prefetch.prefetch_topical(candidates, &claims_counts);
+                    prefetch.prefetch_sections_for(
+                        PRIMARY_CORPUS_ID,
+                        PrefetchStrategy::Topical,
+                        candidates,
+                        &claims_counts,
+                        usize::MAX,
+                    );
                 }
             }
 
@@ -119,7 +287,12 @@ impl MinistrServer {
                 {
                     let mut candidates = Vec::new();
                     for co in co_accessed {
-                        if prefetch.cache().peek(&co.section_id.0).is_some() {
+                        let identity = ministr_core::types::DeliveryIdentity::new(
+                            PRIMARY_CORPUS_ID,
+                            co.section_id.0.clone(),
+                            "section_full",
+                        );
+                        if prefetch.cache().peek(&identity.storage_key()).is_some() {
                             continue;
                         }
                         if let Ok(Some(s)) = storage.get_section(&co.section_id).await {
@@ -134,7 +307,13 @@ impl MinistrServer {
                                 claims_counts.insert(s.id.0.clone(), claims.len());
                             }
                         }
-                        prefetch.prefetch_cross_session(candidates, &claims_counts);
+                        prefetch.prefetch_sections_for(
+                            PRIMARY_CORPUS_ID,
+                            PrefetchStrategy::CrossSession,
+                            candidates,
+                            &claims_counts,
+                            usize::MAX,
+                        );
                     }
                 }
             }
@@ -171,11 +350,13 @@ impl MinistrServer {
             // Incremental co-access flush.
             if let Some(ref analytics) = self.analytics {
                 let (new_items, already_flushed) = entry.session.unflushed_co_access_items();
-                let fresh_ids: Vec<SectionId> =
-                    new_items.iter().map(|c| SectionId(c.0.clone())).collect();
+                let fresh_ids: Vec<SectionId> = new_items
+                    .iter()
+                    .map(|identity| SectionId(identity.content_id.clone()))
+                    .collect();
                 let known_ids: Vec<SectionId> = already_flushed
                     .iter()
-                    .map(|c| SectionId(c.0.clone()))
+                    .map(|identity| SectionId(identity.content_id.clone()))
                     .collect();
                 // Mark BEFORE drop so the session state is updated
                 // atomically with the flush decision.

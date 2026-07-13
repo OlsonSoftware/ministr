@@ -10,12 +10,15 @@ use serde::Serialize;
 
 use super::types::{CompressionTier, DeliveredItem, Session};
 use super::usage::UsageLevel;
+use crate::types::DeliveryIdentity;
 
 /// A recommended tier promotion for a delivered item.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub struct TierPromotion {
     /// The content ID to promote.
     pub content_id: String,
+    /// Exact delivery to promote.
+    pub identity: DeliveryIdentity,
     /// Current compression tier.
     pub current_tier: CompressionTier,
     /// Recommended new tier.
@@ -134,6 +137,7 @@ impl CompressionPipeline {
                 let estimated_freed = Self::estimate_tokens_freed(item, next);
                 promotions.push(TierPromotion {
                     content_id: item.content_id.0.clone(),
+                    identity: item.identity(),
                     current_tier: item.compression_tier,
                     recommended_tier: next,
                     estimated_tokens_freed: estimated_freed,
@@ -378,6 +382,8 @@ mod tests {
         let item = DeliveredItem {
             content_id: ContentId("test".into()),
             resolution: Resolution::Section,
+            corpus_id: "primary".into(),
+            delivery_resolution: "section".into(),
             token_count: 1000,
             turn_delivered: 1,
             content_hash: "h".into(),
@@ -394,6 +400,8 @@ mod tests {
         let item = DeliveredItem {
             content_id: ContentId("test".into()),
             resolution: Resolution::Section,
+            corpus_id: "primary".into(),
+            delivery_resolution: "section".into(),
             token_count: 1000,
             turn_delivered: 1,
             content_hash: "h".into(),
@@ -411,6 +419,7 @@ mod tests {
     fn tier_promotion_serializes() {
         let promo = TierPromotion {
             content_id: "test".into(),
+            identity: DeliveryIdentity::primary("test", "section_full"),
             current_tier: CompressionTier::Full,
             recommended_tier: CompressionTier::Extractive,
             estimated_tokens_freed: 700,

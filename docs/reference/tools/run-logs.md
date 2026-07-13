@@ -13,6 +13,17 @@
 | `query` | string | no | Substring filter: return matching lines instead of paging |
 | `run_id` | string | yes | Run id from ministr_run |
 
+## Output
+
+| Field | Type | Description |
+|---|---|---|
+| `chunk` | string | The log span (delta mode) or matched lines joined (query mode). |
+| `matched_lines` | integer | Matched line count (query mode only). |
+| `next_offset` | integer | Cursor for the next page (delta mode only). |
+| `remaining_bytes` | integer | Bytes not yet delivered after this page (delta mode only). |
+| `run_id` | string | Run id. |
+| `status` | string | Lifecycle state: `running` \| `exited` \| `killed` \| `timed_out`. |
+
 Annotations: read-only.
 
 <small>This block is generated from the live tool schema — the same definition agents receive.</small>

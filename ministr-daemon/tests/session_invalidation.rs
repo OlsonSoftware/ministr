@@ -27,7 +27,7 @@ use ministr_core::service::QueryService;
 use ministr_core::session::prefetch::PrefetchEngine;
 use ministr_core::session::{AccessMode, SessionRegistry, UsageConfig};
 use ministr_core::storage::SqliteStorage;
-use ministr_core::types::{ContentId, Resolution};
+use ministr_core::types::{DeliveryIdentity, Resolution};
 use ministr_daemon::registry::{CorpusHandle, CorpusRegistry};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -180,20 +180,21 @@ async fn session_invalidation_propagates_on_coherence_broadcast() {
     // Mint a session and deliver a section to it.
     let sid = "s1".to_string();
     let section_id = "auth.md#tokens".to_string();
+    let identity = DeliveryIdentity::new(&corpus_id, &section_id, "section_full");
     {
         let corpora = registry.corpora().read().await;
         let handle = corpora.get(&corpus_id).unwrap();
         let mut sessions = handle.sessions.lock().await;
         let entry = sessions.get_or_create(&sid, None, AccessMode::ReadWrite);
-        entry.session.record_delivery(
-            &ContentId(section_id.clone()),
+        entry.session.record_delivery_identity(
+            &identity,
             Resolution::Section,
             8,
             1,
             "hash-before".to_string(),
         );
         assert!(
-            !entry.session.is_stale(&ContentId(section_id.clone())),
+            !entry.session.is_identity_stale(&identity),
             "sanity: delivered item should not start stale"
         );
     }
@@ -219,7 +220,7 @@ async fn session_invalidation_propagates_on_coherence_broadcast() {
         let handle = corpora.get(&corpus_id).unwrap();
         let sessions = handle.sessions.lock().await;
         if let Some(entry) = sessions.get_session(&sid)
-            && entry.session.is_stale(&ContentId(section_id.clone()))
+            && entry.session.is_identity_stale(&identity)
         {
             observed = true;
             break;
@@ -245,5 +246,9 @@ async fn session_invalidation_propagates_on_coherence_broadcast() {
     assert!(
         alerts[0].stale_content_ids.contains(&section_id),
         "alert should name the invalidated section"
+    );
+    assert!(
+        alerts[0].stale_identities.contains(&identity),
+        "alert should preserve the exact corpus-aware delivery identity"
     );
 }

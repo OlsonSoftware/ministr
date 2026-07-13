@@ -1828,7 +1828,7 @@ pub fn spawn_session_invalidator(
                         break;
                     };
                     let mut sessions = handle.sessions.lock().await;
-                    let n = sessions.invalidate_all(&event.affected_sections);
+                    let n = sessions.invalidate_all_in_corpus(&corpus_id, &event.affected_sections);
                     if n > 0 {
                         tracing::debug!(
                             corpus_id = %corpus_id,

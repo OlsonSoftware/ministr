@@ -55,8 +55,11 @@ use ministr_core::embedding::Embedder;
 use ministr_core::git::GitFetcher;
 use ministr_core::index::VectorIndex;
 use ministr_core::ingestion::{IngestionPipeline, IngestionProgress};
-use ministr_core::service::{CallDirection, ImpactCaller, ImpactResult, ImpactRisk, QueryService};
-use ministr_core::session::prefetch::PrefetchEngine;
+use ministr_core::service::{
+    CallDirection, DefinitionOptions, ImpactCaller, ImpactResult, ImpactRisk, InspectOptions,
+    QueryService,
+};
+use ministr_core::session::prefetch::{PrefetchEngine, PrefetchStrategy};
 use ministr_core::session::{SessionRegistry, UsageLevel};
 use ministr_core::storage::{SqliteStorage, Storage, SymbolFilter};
 use ministr_core::token::count_tokens;
@@ -66,21 +69,23 @@ use ministr_core::types::{
 use ministr_core::web::fetcher::WebFetcher;
 
 use helpers::{
-    MAX_INTENT_PREFETCH_SURVEY, content_hash, parse_resolution, soft_backend_error, soft_error,
-    structured_result,
+    MAX_INTENT_PREFETCH_SURVEY, apply_active_indexing_to_soft_error, content_hash, page_metadata,
+    page_request, parse_resolution, soft_backend_error, soft_error, stable_cursor,
+    stable_cursor_offset, structured_full_result, structured_result,
 };
 use progress::{run_ingestion_progress_notifier, run_subscription_notifier};
 use types::{
     AlreadyDeliveredResponse, BridgeEndpointSummary, BridgeLinkSummary, BridgeParams,
     BridgeResponse, ChangedSymbol, CloneOutputData, CloneParams, CompressParams, CompressResponse,
-    CorpusStatsHeader, DeadCodeParams, DeadCodeResponse, DefinitionParams, DefinitionResponse,
-    DiagnosticsParams, DiagnosticsResponse, DiffSeed, DroppedParams, DroppedResponse,
-    ExtractParams, ExtractResponse, FetchOutputData, FetchParams, FetchResponse, ImpactParams,
-    ImpactResponse, NextAction, ProjectEntry, ProjectsResponse, ReadOutputData, ReadParams,
-    ReferencesParams, ReferencesResponse, RefreshParams, RefreshResponse, RelatedParams,
-    RelatedResponse, SessionMetricsResponse, SolidParams, SolidResponse, SurveyParams,
-    SurveyResponse, SymbolSummary, SymbolsParams, SymbolsResponse, TaskParams, TaskStatusResponse,
-    TocParams, TocResponse, ToolResponse, UsageResponse, tool_output_schema,
+    CompressedDeliveryResponse, CorpusStatsHeader, DeadCodeParams, DeadCodeResponse,
+    DefinitionParams, DefinitionResponse, DiagnosticsParams, DiagnosticsResponse, DiffSeed,
+    DroppedParams, DroppedResponse, ExtractParams, ExtractResponse, FetchOutputData, FetchParams,
+    FetchResponse, ImpactParams, ImpactResponse, InspectParams, NextAction, ProjectEntry,
+    ProjectsParams, ProjectsResponse, ReadOutputData, ReadParams, ReferencesParams,
+    ReferencesResponse, RefreshParams, RefreshResponse, RelatedParams, RelatedResponse,
+    SessionMetricsResponse, SolidParams, SolidResponse, SurveyParams, SurveyResponse,
+    SymbolSummary, SymbolsParams, SymbolsResponse, TaskParams, TaskStatusResponse, TocParams,
+    TocResponse, ToolResponse, UsageResponse, tool_output_schema,
 };
 
 use crate::task::{McpTaskManager, task_to_cancel_result, task_to_get_result};
@@ -124,6 +129,97 @@ fn union_risk(symbols: usize, files: usize, tests: usize) -> ImpactRisk {
     }
 }
 
+fn impact_caller_identity(caller: &ImpactCaller) -> serde_json::Value {
+    serde_json::json!([caller.symbol_id, caller.file, caller.line, caller.depth])
+}
+
+fn impact_cursor_offset(
+    callers: &[ImpactCaller],
+    offset: Option<usize>,
+    cursor: Option<&str>,
+) -> Result<usize, &'static str> {
+    if let Some(cursor) = cursor.filter(|cursor| cursor.starts_with("impact:")) {
+        stable_cursor_offset(callers, cursor, "impact", impact_caller_identity)
+            .ok_or("impact cursor no longer identifies an item")
+    } else {
+        page_request(offset, cursor, Some(1), 1).map(|(offset, _)| offset)
+    }
+}
+
+fn impact_pagination(
+    callers: &[ImpactCaller],
+    limit: usize,
+    offset: usize,
+    total: usize,
+    cursor: Option<String>,
+) -> ministr_api::metadata::Pagination {
+    let mut pagination = page_metadata(limit, offset, callers.len(), total);
+    pagination.cursor = cursor;
+    if pagination.has_more {
+        pagination.next_cursor = callers
+            .last()
+            .map(|caller| stable_cursor("impact", &impact_caller_identity(caller)));
+    }
+    pagination
+}
+
+fn merge_daemon_prefetch_metrics(
+    local: &mut ministr_core::session::prefetch::PrefetchMetrics,
+    remote: &ministr_api::session::PrefetchMetricsResponse,
+) {
+    local.hits = local.hits.saturating_add(remote.hits);
+    local.misses = local.misses.saturating_add(remote.misses);
+    local.sequential_hits = local.sequential_hits.saturating_add(remote.sequential_hits);
+    local.topical_hits = local.topical_hits.saturating_add(remote.topical_hits);
+    local.structural_hits = local.structural_hits.saturating_add(remote.structural_hits);
+    local.cross_session_hits = local
+        .cross_session_hits
+        .saturating_add(remote.cross_session_hits);
+    local.survey_expand_hits = local
+        .survey_expand_hits
+        .saturating_add(remote.survey_expand_hits);
+    local.agent_plan_hits = local.agent_plan_hits.saturating_add(remote.agent_plan_hits);
+    local.symbol_search_hits = local
+        .symbol_search_hits
+        .saturating_add(remote.symbol_search_hits);
+    local.reference_follow_hits = local
+        .reference_follow_hits
+        .saturating_add(remote.reference_follow_hits);
+    local.prefetches_issued = local
+        .prefetches_issued
+        .saturating_add(remote.prefetches_issued);
+    local.prefetches_never_consumed = local
+        .prefetches_never_consumed
+        .saturating_add(remote.prefetches_never_consumed);
+    local.bytes_saved = local.bytes_saved.saturating_add(remote.bytes_saved);
+    local.tokens_saved = local.tokens_saved.saturating_add(remote.tokens_saved);
+    local.latency_saved_ms = local
+        .latency_saved_ms
+        .saturating_add(remote.latency_saved_ms);
+    local.sequential_issued = local
+        .sequential_issued
+        .saturating_add(remote.sequential_issued);
+    local.topical_issued = local.topical_issued.saturating_add(remote.topical_issued);
+    local.structural_issued = local
+        .structural_issued
+        .saturating_add(remote.structural_issued);
+    local.cross_session_issued = local
+        .cross_session_issued
+        .saturating_add(remote.cross_session_issued);
+    local.survey_expand_issued = local
+        .survey_expand_issued
+        .saturating_add(remote.survey_expand_issued);
+    local.agent_plan_issued = local
+        .agent_plan_issued
+        .saturating_add(remote.agent_plan_issued);
+    local.symbol_search_issued = local
+        .symbol_search_issued
+        .saturating_add(remote.symbol_search_issued);
+    local.reference_follow_issued = local
+        .reference_follow_issued
+        .saturating_add(remote.reference_follow_issued);
+}
+
 /// FL7 — map each changed file's head-side line ranges to the enclosing indexed
 /// symbols (the diff seed set). Exact `file_path` equality matches the absolute
 /// paths the diff parser resolved against the work tree. Returns the bounded,
@@ -153,7 +249,8 @@ async fn resolve_changed_seeds(
             };
             syms = backend
                 .search_symbols(tenant_subject, project, filter)
-                .await?;
+                .await?
+                .data;
             if !syms.is_empty() {
                 break;
             }
@@ -228,7 +325,7 @@ async fn diff_impact(
             .await
         {
             Ok(ir) => {
-                for c in ir.callers {
+                for c in ir.data.callers {
                     impacted
                         .entry(c.symbol_id.clone())
                         .and_modify(|e| {
@@ -290,71 +387,89 @@ async fn diff_impact(
 /// the agent how to use ministr's tools effectively, which downstream
 /// consumers cannot get from the project's `CLAUDE.md` (that file is only
 /// loaded when editing ministr itself).
-pub(crate) const DEFAULT_INSTRUCTIONS: &str = "\
-ministr is a code intelligence MCP server. It gives you AST-level \
-understanding of the codebase: symbol navigation, real reference graphs, \
-cross-language bridge detection, and hybrid semantic search across code \
-and docs — not text matching. Prefer it over Read/Grep/Glob for any \
-exploration.
-
-# Where to start
-- Know the symbol name → ministr_symbols, then ministr_definition
-- Vague concept question → ministr_survey
-- Know the file → ministr_toc, then ministr_read (or ministr_extract for atomic claims)
-- Need project layout → ministr_toc
-- Following claim dependencies → ministr_related
-
-# Before you mutate code
-- Before deleting or significantly modifying a public symbol → ministr_references first. \
-Zero references means safe to delete; non-zero means you have to update each call site.
-- Before changing any IPC or FFI boundary (Tauri command, NAPI export, PyO3 fn, HTTP route, etc.) \
-→ ministr_bridge first to see every cross-language call site.
-
-# Read the response wrapper
-Some tool responses include metadata worth reacting to:
-- `coherence_alerts` non-empty → underlying file changed since last delivery; \
-re-call ministr_read on the listed sections to get the delta.
-- `indexing_in_progress: true` → results may be incomplete; consider re-running \
-search-style tools when it clears.
-- `next_actions` array → concrete suggested next tool calls with arguments and reasons. \
-Treat as advisory but high-signal.
-
-# Anti-patterns
-- Don't shell out to grep/rg/find/ag/cat for search — use ministr_survey or ministr_symbols.
-- Don't Read a file just to explore — use ministr_read for a section or \
-ministr_definition for a symbol.
-";
+pub(crate) const DEFAULT_INSTRUCTIONS: &str = "Start with ministr_survey for concepts, \
+ministr_symbols for names, or ministr_toc for structure. Follow documentation with ministr_read \
+or ministr_extract; follow code with ministr_definition or ministr_inspect. Use \
+ministr_references before changes and ministr_bridge at language boundaries.";
 
 /// Minimum survey score for a top-result follow-up suggestion.
 ///
 /// Below this, the top hit is too uncertain to be worth nudging the agent
 /// to read it — the survey ranking signal is already noisy in that range.
-const TOP_HIT_FOLLOWUP_THRESHOLD: f32 = 0.5;
+const TOP_HIT_FOLLOWUP_THRESHOLD: f32 = 0.005;
+const MAX_CROSS_CORPORA: usize = 32;
 
 /// Cross-corpus survey fan-out.
 ///
 /// Runs the query against each corpus in `corpus_ids` sequentially,
 /// tags each result with `source_corpus = Some(corpus_id)`, merges
 /// all hits into one Vec sorted by score descending, and truncates to
-/// `top_k`. Per-corpus errors log + skip rather than fail the whole
-/// fan-out — a single broken corpus shouldn't sink the whole query.
+/// `top_k`. Per-corpus failures are retained as machine-readable status while
+/// successful corpora still contribute results. Exact delivery identities
+/// prevent colliding content IDs in different corpora from suppressing one
+/// another.
+struct CrossCorpusSurveyOutcome {
+    results: Vec<ministr_core::service::SurveyResult>,
+    deduplicated_count: usize,
+    suppressed_identities: Vec<ministr_core::types::DeliveryIdentity>,
+    corpora: Vec<ministr_api::metadata::CorpusOperationStatus>,
+}
+
+/// Account only the concrete deliveries the search backend says it suppressed.
 ///
-/// `deduplicated_count` sums across all per-corpus calls.
-///
-/// # Honest scope (v0)
-///
-/// - Sequential, not parallel. Atlas-corpus fan-out across 10+ corpora
-///   could benefit from `tokio::join_all`, but the registry's
-///   `ensure_present` is not yet parallel-safe across the same pod for
-///   distinct corpora (lock contention in the in-memory cache). v1
-///   will parallelise once the registry side is audited.
-/// - Same `exclude_ids` applied to every corpus, by raw `content_id`
-///   string match. Two corpora can produce identical `content_id`
-///   strings (e.g. both contain `docs/index.md#root`); the session
-///   machinery sees them as the same delivery. Agents can
-///   disambiguate via the new `source_corpus` field on the result,
-///   but the dedupe collision is a real edge case. The fix lands when
-///   session tracking learns to namespace by `(corpus_id, content_id)`.
+/// Older paths multiplied one guessed minimum size by an aggregate count,
+/// which lost both corpus identity and the real cost variance between hits.
+fn record_suppressed_delivery_savings(
+    session: &mut ministr_core::session::Session,
+    identities: &[ministr_core::types::DeliveryIdentity],
+) {
+    for identity in identities {
+        if let Some(token_count) = session
+            .get_delivered_identity(identity)
+            .map(|item| item.token_count)
+        {
+            // Legacy snapshots did not persist original byte size. Preserve
+            // exact token accounting and use the standard four-byte/token
+            // model for the secondary byte metric.
+            session.record_dedup_savings(token_count, token_count.saturating_mul(4));
+        }
+    }
+}
+
+fn paginate_survey_window(
+    results: Vec<ministr_core::service::SurveyResult>,
+    offset: usize,
+    limit: usize,
+    delivered: &std::collections::HashSet<ministr_core::types::DeliveryIdentity>,
+    filter_delivered_after_paging: bool,
+) -> (
+    Vec<ministr_core::service::SurveyResult>,
+    Vec<ministr_core::types::DeliveryIdentity>,
+    ministr_api::metadata::Pagination,
+) {
+    let total = results.len();
+    let mut page: Vec<_> = results.into_iter().skip(offset).take(limit).collect();
+    let window_returned = page.len();
+    let mut suppressed = Vec::new();
+    if filter_delivered_after_paging {
+        page.retain(|result| {
+            if delivered.contains(&result.locator.identity) {
+                suppressed.push(result.locator.identity.clone());
+                false
+            } else {
+                true
+            }
+        });
+    }
+    let mut pagination = page_metadata(limit, offset, window_returned, total);
+    let consumed = offset.saturating_add(window_returned).min(total);
+    pagination.has_more = consumed < total;
+    pagination.next_cursor = pagination.has_more.then(|| format!("offset:{consumed}"));
+    pagination.omitted_count = total.saturating_sub(consumed);
+    (page, suppressed, pagination)
+}
+
+#[allow(clippy::too_many_arguments)] // fan-out needs explicit routing, bounds, boosts, and dedup policy
 async fn cross_corpus_survey(
     backend: &crate::backend::Backend,
     tenant_subject: Option<&str>,
@@ -362,43 +477,92 @@ async fn cross_corpus_survey(
     corpus_boost: Option<&std::collections::HashMap<String, f32>>,
     query: &str,
     top_k: usize,
-    exclude_ids: &std::collections::HashSet<String>,
-) -> Result<(Vec<ministr_core::service::SurveyResult>, usize), crate::backend::BackendError> {
+    exclude_ids: &std::collections::HashSet<ministr_core::types::DeliveryIdentity>,
+    apply_session_dedup_before_ranking: bool,
+) -> CrossCorpusSurveyOutcome {
     let mut per_corpus: Vec<(String, Vec<ministr_core::service::SurveyResult>, usize)> = Vec::new();
-    let mut last_err: Option<crate::backend::BackendError> = None;
+    let mut suppressed_identities = Vec::new();
+    let mut corpora = Vec::with_capacity(corpus_ids.len());
     for corpus_id in corpus_ids {
-        match backend
-            .survey_with_exclude(
-                tenant_subject,
-                Some(corpus_id.as_str()),
-                query,
-                top_k,
-                exclude_ids,
-            )
-            .await
-        {
-            Ok((results, dedup)) => {
-                per_corpus.push((corpus_id.clone(), results, dedup));
+        let response = if apply_session_dedup_before_ranking {
+            backend
+                .survey_with_exclude(
+                    tenant_subject,
+                    Some(corpus_id.as_str()),
+                    query,
+                    top_k,
+                    exclude_ids,
+                )
+                .await
+        } else {
+            backend
+                .survey_window(tenant_subject, Some(corpus_id.as_str()), query, top_k)
+                .await
+        };
+        match response {
+            Ok(response) => {
+                suppressed_identities.extend(response.suppressed_identities);
+                let mut operation = response.metadata.corpora.into_iter().next().unwrap_or(
+                    ministr_api::metadata::CorpusOperationStatus {
+                        corpus_id: corpus_id.clone(),
+                        status: response.metadata.status,
+                        completeness: response.metadata.completeness,
+                        error: response.metadata.error,
+                    },
+                );
+                operation.corpus_id.clone_from(corpus_id);
+                corpora.push(operation);
+                per_corpus.push((
+                    corpus_id.clone(),
+                    response.results,
+                    response.deduplicated_count,
+                ));
             }
             Err(e) => {
                 warn!(corpus_id = %corpus_id, error = %e, "cross-corpus survey: per-corpus error");
-                last_err = Some(e);
+                let retryable = !matches!(
+                    e,
+                    crate::backend::BackendError::PermissionDenied(_)
+                        | crate::backend::BackendError::InvalidParameters(_)
+                );
+                let error_code = match &e {
+                    crate::backend::BackendError::PermissionDenied(_) => "permission_denied",
+                    crate::backend::BackendError::UnknownProject(_) => "unavailable_corpus",
+                    crate::backend::BackendError::Client(_) => "backend_failure",
+                    crate::backend::BackendError::Query(_) => "query_failure",
+                    crate::backend::BackendError::InvalidParameters(_) => "invalid_parameters",
+                };
+                corpora.push(ministr_api::metadata::CorpusOperationStatus {
+                    corpus_id: corpus_id.clone(),
+                    status: ministr_api::metadata::ResponseStatus::Error,
+                    completeness: ministr_api::metadata::Completeness {
+                        completeness: ministr_api::metadata::CompletenessState::Unavailable,
+                        indexed_items: 0,
+                        estimated_total_items: None,
+                        affected_capabilities: vec!["survey".to_string()],
+                        index_generation: None,
+                        absence_is_conclusive: false,
+                        retry_guidance: retryable
+                            .then(|| "Retry when the corpus backend is available.".to_string()),
+                    },
+                    error: Some(ministr_api::metadata::ResponseError {
+                        error_code: error_code.to_string(),
+                        retryable,
+                        message: helpers::format_backend_error(&e),
+                        corpus_id: Some(corpus_id.clone()),
+                        backend: Some("mcp".to_string()),
+                    }),
+                });
             }
         }
     }
-    // If EVERY per-corpus call errored, propagate the last error so
-    // the caller surfaces the failure. If at least one succeeded,
-    // return the partial merge — better to deliver what we have than
-    // hard-fail the agent.
-    if per_corpus.is_empty() {
-        if let Some(e) = last_err {
-            return Err(e);
-        }
-        // corpus_ids was empty — caller branch should prevent this,
-        // but return empty defensively.
-        return Ok((Vec::new(), 0));
+    let (results, deduplicated_count) = merge_cross_corpus_results(per_corpus, corpus_boost, top_k);
+    CrossCorpusSurveyOutcome {
+        results,
+        deduplicated_count,
+        suppressed_identities,
+        corpora,
     }
-    Ok(merge_cross_corpus_results(per_corpus, corpus_boost, top_k))
 }
 
 /// Clamp / sanitise a single user-supplied boost multiplier.
@@ -446,7 +610,10 @@ fn merge_cross_corpus_results(
     corpus_boost: Option<&std::collections::HashMap<String, f32>>,
     top_k: usize,
 ) -> (Vec<ministr_core::service::SurveyResult>, usize) {
-    let mut merged: Vec<ministr_core::service::SurveyResult> = Vec::new();
+    let mut merged: std::collections::HashMap<
+        ministr_core::types::DeliveryIdentity,
+        ministr_core::service::SurveyResult,
+    > = std::collections::HashMap::new();
     let mut total_dedup: usize = 0;
     for (corpus_id, mut results, dedup) in per_corpus {
         let boost = corpus_boost
@@ -457,14 +624,47 @@ fn merge_cross_corpus_results(
             // Apply the multiplier in-place; even when boost == 1.0
             // the write is a no-op cost-wise.
             r.score *= boost;
+            r.score_explanation.final_score = r.score;
+            if r.locator.identity.corpus_id == ministr_core::types::PRIMARY_CORPUS_ID {
+                r.locator.identity.corpus_id.clone_from(&corpus_id);
+            }
+            r.locator.project = Some(corpus_id.clone());
+            r.locator.source_corpus = Some(corpus_id.clone());
+            if let Some(continuation) = r.text_metadata.continuation.as_mut() {
+                if continuation.identity.corpus_id == ministr_core::types::PRIMARY_CORPUS_ID {
+                    continuation.identity.corpus_id.clone_from(&corpus_id);
+                }
+                continuation.project = Some(corpus_id.clone());
+                continuation.source_corpus = Some(corpus_id.clone());
+            }
         }
-        merged.extend(results);
+        for result in results {
+            let identity = result.locator.identity.clone();
+            match merged.entry(identity) {
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(result);
+                }
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    total_dedup = total_dedup.saturating_add(1);
+                    if result.score > entry.get().score {
+                        entry.insert(result);
+                    }
+                }
+            }
+        }
         total_dedup += dedup;
     }
+    let mut merged: Vec<_> = merged.into_values().collect();
     merged.sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                a.locator
+                    .identity
+                    .storage_key()
+                    .cmp(&b.locator.identity.storage_key())
+            })
     });
     merged.truncate(top_k);
     (merged, total_dedup)
@@ -473,19 +673,67 @@ fn merge_cross_corpus_results(
 /// Suggest a follow-up read on a survey's top result when it's confidently
 /// above noise. Symbol-resolution hits route to `ministr_definition`;
 /// section/claim/summary hits route to `ministr_read` on the section ID.
-fn top_hit_next_action(results: &[ministr_core::service::SurveyResult]) -> Vec<NextAction> {
+fn top_hit_next_action(
+    results: &[ministr_core::service::SurveyResult],
+    requested_project: Option<&str>,
+) -> Vec<NextAction> {
     let Some(top) = results.first() else {
         return Vec::new();
     };
     if top.score < TOP_HIT_FOLLOWUP_THRESHOLD {
         return Vec::new();
     }
+    let source_corpus = top
+        .locator
+        .source_corpus
+        .as_deref()
+        .or(top.source_corpus.as_deref());
+    let project = top
+        .locator
+        .project
+        .as_deref()
+        .or(requested_project)
+        .or(source_corpus);
+    let routed_args = |key: &str, value: String| {
+        let mut args = serde_json::Map::new();
+        args.insert(key.to_string(), serde_json::Value::String(value));
+        if let Some(project) = project {
+            args.insert(
+                "project".to_string(),
+                serde_json::Value::String(project.to_string()),
+            );
+        }
+        if let Some(source_corpus) = source_corpus {
+            args.insert(
+                "source_corpus".to_string(),
+                serde_json::Value::String(source_corpus.to_string()),
+            );
+        }
+        serde_json::Value::Object(args)
+    };
+
+    if top
+        .text_metadata
+        .continuation
+        .as_ref()
+        .is_some_and(|locator| locator.identity.resolution == "document_toc")
+    {
+        return vec![NextAction {
+            action: "ministr_toc".to_string(),
+            args: routed_args("document_id", top.content_id.clone()),
+            reason: format!(
+                "Top document summary (score {:.4}) — list sections for full reads",
+                top.score
+            ),
+        }];
+    }
+
     if top.resolution.starts_with("symbol_") {
         vec![NextAction {
             action: "ministr_definition".to_string(),
-            args: serde_json::json!({ "symbol_id": top.content_id }),
+            args: routed_args("symbol_id", top.content_id.clone()),
             reason: format!(
-                "Top survey match (score {:.2}) — fetch full definition",
+                "Top survey match (score {:.4}) — fetch full definition",
                 top.score
             ),
         }]
@@ -500,9 +748,9 @@ fn top_hit_next_action(results: &[ministr_core::service::SurveyResult]) -> Vec<N
         };
         vec![NextAction {
             action: "ministr_read".to_string(),
-            args: serde_json::json!({ "section_id": section_id }),
+            args: routed_args("section_id", section_id),
             reason: format!(
-                "Top survey match (score {:.2}) — read full section",
+                "Top survey match (score {:.4}) — read full section",
                 top.score
             ),
         }]
@@ -511,14 +759,21 @@ fn top_hit_next_action(results: &[ministr_core::service::SurveyResult]) -> Vec<N
 
 /// Suggest fetching a definition when `ministr_symbols` returned exactly
 /// one match — the agent almost always wants the source next.
-fn single_symbol_next_action(symbols: &[SymbolSummary]) -> Vec<NextAction> {
+fn single_symbol_next_action(
+    symbols: &[SymbolSummary],
+    requested_project: Option<&str>,
+) -> Vec<NextAction> {
     if symbols.len() != 1 {
         return Vec::new();
     }
     let only = &symbols[0];
+    let mut args = serde_json::json!({ "symbol_id": only.id });
+    if let Some(project) = requested_project {
+        args["project"] = serde_json::Value::String(project.to_string());
+    }
     vec![NextAction {
         action: "ministr_definition".to_string(),
-        args: serde_json::json!({ "symbol_id": only.id }),
+        args,
         reason: format!("Single match for `{}` — fetch full source", only.name),
     }]
 }
@@ -706,6 +961,12 @@ pub struct MinistrServer {
     /// instead of `active_session_id`.
     session_id_override: Arc<std::sync::Mutex<Option<String>>>,
     prefetch: Arc<Mutex<PrefetchEngine>>,
+    /// Query status captured with each warmed definition; a cache hit must not
+    /// upgrade a stale/partial daemon response to complete.
+    prefetch_definition_metadata:
+        Arc<Mutex<std::collections::HashMap<String, ministr_api::metadata::QueryMetadata>>>,
+    prefetch_section_metadata:
+        Arc<Mutex<std::collections::HashMap<String, ministr_api::metadata::QueryMetadata>>>,
     storage: Option<Arc<SqliteStorage>>,
     analytics: Option<Arc<Analytics>>,
     web_fetcher: Option<Arc<WebFetcher>>,
@@ -1274,12 +1535,29 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<SurveyParams>,
     ) -> Result<CallToolResult, McpError> {
-        let top_k = params.top_k.unwrap_or(10);
+        let requested_limit = params.limit.or(params.top_k);
+        let Ok((offset, requested_page_limit)) =
+            page_request(params.offset, params.cursor.as_deref(), requested_limit, 10)
+        else {
+            return Ok(soft_error(
+                "invalid_parameters",
+                "Invalid survey pagination cursor.",
+            ));
+        };
+        let limit = requested_page_limit.min(100);
+        if offset >= 500 {
+            return Ok(soft_error(
+                "invalid_parameters",
+                "Survey offset exceeds the 500-result discovery window.",
+            ));
+        }
+        let top_k = offset.saturating_add(limit).saturating_add(1).min(500);
         let tenant_subject = self.current_tenant_subject();
         let span = info_span!("ministr_survey", query_len = params.query.len(), top_k);
 
         async {
             debug!(query = %params.query, top_k, "ministr_survey request");
+            self.restore_active_session().await;
 
             // Collect delivered IDs so the service can exclude them
             // before truncating to top_k (prevents the over-fetch buffer
@@ -1296,7 +1574,7 @@ impl MinistrServer {
             let exclude_ids = {
                 let mut reg = self.registry.lock().await;
                 let entry = self.ensure_session_mut(&mut reg);
-                entry.session.delivered_ids()
+                entry.session.delivered_identities()
             };
 
             // Branch on `corpus_ids`. When set + non-empty, fan the
@@ -1305,32 +1583,110 @@ impl MinistrServer {
             let is_cross_corpus = params.corpus_ids.as_ref().is_some_and(|v| !v.is_empty());
 
             // Run the survey through the backend trait.
-            let survey_result = if is_cross_corpus {
-                let corpus_ids = params.corpus_ids.as_deref().unwrap_or(&[]);
-                cross_corpus_survey(
+            let (survey_result, corpus_statuses, response_metadata) = if is_cross_corpus {
+                let requested = params.corpus_ids.as_deref().unwrap_or(&[]);
+                let mut canonical = std::collections::HashSet::new();
+                let mut corpus_ids = Vec::new();
+                for corpus_id in requested {
+                    let route_id = self
+                        .backend
+                        .routed_corpus_id(Some(corpus_id))
+                        .unwrap_or_else(|_| corpus_id.clone());
+                    if canonical.insert(route_id) {
+                        corpus_ids.push(corpus_id.clone());
+                    }
+                }
+                if corpus_ids.len() > MAX_CROSS_CORPORA {
+                    return Ok(soft_error(
+                        "invalid_parameters",
+                        format!(
+                            "At most {MAX_CROSS_CORPORA} distinct corpora may be searched per survey."
+                        ),
+                    ));
+                }
+                let outcome = cross_corpus_survey(
                     &self.backend,
                     tenant_subject.as_deref(),
-                    corpus_ids,
+                    &corpus_ids,
                     params.corpus_boost.as_ref(),
                     &params.query,
                     top_k,
                     &exclude_ids,
+                    offset == 0,
                 )
-                .await
+                .await;
+                (
+                    Ok((
+                        outcome.results,
+                        outcome.deduplicated_count,
+                        outcome.suppressed_identities,
+                    )),
+                    outcome.corpora,
+                    None,
+                )
             } else {
-                self.backend
-                    .survey_with_exclude(
-                        tenant_subject.as_deref(),
-                        params.project.as_deref(),
-                        &params.query,
-                        top_k,
-                        &exclude_ids,
-                    )
-                    .await
+                let response = if offset == 0 {
+                    self.backend
+                        .survey_with_exclude(
+                            tenant_subject.as_deref(),
+                            params.project.as_deref(),
+                            &params.query,
+                            top_k,
+                            &exclude_ids,
+                        )
+                        .await
+                } else {
+                    self.backend
+                        .survey_window(
+                            tenant_subject.as_deref(),
+                            params.project.as_deref(),
+                            &params.query,
+                            top_k,
+                        )
+                        .await
+                };
+                match response {
+                    Ok(response) => {
+                        let corpora = response.metadata.corpora.clone();
+                        (
+                            Ok((
+                                response.results,
+                                response.deduplicated_count,
+                                response.suppressed_identities,
+                            )),
+                            corpora,
+                            Some(response.metadata),
+                        )
+                    }
+                    Err(error) => (Err(error), Vec::new(), None),
+                }
             };
 
             match survey_result {
-                Ok((results, deduplicated_count)) => {
+                Ok((mut results, mut deduplicated_count, mut suppressed_identities)) => {
+                    if !is_cross_corpus {
+                        for result in &mut results {
+                            if result.locator.project.is_none() {
+                                result.locator.project.clone_from(&params.project);
+                            }
+                        }
+                    }
+                    let (results, page_suppressed, mut pagination) = paginate_survey_window(
+                        results,
+                        offset,
+                        limit,
+                        &exclude_ids,
+                        offset > 0,
+                    );
+                    deduplicated_count = deduplicated_count
+                        .saturating_add(page_suppressed.len());
+                    suppressed_identities.extend(page_suppressed);
+                    let results = ministr_core::service::bound_survey_results(
+                        &params.query,
+                        results,
+                        ministr_core::service::SurveyOptions::default(),
+                    );
+                    pagination.cursor.clone_from(&params.cursor);
                     debug!(
                         result_count = results.len(),
                         deduplicated_count, "ministr_survey success"
@@ -1348,25 +1704,42 @@ impl MinistrServer {
                         let token_count = count_tokens(&r.text);
                         let hash = content_hash(&r.text);
                         let resolution = parse_resolution(&r.resolution);
-                        entry.session.record_delivery(
-                            &ContentId(r.content_id.clone()),
+                        entry.session.record_delivery_identity(
+                            &r.locator.identity,
                             resolution,
                             token_count,
                             turn,
                             hash,
                         );
-                        let _ = entry.budget.record_tokens(&r.content_id, token_count);
+                        let _ = entry
+                            .budget
+                            .record_tokens(&r.locator.identity.storage_key(), token_count);
                     }
+                    record_suppressed_delivery_savings(
+                        &mut entry.session,
+                        &suppressed_identities,
+                    );
                     let usage_status = entry.budget.usage_status();
 
                     // Survey-triggered prefetch: pre-warm parent sections of claim hits
                     let claim_section_ids: Vec<String> = results
                         .iter()
                         .filter(|r| r.resolution == "claim")
+                        .filter(|r| {
+                            r.locator.identity.corpus_id == ministr_core::types::PRIMARY_CORPUS_ID
+                        })
                         .filter_map(|r| parent_section_id(&r.content_id).map(String::from))
                         .collect::<std::collections::HashSet<_>>()
                         .into_iter()
-                        .filter(|sid| !entry.session.is_delivered(&ContentId(sid.clone())))
+                        .filter(|sid| {
+                            !entry.session.is_identity_delivered(
+                                &ministr_core::types::DeliveryIdentity::new(
+                                    ministr_core::types::PRIMARY_CORPUS_ID,
+                                    sid.clone(),
+                                    "section_full",
+                                ),
+                            )
+                        })
                         .collect();
                     drop(reg);
 
@@ -1374,7 +1747,9 @@ impl MinistrServer {
                     // access — local-only. In daemon-forward mode the
                     // daemon owns prefetch state server-side and we skip
                     // the in-proxy cache warming entirely.
-                    if !claim_section_ids.is_empty()
+                    if !is_cross_corpus
+                        && params.project.is_none()
+                        && !claim_section_ids.is_empty()
                         && let Some(ref service) = self.service
                     {
                         let storage = service.storage();
@@ -1396,74 +1771,165 @@ impl MinistrServer {
                                     sections.push(record);
                                 }
                             }
-                            prefetch.prefetch_survey_expand(sections, &claims_counts);
+                            prefetch.prefetch_sections_for(
+                                ministr_core::types::PRIMARY_CORPUS_ID,
+                                PrefetchStrategy::SurveyExpand,
+                                sections,
+                                &claims_counts,
+                                usize::MAX,
+                            );
                         }
                     }
 
                     // Agent intent: record survey result section IDs as predicted next reads.
                     // Top results are likely to be read next by the agent.
                     {
-                        let survey_section_ids: Vec<String> = results
+                        let survey_identities: Vec<ministr_core::types::DeliveryIdentity> = results
                             .iter()
-                            .filter(|r| r.resolution == "section")
+                            .filter(|r| r.locator.identity.resolution.starts_with("section"))
                             .take(MAX_INTENT_PREFETCH_SURVEY)
-                            .map(|r| r.content_id.clone())
+                            .map(|r| {
+                                r.text_metadata.continuation.as_ref().map_or_else(
+                                    || {
+                                        ministr_core::types::DeliveryIdentity::new(
+                                            r.locator.identity.corpus_id.clone(),
+                                            r.content_id.clone(),
+                                            "section_full",
+                                        )
+                                    },
+                                    |locator| locator.identity.clone(),
+                                )
+                            })
                             .collect();
-                        if !survey_section_ids.is_empty() {
+                        if !survey_identities.is_empty() {
                             let mut prefetch = self.prefetch.lock().await;
                             prefetch.record_tool_call("ministr_survey", &params.query);
-                            prefetch.record_survey_results(survey_section_ids.clone());
+                            prefetch.record_survey_identities(survey_identities.clone());
 
                             // Pre-warm via direct storage — local-only.
-                            if let Some(ref service) = self.service {
+                            if !is_cross_corpus
+                                && params.project.is_none()
+                                && let Some(ref service) = self.service
+                            {
                                 let storage = service.storage();
                                 let mut sections = Vec::new();
                                 let mut claims_counts = std::collections::HashMap::new();
-                                for sid in &survey_section_ids {
-                                    if prefetch.cache().peek(sid).is_some() {
+                                for identity in &survey_identities {
+                                    if prefetch.cache().peek(&identity.storage_key()).is_some() {
                                         continue;
                                     }
-                                    let section_id = SectionId(sid.clone());
+                                    let section_id = SectionId(identity.content_id.clone());
                                     if let Ok(Some(record)) = storage.get_section(&section_id).await
                                     {
                                         // Stamp the true claim count so a warm
                                         // ministr_read hit reports the right
                                         // number of extractable claims (not 0).
                                         if let Ok(claims) = storage.list_claims(&section_id).await {
-                                            claims_counts.insert(sid.clone(), claims.len());
+                                            claims_counts
+                                                .insert(identity.content_id.clone(), claims.len());
                                         }
                                         sections.push(record);
                                     }
                                 }
                                 if !sections.is_empty() {
-                                    prefetch.prefetch_from_intent(sections, &claims_counts);
+                                    prefetch.prefetch_sections_for(
+                                        ministr_core::types::PRIMARY_CORPUS_ID,
+                                        PrefetchStrategy::AgentPlan,
+                                        sections,
+                                        &claims_counts,
+                                        MAX_INTENT_PREFETCH_SURVEY,
+                                    );
                                 }
                             }
                         }
                     }
 
+                    self.warm_survey_sections(tenant_subject.as_deref(), &results)
+                        .await;
                     self.persist_session().await;
 
                     // Suggest a follow-up on the top hit when it's confidently above noise.
                     // Symbol-resolution hits route to ministr_definition; everything else
                     // (section / claim / summary) routes to ministr_read on the section.
-                    let extra_actions = top_hit_next_action(&results);
+                    let extra_actions = top_hit_next_action(&results, params.project.as_deref());
 
-                    let response = self
+                    let mut response = self
                         .build_response_with(
                             SurveyResponse {
                                 results,
                                 deduplicated_count,
+                                pagination,
+                                total_is_exact: false,
                             },
                             usage_status,
                             extra_actions,
                         )
                         .await;
+                    if let Some(metadata) = response_metadata {
+                        response.status = metadata.status;
+                        response.completeness = metadata.completeness;
+                        response.error = metadata.error;
+                        response.corpora = metadata.corpora;
+                    }
+                    if is_cross_corpus && !corpus_statuses.is_empty() {
+                        let errors = corpus_statuses
+                            .iter()
+                            .filter(|status| status.status == ministr_api::metadata::ResponseStatus::Error)
+                            .count();
+                        let partials = corpus_statuses
+                            .iter()
+                            .filter(|status| status.status == ministr_api::metadata::ResponseStatus::Partial)
+                            .count();
+                        response.status = if errors == corpus_statuses.len() {
+                            ministr_api::metadata::ResponseStatus::Error
+                        } else if errors > 0 || partials > 0 {
+                            ministr_api::metadata::ResponseStatus::Partial
+                        } else {
+                            ministr_api::metadata::ResponseStatus::Ok
+                        };
+                        if errors > 0 || partials > 0 {
+                            let indexed_items = corpus_statuses
+                                .iter()
+                                .map(|status| status.completeness.indexed_items)
+                                .sum();
+                            let absence_is_conclusive = corpus_statuses
+                                .iter()
+                                .all(|status| status.completeness.absence_is_conclusive);
+                            response.completeness = ministr_api::metadata::Completeness {
+                                completeness: if errors == corpus_statuses.len() {
+                                    ministr_api::metadata::CompletenessState::Unavailable
+                                } else if corpus_statuses.iter().any(|status| {
+                                    status.completeness.completeness
+                                        == ministr_api::metadata::CompletenessState::Stale
+                                }) {
+                                    ministr_api::metadata::CompletenessState::Stale
+                                } else {
+                                    ministr_api::metadata::CompletenessState::Partial
+                                },
+                                indexed_items,
+                                estimated_total_items: None,
+                                affected_capabilities: vec!["survey".to_string()],
+                                index_generation: None,
+                                absence_is_conclusive,
+                                retry_guidance: Some(
+                                    "Retry incomplete corpora; successful corpus results are preserved."
+                                        .to_string(),
+                                ),
+                            };
+                            response.error = corpus_statuses
+                                .iter()
+                                .find_map(|status| status.error.clone());
+                        }
+                        response.corpora = corpus_statuses;
+                    }
                     structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, "ministr_survey failed");
-                    Ok(soft_backend_error(&e))
+                    Ok(apply_active_indexing_to_soft_error(
+                        soft_backend_error(&e),
+                        &self.ingestion_progress,
+                    ))
                 }
             }
         }
@@ -1496,19 +1962,57 @@ impl MinistrServer {
 
         async {
             debug!(section_id = %params.section_id, "ministr_read request");
+            self.restore_active_session().await;
+            let route = params
+                .project
+                .as_deref()
+                .or(params.source_corpus.as_deref());
 
-            // Check prefetch cache for a warm hit
-            let warm_detail = {
+            let read_corpus = match self.backend.routed_corpus_id(route) {
+                Ok(corpus) => corpus,
+                Err(error) => {
+                    return Ok(apply_active_indexing_to_soft_error(
+                        soft_backend_error(&error),
+                        &self.ingestion_progress,
+                    ));
+                }
+            };
+            let read_identity = ministr_core::types::DeliveryIdentity::new(
+                read_corpus,
+                params.section_id.clone(),
+                "section_full",
+            );
+
+            // Check the exact routed identity so colliding section IDs in a
+            // linked corpus can never consume a primary-corpus cache entry.
+            let warm_entry = {
                 let mut prefetch = self.prefetch.lock().await;
-                prefetch.try_serve(&params.section_id).map(|entry| {
-                    ministr_core::service::SectionDetail {
-                        section_id: entry.content_id.clone(),
-                        heading_path: entry.heading_path.clone().unwrap_or_default(),
-                        text: entry.text.clone(),
-                        summary: entry.summary.clone(),
+                let hit = prefetch.try_serve_identity(&read_identity);
+                if hit.is_none() {
+                    prefetch.record_miss();
+                }
+                hit
+            };
+            let warm_detail = if let Some(entry) = warm_entry {
+                let metadata = self
+                    .prefetch_section_metadata
+                    .lock()
+                    .await
+                    .get(&read_identity.storage_key())
+                    .cloned()
+                    .unwrap_or_default();
+                Some(crate::backend::BackendResponse {
+                    data: ministr_core::service::SectionDetail {
+                        section_id: entry.content_id,
+                        heading_path: entry.heading_path.unwrap_or_default(),
+                        text: entry.text,
+                        summary: entry.summary,
                         claims_available: entry.claims_available,
-                    }
+                    },
+                    metadata,
                 })
+            } else {
+                None
             };
 
             let read_result = if let Some(detail) = warm_detail {
@@ -1516,25 +2020,25 @@ impl MinistrServer {
                 Ok(detail)
             } else {
                 self.backend
-                    .read_section(
-                        tenant_subject.as_deref(),
-                        params.project.as_deref(),
-                        &params.section_id,
-                    )
+                    .read_section(tenant_subject.as_deref(), route, &params.section_id)
                     .await
             };
 
             match read_result {
-                Ok(detail) => {
+                Ok(backend_response) => {
+                    let metadata = backend_response.metadata;
+                    let detail = backend_response.data;
                     let current_hash = content_hash(&detail.text);
-                    let content_id = ContentId(params.section_id.clone());
 
                     // Check deduplication against session shadow
                     let mut reg = self.registry.lock().await;
                     let entry = self.ensure_session_mut(&mut reg);
-                    let already_delivered = entry.session.is_delivered(&content_id);
-                    let has_changed = entry.session.has_changed(&content_id, &current_hash);
-                    let is_re_request = entry.session.is_re_request(&content_id, &current_hash);
+                    let delivered = entry.session.get_delivered_identity(&read_identity);
+                    let already_delivered = delivered.is_some();
+                    let has_changed = delivered
+                        .is_some_and(|item| item.content_hash.as_str() != current_hash.as_str());
+                    let is_re_request = delivered
+                        .is_some_and(|item| item.content_hash.as_str() == current_hash.as_str());
 
                     // Case 2: Already delivered and unchanged — skip re-delivery
                     if already_delivered && !has_changed {
@@ -1543,12 +2047,14 @@ impl MinistrServer {
                             "ministr_read: already delivered, skipping re-delivery"
                         );
 
-                        entry.session.record_dedup_hit();
+                        entry
+                            .session
+                            .record_dedup_savings(count_tokens(&detail.text), detail.text.len());
 
                         // If agent re-requests content it should still have,
                         // treat as a fault-based eviction signal.
                         if is_re_request {
-                            entry.budget.force_evict(&params.section_id);
+                            entry.budget.force_evict(&read_identity.storage_key());
                         }
 
                         let usage_status = entry.budget.usage_status();
@@ -1559,7 +2065,8 @@ impl MinistrServer {
                             status: "already_delivered",
                             claims_available: detail.claims_available,
                         };
-                        let response = self.build_response(skip, usage_status).await;
+                        let mut response = self.build_response(skip, usage_status).await;
+                        response.apply_query_metadata(metadata);
                         return structured_result(&response);
                     }
 
@@ -1571,17 +2078,23 @@ impl MinistrServer {
                     // Case 1: New content (or changed) — deliver full text
                     drop(reg);
                     let usage_status = self
-                        .record_section_delivery(&params.section_id, &detail.text, current_hash)
+                        .record_section_delivery(&read_identity, &detail.text, current_hash)
                         .await;
-                    self.record_analytics_access(&params.section_id).await;
-                    self.trigger_prefetch(&params.section_id).await;
+                    if read_identity.corpus_id == ministr_core::types::PRIMARY_CORPUS_ID {
+                        self.record_analytics_access(&params.section_id).await;
+                        self.trigger_prefetch(&params.section_id).await;
+                    }
 
-                    let response = self.build_response(detail, usage_status).await;
-                    structured_result(&response)
+                    let mut response = self.build_response(detail, usage_status).await;
+                    response.apply_query_metadata(metadata);
+                    structured_full_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, section_id = %params.section_id, "ministr_read failed");
-                    Ok(soft_backend_error(&e))
+                    Ok(apply_active_indexing_to_soft_error(
+                        soft_backend_error(&e),
+                        &self.ingestion_progress,
+                    ))
                 }
             }
         }
@@ -1617,17 +2130,32 @@ impl MinistrServer {
                 "ministr_extract request"
             );
 
+            let Ok((offset, limit)) =
+                page_request(params.offset, params.cursor.as_deref(), params.limit, 100)
+            else {
+                return Ok(soft_error(
+                    "invalid_parameters",
+                    "Invalid pagination cursor.",
+                ));
+            };
+
             match self
                 .backend
-                .extract_claims(
+                .extract_claims_page(
                     tenant_subject.as_deref(),
                     params.project.as_deref(),
                     &params.section_id,
                     params.query.as_deref(),
+                    offset,
+                    limit,
                 )
                 .await
             {
-                Ok(claims) => {
+                Ok(backend_response) => {
+                    let metadata = backend_response.metadata;
+                    let claims = backend_response.data;
+                    let pagination = backend_response.pagination;
+                    let total = pagination.total;
                     debug!(
                         section_id = %params.section_id,
                         claim_count = claims.len(),
@@ -1638,31 +2166,52 @@ impl MinistrServer {
                     let mut reg = self.registry.lock().await;
                     let entry = self.ensure_session_mut(&mut reg);
                     let turn = entry.session.current_turn() + 1;
+                    let claim_corpus = self
+                        .backend
+                        .routed_corpus_id(params.project.as_deref())
+                        .unwrap_or_else(|_| ministr_core::types::PRIMARY_CORPUS_ID.to_string());
                     for c in &claims {
                         let token_count = count_tokens(&c.text);
                         let hash = content_hash(&c.text);
-                        entry.session.record_delivery(
-                            &ContentId(c.claim_id.clone()),
+                        let identity = ministr_core::types::DeliveryIdentity::new(
+                            claim_corpus.clone(),
+                            c.claim_id.clone(),
+                            "claim",
+                        );
+                        entry.session.record_delivery_identity(
+                            &identity,
                             Resolution::Claim,
                             token_count,
                             turn,
                             hash,
                         );
-                        let _ = entry.budget.record_tokens(&c.claim_id, token_count);
+                        let _ = entry
+                            .budget
+                            .record_tokens(&identity.storage_key(), token_count);
                     }
                     let usage_status = entry.budget.usage_status();
                     drop(reg);
-
                     self.persist_session().await;
 
-                    let response = self
-                        .build_response(ExtractResponse { claims }, usage_status)
+                    let mut response = self
+                        .build_response(
+                            ExtractResponse {
+                                claims,
+                                total,
+                                pagination,
+                            },
+                            usage_status,
+                        )
                         .await;
+                    response.apply_query_metadata(metadata);
                     structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, section_id = %params.section_id, "ministr_extract failed");
-                    Ok(soft_backend_error(&e))
+                    Ok(apply_active_indexing_to_soft_error(
+                        soft_backend_error(&e),
+                        &self.ingestion_progress,
+                    ))
                 }
             }
         }
@@ -1699,18 +2248,28 @@ impl MinistrServer {
                         .filter_map(|t| RelationType::parse(t))
                         .collect()
                 });
+            let limit = params
+                .limit
+                .unwrap_or(100)
+                .clamp(1, helpers::MAX_COLLECTION_PAGE);
 
             match self
                 .backend
-                .related_claims(
+                .related_claims_page(
                     tenant_subject.as_deref(),
                     params.project.as_deref(),
                     &params.claim_id,
                     relation_types.as_deref(),
+                    params.offset,
+                    params.cursor.as_deref(),
+                    limit,
                 )
                 .await
             {
-                Ok(related) => {
+                Ok(backend_response) => {
+                    let metadata = backend_response.metadata;
+                    let related = backend_response.data;
+                    let pagination = backend_response.pagination;
                     debug!(
                         claim_id = %params.claim_id,
                         related_count = related.len(),
@@ -1721,31 +2280,57 @@ impl MinistrServer {
                     let mut reg = self.registry.lock().await;
                     let entry = self.ensure_session_mut(&mut reg);
                     let turn = entry.session.current_turn() + 1;
+                    let corpus_id = match self.backend.routed_corpus_id(params.project.as_deref()) {
+                        Ok(corpus_id) => corpus_id,
+                        Err(error) => {
+                            return Ok(apply_active_indexing_to_soft_error(
+                                soft_backend_error(&error),
+                                &self.ingestion_progress,
+                            ));
+                        }
+                    };
                     for r in &related {
                         let token_count = count_tokens(&r.text);
                         let hash = content_hash(&r.text);
-                        entry.session.record_delivery(
-                            &ContentId(r.claim_id.clone()),
+                        let identity = ministr_core::types::DeliveryIdentity::new(
+                            corpus_id.clone(),
+                            r.claim_id.clone(),
+                            "claim",
+                        );
+                        entry.session.record_delivery_identity(
+                            &identity,
                             Resolution::Claim,
                             token_count,
                             turn,
                             hash,
                         );
-                        let _ = entry.budget.record_tokens(&r.claim_id, token_count);
+                        let _ = entry
+                            .budget
+                            .record_tokens(&identity.storage_key(), token_count);
                     }
                     let usage_status = entry.budget.usage_status();
                     drop(reg);
 
                     self.persist_session().await;
 
-                    let response = self
-                        .build_response(RelatedResponse { related }, usage_status)
+                    let mut response = self
+                        .build_response(
+                            RelatedResponse {
+                                related,
+                                pagination,
+                            },
+                            usage_status,
+                        )
                         .await;
+                    response.apply_query_metadata(metadata);
                     structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, claim_id = %params.claim_id, "ministr_related failed");
-                    Ok(soft_backend_error(&e))
+                    Ok(apply_active_indexing_to_soft_error(
+                        soft_backend_error(&e),
+                        &self.ingestion_progress,
+                    ))
                 }
             }
         }
@@ -1768,24 +2353,54 @@ impl MinistrServer {
         &self,
         Parameters(params): Parameters<DroppedParams>,
     ) -> Result<CallToolResult, McpError> {
-        let span = info_span!("ministr_dropped", count = params.content_ids.len());
+        let span = info_span!(
+            "ministr_dropped",
+            count = params.content_ids.len() + params.identities.len()
+        );
 
         async {
             debug!(content_ids = ?params.content_ids, "ministr_dropped request");
 
+            if let Err(error) = self
+                .backend
+                .drop_deliveries(&params.identities, &params.content_ids)
+                .await
+            {
+                return Ok(apply_active_indexing_to_soft_error(
+                    soft_backend_error(&error),
+                    &self.ingestion_progress,
+                ));
+            }
+
             let mut dropped = Vec::new();
             let mut not_found = Vec::new();
+            let mut dropped_identities = Vec::new();
+            let mut not_found_identities = Vec::new();
 
             let mut reg = self.registry.lock().await;
             let entry = self.ensure_session_mut(&mut reg);
 
+            for identity in &params.identities {
+                if entry.session.remove_delivered_identity(identity).is_some() {
+                    entry.budget.force_evict(&identity.storage_key());
+                    dropped_identities.push(identity.clone());
+                } else {
+                    not_found_identities.push(identity.clone());
+                }
+            }
+
             for id_str in &params.content_ids {
                 let content_id = ContentId(id_str.clone());
-                if entry.session.remove_delivered(&content_id).is_some() {
+                let items = entry.session.remove_delivered_resolutions(&content_id);
+                if items.is_empty() {
+                    not_found.push(id_str.clone());
+                } else {
+                    for item in &items {
+                        entry.budget.force_evict(&item.identity().storage_key());
+                    }
+                    // Compatibility with budgets persisted under old bare keys.
                     entry.budget.force_evict(id_str);
                     dropped.push(id_str.clone());
-                } else {
-                    not_found.push(id_str.clone());
                 }
             }
 
@@ -1801,7 +2416,15 @@ impl MinistrServer {
             );
 
             let response = self
-                .build_response(DroppedResponse { dropped, not_found }, usage_status)
+                .build_response(
+                    DroppedResponse {
+                        dropped,
+                        not_found,
+                        dropped_identities,
+                        not_found_identities,
+                    },
+                    usage_status,
+                )
                 .await;
             structured_result(&response)
         }
@@ -1826,6 +2449,8 @@ impl MinistrServer {
         async {
             debug!("ministr_usage request");
 
+            let daemon_prefetch = self.backend.all_daemon_prefetch_metrics().await;
+
             let mut reg = self.registry.lock().await;
             let entry = self.ensure_session_mut(&mut reg);
             let prefetch = self.prefetch.lock().await;
@@ -1834,7 +2459,10 @@ impl MinistrServer {
             let candidates = entry
                 .budget
                 .drop_candidates(&entry.session, 5, Some(&entry.memory));
-            let prefetch_metrics = prefetch.metrics();
+            let mut prefetch_metrics = prefetch.metrics();
+            for remote in &daemon_prefetch {
+                merge_daemon_prefetch_metrics(&mut prefetch_metrics, remote);
+            }
             let alerts = entry.session.drain_alerts();
             let metrics = entry.session.metrics().clone();
 
@@ -1864,6 +2492,12 @@ impl MinistrServer {
                 level: level_str.to_string(),
                 drop_candidates: candidates,
                 prefetch_metrics,
+                prefetch_waste_rate: if prefetch_metrics.prefetches_issued == 0 {
+                    0.0
+                } else {
+                    prefetch_metrics.prefetches_never_consumed as f64
+                        / prefetch_metrics.prefetches_issued as f64
+                },
                 session_metrics: SessionMetricsResponse {
                     total_deliveries: metrics.total_deliveries,
                     cumulative_tokens_delivered: metrics.cumulative_tokens_delivered,
@@ -1901,10 +2535,75 @@ impl MinistrServer {
         Parameters(params): Parameters<CompressParams>,
     ) -> Result<CallToolResult, McpError> {
         let tenant_subject = self.current_tenant_subject();
-        let span = info_span!("ministr_compress", count = params.content_ids.len());
+        let span = info_span!(
+            "ministr_compress",
+            count = params.content_ids.len() + params.identities.len()
+        );
 
         async {
-            debug!(content_ids = ?params.content_ids, "ministr_compress request");
+            self.restore_active_session().await;
+            let route_corpus = match self.backend.routed_corpus_id(params.project.as_deref()) {
+                Ok(corpus) => corpus,
+                Err(error) => {
+                    return Ok(apply_active_indexing_to_soft_error(
+                        soft_backend_error(&error),
+                        &self.ingestion_progress,
+                    ));
+                }
+            };
+            if let Some(identity) = params
+                .identities
+                .iter()
+                .find(|identity| identity.corpus_id != route_corpus)
+            {
+                return Ok(soft_error(
+                    "invalid_parameters",
+                    format!(
+                        "identity corpus '{}' does not match routed corpus '{route_corpus}'",
+                        identity.corpus_id
+                    ),
+                ));
+            }
+
+            let mut identities = params.identities.clone();
+            {
+                let mut registry = self.registry.lock().await;
+                let entry = self.ensure_session_mut(&mut registry);
+                for content_id in &params.content_ids {
+                    let matching: Vec<_> = entry
+                        .session
+                        .delivered_identities()
+                        .into_iter()
+                        .filter(|identity| {
+                            identity.corpus_id == route_corpus && identity.content_id == *content_id
+                        })
+                        .collect();
+                    if matching.is_empty() {
+                        identities.push(ministr_core::types::DeliveryIdentity::new(
+                            route_corpus.clone(),
+                            content_id.clone(),
+                            "legacy",
+                        ));
+                    } else {
+                        identities.extend(matching);
+                    }
+                }
+            }
+            identities.sort();
+            identities.dedup();
+            let total = identities.len();
+            let Ok((offset, limit)) =
+                page_request(params.offset, params.cursor.as_deref(), params.limit, 100)
+            else {
+                return Ok(soft_error(
+                    "invalid_parameters",
+                    "Invalid pagination cursor.",
+                ));
+            };
+            identities = identities.into_iter().skip(offset).take(limit).collect();
+            let pagination = page_metadata(limit, offset, identities.len(), total);
+
+            debug!(?identities, "ministr_compress request");
 
             // Always use extractive (TF-IDF) compression — fast, no extra cost,
             // and doesn't require MCP sampling support from the client.
@@ -1913,7 +2612,7 @@ impl MinistrServer {
                 .compress(
                     tenant_subject.as_deref(),
                     params.project.as_deref(),
-                    &params.content_ids,
+                    &identities,
                 )
                 .await;
 
@@ -1921,9 +2620,14 @@ impl MinistrServer {
                 Ok(summaries) => {
                     debug!(summary_count = summaries.len(), "ministr_compress success");
 
-                    let total_original: usize = summaries.iter().map(|s| s.original_tokens).sum();
-                    let total_compressed: usize =
-                        summaries.iter().map(|s| s.compressed_tokens).sum();
+                    let total_original: usize = summaries
+                        .iter()
+                        .map(|summary| summary.item.original_tokens)
+                        .sum();
+                    let total_compressed: usize = summaries
+                        .iter()
+                        .map(|summary| summary.item.compressed_tokens)
+                        .sum();
                     let ratio = if total_original > 0 {
                         total_compressed as f64 / total_original as f64
                     } else {
@@ -1931,11 +2635,36 @@ impl MinistrServer {
                     };
 
                     let mut reg = self.registry.lock().await;
-                    let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
+                    let entry = self.ensure_session_mut(&mut reg);
+                    for summary in &summaries {
+                        if entry.session.is_identity_delivered(&summary.identity) {
+                            entry.session.set_identity_compressed_summary(
+                                &summary.identity,
+                                summary.item.summary.clone(),
+                                ministr_core::session::CompressionTier::Extractive,
+                                summary.item.compressed_tokens,
+                            );
+                            entry.budget.force_evict_identity(&summary.identity);
+                            let _ = entry.budget.record_tokens(
+                                &summary.identity.storage_key(),
+                                summary.item.compressed_tokens,
+                            );
+                        }
+                    }
+                    let usage_status = entry.budget.usage_status();
                     drop(reg);
+                    self.persist_session().await;
 
                     let compress_resp = CompressResponse {
-                        summaries,
+                        summaries: summaries
+                            .into_iter()
+                            .map(|summary| CompressedDeliveryResponse {
+                                identity: summary.identity,
+                                item: summary.item,
+                            })
+                            .collect(),
+                        total,
+                        pagination,
                         total_original_tokens: total_original,
                         total_compressed_tokens: total_compressed,
                         compression_ratio: ratio,
@@ -1945,7 +2674,10 @@ impl MinistrServer {
                 }
                 Err(e) => {
                     warn!(error = %e, "ministr_compress failed");
-                    Ok(soft_backend_error(&e))
+                    Ok(apply_active_indexing_to_soft_error(
+                        soft_backend_error(&e),
+                        &self.ingestion_progress,
+                    ))
                 }
             }
         }
@@ -1973,31 +2705,40 @@ impl MinistrServer {
 
         async {
             debug!(document_id = ?params.document_id, "ministr_toc request");
+            let route = params
+                .project
+                .as_deref()
+                .or(params.source_corpus.as_deref());
+
+            let Ok((offset, limit)) =
+                page_request(params.offset, params.cursor.as_deref(), params.limit, 100)
+            else {
+                return Ok(soft_error(
+                    "invalid_parameters",
+                    "Invalid pagination cursor.",
+                ));
+            };
 
             match self
                 .backend
-                .toc(
+                .toc_page(
                     tenant_subject.as_deref(),
-                    params.project.as_deref(),
+                    route,
                     params.document_id.as_deref(),
+                    offset,
+                    limit,
                 )
                 .await
             {
-                Ok(entries) => {
-                    let total_sections = entries.len();
-                    let total_claims: usize = entries.iter().map(|e| e.claims_available).sum();
+                Ok(backend_response) => {
+                    let metadata = backend_response.metadata;
+                    let entries = backend_response.entries;
+                    let pagination = backend_response.pagination;
+                    let total_sections = pagination.total;
+                    let total_claims = backend_response.claims;
+                    let total_documents = backend_response.documents;
 
-                    // Count unique document IDs
-                    let mut doc_ids: Vec<&str> =
-                        entries.iter().map(|e| e.document_id.as_ref()).collect();
-                    doc_ids.sort_unstable();
-                    doc_ids.dedup();
-                    let total_documents = doc_ids.len();
-
-                    // Apply pagination
-                    let offset = params.offset.unwrap_or(0);
-                    let limit = params.limit.unwrap_or(100);
-                    let paginated: Vec<_> = entries.into_iter().skip(offset).take(limit).collect();
+                    let paginated = entries;
                     let returned = paginated.len();
 
                     debug!(
@@ -2011,10 +2752,14 @@ impl MinistrServer {
 
                     // Report ingestion status when corpus is empty to help
                     // diagnose "0 documents" scenarios.
-                    let ingestion_status = match self.ingestion_progress.status() {
-                        0 if total_documents == 0 => Some("pending".to_string()),
-                        1 => Some("running".to_string()),
-                        _ => None, // Don't clutter the response when complete
+                    let ingestion_status = if route.is_none() {
+                        match self.ingestion_progress.status() {
+                            0 if total_documents == 0 => Some("pending".to_string()),
+                            1 => Some("running".to_string()),
+                            _ => None,
+                        }
+                    } else {
+                        None
                     };
 
                     // Include corpus roots when not filtered to a single
@@ -2022,7 +2767,7 @@ impl MinistrServer {
                     // daemon-forward mode the roots list is empty (the
                     // agent can query the daemon directly for project
                     // metadata if needed).
-                    let roots = if params.document_id.is_none() {
+                    let roots = if params.document_id.is_none() && route.is_none() {
                         match self.service.as_ref() {
                             Some(s) => s.list_corpus_roots().await.unwrap_or_default(),
                             None => Vec::new(),
@@ -2031,7 +2776,7 @@ impl MinistrServer {
                         Vec::new()
                     };
 
-                    let response = self
+                    let mut response = self
                         .build_response(
                             TocResponse {
                                 corpus_stats: CorpusStatsHeader {
@@ -2044,15 +2789,20 @@ impl MinistrServer {
                                 },
                                 roots,
                                 entries: paginated,
+                                pagination,
                             },
                             usage_status,
                         )
                         .await;
+                    response.apply_query_metadata(metadata);
                     structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, "ministr_toc failed");
-                    Ok(soft_backend_error(&e))
+                    Ok(apply_active_indexing_to_soft_error(
+                        soft_backend_error(&e),
+                        &self.ingestion_progress,
+                    ))
                 }
             }
         }
@@ -2513,6 +3263,19 @@ impl MinistrServer {
 
         async {
             debug!(?params.query, ?params.kind, ?params.module, ?params.visibility, "ministr_symbols request");
+            let route_label = params
+                .project
+                .clone()
+                .or_else(|| params.source_corpus.clone());
+
+            let Ok((offset, limit)) = page_request(
+                params.offset,
+                params.cursor.as_deref(),
+                params.limit,
+                100,
+            ) else {
+                return Ok(soft_error("invalid_parameters", "Invalid pagination cursor."));
+            };
 
             // Track query for task-aware salience scoring
             if let Some(ref q) = params.query {
@@ -2533,11 +3296,20 @@ impl MinistrServer {
 
             match self
                 .backend
-                .search_symbols(tenant_subject.as_deref(), params.project.as_deref(), filter)
+                .search_symbols_page(
+                    tenant_subject.as_deref(),
+                    route_label.as_deref(),
+                    filter,
+                    offset,
+                    limit,
+                )
                 .await
             {
-                Ok(symbols) => {
-                    let total = symbols.len();
+                Ok(backend_response) => {
+                    let metadata = backend_response.metadata;
+                    let symbols = backend_response.data;
+                    let pagination = backend_response.pagination;
+                    let total = pagination.total;
 
                     // Compute transitive caller counts for all result symbols.
                     // This stays on `self.service` (local-only enrichment); the
@@ -2573,34 +3345,77 @@ impl MinistrServer {
                         })
                         .collect();
 
-                    // Apply pagination
-                    let offset = params.offset.unwrap_or(0);
-                    let limit = params.limit.unwrap_or(100);
-                    let paginated: Vec<_> =
-                        summaries.into_iter().skip(offset).take(limit).collect();
+                    let paginated = summaries;
+                    let predicted_symbol_id = paginated.first().map(|symbol| symbol.id.clone());
 
                     debug!(total, offset, returned = paginated.len(), "ministr_symbols success");
 
                     let mut reg = self.registry.lock().await;
-                    let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
+                    let entry = self.ensure_session_mut(&mut reg);
+                    let turn = entry.session.current_turn() + 1;
+                    let corpus_id = self
+                        .backend
+                        .routed_corpus_id(route_label.as_deref())
+                        .unwrap_or_else(|_| ministr_core::types::PRIMARY_CORPUS_ID.to_string());
+                    for symbol in &paginated {
+                        let delivered = serde_json::to_string(symbol).unwrap_or_default();
+                        let token_count = count_tokens(&delivered);
+                        let identity = ministr_core::types::DeliveryIdentity::new(
+                            corpus_id.clone(),
+                            symbol.id.clone(),
+                            "symbol_stub",
+                        );
+                        entry.session.record_delivery_identity(
+                            &identity,
+                            Resolution::Section,
+                            token_count,
+                            turn,
+                            content_hash(&delivered),
+                        );
+                        let _ = entry
+                            .budget
+                            .record_tokens(&identity.storage_key(), token_count);
+                    }
+                    let usage_status = entry.budget.usage_status();
                     drop(reg);
+                    self.persist_session().await;
 
                     // When there's exactly one match, suggest fetching its definition —
                     // the agent almost always wants the source next.
-                    let extra_actions = single_symbol_next_action(&paginated);
+                    let extra_actions =
+                        single_symbol_next_action(&paginated, route_label.as_deref());
 
-                    let response = self
+                    if let Some(symbol_id) = predicted_symbol_id.as_deref() {
+                        self.warm_symbol_definition(
+                            tenant_subject.as_deref(),
+                            route_label.as_deref(),
+                            symbol_id,
+                            PrefetchStrategy::SymbolSearch,
+                        )
+                        .await;
+                    }
+
+                    let mut response = self
                         .build_response_with(
-                            SymbolsResponse { symbols: paginated, total, offset },
+                            SymbolsResponse {
+                                symbols: paginated,
+                                total,
+                                offset,
+                                pagination,
+                            },
                             usage_status,
                             extra_actions,
                         )
                         .await;
+                    response.apply_query_metadata(metadata);
                     structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, "ministr_symbols failed");
-                    Ok(soft_backend_error(&e))
+                    Ok(apply_active_indexing_to_soft_error(
+                        soft_backend_error(&e),
+                        &self.ingestion_progress,
+                    ))
                 }
             }
         }
@@ -2641,15 +3456,21 @@ impl MinistrServer {
             .await
         {
             Ok(Some(sym)) => Ok(sym),
-            Ok(None) => Err(soft_error(
-                "no_symbol_at_position",
-                format!(
-                    "No symbol under the cursor at {file}:{line}:{col}. The position may be \
-                     whitespace/punctuation, or the corpus was indexed without the occurrence \
-                     index (re-index to enable click-any-token)."
+            Ok(None) => Err(apply_active_indexing_to_soft_error(
+                soft_error(
+                    "no_symbol_at_position",
+                    format!(
+                        "No symbol under the cursor at {file}:{line}:{col}. The position may be \
+                         whitespace/punctuation, or the corpus was indexed without the occurrence \
+                         index (re-index to enable click-any-token)."
+                    ),
                 ),
+                &self.ingestion_progress,
             )),
-            Err(e) => Err(soft_backend_error(&e)),
+            Err(e) => Err(apply_active_indexing_to_soft_error(
+                soft_backend_error(&e),
+                &self.ingestion_progress,
+            )),
         }
     }
 
@@ -2671,10 +3492,18 @@ impl MinistrServer {
         let span = info_span!("ministr_definition", symbol_id = %params.symbol_id);
 
         async {
+            let route = params
+                .project
+                .as_deref()
+                .or(params.source_corpus.as_deref());
+            let route_label = params
+                .project
+                .clone()
+                .or_else(|| params.source_corpus.clone());
             let symbol_id = match self
                 .resolve_nav_symbol(
                     tenant_subject.as_deref(),
-                    params.project.as_deref(),
+                    route,
                     &params.symbol_id,
                     params.file.as_deref(),
                     params.line,
@@ -2688,20 +3517,71 @@ impl MinistrServer {
 
             debug!(symbol_id = %symbol_id, "ministr_definition request");
 
-            match self
-                .backend
-                .definition(
-                    tenant_subject.as_deref(),
-                    params.project.as_deref(),
-                    &symbol_id,
-                )
+            let options = DefinitionOptions {
+                max_lines: params.max_lines.unwrap_or(160).clamp(1, 1_000),
+                context_lines: params.context_lines.unwrap_or(3).min(100),
+                include_body: params.include_body.unwrap_or(true),
+                outline_only: params.outline_only.unwrap_or(false),
+                start_line: params.start_line,
+                start_byte: params.start_byte,
+            };
+            let definition_result = if let Some(definition) = self
+                .try_prefetched_definition(route, &symbol_id, options)
                 .await
             {
-                Ok(def) => {
+                Ok(definition)
+            } else {
+                self.backend
+                    .definition(
+                        tenant_subject.as_deref(),
+                        route,
+                    &symbol_id,
+                        options,
+                    )
+                    .await
+            };
+
+            match definition_result {
+                Ok(backend_response) => {
+                    let metadata = backend_response.metadata;
+                    let mut def = backend_response.data;
+                    let routed_corpus = self
+                        .backend
+                        .routed_corpus_id(route)
+                        .unwrap_or_else(|_| def.locator.identity.corpus_id.clone());
+                    def.locator
+                        .identity
+                        .corpus_id
+                        .clone_from(&routed_corpus);
+                    def.locator.project.clone_from(&route_label);
+                    if routed_corpus != ministr_core::types::PRIMARY_CORPUS_ID {
+                        def.locator.source_corpus = Some(routed_corpus.clone());
+                    }
+                    for child in &mut def.child_symbols {
+                        child
+                            .locator
+                            .identity
+                            .corpus_id
+                            .clone_from(&routed_corpus);
+                        child.locator.project.clone_from(&route_label);
+                        if routed_corpus != ministr_core::types::PRIMARY_CORPUS_ID {
+                            child.locator.source_corpus = Some(routed_corpus.clone());
+                        }
+                    }
                     let token_count = count_tokens(&def.source_context);
                     let mut reg = self.registry.lock().await;
                     let entry = self.ensure_session_mut(&mut reg);
-                    let _ = entry.budget.record_tokens(&symbol_id, token_count);
+                    let turn = entry.session.current_turn() + 1;
+                    entry.session.record_delivery_identity(
+                        &def.locator.identity,
+                        parse_resolution(&def.locator.identity.resolution),
+                        token_count,
+                        turn,
+                        content_hash(&def.source_context),
+                    );
+                    let _ = entry
+                        .budget
+                        .record_tokens(&def.locator.identity.storage_key(), token_count);
                     let usage_status = entry.budget.usage_status();
                     drop(reg);
 
@@ -2728,19 +3608,220 @@ impl MinistrServer {
 
                     debug!(symbol_id = %symbol_id, token_count, blame = blame.is_some(), "ministr_definition success");
 
-                    let response = self
+                    let mut response = self
                         .build_response(DefinitionResponse { definition: def, blame }, usage_status)
                         .await;
+                    response.apply_query_metadata(metadata);
                     structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, symbol_id = %symbol_id, "ministr_definition failed");
-                    Ok(soft_backend_error(&e))
+                    Ok(apply_active_indexing_to_soft_error(
+                        soft_backend_error(&e),
+                        &self.ingestion_progress,
+                    ))
                 }
             }
         }
         .instrument(span)
         .await
+    }
+
+    /// Inspect a symbol's bounded navigation neighbourhood in one call.
+    #[tool(
+        name = "ministr_inspect",
+        description = "Bounded definition, callers, callees, implementations, tests, and bridges for one symbol. Use after survey/symbols when you need impact context in one round trip; use granular tools to page one group.",
+        output_schema = tool_output_schema::<ToolResponse<ministr_core::service::InspectResult>>(),
+        annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn inspect(
+        &self,
+        Parameters(params): Parameters<InspectParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let tenant_subject = self.current_tenant_subject();
+        let options = InspectOptions {
+            include: if params.include.is_empty() {
+                InspectOptions::default().include
+            } else {
+                params.include
+            },
+            max_per_group: params.max_per_group.unwrap_or(10).clamp(1, 50),
+            max_source_lines: params.max_source_lines.unwrap_or(160).clamp(1, 1_000),
+        };
+
+        let result = if !params.symbol_id.is_empty() {
+            self.backend
+                .inspect_symbol(
+                    tenant_subject.as_deref(),
+                    params.project.as_deref(),
+                    &params.symbol_id,
+                    options,
+                )
+                .await
+        } else if let (Some(file), Some(line), Some(col)) =
+            (params.file.as_deref(), params.line, params.col)
+        {
+            self.backend
+                .inspect_at_position(
+                    tenant_subject.as_deref(),
+                    params.project.as_deref(),
+                    file,
+                    line,
+                    col,
+                    options,
+                )
+                .await
+        } else {
+            return Ok(soft_error(
+                "invalid_parameters",
+                "Provide symbol_id or file + line + col.",
+            ));
+        };
+
+        match result {
+            Ok(backend_response) => {
+                let mut metadata = backend_response.metadata;
+                let mut inspect = backend_response.data;
+                let routed_corpus = self
+                    .backend
+                    .routed_corpus_id(params.project.as_deref())
+                    .unwrap_or_else(|_| inspect.locator.identity.corpus_id.clone());
+                inspect
+                    .locator
+                    .identity
+                    .corpus_id
+                    .clone_from(&routed_corpus);
+                if routed_corpus != ministr_core::types::PRIMARY_CORPUS_ID {
+                    inspect.locator.source_corpus = Some(routed_corpus.clone());
+                }
+                if let Some(definition) = inspect.definition.as_mut() {
+                    definition
+                        .locator
+                        .identity
+                        .corpus_id
+                        .clone_from(&routed_corpus);
+                    for child in &mut definition.child_symbols {
+                        child.locator.identity.corpus_id.clone_from(&routed_corpus);
+                    }
+                }
+                for action in &mut inspect.next_actions {
+                    action.locator.identity.corpus_id.clone_from(&routed_corpus);
+                }
+                if let Some(code) = inspect
+                    .definition
+                    .as_ref()
+                    .and_then(|definition| definition.source_error.clone())
+                {
+                    metadata.status = ministr_api::metadata::ResponseStatus::Partial;
+                    metadata.completeness.completeness =
+                        ministr_api::metadata::CompletenessState::Partial;
+                    metadata.completeness.absence_is_conclusive = false;
+                    metadata.error = Some(ministr_api::metadata::ResponseError {
+                        error_code: code.clone(),
+                        retryable: code != "permission_denied",
+                        message: "Inspect returned indexed relationships, but definition source was unavailable."
+                            .to_string(),
+                        corpus_id: Some(routed_corpus.clone()),
+                        backend: Some("mcp".to_string()),
+                    });
+                }
+                if let Some(group_error) = inspect.partial_errors.first() {
+                    metadata.status = ministr_api::metadata::ResponseStatus::Partial;
+                    metadata.completeness.completeness =
+                        ministr_api::metadata::CompletenessState::Partial;
+                    metadata.completeness.absence_is_conclusive = false;
+                    if !metadata
+                        .completeness
+                        .affected_capabilities
+                        .iter()
+                        .any(|capability| capability == "inspect")
+                    {
+                        metadata
+                            .completeness
+                            .affected_capabilities
+                            .push("inspect".to_string());
+                    }
+                    metadata
+                        .error
+                        .get_or_insert_with(|| ministr_api::metadata::ResponseError {
+                            error_code: "inspect_group_failure".to_string(),
+                            retryable: true,
+                            message: format!(
+                                "inspect group `{}` was unavailable: {}",
+                                group_error.group, group_error.message
+                            ),
+                            corpus_id: Some(inspect.locator.identity.corpus_id.clone()),
+                            backend: None,
+                        });
+                }
+                if let Some(project) = params.project.clone() {
+                    inspect.locator.project = Some(project.clone());
+                    inspect.locator.source_corpus = Some(routed_corpus.clone());
+                    if let Some(definition) = inspect.definition.as_mut() {
+                        definition.locator.project = Some(project.clone());
+                        definition
+                            .locator
+                            .identity
+                            .corpus_id
+                            .clone_from(&routed_corpus);
+                        definition.locator.source_corpus = Some(routed_corpus.clone());
+                        for child in &mut definition.child_symbols {
+                            child.locator.project = Some(project.clone());
+                            child.locator.identity.corpus_id.clone_from(&routed_corpus);
+                            child.locator.source_corpus = Some(routed_corpus.clone());
+                        }
+                    }
+                    for action in &mut inspect.next_actions {
+                        action.locator.project = Some(project.clone());
+                        action.locator.identity.corpus_id.clone_from(&routed_corpus);
+                        action.locator.source_corpus = Some(routed_corpus.clone());
+                    }
+                }
+                let tokens = serde_json::to_string(&inspect)
+                    .map_or(0, |serialized| count_tokens(&serialized));
+                let mut registry = self.registry.lock().await;
+                let entry = self.ensure_session_mut(&mut registry);
+                let turn = entry.session.current_turn() + 1;
+                let compound_identity = ministr_core::types::DeliveryIdentity::new(
+                    inspect.locator.identity.corpus_id.clone(),
+                    inspect.locator.identity.content_id.clone(),
+                    "inspect_compound",
+                );
+                entry.session.record_delivery_identity(
+                    &compound_identity,
+                    Resolution::Section,
+                    tokens,
+                    turn,
+                    content_hash(&serde_json::to_string(&inspect).unwrap_or_default()),
+                );
+                let _ = entry
+                    .budget
+                    .record_tokens(&compound_identity.storage_key(), tokens);
+                if let Some(definition) = inspect.definition.as_ref() {
+                    let definition_tokens = count_tokens(&definition.source_context);
+                    entry.session.record_delivery_identity(
+                        &definition.locator.identity,
+                        parse_resolution(&definition.locator.identity.resolution),
+                        definition_tokens,
+                        turn,
+                        content_hash(&definition.source_context),
+                    );
+                    let _ = entry.budget.record_tokens(
+                        &definition.locator.identity.storage_key(),
+                        definition_tokens,
+                    );
+                }
+                let usage = entry.budget.usage_status();
+                drop(registry);
+                let mut response = self.build_response(inspect, usage).await;
+                response.apply_query_metadata(metadata);
+                structured_result(&response)
+            }
+            Err(error) => Ok(apply_active_indexing_to_soft_error(
+                soft_backend_error(&error),
+                &self.ingestion_progress,
+            )),
+        }
     }
 
     /// Find all references to a code symbol.
@@ -2782,48 +3863,92 @@ impl MinistrServer {
                 .ref_kind
                 .as_deref()
                 .and_then(RefKind::parse);
+            let limit = params.limit.unwrap_or(100).clamp(1, 500);
 
             match self
                 .backend
-                .references(
+                .references_page(
                     tenant_subject.as_deref(),
                     params.project.as_deref(),
                     &symbol_id,
                     ref_kind,
                     params.through_implementors.unwrap_or(false),
+                    params.offset,
+                    params.cursor.as_deref(),
+                    limit,
                 )
                 .await
             {
-                Ok(refs) => {
-                    let total = refs.len();
-
-                    // Apply pagination
-                    let offset = params.offset.unwrap_or(0);
-                    let limit = params.limit.unwrap_or(100);
-                    let paginated: Vec<_> =
-                        refs.into_iter().skip(offset).take(limit).collect();
+                Ok(backend_response) => {
+                    let metadata = backend_response.metadata;
+                    let paginated = backend_response.references;
+                    let pagination = backend_response.pagination;
+                    let total = pagination.total;
+                    let offset = pagination.offset.unwrap_or(0);
 
                     debug!(symbol_id = %symbol_id, total, offset, returned = paginated.len(), "ministr_references success");
 
                     let mut reg = self.registry.lock().await;
-                    let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
+                    let entry = self.ensure_session_mut(&mut reg);
+                    let delivered = serde_json::to_string(&paginated).unwrap_or_default();
+                    let token_count = count_tokens(&delivered);
+                    let corpus_id = self
+                        .backend
+                        .routed_corpus_id(params.project.as_deref())
+                        .unwrap_or_else(|_| ministr_core::types::PRIMARY_CORPUS_ID.to_string());
+                    let identity = ministr_core::types::DeliveryIdentity::new(
+                        corpus_id,
+                        symbol_id.clone(),
+                        format!(
+                            "references_page:{}:{}:{}",
+                            params.ref_kind.as_deref().unwrap_or("all"),
+                            params.through_implementors.unwrap_or(false),
+                            offset
+                        ),
+                    );
+                    let turn = entry.session.current_turn() + 1;
+                    entry.session.record_delivery_identity(
+                        &identity,
+                        Resolution::Section,
+                        token_count,
+                        turn,
+                        content_hash(&delivered),
+                    );
+                    let _ = entry
+                        .budget
+                        .record_tokens(&identity.storage_key(), token_count);
+                    let usage_status = entry.budget.usage_status();
                     drop(reg);
+                    self.persist_session().await;
 
-                    let response = self
+                    self.warm_symbol_definition(
+                        tenant_subject.as_deref(),
+                        params.project.as_deref(),
+                        &symbol_id,
+                        PrefetchStrategy::ReferenceFollow,
+                    )
+                    .await;
+
+                    let mut response = self
                         .build_response(
                             ReferencesResponse {
                                 references: paginated,
                                 total,
                                 offset,
+                                pagination,
                             },
                             usage_status,
                         )
                         .await;
+                    response.apply_query_metadata(metadata);
                     structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, symbol_id = %symbol_id, "ministr_references failed");
-                    Ok(soft_backend_error(&e))
+                    Ok(apply_active_indexing_to_soft_error(
+                        soft_backend_error(&e),
+                        &self.ingestion_progress,
+                    ))
                 }
             }
         }
@@ -2872,6 +3997,9 @@ impl MinistrServer {
                     max_depth,
                     direction,
                     tests_only,
+                    params.offset,
+                    params.cursor.as_deref(),
+                    params.limit,
                 )
                 .await;
         }
@@ -2881,42 +4009,55 @@ impl MinistrServer {
         async {
             debug!(symbol_id = %params.symbol_id, max_depth, direction = direction.as_str(), tests_only, "ministr_impact request");
 
+            let limit = params.limit.unwrap_or(100).clamp(1, helpers::MAX_COLLECTION_PAGE);
+
             // Goes through the QueryBackend abstraction so the same handler
             // works whether ministr is running embedded or proxying to a
             // daemon. Concrete dispatch happens in `Backend::impact`.
             match self
                 .backend
-                .impact(
+                .impact_page(
                     tenant_subject.as_deref(),
                     params.project.as_deref(),
                     &params.symbol_id,
                     max_depth,
                     direction,
                     tests_only,
+                    params.offset,
+                    params.cursor.as_deref(),
+                    limit,
                 )
                 .await
             {
-                Ok(impact) => {
+                Ok(backend_response) => {
+                    let metadata = backend_response.metadata;
+                    let impact = backend_response.impact;
+                    let pagination = backend_response.pagination;
                     debug!(symbol_id = %params.symbol_id, symbols = impact.symbols, files = impact.files, "ministr_impact success");
 
                     let mut reg = self.registry.lock().await;
                     let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
                     drop(reg);
 
-                    let response = self
+                    let mut response = self
                         .build_response(
                             ImpactResponse {
                                 impact,
                                 changed: None,
+                                pagination,
                             },
                             usage_status,
                         )
                         .await;
+                    response.apply_query_metadata(metadata);
                     structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, symbol_id = %params.symbol_id, "ministr_impact failed");
-                    Ok(soft_backend_error(&e))
+                    Ok(apply_active_indexing_to_soft_error(
+                        soft_backend_error(&e),
+                        &self.ingestion_progress,
+                    ))
                 }
             }
         }
@@ -2940,6 +4081,9 @@ impl MinistrServer {
         max_depth: u32,
         direction: CallDirection,
         tests_only: bool,
+        offset: Option<usize>,
+        cursor: Option<&str>,
+        requested_limit: Option<usize>,
     ) -> Result<CallToolResult, McpError> {
         let span =
             info_span!("ministr_impact", range = %range, max_depth, direction = direction.as_str());
@@ -2971,7 +4115,7 @@ impl MinistrServer {
 
             // Resolve the changed lines to indexed symbols and union their blast
             // radius (composition over existing backend ops; testable in isolation).
-            let (impact, seed) = match diff_impact(
+            let (mut impact, seed) = match diff_impact(
                 &self.backend,
                 tenant_subject,
                 project,
@@ -2986,9 +4130,28 @@ impl MinistrServer {
                 Ok(r) => r,
                 Err(e) => {
                     warn!(error = %e, range = %range, "ministr_impact diff: backend op failed");
-                    return Ok(soft_backend_error(&e));
+                    return Ok(apply_active_indexing_to_soft_error(
+                        soft_backend_error(&e),
+                        &self.ingestion_progress,
+                    ));
                 }
             };
+            let total = impact.callers.len();
+            let limit = requested_limit.unwrap_or(100).clamp(1, 500);
+            let Ok(offset) = impact_cursor_offset(&impact.callers, offset, cursor) else {
+                return Ok(soft_error(
+                    "invalid_parameters",
+                    "Impact cursor no longer identifies an item; restart pagination.",
+                ));
+            };
+            impact.callers = impact.callers.into_iter().skip(offset).take(limit).collect();
+            let pagination = impact_pagination(
+                &impact.callers,
+                limit,
+                offset,
+                total,
+                cursor.map(str::to_owned),
+            );
             debug!(range = %range, changed_symbols = seed.changed_symbols.len(), impacted = impact.symbols, "ministr_impact (diff range) success");
 
             let mut reg = self.registry.lock().await;
@@ -3000,6 +4163,7 @@ impl MinistrServer {
                     ImpactResponse {
                         impact,
                         changed: Some(seed),
+                        pagination,
                     },
                     usage_status,
                 )
@@ -3029,7 +4193,14 @@ impl MinistrServer {
     ) -> Result<CallToolResult, McpError> {
         let tenant_subject = self.current_tenant_subject();
         let min_lines = params.min_lines.unwrap_or(1).max(1);
-        let limit = params.limit.unwrap_or(50).clamp(1, 500);
+        let Ok((offset, limit)) =
+            page_request(params.offset, params.cursor.as_deref(), params.limit, 50)
+        else {
+            return Ok(soft_error(
+                "invalid_parameters",
+                "Invalid pagination cursor.",
+            ));
+        };
         let span = info_span!("ministr_dead", kind = ?params.kind, module = ?params.module, min_lines, limit);
 
         async {
@@ -3047,32 +4218,47 @@ impl MinistrServer {
             // deployments.
             match self
                 .backend
-                .dead_code(
+                .dead_code_page(
                     tenant_subject.as_deref(),
                     params.project.as_deref(),
                     params.kind.as_deref(),
                     params.module.as_deref(),
                     min_lines,
+                    offset,
                     limit,
                 )
                 .await
             {
-                Ok(symbols) => {
-                    let total = symbols.len();
+                Ok(backend_response) => {
+                    let metadata = backend_response.metadata;
+                    let symbols = backend_response.data;
+                    let pagination = backend_response.pagination;
+                    let total = pagination.total;
                     debug!(total, "ministr_dead success");
 
                     let mut reg = self.registry.lock().await;
                     let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
                     drop(reg);
 
-                    let response = self
-                        .build_response(DeadCodeResponse { symbols, total }, usage_status)
+                    let mut response = self
+                        .build_response(
+                            DeadCodeResponse {
+                                symbols,
+                                total,
+                                pagination,
+                            },
+                            usage_status,
+                        )
                         .await;
+                    response.apply_query_metadata(metadata);
                     structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, "ministr_dead failed");
-                    Ok(soft_backend_error(&e))
+                    Ok(apply_active_indexing_to_soft_error(
+                        soft_backend_error(&e),
+                        &self.ingestion_progress,
+                    ))
                 }
             }
         }
@@ -3100,36 +4286,58 @@ impl MinistrServer {
         Parameters(params): Parameters<DiagnosticsParams>,
     ) -> Result<CallToolResult, McpError> {
         let tenant_subject = self.current_tenant_subject();
-        let limit = params.limit.unwrap_or(100).clamp(1, 500);
+        let Ok((offset, limit)) =
+            page_request(params.offset, params.cursor.as_deref(), params.limit, 100)
+        else {
+            return Ok(soft_error(
+                "invalid_parameters",
+                "Invalid pagination cursor.",
+            ));
+        };
         let span = info_span!("ministr_diagnostics", languages = ?params.languages, limit);
 
         async {
             match self
                 .backend
-                .diagnostics(
+                .diagnostics_page(
                     tenant_subject.as_deref(),
                     params.project.as_deref(),
                     params.languages.as_deref(),
+                    offset,
                     limit,
                 )
                 .await
             {
-                Ok(diagnostics) => {
-                    let total = diagnostics.len();
+                Ok(backend_response) => {
+                    let metadata = backend_response.metadata;
+                    let diagnostics = backend_response.data;
+                    let pagination = backend_response.pagination;
+                    let total = pagination.total;
                     debug!(total, "ministr_diagnostics success");
 
                     let mut reg = self.registry.lock().await;
                     let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
                     drop(reg);
 
-                    let response = self
-                        .build_response(DiagnosticsResponse { diagnostics, total }, usage_status)
+                    let mut response = self
+                        .build_response(
+                            DiagnosticsResponse {
+                                diagnostics,
+                                total,
+                                pagination,
+                            },
+                            usage_status,
+                        )
                         .await;
+                    response.apply_query_metadata(metadata);
                     structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, "ministr_diagnostics failed");
-                    Ok(soft_backend_error(&e))
+                    Ok(apply_active_indexing_to_soft_error(
+                        soft_backend_error(&e),
+                        &self.ingestion_progress,
+                    ))
                 }
             }
         }
@@ -3155,7 +4363,16 @@ impl MinistrServer {
         Parameters(params): Parameters<SolidParams>,
     ) -> Result<CallToolResult, McpError> {
         let tenant_subject = self.current_tenant_subject();
-        let core_params = mcp_solid_params_to_service(&params);
+        let mut core_params = mcp_solid_params_to_service(&params);
+        let Ok((offset, limit)) =
+            page_request(params.offset, params.cursor.as_deref(), params.limit, 50)
+        else {
+            return Ok(soft_error(
+                "invalid_parameters",
+                "Invalid pagination cursor.",
+            ));
+        };
+        core_params.limit = helpers::MAX_COLLECTION_PAGE;
         let span = info_span!(
             "ministr_solid",
             kind = ?core_params.kind,
@@ -3175,29 +4392,45 @@ impl MinistrServer {
 
             match self
                 .backend
-                .solid(
+                .solid_page(
                     tenant_subject.as_deref(),
                     params.project.as_deref(),
                     &core_params,
+                    offset,
+                    limit,
                 )
                 .await
             {
-                Ok(findings) => {
-                    let total = findings.len();
+                Ok(backend_response) => {
+                    let metadata = backend_response.metadata;
+                    let findings = backend_response.data;
+                    let pagination = backend_response.pagination;
+                    let total = pagination.total;
                     debug!(total, "ministr_solid success");
 
                     let mut reg = self.registry.lock().await;
                     let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
                     drop(reg);
 
-                    let response = self
-                        .build_response(SolidResponse { findings, total }, usage_status)
+                    let mut response = self
+                        .build_response(
+                            SolidResponse {
+                                findings,
+                                total,
+                                pagination,
+                            },
+                            usage_status,
+                        )
                         .await;
+                    response.apply_query_metadata(metadata);
                     structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, "ministr_solid failed");
-                    Ok(soft_backend_error(&e))
+                    Ok(apply_active_indexing_to_soft_error(
+                        soft_backend_error(&e),
+                        &self.ingestion_progress,
+                    ))
                 }
             }
         }
@@ -3225,20 +4458,34 @@ impl MinistrServer {
         async {
             debug!(?params.query, ?params.bridge_kind, ?params.language, ?params.file_path, "ministr_bridge request");
 
+            let Ok((offset, limit)) = page_request(
+                params.offset,
+                params.cursor.as_deref(),
+                params.limit,
+                100,
+            ) else {
+                return Ok(soft_error("invalid_parameters", "Invalid pagination cursor."));
+            };
+
             match self
                 .backend
-                .bridges(
+                .bridges_page(
                     tenant_subject.as_deref(),
                     params.project.as_deref(),
                     params.query.as_deref(),
                     params.bridge_kind.as_deref(),
                     params.language.as_deref(),
                     params.file_path.as_deref(),
+                    offset,
+                    limit,
                 )
                 .await
             {
-                Ok(links) => {
-                    let total = links.len();
+                Ok(backend_response) => {
+                    let metadata = backend_response.metadata;
+                    let links = backend_response.data;
+                    let pagination = backend_response.pagination;
+                    let total = pagination.total;
 
                     let summaries: Vec<BridgeLinkSummary> = links
                         .into_iter()
@@ -3268,14 +4515,25 @@ impl MinistrServer {
                     let usage_status = self.ensure_session_mut(&mut reg).budget.usage_status();
                     drop(reg);
 
-                    let response = self
-                        .build_response(BridgeResponse { links: summaries, total }, usage_status)
+                    let mut response = self
+                        .build_response(
+                            BridgeResponse {
+                                links: summaries,
+                                total,
+                                pagination,
+                            },
+                            usage_status,
+                        )
                         .await;
+                    response.apply_query_metadata(metadata);
                     structured_result(&response)
                 }
                 Err(e) => {
                     warn!(error = %e, "ministr_bridge failed");
-                    Ok(soft_backend_error(&e))
+                    Ok(apply_active_indexing_to_soft_error(
+                        soft_backend_error(&e),
+                        &self.ingestion_progress,
+                    ))
                 }
             }
         }
@@ -3297,7 +4555,10 @@ impl MinistrServer {
         output_schema = tool_output_schema::<ToolResponse<ProjectsResponse>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
-    async fn projects(&self) -> Result<CallToolResult, McpError> {
+    async fn projects(
+        &self,
+        Parameters(params): Parameters<ProjectsParams>,
+    ) -> Result<CallToolResult, McpError> {
         let span = info_span!("ministr_projects");
         async {
             let labels = self.backend.linked_labels();
@@ -3312,6 +4573,17 @@ impl MinistrServer {
                     is_current: false,
                 });
             }
+            let total = projects.len();
+            let Ok((offset, limit)) =
+                page_request(params.offset, params.cursor.as_deref(), params.limit, 100)
+            else {
+                return Ok(soft_error(
+                    "invalid_parameters",
+                    "Invalid pagination cursor.",
+                ));
+            };
+            projects = projects.into_iter().skip(offset).take(limit).collect();
+            let pagination = page_metadata(limit, offset, projects.len(), total);
             let hint = if projects.len() == 1 {
                 "No linked projects. Use `ministr_clone` to clone a repo as a new linked \
                  project, or add a `[[linked]]` entry to .ministr.toml."
@@ -3327,7 +4599,15 @@ impl MinistrServer {
             drop(reg);
 
             let response = self
-                .build_response(ProjectsResponse { projects, hint }, usage_status)
+                .build_response(
+                    ProjectsResponse {
+                        projects,
+                        hint,
+                        total,
+                        pagination,
+                    },
+                    usage_status,
+                )
                 .await;
             structured_result(&response)
         }
@@ -3522,6 +4802,7 @@ impl MinistrServer {
                 .backend
                 .extract_claims(None, None, &result.content_id, Some(concept))
                 .await
+                .map(|response| response.data)
                 .unwrap_or_default();
 
             if claims.is_empty() {
@@ -3538,6 +4819,7 @@ impl MinistrServer {
                     .backend
                     .related_claims(None, None, &claim.claim_id, None)
                     .await
+                    .map(|response| response.data)
                     .unwrap_or_default();
 
                 for rel in relations.iter().take(3) {
@@ -3637,14 +4919,67 @@ mod tests {
     // ── Cross-corpus survey tests ──────────────────────────────────────
 
     fn make_sr(content_id: &str, score: f32) -> ministr_core::service::SurveyResult {
+        let text = format!("text for {content_id}");
         ministr_core::service::SurveyResult {
             content_id: content_id.to_string(),
             resolution: "section".to_string(),
             score,
-            text: format!("text for {content_id}"),
+            text: text.clone(),
             heading_path: None,
             source_corpus: None,
+            locator: ministr_core::types::ResultLocator::primary(content_id, "section_full"),
+            text_metadata: ministr_core::types::TextDeliveryMetadata {
+                truncated: false,
+                original_bytes: text.len(),
+                original_tokens: count_tokens(&text),
+                returned_bytes: text.len(),
+                returned_tokens: count_tokens(&text),
+                representation: ministr_core::types::TextRepresentation::Full,
+                continuation: None,
+            },
+            provenance: ministr_core::types::ContentProvenance::Production,
+            score_explanation: ministr_core::types::ScoreExplanation {
+                final_score: score,
+                ..Default::default()
+            },
         }
+    }
+
+    #[test]
+    fn survey_continuation_pages_before_dedup_without_gaps_or_repeats() {
+        let ranked: Vec<_> = (0..35)
+            .map(|index| {
+                let rank = f32::from(u16::try_from(index).unwrap());
+                make_sr(&format!("result-{index:02}"), 1.0 - rank / 100.0)
+            })
+            .collect();
+        let mut delivered = std::collections::HashSet::new();
+        let mut observed = Vec::new();
+        for page_index in 0..3 {
+            let offset = page_index * 10;
+            let (page, suppressed, pagination) =
+                paginate_survey_window(ranked.clone(), offset, 10, &delivered, page_index > 0);
+            assert!(suppressed.is_empty());
+            assert_eq!(pagination.offset, Some(offset));
+            assert_eq!(
+                pagination.next_cursor,
+                Some(format!("offset:{}", offset + 10))
+            );
+            for result in page {
+                assert!(delivered.insert(result.locator.identity.clone()));
+                observed.push(result.content_id);
+            }
+        }
+        assert_eq!(observed.len(), 30);
+        assert_eq!(observed[0], "result-00");
+        assert_eq!(observed[29], "result-29");
+        assert_eq!(
+            observed
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            observed.len()
+        );
     }
 
     #[test]
@@ -3737,6 +5072,45 @@ mod tests {
         let (merged, dedup) = merge_cross_corpus_results(Vec::new(), None, 10);
         assert!(merged.is_empty());
         assert_eq!(dedup, 0);
+    }
+
+    #[tokio::test]
+    async fn cross_corpus_mixed_success_preserves_results_and_failure_status() {
+        let server = setup_server().await;
+        let result = server
+            .survey(Parameters(SurveyParams {
+                query: "JWT authentication tokens".to_string(),
+                top_k: Some(10),
+                limit: None,
+                offset: None,
+                cursor: None,
+                project: None,
+                corpus_ids: Some(vec!["primary".to_string(), "missing".to_string()]),
+                corpus_boost: None,
+            }))
+            .await
+            .unwrap();
+        let structured = result
+            .structured_content
+            .expect("cross-corpus survey must return structured content");
+        assert_eq!(structured["status"], "partial");
+        assert!(
+            structured["result"]["results"]
+                .as_array()
+                .is_some_and(|v| !v.is_empty())
+        );
+        let corpora = structured["corpora"].as_array().unwrap();
+        assert_eq!(corpora.len(), 2);
+        assert!(corpora.iter().any(|status| {
+            status["corpus_id"] == "missing"
+                && status["status"] == "error"
+                && status["error"]["error_code"] == "unavailable_corpus"
+        }));
+        assert!(
+            !structured["completeness"]["absence_is_conclusive"]
+                .as_bool()
+                .unwrap()
+        );
     }
 
     #[test]
@@ -3924,35 +5298,21 @@ mod tests {
 
     #[test]
     fn top_hit_next_action_empty_when_no_results() {
-        let actions = top_hit_next_action(&[]);
+        let actions = top_hit_next_action(&[], None);
         assert!(actions.is_empty());
     }
 
     #[test]
     fn top_hit_next_action_empty_when_top_score_below_threshold() {
-        let results = vec![ministr_core::service::SurveyResult {
-            content_id: "docs/a.md#x".into(),
-            resolution: "section".into(),
-            score: 0.3,
-            text: "noisy match".into(),
-            heading_path: None,
-            source_corpus: None,
-        }];
-        let actions = top_hit_next_action(&results);
+        let results = vec![make_sr("docs/a.md#x", 0.001)];
+        let actions = top_hit_next_action(&results, None);
         assert!(actions.is_empty());
     }
 
     #[test]
     fn top_hit_next_action_section_resolution_emits_read() {
-        let results = vec![ministr_core::service::SurveyResult {
-            content_id: "docs/a.md#x".into(),
-            resolution: "section".into(),
-            score: 0.85,
-            text: "confident match".into(),
-            heading_path: None,
-            source_corpus: None,
-        }];
-        let actions = top_hit_next_action(&results);
+        let results = vec![make_sr("docs/a.md#x", 0.85)];
+        let actions = top_hit_next_action(&results, None);
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].action, "ministr_read");
         assert_eq!(actions[0].args["section_id"], "docs/a.md#x");
@@ -3960,15 +5320,11 @@ mod tests {
 
     #[test]
     fn top_hit_next_action_symbol_resolution_emits_definition() {
-        let results = vec![ministr_core::service::SurveyResult {
-            content_id: "sym-foo::bar".into(),
-            resolution: "symbol_full".into(),
-            score: 0.9,
-            text: "sym".into(),
-            heading_path: None,
-            source_corpus: None,
-        }];
-        let actions = top_hit_next_action(&results);
+        let mut symbol = make_sr("sym-foo::bar", 0.9);
+        symbol.resolution = "symbol_full".into();
+        symbol.locator.identity.resolution = "symbol_full".into();
+        let results = vec![symbol];
+        let actions = top_hit_next_action(&results, None);
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].action, "ministr_definition");
         assert_eq!(actions[0].args["symbol_id"], "sym-foo::bar");
@@ -3987,7 +5343,7 @@ mod tests {
             complexity: None,
             caller_count: None,
         }];
-        let actions = single_symbol_next_action(&symbols);
+        let actions = single_symbol_next_action(&symbols, None);
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].action, "ministr_definition");
         assert_eq!(actions[0].args["symbol_id"], "sym-foo");
@@ -3996,7 +5352,7 @@ mod tests {
 
     #[test]
     fn single_symbol_next_action_empty_when_zero_or_many() {
-        assert!(single_symbol_next_action(&[]).is_empty());
+        assert!(single_symbol_next_action(&[], None).is_empty());
 
         let two = vec![
             SymbolSummary {
@@ -4022,7 +5378,7 @@ mod tests {
                 caller_count: None,
             },
         ];
-        assert!(single_symbol_next_action(&two).is_empty());
+        assert!(single_symbol_next_action(&two, None).is_empty());
     }
 
     /// Deterministic mock embedder for testing.
@@ -4457,6 +5813,9 @@ mod tests {
         let params = SurveyParams {
             query: "JWT authentication tokens".to_string(),
             top_k: Some(5),
+            limit: None,
+            offset: None,
+            cursor: None,
             project: None,
             corpus_ids: None,
             corpus_boost: None,
@@ -4480,6 +5839,7 @@ mod tests {
         let params = ReadParams {
             section_id: "docs/auth.md#tokens".to_string(),
             project: None,
+            source_corpus: None,
         };
         let result = server.read(Parameters(params)).await.unwrap();
 
@@ -4496,6 +5856,9 @@ mod tests {
         let params = ExtractParams {
             section_id: "docs/auth.md#tokens".to_string(),
             query: None,
+            offset: None,
+            cursor: None,
+            limit: None,
             project: None,
         };
         let result = server.extract(Parameters(params)).await.unwrap();
@@ -4516,6 +5879,7 @@ mod tests {
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
                 project: None,
+                source_corpus: None,
             }))
             .await
             .unwrap();
@@ -4526,6 +5890,9 @@ mod tests {
             .extract(Parameters(ExtractParams {
                 section_id: "docs/auth.md#tokens".to_string(),
                 query: None,
+                offset: None,
+                cursor: None,
+                limit: None,
                 project: None,
             }))
             .await
@@ -4548,6 +5915,9 @@ mod tests {
             .survey(Parameters(SurveyParams {
                 query: "JWT authentication tokens".to_string(),
                 top_k: Some(10),
+                limit: None,
+                offset: None,
+                cursor: None,
                 project: None,
                 corpus_ids: None,
                 corpus_boost: None,
@@ -4564,6 +5934,9 @@ mod tests {
             .survey(Parameters(SurveyParams {
                 query: "JWT authentication tokens".to_string(),
                 top_k: Some(10),
+                limit: None,
+                offset: None,
+                cursor: None,
                 project: None,
                 corpus_ids: None,
                 corpus_boost: None,
@@ -4586,6 +5959,129 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn exact_drop_makes_one_survey_identity_reeligible_and_updates_savings() {
+        let server = setup_server().await;
+        let survey = || SurveyParams {
+            query: "JWT authentication tokens".to_string(),
+            top_k: Some(10),
+            limit: None,
+            offset: None,
+            cursor: None,
+            project: None,
+            corpus_ids: None,
+            corpus_boost: None,
+        };
+
+        let first = server.survey(Parameters(survey())).await.unwrap();
+        let first_structured = first.structured_content.unwrap();
+        let identity: ministr_core::types::DeliveryIdentity = serde_json::from_value(
+            first_structured["result"]["results"][0]["locator"]["identity"].clone(),
+        )
+        .unwrap();
+
+        let second = server.survey(Parameters(survey())).await.unwrap();
+        assert!(
+            second.structured_content.unwrap()["result"]["deduplicated_count"]
+                .as_u64()
+                .is_some_and(|count| count > 0)
+        );
+
+        let usage = server.usage().await.unwrap().structured_content.unwrap();
+        assert!(
+            usage["session_metrics"]["dedup_hits"]
+                .as_u64()
+                .is_some_and(|count| count > 0)
+        );
+        assert!(
+            usage["session_metrics"]["total_tokens_saved"]
+                .as_u64()
+                .is_some_and(|tokens| tokens > 0)
+        );
+
+        let dropped = server
+            .dropped(Parameters(DroppedParams {
+                content_ids: Vec::new(),
+                identities: vec![identity.clone()],
+            }))
+            .await
+            .unwrap();
+        assert_eq!(
+            dropped.structured_content.unwrap()["result"]["dropped_identities"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let third = server.survey(Parameters(survey())).await.unwrap();
+        let third = third.structured_content.unwrap();
+        assert!(
+            third["result"]["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|result| {
+                    serde_json::from_value::<ministr_core::types::DeliveryIdentity>(
+                        result["locator"]["identity"].clone(),
+                    )
+                    .is_ok_and(|candidate| candidate == identity)
+                })
+        );
+    }
+
+    #[tokio::test]
+    async fn survey_then_read_records_a_real_prefetch_hit() {
+        let server = setup_server().await;
+        let surveyed = server
+            .survey(Parameters(SurveyParams {
+                query: "JWT authentication tokens".to_string(),
+                top_k: Some(10),
+                limit: None,
+                offset: None,
+                cursor: None,
+                project: None,
+                corpus_ids: None,
+                corpus_boost: None,
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        let section_id = surveyed["result"]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|result| {
+                result["locator"]["identity"]["resolution"]
+                    .as_str()
+                    .is_some_and(|resolution| resolution.starts_with("section"))
+            })
+            .and_then(|result| result["content_id"].as_str())
+            .expect("fixture survey should surface a section")
+            .to_string();
+
+        server
+            .read(Parameters(ReadParams {
+                section_id,
+                project: None,
+                source_corpus: None,
+            }))
+            .await
+            .unwrap();
+        let usage = server.usage().await.unwrap().structured_content.unwrap();
+        assert!(
+            usage["prefetch_metrics"]["hits"]
+                .as_u64()
+                .is_some_and(|hits| hits > 0)
+        );
+        assert!(
+            usage["prefetch_metrics"]["agent_plan_hits"]
+                .as_u64()
+                .is_some_and(|hits| hits > 0)
+        );
+    }
+
+    #[tokio::test]
     async fn read_re_request_skips_unchanged_content() {
         let server = setup_server().await;
 
@@ -4594,6 +6090,7 @@ mod tests {
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
                 project: None,
+                source_corpus: None,
             }))
             .await
             .unwrap();
@@ -4609,6 +6106,7 @@ mod tests {
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
                 project: None,
+                source_corpus: None,
             }))
             .await
             .unwrap();
@@ -4637,6 +6135,9 @@ mod tests {
         let params = SurveyParams {
             query: "JWT authentication tokens".to_string(),
             top_k: Some(5),
+            limit: None,
+            offset: None,
+            cursor: None,
             project: None,
             corpus_ids: None,
             corpus_boost: None,
@@ -4663,6 +6164,7 @@ mod tests {
         let params = ReadParams {
             section_id: "docs/auth.md#tokens".to_string(),
             project: None,
+            source_corpus: None,
         };
         let result = server.read(Parameters(params)).await.unwrap();
 
@@ -4682,15 +6184,143 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn read_returns_full_large_unicode_section_without_condensing() {
+        let server = setup_server().await;
+        let mut text = "beginning — αβγ\n".to_string();
+        text.push_str(&"middle 🚀 data\n".repeat(12_000));
+        text.push_str("ending — 終わり");
+        let document = ministr_core::types::DocumentTree {
+            id: ContentId("docs/large.md".into()),
+            title: "Large".into(),
+            source_path: "docs/large.md".into(),
+            summary: None,
+            sections: vec![ministr_core::types::Section {
+                id: SectionId("docs/large.md#body".into()),
+                heading_path: vec!["Large".into(), "Body".into()],
+                depth: 2,
+                text: text.clone(),
+                structural_nodes: vec![],
+                children: vec![],
+                claims: vec![],
+                summary: Some("Large Unicode body".into()),
+            }],
+        };
+        server
+            .service
+            .as_ref()
+            .unwrap()
+            .storage()
+            .insert_document(&document)
+            .await
+            .unwrap();
+
+        let result = server
+            .read(Parameters(ReadParams {
+                section_id: "docs/large.md#body".into(),
+                project: None,
+                source_corpus: None,
+            }))
+            .await
+            .unwrap();
+        let structured = result.structured_content.expect("structured content");
+        assert_eq!(structured["result"]["text"], text);
+        assert!(structured["_condensed"].is_null());
+        assert!(structured["_truncation_warning"].is_object());
+    }
+
+    #[tokio::test]
     async fn read_not_found_returns_error() {
         let server = setup_server().await;
         let params = ReadParams {
             section_id: "nonexistent#section".to_string(),
             project: None,
+            source_corpus: None,
         };
         let result = server.read(Parameters(params)).await.unwrap();
 
         assert_soft_error(&result, "section_not_found");
+    }
+
+    #[test]
+    fn soft_errors_are_schema_valid_and_access_failures_are_nonconclusive() {
+        for (kind, retryable) in [("permission_denied", false), ("file_unavailable", true)] {
+            let result = soft_error(kind, "unavailable for test");
+            assert_soft_error(&result, kind);
+            let structured = result.structured_content.expect("structured content");
+            assert!(structured["result"].is_null());
+            assert_eq!(structured["status"], "error");
+            assert_eq!(structured["error"]["retryable"], retryable);
+            assert_eq!(structured["completeness"]["completeness"], "unavailable");
+            assert_eq!(structured["completeness"]["absence_is_conclusive"], false);
+        }
+
+        let schema =
+            serde_json::to_string(&tool_output_schema::<ToolResponse<ReadOutputData>>()).unwrap();
+        assert!(
+            schema.contains("null"),
+            "the advertised ToolResponse schema must permit result:null on soft errors"
+        );
+    }
+
+    #[tokio::test]
+    async fn active_indexing_makes_navigation_misses_partial_and_nonconclusive() {
+        let server = setup_server().await;
+        server.ingestion_progress.start(12);
+
+        let read = server
+            .read(Parameters(ReadParams {
+                section_id: "not-indexed-yet#section".into(),
+                project: None,
+                source_corpus: None,
+            }))
+            .await
+            .unwrap();
+        let definition = server
+            .definition(Parameters(DefinitionParams {
+                symbol_id: "sym-not-indexed-yet".into(),
+                file: None,
+                line: None,
+                col: None,
+                blame: None,
+                max_lines: None,
+                context_lines: None,
+                include_body: None,
+                outline_only: None,
+                start_line: None,
+                start_byte: None,
+                project: None,
+                source_corpus: None,
+            }))
+            .await
+            .unwrap();
+        let references = server
+            .references(Parameters(ReferencesParams {
+                symbol_id: "sym-not-indexed-yet".into(),
+                file: None,
+                line: None,
+                col: None,
+                ref_kind: None,
+                through_implementors: None,
+                offset: None,
+                limit: None,
+                cursor: None,
+                project: None,
+            }))
+            .await
+            .unwrap();
+
+        for result in [&read, &definition, &references] {
+            let structured = result
+                .structured_content
+                .as_ref()
+                .expect("structured content");
+            assert_eq!(structured["status"], "partial");
+            assert_eq!(structured["completeness"]["completeness"], "partial");
+            assert_eq!(structured["completeness"]["estimated_total_items"], 12);
+            assert_eq!(structured["completeness"]["absence_is_conclusive"], false);
+            assert_eq!(structured["error"]["retryable"], true);
+            assert!(structured["result"].is_null());
+        }
     }
 
     #[tokio::test]
@@ -4699,6 +6329,9 @@ mod tests {
         let params = ExtractParams {
             section_id: "nonexistent#section".to_string(),
             query: None,
+            offset: None,
+            cursor: None,
+            limit: None,
             project: None,
         };
         let result = server.extract(Parameters(params)).await.unwrap();
@@ -4754,6 +6387,7 @@ mod tests {
         let params = ReadParams {
             section_id: "nonexistent#section".to_string(),
             project: None,
+            source_corpus: None,
         };
         let result = server.read(Parameters(params)).await.unwrap();
 
@@ -4775,6 +6409,9 @@ mod tests {
         let params = ExtractParams {
             section_id: "nonexistent#section".to_string(),
             query: None,
+            offset: None,
+            cursor: None,
+            limit: None,
             project: None,
         };
         let result = server.extract(Parameters(params)).await.unwrap();
@@ -4812,6 +6449,26 @@ mod tests {
         assert_eq!(parse_resolution("unknown"), Resolution::Section);
     }
 
+    #[test]
+    fn dedup_savings_use_each_suppressed_exact_delivery_size() {
+        let mut session = ministr_core::session::Session::new(
+            ministr_core::session::SessionId::from("dedup-accounting".to_string()),
+            10_000,
+            ministr_core::session::DropPolicy::Fifo,
+        );
+        let small = ministr_core::types::DeliveryIdentity::new("corpus-a", "collision", "summary");
+        let large = ministr_core::types::DeliveryIdentity::new("corpus-b", "collision", "summary");
+        session.record_delivery_identity(&small, Resolution::Summary, 7, 1, "small".to_string());
+        session.record_delivery_identity(&large, Resolution::Summary, 113, 1, "large".to_string());
+
+        record_suppressed_delivery_savings(&mut session, &[small, large]);
+
+        let metrics = session.metrics();
+        assert_eq!(metrics.dedup_hits, 2);
+        assert_eq!(metrics.cumulative_tokens_deduplicated, 120);
+        assert_eq!(metrics.cumulative_bytes_deduplicated, 480);
+    }
+
     // --- ministr_dropped tests ---
 
     #[tokio::test]
@@ -4823,6 +6480,7 @@ mod tests {
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
                 project: None,
+                source_corpus: None,
             }))
             .await
             .unwrap();
@@ -4831,6 +6489,7 @@ mod tests {
         let result = server
             .dropped(Parameters(DroppedParams {
                 content_ids: vec!["docs/auth.md#tokens".to_string()],
+                identities: Vec::new(),
             }))
             .await
             .unwrap();
@@ -4857,6 +6516,7 @@ mod tests {
         let result = server
             .dropped(Parameters(DroppedParams {
                 content_ids: vec!["nonexistent".to_string()],
+                identities: Vec::new(),
             }))
             .await
             .unwrap();
@@ -4877,6 +6537,7 @@ mod tests {
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
                 project: None,
+                source_corpus: None,
             }))
             .await
             .unwrap();
@@ -4885,6 +6546,7 @@ mod tests {
         let result = server
             .dropped(Parameters(DroppedParams {
                 content_ids: vec!["docs/auth.md#tokens".to_string(), "nonexistent".to_string()],
+                identities: Vec::new(),
             }))
             .await
             .unwrap();
@@ -4903,6 +6565,7 @@ mod tests {
         let result = server
             .dropped(Parameters(DroppedParams {
                 content_ids: vec![],
+                identities: Vec::new(),
             }))
             .await
             .unwrap();
@@ -4925,6 +6588,7 @@ mod tests {
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
                 project: None,
+                source_corpus: None,
             }))
             .await
             .unwrap();
@@ -4938,6 +6602,7 @@ mod tests {
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
                 project: None,
+                source_corpus: None,
             }))
             .await
             .unwrap();
@@ -5037,6 +6702,7 @@ mod tests {
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
                 project: None,
+                source_corpus: None,
             }))
             .await
             .unwrap();
@@ -5062,6 +6728,7 @@ mod tests {
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
                 project: None,
+                source_corpus: None,
             }))
             .await
             .unwrap();
@@ -5087,6 +6754,10 @@ mod tests {
         let server = setup_server().await;
         let params = CompressParams {
             content_ids: vec!["docs/auth.md#tokens".to_string()],
+            identities: Vec::new(),
+            offset: None,
+            cursor: None,
+            limit: None,
             project: None,
         };
         let result = server.compress(Parameters(params)).await.unwrap();
@@ -5108,6 +6779,10 @@ mod tests {
         let server = setup_server().await;
         let params = CompressParams {
             content_ids: vec!["nonexistent#section".to_string()],
+            identities: Vec::new(),
+            offset: None,
+            cursor: None,
+            limit: None,
             project: None,
         };
         let result = server.compress(Parameters(params)).await.unwrap();
@@ -5123,10 +6798,99 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn compress_clamps_large_requests_and_reports_omitted_identities() {
+        let server = setup_server().await;
+        let result = server
+            .compress(Parameters(CompressParams {
+                content_ids: (0..510).map(|index| format!("missing#{index}")).collect(),
+                identities: Vec::new(),
+                offset: None,
+                cursor: None,
+                limit: Some(10_000),
+                project: None,
+            }))
+            .await
+            .unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(extract_text(&result.content)).unwrap();
+        assert_eq!(parsed["result"]["total"], 510);
+        assert_eq!(parsed["result"]["pagination"]["limit"], 500);
+        assert_eq!(parsed["result"]["pagination"]["omitted_count"], 10);
+        assert_eq!(parsed["result"]["pagination"]["has_more"], true);
+        assert!(parsed["result"]["summaries"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn projects_are_sorted_and_paginated_with_exact_totals() {
+        use crate::backend::{DaemonBackend, DaemonMultiBackend};
+        use ministr_api::client::DaemonClient;
+
+        let client = Arc::new(DaemonClient::new());
+        let default = Arc::new(DaemonBackend::new(
+            Arc::clone(&client),
+            "primary".to_string(),
+            None,
+        ));
+        let linked = std::collections::HashMap::from([
+            (
+                "zeta".to_string(),
+                Arc::new(DaemonBackend::new(
+                    Arc::clone(&client),
+                    "corpus-z".to_string(),
+                    None,
+                )),
+            ),
+            (
+                "alpha".to_string(),
+                Arc::new(DaemonBackend::new(client, "corpus-a".to_string(), None)),
+            ),
+        ]);
+        let server = MinistrServer::with_daemon_multi_backend(
+            DaemonMultiBackend::new(default, linked),
+            "projects-pagination".to_string(),
+        );
+
+        let first = server
+            .projects(Parameters(ProjectsParams {
+                offset: None,
+                cursor: None,
+                limit: Some(2),
+            }))
+            .await
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(extract_text(&first.content)).unwrap();
+        assert_eq!(parsed["result"]["total"], 3);
+        assert_eq!(parsed["result"]["projects"][0]["is_current"], true);
+        assert_eq!(parsed["result"]["projects"][1]["label"], "alpha");
+        let cursor = parsed["result"]["pagination"]["next_cursor"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let second = server
+            .projects(Parameters(ProjectsParams {
+                offset: None,
+                cursor: Some(cursor),
+                limit: Some(2),
+            }))
+            .await
+            .unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(extract_text(&second.content)).unwrap();
+        assert_eq!(parsed["result"]["pagination"]["offset"], 2);
+        assert_eq!(parsed["result"]["projects"][0]["label"], "zeta");
+        assert_eq!(parsed["result"]["pagination"]["has_more"], false);
+    }
+
+    #[tokio::test]
     async fn compress_omits_usage_status() {
         let server = setup_server().await;
         let params = CompressParams {
             content_ids: vec!["docs/auth.md#tokens".to_string()],
+            identities: Vec::new(),
+            offset: None,
+            cursor: None,
+            limit: None,
             project: None,
         };
         let result = server.compress(Parameters(params)).await.unwrap();
@@ -5142,6 +6906,10 @@ mod tests {
         let server = setup_server().await;
         let params = CompressParams {
             content_ids: vec!["docs/auth.md#tokens".to_string()],
+            identities: Vec::new(),
+            offset: None,
+            cursor: None,
+            limit: None,
             project: None,
         };
         let result = server.compress(Parameters(params)).await.unwrap();
@@ -5170,6 +6938,10 @@ mod tests {
                 "docs/auth.md#tokens".to_string(),
                 "nonexistent#missing".to_string(),
             ],
+            identities: Vec::new(),
+            offset: None,
+            cursor: None,
+            limit: None,
             project: None,
         };
         let result = server.compress(Parameters(params)).await.unwrap();
@@ -5182,6 +6954,77 @@ mod tests {
             summaries.len(),
             1,
             "should only return summary for the known section"
+        );
+    }
+
+    #[tokio::test]
+    async fn compress_updates_only_the_exact_corpus_identity() {
+        let server = setup_server().await;
+        let content_id = "docs/auth.md#tokens";
+        let primary = ministr_core::types::DeliveryIdentity::new(
+            ministr_core::types::PRIMARY_CORPUS_ID,
+            content_id,
+            "section_full",
+        );
+        let collision =
+            ministr_core::types::DeliveryIdentity::new("linked-corpus", content_id, "section_full");
+
+        server
+            .read(Parameters(ReadParams {
+                section_id: content_id.to_string(),
+                project: None,
+                source_corpus: None,
+            }))
+            .await
+            .unwrap();
+        {
+            let mut registry = server.registry.lock().await;
+            let entry = server.ensure_session_mut(&mut registry);
+            entry.session.record_delivery_identity(
+                &collision,
+                Resolution::Section,
+                777,
+                1,
+                "linked-hash".to_string(),
+            );
+        }
+
+        let result = server
+            .compress(Parameters(CompressParams {
+                content_ids: Vec::new(),
+                identities: vec![primary.clone()],
+                offset: None,
+                cursor: None,
+                limit: None,
+                project: None,
+            }))
+            .await
+            .unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(extract_text(&result.content)).unwrap();
+        let summary = &parsed["result"]["summaries"][0];
+        assert_eq!(summary["identity"]["corpus_id"], "primary");
+        assert_eq!(summary["identity"]["content_id"], content_id);
+        assert_eq!(summary["identity"]["resolution"], "section_full");
+
+        let mut registry = server.registry.lock().await;
+        let entry = server.ensure_session_mut(&mut registry);
+        assert_eq!(
+            entry
+                .session
+                .get_delivered_identity(&primary)
+                .unwrap()
+                .compression_tier,
+            ministr_core::session::CompressionTier::Extractive
+        );
+        assert_ne!(
+            entry
+                .session
+                .get_delivered_identity(&collision)
+                .unwrap()
+                .compression_tier,
+            ministr_core::session::CompressionTier::Extractive,
+            "a colliding ID in another corpus must remain untouched"
         );
     }
 
@@ -5502,7 +7345,9 @@ mod tests {
                 document_id: None,
                 offset: None,
                 limit: None,
+                cursor: None,
                 project: None,
+                source_corpus: None,
             }))
             .await
             .unwrap();
@@ -5524,6 +7369,7 @@ mod tests {
             .read(Parameters(ReadParams {
                 section_id: "docs/auth.md#tokens".to_string(),
                 project: None,
+                source_corpus: None,
             }))
             .await
             .unwrap();
@@ -5533,7 +7379,9 @@ mod tests {
                 document_id: None,
                 offset: None,
                 limit: None,
+                cursor: None,
                 project: None,
+                source_corpus: None,
             }))
             .await
             .unwrap();
@@ -5562,6 +7410,9 @@ mod tests {
             .survey(Parameters(SurveyParams {
                 query: "JWT tokens".to_string(),
                 top_k: Some(5),
+                limit: None,
+                offset: None,
+                cursor: None,
                 project: None,
                 corpus_ids: None,
                 corpus_boost: None,
@@ -6507,7 +8358,9 @@ mod tests {
                 document_id: None,
                 offset: None,
                 limit: None,
+                cursor: None,
                 project: None,
+                source_corpus: None,
             }))
             .await
             .unwrap();
@@ -6519,6 +8372,41 @@ mod tests {
         assert_eq!(parsed["result"]["corpus_stats"]["offset"], 0);
         assert_eq!(parsed["result"]["corpus_stats"]["returned"], 1);
         assert_eq!(parsed["result"]["entries"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["result"]["pagination"]["limit"], 100);
+        assert_eq!(parsed["result"]["pagination"]["has_more"], false);
+        assert_eq!(parsed["result"]["pagination"]["omitted_count"], 0);
+    }
+
+    #[tokio::test]
+    async fn active_ingestion_marks_negative_results_partial_and_non_conclusive() {
+        let server = setup_server().await;
+        let progress = server.ingestion_progress_arc();
+        progress.start(10);
+        progress.increment_done();
+        progress.increment_done();
+        progress.increment_done();
+
+        let result = server
+            .symbols(Parameters(SymbolsParams {
+                query: Some("definitely_missing_symbol".into()),
+                kind: None,
+                module: None,
+                visibility: None,
+                offset: None,
+                limit: Some(10),
+                cursor: None,
+                project: None,
+                source_corpus: None,
+            }))
+            .await
+            .unwrap();
+        let structured = result.structured_content.expect("structured response");
+        assert_eq!(structured["status"], "partial");
+        assert_eq!(structured["completeness"]["completeness"], "partial");
+        assert_eq!(structured["completeness"]["indexed_items"], 3);
+        assert_eq!(structured["completeness"]["estimated_total_items"], 10);
+        assert_eq!(structured["completeness"]["absence_is_conclusive"], false);
+        assert_eq!(structured["result"]["total"], 0);
     }
 
     #[tokio::test]
@@ -6531,7 +8419,9 @@ mod tests {
                 document_id: None,
                 offset: Some(100),
                 limit: Some(10),
+                cursor: None,
                 project: None,
+                source_corpus: None,
             }))
             .await
             .unwrap();
@@ -6555,7 +8445,9 @@ mod tests {
                 visibility: None,
                 offset: None,
                 limit: None,
+                cursor: None,
                 project: None,
+                source_corpus: None,
             }))
             .await
             .unwrap();
@@ -6566,6 +8458,8 @@ mod tests {
         assert_eq!(parsed["result"]["total"], 0);
         assert_eq!(parsed["result"]["offset"], 0);
         assert!(parsed["result"]["symbols"].as_array().unwrap().is_empty());
+        assert_eq!(parsed["result"]["pagination"]["limit"], 100);
+        assert_eq!(parsed["result"]["pagination"]["has_more"], false);
     }
 
     #[tokio::test]
@@ -6579,7 +8473,9 @@ mod tests {
                 visibility: None,
                 offset: Some(50),
                 limit: Some(10),
+                cursor: None,
                 project: None,
+                source_corpus: None,
             }))
             .await
             .unwrap();
@@ -6606,6 +8502,7 @@ mod tests {
                 through_implementors: None,
                 offset: None,
                 limit: None,
+                cursor: None,
                 project: None,
             }))
             .await
@@ -6620,6 +8517,7 @@ mod tests {
             references: vec![],
             total: 42,
             offset: 10,
+            pagination: ministr_api::metadata::Pagination::default(),
         };
         let json = serde_json::to_value(&response).unwrap();
         assert_eq!(json["total"], 42);
@@ -6633,11 +8531,56 @@ mod tests {
             symbols: vec![],
             total: 99,
             offset: 20,
+            pagination: ministr_api::metadata::Pagination::default(),
         };
         let json = serde_json::to_value(&response).unwrap();
         assert_eq!(json["total"], 99);
         assert_eq!(json["offset"], 20);
         assert!(json["symbols"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn collection_pagination_clamps_excessive_limits() {
+        let (offset, limit) = page_request(Some(7), None, Some(usize::MAX), 100).unwrap();
+        assert_eq!(offset, 7);
+        assert_eq!(limit, helpers::MAX_COLLECTION_PAGE);
+        let metadata = page_metadata(limit, offset, 10, 1_000);
+        assert!(metadata.has_more);
+        assert_eq!(metadata.omitted_count, 983);
+        assert_eq!(metadata.next_cursor.as_deref(), Some("offset:17"));
+    }
+
+    #[test]
+    fn stable_reference_cursor_survives_insertions_before_it() {
+        let reference = |name: &str, line: u32| ministr_core::service::SymbolRefResult {
+            from_symbol_id: format!("sym-{name}"),
+            from_name: name.into(),
+            from_file: format!("{name}.rs"),
+            from_line: line,
+            to_symbol_id: "target".into(),
+            to_name: "target".into(),
+            to_file: "target.rs".into(),
+            to_line: 1,
+            ref_kind: "calls".into(),
+        };
+        let original = reference("original", 10);
+        let identity = |item: &ministr_core::service::SymbolRefResult| {
+            serde_json::json!([
+                item.from_symbol_id,
+                item.from_file,
+                item.from_line,
+                item.to_symbol_id,
+                item.to_file,
+                item.to_line,
+                item.ref_kind,
+            ])
+        };
+        let cursor = stable_cursor("ref", &identity(&original));
+        let mutated = vec![reference("inserted", 1), original, reference("later", 20)];
+        assert_eq!(
+            stable_cursor_offset(&mutated, &cursor, "ref", identity),
+            Some(2)
+        );
     }
 
     #[test]
@@ -6681,22 +8624,30 @@ mod tests {
         };
 
         let resp_a = ToolResponse {
+            status: ministr_api::metadata::ResponseStatus::Ok,
+            completeness: ministr_api::metadata::Completeness::default(),
+            corpora: Vec::new(),
+            error: None,
             usage_status: budget.clone(),
             coherence_alerts: Vec::new(),
             indexing_in_progress: false,
             indexing_message: None,
             drop_suggestions: Vec::new(),
             next_actions: Vec::new(),
-            result: serde_json::json!({"results": [1, 2, 3]}),
+            result: Some(serde_json::json!({"results": [1, 2, 3]})),
         };
         let resp_b = ToolResponse {
+            status: ministr_api::metadata::ResponseStatus::Ok,
+            completeness: ministr_api::metadata::Completeness::default(),
+            corpora: Vec::new(),
+            error: None,
             usage_status: budget,
             coherence_alerts: Vec::new(),
             indexing_in_progress: false,
             indexing_message: None,
             drop_suggestions: Vec::new(),
             next_actions: Vec::new(),
-            result: serde_json::json!({"symbols": ["foo", "bar"]}),
+            result: Some(serde_json::json!({"symbols": ["foo", "bar"]})),
         };
 
         let json_a = serde_json::to_string(&resp_a).unwrap();
@@ -6716,6 +8667,10 @@ mod tests {
         use ministr_core::session::{UsageLevel, UsageStatus};
 
         let resp = ToolResponse {
+            status: ministr_api::metadata::ResponseStatus::Ok,
+            completeness: ministr_api::metadata::Completeness::default(),
+            corpora: Vec::new(),
+            error: None,
             usage_status: UsageStatus {
                 tokens_used: 0,
                 tokens_remaining: 100_000,
@@ -6727,7 +8682,7 @@ mod tests {
             indexing_message: None,
             drop_suggestions: Vec::new(),
             next_actions: Vec::new(),
-            result: serde_json::json!({"items": [1]}),
+            result: Some(serde_json::json!({"items": [1]})),
         };
 
         let v = serde_json::to_value(&resp).unwrap();
@@ -6752,6 +8707,10 @@ mod tests {
         use ministr_core::session::{UsageLevel, UsageStatus};
 
         let resp = ToolResponse {
+            status: ministr_api::metadata::ResponseStatus::Ok,
+            completeness: ministr_api::metadata::Completeness::default(),
+            corpora: Vec::new(),
+            error: None,
             usage_status: UsageStatus {
                 tokens_used: 0,
                 tokens_remaining: 100_000,
@@ -6763,7 +8722,7 @@ mod tests {
             indexing_message: None,
             drop_suggestions: Vec::new(),
             next_actions: Vec::new(),
-            result: serde_json::json!({}),
+            result: Some(serde_json::json!({})),
         };
 
         let v = serde_json::to_value(&resp).unwrap();
@@ -6791,8 +8750,12 @@ mod tests {
             "usage_status must never be serialized"
         );
 
-        // Only `result` remains — budget hints are gone entirely.
-        assert_eq!(obj.len(), 1, "should only have result");
+        // Required status/completeness plus result remain; optional fields are absent.
+        assert_eq!(
+            obj.len(),
+            3,
+            "should only have status, completeness, result"
+        );
     }
 
     // --- Lazy tool registration (prune_tools) tests ---

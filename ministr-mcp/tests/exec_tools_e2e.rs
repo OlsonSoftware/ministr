@@ -123,7 +123,9 @@ fn extract_text(content: &[Content]) -> &str {
 }
 
 fn tool_result(result: &CallToolResult) -> serde_json::Value {
-    serde_json::from_str(extract_text(&result.content)).expect("json response")
+    result.structured_content.clone().unwrap_or_else(|| {
+        serde_json::from_str(extract_text(&result.content)).expect("legacy JSON response")
+    })
 }
 
 #[tokio::test]
@@ -338,7 +340,7 @@ async fn failing_run_is_retrievable_via_survey_by_its_error_text() {
         json!({"query": "frobnicator_zx81 panicked"}),
     )
     .await;
-    let rendered = extract_text(&survey.content);
+    let rendered = serde_json::to_string(&tool_result(&survey)).expect("serialize survey payload");
     assert!(
         rendered.contains("exec-runs/run-") && rendered.contains("frobnicator_zx81"),
         "survey must surface the run report for its own error text: {rendered}"

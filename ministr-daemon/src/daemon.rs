@@ -4,6 +4,7 @@
 //! macOS/Linux and a named pipe on Windows. All handlers delegate to
 //! [`QueryService`] via the [`CorpusRegistry`].
 
+use std::collections::HashSet;
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -19,7 +20,7 @@ use futures_core::Stream;
 use ministr_api::IpcAddr;
 use tracing::info;
 
-use crate::registry::RegistryError;
+use crate::registry::{CorpusHandle, RegistryError};
 use crate::transport::Listener;
 
 use ministr_api::ApiError;
@@ -55,6 +56,7 @@ pub fn corpora_read_router(state: AppState) -> Router {
         .route("/api/v1/corpora/{id}/symbols", post(symbols))
         .route("/api/v1/corpora/{id}/definition/{sym}", get(definition))
         .route("/api/v1/corpora/{id}/references/{sym}", get(references))
+        .route("/api/v1/corpora/{id}/inspect", post(inspect))
         .route("/api/v1/corpora/{id}/impact/{sym}", get(impact))
         .route("/api/v1/corpora/{id}/diff-impact", get(diff_impact))
         .route("/api/v1/corpora/{id}/dead", post(dead_code))
@@ -563,14 +565,119 @@ async fn shutdown_signal() {
 // Error helper
 // ---------------------------------------------------------------------------
 
+fn api_error(
+    status: StatusCode,
+    code: &str,
+    msg: impl std::fmt::Display,
+    corpus_id: Option<String>,
+) -> ApiError {
+    use ministr_api::metadata::{Completeness, CompletenessState, ResponseStatus};
+
+    let conclusive = matches!(code, "invalid_parameters" | "not_found");
+    let retryable = status.is_server_error()
+        || status == StatusCode::TOO_MANY_REQUESTS
+        || matches!(code, "unavailable_corpus" | "file_unavailable");
+    let retry_guidance = retryable.then(|| {
+        if code == "unavailable_corpus" {
+            "Retry after the corpus is registered and available.".to_string()
+        } else {
+            "Retry after the daemon backend becomes available.".to_string()
+        }
+    });
+
+    ApiError {
+        code: code.to_string(),
+        error_code: code.to_string(),
+        status: ResponseStatus::Error,
+        retryable,
+        message: msg.to_string(),
+        corpus_id,
+        backend: Some("daemon".to_string()),
+        completeness: Completeness {
+            completeness: if conclusive {
+                CompletenessState::Complete
+            } else {
+                CompletenessState::Unavailable
+            },
+            indexed_items: 0,
+            estimated_total_items: None,
+            affected_capabilities: if conclusive {
+                Vec::new()
+            } else {
+                vec!["query".to_string()]
+            },
+            index_generation: None,
+            absence_is_conclusive: conclusive,
+            retry_guidance,
+        },
+    }
+}
+
 fn err(status: StatusCode, code: &str, msg: impl std::fmt::Display) -> impl IntoResponse {
+    (status, Json(api_error(status, code, msg, None)))
+}
+
+fn corpus_err(
+    status: StatusCode,
+    code: &str,
+    msg: impl std::fmt::Display,
+    corpus_id: &str,
+) -> impl IntoResponse {
     (
         status,
-        Json(ApiError {
-            code: code.to_string(),
-            message: msg.to_string(),
-        }),
+        Json(api_error(status, code, msg, Some(corpus_id.to_string()))),
     )
+}
+
+fn corpus_query_err(
+    status: StatusCode,
+    code: &str,
+    msg: impl std::fmt::Display,
+    corpus_id: &str,
+    metadata: ministr_api::metadata::QueryMetadata,
+) -> impl IntoResponse {
+    use ministr_api::metadata::CompletenessState;
+
+    let mut error = api_error(status, code, msg, Some(corpus_id.to_string()));
+    if metadata.completeness.completeness != CompletenessState::Complete {
+        error.retryable = true;
+        error.completeness = metadata.completeness;
+        error.completeness.absence_is_conclusive = false;
+        if error.completeness.retry_guidance.is_none() {
+            error.completeness.retry_guidance = Some(
+                "Retry after indexing or corpus refresh completes before concluding absence."
+                    .to_string(),
+            );
+        }
+    }
+    (status, Json(error))
+}
+
+fn query_error_response(
+    error: ministr_core::service::QueryError,
+    corpus_id: &str,
+    metadata: ministr_api::metadata::QueryMetadata,
+) -> axum::response::Response {
+    let (status, code) = match &error {
+        ministr_core::service::QueryError::SectionNotFound { .. }
+        | ministr_core::service::QueryError::ClaimNotFound { .. }
+        | ministr_core::service::QueryError::SymbolNotFound { .. } => {
+            (StatusCode::NOT_FOUND, "not_found")
+        }
+        ministr_core::service::QueryError::FileUnavailable { source, .. }
+            if source.kind() == std::io::ErrorKind::PermissionDenied =>
+        {
+            (StatusCode::FORBIDDEN, "permission_denied")
+        }
+        ministr_core::service::QueryError::FileUnavailable { .. } => {
+            (StatusCode::SERVICE_UNAVAILABLE, "file_unavailable")
+        }
+        ministr_core::service::QueryError::Storage(_)
+        | ministr_core::service::QueryError::Index(_) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, "query_failed")
+        }
+    };
+    corpus_query_err(status, code, error, corpus_id, metadata).into_response()
 }
 
 /// Resolve a corpus ID to its `Arc<CorpusHandle>`, returning a 404
@@ -585,7 +692,10 @@ macro_rules! get_corpus {
         // instead of 404ing.
         match $state.registry.get_or_lazy_load($id).await {
             Ok(handle) => handle,
-            Err(e) => return err(StatusCode::NOT_FOUND, "not_found", e).into_response(),
+            Err(e) => {
+                return corpus_err(StatusCode::NOT_FOUND, "unavailable_corpus", e, $id)
+                    .into_response();
+            }
         }
     };
 }
@@ -637,6 +747,128 @@ async fn tick_session_turn(
 /// feed the session's budget — approximate but consistent across tools.
 fn response_tokens<T: serde::Serialize>(value: &T) -> usize {
     serde_json::to_string(value).map_or(0, |s| ministr_core::token::count_tokens(&s))
+}
+
+async fn query_metadata(
+    handle: &crate::registry::CorpusHandle,
+    capability: &str,
+) -> ministr_api::metadata::QueryMetadata {
+    use ministr_api::corpus::IndexingStatus;
+    use ministr_api::metadata::{
+        Completeness, CompletenessState, CorpusOperationStatus, QueryMetadata, ResponseError,
+        ResponseStatus,
+    };
+
+    let info = handle.current_info().await;
+    // `CorpusInfo.status` is persisted/snapshot state; the atomics are the
+    // live source of truth while ingestion is running between snapshots.
+    let effective_status = if handle.progress.is_running() {
+        IndexingStatus::Indexing {
+            files_done: handle.progress.files_done(),
+            files_total: handle.progress.files_total(),
+        }
+    } else {
+        info.status.clone()
+    };
+    let source_is_stale = if matches!(effective_status, IndexingStatus::Idle) {
+        match cached_freshness(handle, &info.id).await {
+            Ok(freshness) => freshness.files.iter().any(|file| file.state != "current"),
+            // Failure to prove freshness must never be upgraded to conclusive
+            // completeness. Missing/unreadable roots are stale until repaired.
+            Err(_) => true,
+        }
+    } else {
+        false
+    };
+    let (status, completeness, estimated_total, retry_guidance, error) = match &effective_status {
+        IndexingStatus::Idle if source_is_stale => (
+            ResponseStatus::Partial,
+            CompletenessState::Stale,
+            Some(info.files_indexed),
+            Some("Indexed sources changed; refresh the corpus before treating absence as conclusive.".to_string()),
+            None,
+        ),
+        IndexingStatus::Idle => (
+            ResponseStatus::Ok,
+            CompletenessState::Complete,
+            None,
+            None,
+            None,
+        ),
+        IndexingStatus::Queued => (
+            ResponseStatus::Partial,
+            CompletenessState::Partial,
+            None,
+            Some("Corpus is queued for indexing; retry when indexing completes.".to_string()),
+            None,
+        ),
+        IndexingStatus::Indexing {
+            files_done: _,
+            files_total,
+        } => (
+            ResponseStatus::Partial,
+            CompletenessState::Partial,
+            Some(*files_total),
+            Some("Indexing is active; retry negative queries when it completes.".to_string()),
+            None,
+        ),
+        IndexingStatus::Error { message } => (
+            ResponseStatus::Error,
+            CompletenessState::Unavailable,
+            None,
+            Some("Repair or re-index this corpus, then retry.".to_string()),
+            Some(ResponseError {
+                error_code: "index_unavailable".to_string(),
+                retryable: true,
+                message: message.clone(),
+                corpus_id: Some(info.id.clone()),
+                backend: Some("daemon".to_string()),
+            }),
+        ),
+    };
+    let completeness = Completeness {
+        completeness,
+        indexed_items: info.files_indexed,
+        estimated_total_items: estimated_total,
+        affected_capabilities: if status == ResponseStatus::Ok {
+            Vec::new()
+        } else {
+            vec![capability.to_string()]
+        },
+        index_generation: info.last_indexed.map(|generation| generation.to_string()),
+        absence_is_conclusive: completeness == CompletenessState::Complete,
+        retry_guidance,
+    };
+    QueryMetadata {
+        status,
+        completeness: completeness.clone(),
+        corpora: vec![CorpusOperationStatus {
+            corpus_id: info.id,
+            status,
+            completeness,
+            error: error.clone(),
+        }],
+        error,
+    }
+}
+
+fn pagination(
+    total: usize,
+    offset: usize,
+    requested_limit: usize,
+    hard_cap: usize,
+) -> ministr_api::metadata::Pagination {
+    let limit = requested_limit.clamp(1, hard_cap);
+    let returned_end = offset.saturating_add(limit).min(total);
+    ministr_api::metadata::Pagination {
+        limit,
+        offset: Some(offset),
+        cursor: None,
+        next_cursor: (returned_end < total).then(|| returned_end.to_string()),
+        total,
+        has_more: returned_end < total,
+        omitted_count: total.saturating_sub(returned_end),
+    }
 }
 
 /// Attach an [`ActivitySummary`] extension to a response so the activity
@@ -1403,6 +1635,49 @@ async fn update_corpus_paths(
 // Query endpoints
 // ---------------------------------------------------------------------------
 
+async fn survey_exclusions(
+    handle: &CorpusHandle,
+    corpus_id: &str,
+    request: &query::SurveyRequest,
+    include_session: bool,
+) -> HashSet<ministr_core::types::DeliveryIdentity> {
+    let mut excluded = request
+        .exclude
+        .iter()
+        .filter(|identity| identity.corpus_id == corpus_id)
+        .map(|identity| {
+            ministr_core::types::DeliveryIdentity::new(
+                identity.corpus_id.clone(),
+                identity.content_id.clone(),
+                identity.resolution.clone(),
+            )
+        })
+        .collect::<HashSet<_>>();
+    let Some(session_id) = request.session_id.as_deref().filter(|_| include_session) else {
+        return excluded;
+    };
+
+    let should_restore = {
+        let sessions = handle.sessions.lock().await;
+        sessions.get_session(session_id).is_none()
+    };
+    if should_restore {
+        let persisted_id = ministr_core::session::SessionId::from(session_id.to_string());
+        if let Ok(Some(restored)) = handle.storage.load_session(&persisted_id).await {
+            let mut sessions = handle.sessions.lock().await;
+            sessions
+                .get_or_create(session_id, None, AccessMode::ReadWrite)
+                .session = restored;
+        }
+    }
+    let sessions = handle.sessions.lock().await;
+    if let Some(entry) = sessions.get_session(session_id) {
+        excluded.extend(entry.session.delivered_identities());
+    }
+    excluded
+}
+
+#[allow(clippy::too_many_lines)] // transport shaping, session accounting, and metadata are one response boundary
 async fn survey(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1410,24 +1685,128 @@ async fn survey(
 ) -> impl IntoResponse {
     let _permit = state.query_semaphore.acquire().await;
     let handle = get_corpus!(&state, &id);
-    let top_k = req.top_k.unwrap_or(10);
+    let requested_limit = req.limit.or(req.top_k).unwrap_or(10);
+    let limit = requested_limit.clamp(1, 500);
+    let offset = match req.cursor.as_deref() {
+        Some(cursor) => match cursor
+            .strip_prefix("offset:")
+            .unwrap_or(cursor)
+            .parse::<usize>()
+        {
+            Ok(offset) => offset,
+            Err(error) => {
+                return err(StatusCode::BAD_REQUEST, "invalid_parameters", error).into_response();
+            }
+        },
+        None => req.offset.unwrap_or(0),
+    };
+    if offset >= 500 {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "invalid_parameters",
+            "survey offset exceeds the 500-result discovery window",
+        )
+        .into_response();
+    }
+    let fetch_k = offset.saturating_add(limit).saturating_add(1).min(500);
     let session_id = req.session_id.clone();
-    let summary = format!("\"{}\" (top_k={top_k})", req.query);
-    let result = handle.service.survey(&req.query, top_k).await;
-    drop(handle);
+    let summary = format!("\"{}\" (limit={limit}, offset={offset})", req.query);
+    let excluded = survey_exclusions(&handle, &id, &req, offset == 0).await;
+    let defaults = ministr_core::service::SurveyOptions::default();
+    let options = ministr_core::service::SurveyOptions {
+        max_result_bytes: req.max_result_bytes.unwrap_or(defaults.max_result_bytes),
+        max_result_tokens: req.max_result_tokens.unwrap_or(defaults.max_result_tokens),
+        max_total_bytes: req.max_total_bytes.unwrap_or(defaults.max_total_bytes),
+        max_total_tokens: req.max_total_tokens.unwrap_or(defaults.max_total_tokens),
+    };
+    let result = handle
+        .service
+        .survey_excluding_identities_detailed_with_options(
+            &req.query, fetch_k, &id, &excluded, options,
+        )
+        .await;
+    let metadata = query_metadata(&handle, "survey").await;
     match result {
-        Ok(results) => {
+        Ok((results, suppressed_identities)) => {
+            let deduplicated_count = suppressed_identities.len();
+            let total = results.len();
+            let results: Vec<_> = results.into_iter().skip(offset).take(limit).collect();
+            let results = ministr_core::service::bound_survey_results(
+                &req.query,
+                results,
+                ministr_core::service::SurveyOptions::default(),
+            );
+            if let Some(sid) = session_id.as_deref() {
+                let mut sessions = handle.sessions.lock().await;
+                let entry = sessions.get_or_create(sid, None, AccessMode::ReadWrite);
+                for identity in &suppressed_identities {
+                    if let Some(token_count) = entry
+                        .session
+                        .get_delivered_identity(identity)
+                        .map(|item| item.token_count)
+                    {
+                        entry
+                            .session
+                            .record_dedup_savings(token_count, token_count.saturating_mul(4));
+                    }
+                }
+                let turn = entry.session.current_turn() + 1;
+                for result in &results {
+                    let token_count = ministr_core::token::count_tokens(&result.text);
+                    let mut hasher = Sha256::new();
+                    hasher.update(result.text.as_bytes());
+                    let content_hash = format!("{:x}", hasher.finalize());
+                    let resolution = match result.resolution.as_str() {
+                        "summary" | "document_summary" => ministr_core::types::Resolution::Summary,
+                        "claim" => ministr_core::types::Resolution::Claim,
+                        value if value.starts_with("symbol_") => {
+                            ministr_core::types::Resolution::Section
+                        }
+                        _ => ministr_core::types::Resolution::Section,
+                    };
+                    entry.session.record_delivery_identity(
+                        &result.locator.identity,
+                        resolution,
+                        token_count,
+                        turn,
+                        content_hash,
+                    );
+                    let _ = entry
+                        .budget
+                        .record_tokens(&result.locator.identity.storage_key(), token_count);
+                }
+            }
+            let suppressed_identities = suppressed_identities
+                .into_iter()
+                .map(|identity| ministr_api::metadata::DeliveryIdentity {
+                    corpus_id: identity.corpus_id,
+                    content_id: identity.content_id,
+                    resolution: identity.resolution,
+                })
+                .collect();
+            let results = results
+                .into_iter()
+                .map(convert::survey_result)
+                .collect::<Vec<_>>();
             let body = query::SurveyResponse {
-                results: results.into_iter().map(convert::survey_result).collect(),
-                deduplicated_count: None,
+                results,
+                deduplicated_count: Some(deduplicated_count),
+                suppressed_identities,
                 usage_status: None,
+                pagination: pagination(total, offset, requested_limit, 500),
+                total_is_exact: false,
+                metadata,
             };
             if let Some(sid) = session_id {
                 tick_session_turn(&state, &id, &sid, "survey", response_tokens(&body)).await;
             }
+            drop(handle);
             with_summary(Json(body), summary)
         }
-        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
+        Err(e) => {
+            drop(handle);
+            err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response()
+        }
     }
 }
 
@@ -1438,7 +1817,10 @@ async fn symbols(
 ) -> impl IntoResponse {
     let _permit = state.query_semaphore.acquire().await;
     let handle = get_corpus!(&state, &id);
-    let limit = req.limit.unwrap_or(20);
+    let offset = req.offset.unwrap_or(0);
+    let requested_limit = req.limit.unwrap_or(20);
+    let page = pagination(0, offset, requested_limit, 500);
+    let limit = page.limit;
     let session_id = req.session_id.clone();
     let summary = {
         let mut parts = vec![format!("\"{}\"", req.query)];
@@ -1465,15 +1847,21 @@ async fn symbols(
         file_path: req.file_path,
     };
     let result = handle.service.search_symbols(&filter).await;
+    let metadata = query_metadata(&handle, "symbols").await;
     drop(handle);
     match result {
         Ok(records) => {
+            let total = records.len();
             let body = query::SymbolsResponse {
                 symbols: records
                     .into_iter()
+                    .skip(offset)
                     .take(limit)
                     .map(convert::symbol_from_record)
                     .collect(),
+                total,
+                pagination: pagination(total, offset, requested_limit, 500),
+                metadata,
             };
             let summary = format!("{summary} ({n})", n = body.symbols.len());
             if let Some(sid) = session_id {
@@ -1481,7 +1869,7 @@ async fn symbols(
             }
             with_summary(Json(body), summary)
         }
-        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
+        Err(e) => query_error_response(e, &id, metadata),
     }
 }
 
@@ -1496,14 +1884,54 @@ struct SessionQuery {
 async fn definition(
     State(state): State<AppState>,
     Path((id, sym)): Path<(String, String)>,
-    Query(q): Query<SessionQuery>,
+    Query(q): Query<query::DefinitionRequest>,
 ) -> impl IntoResponse {
     let handle = get_corpus!(&state, &id);
-    let result = handle.service.get_symbol_definition(&sym).await;
+    let defaults = ministr_core::service::DefinitionOptions::default();
+    let options = ministr_core::service::DefinitionOptions {
+        max_lines: q.max_lines.unwrap_or(defaults.max_lines),
+        context_lines: q.context_lines.unwrap_or(defaults.context_lines),
+        include_body: q.include_body.unwrap_or(defaults.include_body),
+        outline_only: q.outline_only.unwrap_or(defaults.outline_only),
+        start_line: q.start_line,
+        start_byte: q.start_byte,
+    };
+    let result = handle
+        .service
+        .get_symbol_definition_with_options(&sym, options)
+        .await;
+    let mut metadata = query_metadata(&handle, "definition").await;
     drop(handle);
     match result {
-        Ok(def) => {
-            let body = convert::symbol_definition(def);
+        Ok(mut def) => {
+            if let Some(code) = def.source_error.clone() {
+                metadata.status = ministr_api::metadata::ResponseStatus::Partial;
+                metadata.completeness.completeness =
+                    ministr_api::metadata::CompletenessState::Partial;
+                metadata.completeness.absence_is_conclusive = false;
+                metadata
+                    .completeness
+                    .affected_capabilities
+                    .push("definition".to_string());
+                metadata.error = Some(ministr_api::metadata::ResponseError {
+                    error_code: code.clone(),
+                    retryable: code != "permission_denied",
+                    message: "Indexed symbol metadata is available, but source could not be read."
+                        .to_string(),
+                    corpus_id: Some(id.clone()),
+                    backend: Some("daemon".to_string()),
+                });
+            }
+            def.locator.identity.corpus_id.clone_from(&id);
+            def.locator.source_corpus = Some(id.clone());
+            for child in &mut def.child_symbols {
+                child.locator.identity.corpus_id.clone_from(&id);
+                child.locator.source_corpus = Some(id.clone());
+            }
+            let body = query::DefinitionResponse {
+                definition: convert::symbol_definition(def),
+                metadata,
+            };
             let summary = match file_from_symbol_id(&sym) {
                 Some(file) => format!("{name} — {file}", name = symbol_short_name(&sym)),
                 None => symbol_short_name(&sym).to_string(),
@@ -1513,50 +1941,218 @@ async fn definition(
             }
             with_summary(Json(body), summary)
         }
-        Err(e) => err(StatusCode::NOT_FOUND, "not_found", e).into_response(),
+        Err(e) => query_error_response(e, &id, metadata),
     }
-}
-
-/// Query params for the references route: session attribution plus the
-/// type-hierarchy expansion flag (run server-side, since the hop needs the
-/// reference graph).
-#[derive(serde::Deserialize)]
-struct ReferencesQuery {
-    session_id: Option<String>,
-    through_implementors: Option<bool>,
 }
 
 async fn references(
     State(state): State<AppState>,
     Path((id, sym)): Path<(String, String)>,
-    Query(q): Query<ReferencesQuery>,
+    Query(q): Query<query::ReferencesRequest>,
 ) -> impl IntoResponse {
     let handle = get_corpus!(&state, &id);
+    let requested_limit = q.limit.unwrap_or(50);
+    let limit = requested_limit.clamp(1, 500);
+    let session_id = q.session_id.clone();
+    let ref_kind = match q.ref_kind.as_deref() {
+        Some(value) => match ministr_core::types::RefKind::parse(value) {
+            Some(kind) => Some(kind),
+            None => {
+                return err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_parameters",
+                    format!("unknown reference kind: {value}"),
+                )
+                .into_response();
+            }
+        },
+        None => None,
+    };
     let result = if q.through_implementors.unwrap_or(false) {
         handle
             .service
-            .get_symbol_references_through_implementors(&sym, None, 50)
+            .get_symbol_references_through_implementors(&sym, ref_kind, 500)
             .await
     } else {
-        handle.service.get_symbol_references(&sym, None).await
+        handle.service.get_symbol_references(&sym, ref_kind).await
     };
+    let metadata = query_metadata(&handle, "references").await;
     drop(handle);
     match result {
         Ok(refs) => {
+            let total = refs.len();
+            let offset = match q.cursor.as_deref() {
+                Some(cursor) if cursor.starts_with("ref:") => {
+                    let Some(index) = refs.iter().position(|reference| {
+                        ministr_core::service::symbol_reference_cursor(reference) == cursor
+                    }) else {
+                        return err(
+                            StatusCode::BAD_REQUEST,
+                            "invalid_parameters",
+                            "reference cursor no longer identifies an item; restart pagination",
+                        )
+                        .into_response();
+                    };
+                    index + 1
+                }
+                Some(cursor) => match cursor
+                    .strip_prefix("offset:")
+                    .unwrap_or(cursor)
+                    .parse::<usize>()
+                {
+                    Ok(offset) => offset,
+                    Err(error) => {
+                        return err(StatusCode::BAD_REQUEST, "invalid_parameters", error)
+                            .into_response();
+                    }
+                },
+                None => q.offset.unwrap_or(0),
+            };
+            let references: Vec<_> = refs.into_iter().skip(offset).take(limit).collect();
+            let mut page = pagination(total, offset, requested_limit, 500);
+            page.cursor.clone_from(&q.cursor);
+            if page.has_more {
+                page.next_cursor = references
+                    .last()
+                    .map(ministr_core::service::symbol_reference_cursor);
+            }
             let body = query::ReferencesResponse {
-                references: refs.into_iter().map(convert::symbol_reference).collect(),
+                references: references
+                    .into_iter()
+                    .map(convert::symbol_reference)
+                    .collect(),
+                total,
+                pagination: page,
+                metadata,
             };
             let n = body.references.len();
             let summary = match file_from_symbol_id(&sym) {
                 Some(file) => format!("{name} — {file} ({n})", name = symbol_short_name(&sym)),
                 None => format!("{name} ({n})", name = symbol_short_name(&sym)),
             };
-            if let Some(sid) = q.session_id {
+            if let Some(sid) = session_id {
                 tick_session_turn(&state, &id, &sid, "references", response_tokens(&body)).await;
             }
             with_summary(Json(body), summary)
         }
-        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
+        Err(e) => query_error_response(e, &id, metadata),
+    }
+}
+
+#[allow(clippy::too_many_lines)] // compound response routing and partial-state promotion stay atomic
+async fn inspect(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<query::InspectRequest>,
+) -> impl IntoResponse {
+    let handle = get_corpus!(&state, &id);
+    let include = if req.include.is_empty() {
+        ministr_core::service::InspectOptions::default().include
+    } else {
+        req.include
+            .iter()
+            .map(|include| match include {
+                query::InspectInclude::Definition => {
+                    ministr_core::service::InspectInclude::Definition
+                }
+                query::InspectInclude::Callers => ministr_core::service::InspectInclude::Callers,
+                query::InspectInclude::Callees => ministr_core::service::InspectInclude::Callees,
+                query::InspectInclude::Implementors => {
+                    ministr_core::service::InspectInclude::Implementors
+                }
+                query::InspectInclude::Imports => ministr_core::service::InspectInclude::Imports,
+                query::InspectInclude::Tests => ministr_core::service::InspectInclude::Tests,
+                query::InspectInclude::Bridges => ministr_core::service::InspectInclude::Bridges,
+            })
+            .collect()
+    };
+    let options = ministr_core::service::InspectOptions {
+        include,
+        max_per_group: req.max_per_group.unwrap_or(10).clamp(1, 50),
+        max_source_lines: req.max_source_lines.unwrap_or(160).clamp(1, 1_000),
+    };
+    let result = match (&req.symbol_id, &req.file, req.line, req.col) {
+        (Some(symbol_id), _, _, _) => handle.service.inspect_symbol(symbol_id, &options).await,
+        (None, Some(file), Some(line), Some(col)) => {
+            handle
+                .service
+                .inspect_at_position(file, line, col, &options)
+                .await
+        }
+        _ => {
+            return err(
+                StatusCode::BAD_REQUEST,
+                "invalid_parameters",
+                "provide symbol_id or file + line + col",
+            )
+            .into_response();
+        }
+    };
+    let mut metadata = query_metadata(&handle, "inspect").await;
+    drop(handle);
+    match result {
+        Ok(mut result) => {
+            result.locator.identity.corpus_id.clone_from(&id);
+            result.locator.source_corpus = Some(id.clone());
+            if let Some(definition) = result.definition.as_mut() {
+                definition.locator.identity.corpus_id.clone_from(&id);
+                definition.locator.source_corpus = Some(id.clone());
+                for child in &mut definition.child_symbols {
+                    child.locator.identity.corpus_id.clone_from(&id);
+                    child.locator.source_corpus = Some(id.clone());
+                }
+            }
+            for action in &mut result.next_actions {
+                action.locator.identity.corpus_id.clone_from(&id);
+                action.locator.source_corpus = Some(id.clone());
+            }
+            if let Some(code) = result
+                .definition
+                .as_ref()
+                .and_then(|definition| definition.source_error.clone())
+            {
+                metadata.status = ministr_api::metadata::ResponseStatus::Partial;
+                metadata.completeness.completeness =
+                    ministr_api::metadata::CompletenessState::Partial;
+                metadata.completeness.absence_is_conclusive = false;
+                metadata.error = Some(ministr_api::metadata::ResponseError {
+                    error_code: code.clone(),
+                    retryable: code != "permission_denied",
+                    message: "Inspect returned indexed relationships, but definition source was unavailable."
+                        .to_string(),
+                    corpus_id: Some(id.clone()),
+                    backend: Some("daemon".to_string()),
+                });
+            }
+            if let Some(group_error) = result.partial_errors.first() {
+                metadata.status = ministr_api::metadata::ResponseStatus::Partial;
+                metadata.completeness.completeness =
+                    ministr_api::metadata::CompletenessState::Partial;
+                metadata.completeness.absence_is_conclusive = false;
+                metadata
+                    .completeness
+                    .affected_capabilities
+                    .push("inspect".to_string());
+                metadata
+                    .error
+                    .get_or_insert_with(|| ministr_api::metadata::ResponseError {
+                        error_code: "inspect_group_failure".to_string(),
+                        retryable: true,
+                        message: format!(
+                            "inspect group `{}` was unavailable: {}",
+                            group_error.group, group_error.message
+                        ),
+                        corpus_id: Some(id.clone()),
+                        backend: Some("daemon".to_string()),
+                    });
+            }
+            let body = convert::inspect_response(result, metadata);
+            if let Some(sid) = req.session_id {
+                tick_session_turn(&state, &id, &sid, "inspect", response_tokens(&body)).await;
+            }
+            with_summary(Json(body), "compound symbol inspection".to_string())
+        }
+        Err(e) => query_error_response(e, &id, metadata),
     }
 }
 
@@ -1573,6 +2169,12 @@ struct ImpactQuery {
     tests_only: bool,
     #[serde(default)]
     session_id: Option<String>,
+    #[serde(default)]
+    offset: Option<usize>,
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
 }
 
 async fn impact(
@@ -1591,10 +2193,54 @@ async fn impact(
         .service
         .compute_impact(&sym, max_depth, direction, q.tests_only)
         .await;
+    let metadata = query_metadata(&handle, "impact").await;
     drop(handle);
     match result {
         Ok(r) => {
-            let body = convert::impact_response(r);
+            let offset = match q.cursor.as_deref() {
+                Some(cursor) if cursor.starts_with("impact:") => r
+                    .callers
+                    .iter()
+                    .position(|caller| {
+                        ministr_core::service::impact_caller_cursor(caller) == cursor
+                    })
+                    .map(|index| index + 1),
+                Some(cursor) => cursor
+                    .strip_prefix("offset:")
+                    .unwrap_or(cursor)
+                    .parse::<usize>()
+                    .ok(),
+                None => Some(q.offset.unwrap_or(0)),
+            };
+            let Some(offset) = offset else {
+                return err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_parameters",
+                    "impact cursor no longer identifies an item; restart pagination",
+                )
+                .into_response();
+            };
+            let requested_limit = q.limit.unwrap_or(100);
+            let limit = pagination(0, offset, requested_limit, 500).limit;
+            let mut body = convert::impact_response(r);
+            let total = body.callers.len();
+            body.callers = body.callers.into_iter().skip(offset).take(limit).collect();
+            body.pagination = pagination(total, offset, requested_limit, 500);
+            body.pagination.cursor = q.cursor;
+            if body.pagination.has_more {
+                body.pagination.next_cursor = body.callers.last().map(|caller| {
+                    let service_caller = ministr_core::service::ImpactCaller {
+                        symbol_id: caller.symbol_id.clone(),
+                        name: caller.name.clone(),
+                        kind: caller.kind.clone(),
+                        file: caller.file.clone(),
+                        line: caller.line,
+                        depth: caller.depth,
+                    };
+                    ministr_core::service::impact_caller_cursor(&service_caller)
+                });
+            }
+            body.metadata = metadata;
             let noun = if body.direction == "outgoing" {
                 "callees"
             } else {
@@ -1672,18 +2318,30 @@ async fn dead_code(
 ) -> impl IntoResponse {
     let handle = get_corpus!(&state, &id);
     let min_lines = req.min_lines.unwrap_or(1);
-    let limit = req.limit.unwrap_or(50);
+    let offset = req.offset.unwrap_or(0);
+    let requested_limit = req.limit.unwrap_or(50);
+    let limit = pagination(0, offset, requested_limit, 500).limit;
     let result = handle
         .service
-        .find_dead_code(req.kind.as_deref(), req.module.as_deref(), min_lines, limit)
+        .find_dead_code(req.kind.as_deref(), req.module.as_deref(), min_lines, 500)
         .await;
+    let metadata = query_metadata(&handle, "dead").await;
     drop(handle);
     match result {
         Ok(syms) => {
-            let symbols: Vec<query::DeadSymbol> =
-                syms.into_iter().map(convert::dead_symbol).collect();
-            let total = symbols.len();
-            let body = query::DeadCodeResponse { symbols, total };
+            let total = syms.len();
+            let symbols = syms
+                .into_iter()
+                .skip(offset)
+                .take(limit)
+                .map(convert::dead_symbol)
+                .collect();
+            let body = query::DeadCodeResponse {
+                symbols,
+                total,
+                pagination: pagination(total, offset, requested_limit, 500),
+                metadata,
+            };
             let summary = format!("{total} dead-code candidates");
             if let Some(sid) = q.session_id {
                 tick_session_turn(&state, &id, &sid, "dead", response_tokens(&body)).await;
@@ -1701,18 +2359,30 @@ async fn diagnostics(
     Json(req): Json<query::DiagnosticsRequest>,
 ) -> impl IntoResponse {
     let handle = get_corpus!(&state, &id);
-    let limit = req.limit.unwrap_or(100);
+    let offset = req.offset.unwrap_or(0);
+    let requested_limit = req.limit.unwrap_or(100);
+    let limit = pagination(0, offset, requested_limit, 500).limit;
     let result = handle
         .service
-        .diagnostics(req.languages.as_deref(), limit)
+        .diagnostics(req.languages.as_deref(), 500)
         .await;
+    let metadata = query_metadata(&handle, "diagnostics").await;
     drop(handle);
     match result {
         Ok(diags) => {
-            let diagnostics: Vec<query::Diagnostic> =
-                diags.into_iter().map(convert::diagnostic).collect();
-            let total = diagnostics.len();
-            let body = query::DiagnosticsResponse { diagnostics, total };
+            let total = diags.len();
+            let diagnostics = diags
+                .into_iter()
+                .skip(offset)
+                .take(limit)
+                .map(convert::diagnostic)
+                .collect();
+            let body = query::DiagnosticsResponse {
+                diagnostics,
+                total,
+                pagination: pagination(total, offset, requested_limit, 500),
+                metadata,
+            };
             let summary = format!("{total} diagnostics");
             if let Some(sid) = q.session_id {
                 tick_session_turn(&state, &id, &sid, "diagnostics", response_tokens(&body)).await;
@@ -1730,17 +2400,28 @@ async fn solid(
     Json(req): Json<query::SolidRequest>,
 ) -> impl IntoResponse {
     let handle = get_corpus!(&state, &id);
-    let params = convert::api_solid_request_to_service(req);
+    let offset = req.offset.unwrap_or(0);
+    let requested_limit = req.limit.unwrap_or(50);
+    let limit = pagination(0, offset, requested_limit, 500).limit;
+    let mut params = convert::api_solid_request_to_service(req);
+    params.limit = 500;
     let result = handle.service.detect_solid_violations(&params).await;
+    let metadata = query_metadata(&handle, "solid").await;
     drop(handle);
     match result {
         Ok(findings) => {
-            let api_findings: Vec<query::SolidFinding> =
-                findings.into_iter().map(convert::solid_finding).collect();
-            let total = api_findings.len();
+            let total = findings.len();
+            let api_findings = findings
+                .into_iter()
+                .skip(offset)
+                .take(limit)
+                .map(convert::solid_finding)
+                .collect();
             let body = query::SolidResponse {
                 findings: api_findings,
                 total,
+                pagination: pagination(total, offset, requested_limit, 500),
+                metadata,
             };
             let summary = format!("{total} SOLID findings");
             if let Some(sid) = q.session_id {
@@ -1802,7 +2483,14 @@ async fn cached_freshness(
     handle: &crate::registry::CorpusHandle,
     id: &str,
 ) -> Result<ministr_api::corpus::FreshnessResponse, String> {
-    if let Some(hit) = FRESHNESS_CACHE.get(id, crate::freshness_cache::FRESHNESS_TTL) {
+    let info = handle.info.read().await.clone();
+    // A corpus id can be unregistered and rebound to different roots in the
+    // same daemon process. Key the cache by the structured route, not the bare
+    // id, so freshness from the previous handle cannot leak into the new one.
+    let handle_generation = format!("{:p}", Arc::as_ptr(&handle.storage));
+    let cache_key =
+        serde_json::to_string(&(id, &info.paths, handle_generation)).map_err(|e| e.to_string())?;
+    if let Some(hit) = FRESHNESS_CACHE.get(&cache_key, crate::freshness_cache::FRESHNESS_TTL) {
         return Ok(hit);
     }
 
@@ -1811,7 +2499,6 @@ async fn cached_freshness(
         .list_file_hashes()
         .await
         .map_err(|e| e.to_string())?;
-    let info = handle.info.read().await.clone();
     let roots: Vec<std::path::PathBuf> = info.paths.iter().map(std::path::PathBuf::from).collect();
     let indexing = matches!(
         info.status,
@@ -1841,7 +2528,7 @@ async fn cached_freshness(
         .collect();
 
     let resp = ministr_api::corpus::FreshnessResponse { files, indexing };
-    FRESHNESS_CACHE.put(id, resp.clone());
+    FRESHNESS_CACHE.put(&cache_key, resp.clone());
     Ok(resp)
 }
 
@@ -2069,19 +2756,25 @@ async fn read_section(
     Path((id, section)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let handle = get_corpus!(&state, &id);
+    let delivery_identity =
+        ministr_core::types::DeliveryIdentity::new(id.clone(), section.clone(), "section_full");
 
     // Check prefetch cache for a warm hit.
     let warm_detail = {
         let mut prefetch = handle.prefetch.lock().await;
-        prefetch
-            .try_serve(&section)
+        let detail = prefetch
+            .try_serve_identity(&delivery_identity)
             .map(|entry| ministr_core::service::SectionDetail {
                 section_id: entry.content_id.clone(),
                 heading_path: entry.heading_path.clone().unwrap_or_default(),
                 text: entry.text.clone(),
                 summary: entry.summary.clone(),
                 claims_available: entry.claims_available,
-            })
+            });
+        if detail.is_none() {
+            prefetch.record_miss();
+        }
+        detail
     };
 
     let read_result = if let Some(detail) = warm_detail {
@@ -2090,6 +2783,7 @@ async fn read_section(
     } else {
         handle.service.read_section(&section).await
     };
+    let metadata = query_metadata(&handle, "read").await;
 
     match read_result {
         Ok(detail) => {
@@ -2099,11 +2793,13 @@ async fn read_section(
             let index = Arc::clone(&handle.index);
             let embedder = Arc::clone(state.registry.embedder());
             let section_clone = section.clone();
+            let corpus_id = id.clone();
             drop(handle);
 
             // Spawn background prefetch (don't block the response).
             tokio::spawn(async move {
                 trigger_prefetch(
+                    &corpus_id,
                     &section_clone,
                     &storage,
                     &prefetch,
@@ -2112,9 +2808,11 @@ async fn read_section(
                 )
                 .await;
             });
-            Json(convert::section_detail(detail)).into_response()
+            let mut response = convert::section_detail(detail);
+            response.metadata = metadata;
+            Json(response).into_response()
         }
-        Err(e) => err(StatusCode::NOT_FOUND, "not_found", e).into_response(),
+        Err(e) => query_error_response(e, &id, metadata),
     }
 }
 
@@ -2126,19 +2824,25 @@ async fn session_read_section(
     Path((id, sid, section)): Path<(String, String, String)>,
 ) -> impl IntoResponse {
     let handle = get_corpus!(&state, &id);
+    let delivery_identity =
+        ministr_core::types::DeliveryIdentity::new(id.clone(), section.clone(), "section_full");
 
     // Check prefetch cache for a warm hit.
     let warm_detail = {
         let mut prefetch = handle.prefetch.lock().await;
-        prefetch
-            .try_serve(&section)
+        let detail = prefetch
+            .try_serve_identity(&delivery_identity)
             .map(|entry| ministr_core::service::SectionDetail {
                 section_id: entry.content_id.clone(),
                 heading_path: entry.heading_path.clone().unwrap_or_default(),
                 text: entry.text.clone(),
                 summary: entry.summary.clone(),
                 claims_available: entry.claims_available,
-            })
+            });
+        if detail.is_none() {
+            prefetch.record_miss();
+        }
+        detail
     };
 
     let read_result = if let Some(detail) = warm_detail {
@@ -2147,13 +2851,13 @@ async fn session_read_section(
     } else {
         handle.service.read_section(&section).await
     };
+    let metadata = query_metadata(&handle, "read").await;
 
     match read_result {
         Ok(detail) => {
             // Record delivery in the session shadow + budget tracker.
             {
                 let token_count = ministr_core::token::count_tokens(&detail.text);
-                let content_id = ministr_core::types::ContentId(section.clone());
                 let content_hash = {
                     let mut hasher = Sha256::new();
                     hasher.update(detail.text.as_bytes());
@@ -2167,15 +2871,15 @@ async fn session_read_section(
                 // A re-read of content that fell out of the window is a
                 // fault signal (the agent "forgot" it); a fresh read or a
                 // still-in-window re-read is `Good`.
-                let rating = if entry.session.is_delivered(&content_id)
-                    && !entry.budget.is_in_window(&section)
+                let rating = if entry.session.is_identity_delivered(&delivery_identity)
+                    && !entry.budget.is_in_window(&delivery_identity.storage_key())
                 {
                     ministr_core::session::memory::AccessRating::Again
                 } else {
                     ministr_core::session::memory::AccessRating::Good
                 };
-                entry.session.record_delivery(
-                    &content_id,
+                entry.session.record_delivery_identity(
+                    &delivery_identity,
                     ministr_core::types::Resolution::Section,
                     token_count,
                     turn,
@@ -2188,7 +2892,7 @@ async fn session_read_section(
                 // retrievability. FIFO/LRU ignore the scores, so this call
                 // is safe for all policies.
                 let _ = entry.budget.record_tokens_with_memory(
-                    &section,
+                    &delivery_identity.storage_key(),
                     token_count,
                     &entry.memory,
                     turn,
@@ -2210,11 +2914,13 @@ async fn session_read_section(
             let index = Arc::clone(&handle.index);
             let embedder = Arc::clone(state.registry.embedder());
             let section_clone = section.clone();
+            let corpus_id = id.clone();
             drop(handle);
 
             // Spawn background prefetch (don't block the response).
             tokio::spawn(async move {
                 trigger_prefetch(
+                    &corpus_id,
                     &section_clone,
                     &storage,
                     &prefetch,
@@ -2223,9 +2929,11 @@ async fn session_read_section(
                 )
                 .await;
             });
-            Json(convert::section_detail(detail)).into_response()
+            let mut response = convert::section_detail(detail);
+            response.metadata = metadata;
+            Json(response).into_response()
         }
-        Err(e) => err(StatusCode::NOT_FOUND, "not_found", e).into_response(),
+        Err(e) => query_error_response(e, &id, metadata),
     }
 }
 
@@ -2236,6 +2944,23 @@ async fn extract(
 ) -> impl IntoResponse {
     let handle = get_corpus!(&state, &id);
     let session_id = req.session_id.clone();
+    let offset = match req.cursor.as_deref() {
+        Some(cursor) => cursor
+            .strip_prefix("offset:")
+            .unwrap_or(cursor)
+            .parse::<usize>()
+            .ok(),
+        None => Some(req.offset.unwrap_or(0)),
+    };
+    let Some(offset) = offset else {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "invalid_parameters",
+            "invalid extract pagination cursor",
+        )
+        .into_response();
+    };
+    let requested_limit = req.limit.unwrap_or(100);
     let summary = {
         let (file, anchor) = split_section_id(&req.section_id);
         let head = match anchor {
@@ -2251,11 +2976,21 @@ async fn extract(
         .service
         .extract_claims(&req.section_id, req.query.as_deref())
         .await;
+    let metadata = query_metadata(&handle, "extract").await;
     drop(handle);
     match result {
         Ok(claims) => {
+            let total = claims.len();
             let body = query::ExtractResponse {
-                claims: claims.into_iter().map(convert::claim_result).collect(),
+                claims: claims
+                    .into_iter()
+                    .skip(offset)
+                    .take(requested_limit.clamp(1, 500))
+                    .map(convert::claim_result)
+                    .collect(),
+                total,
+                pagination: pagination(total, offset, requested_limit, 500),
+                metadata,
             };
             let summary = format!("{summary} ({n})", n = body.claims.len());
             if let Some(sid) = session_id {
@@ -2263,7 +2998,7 @@ async fn extract(
             }
             with_summary(Json(body), summary)
         }
-        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "query_failed", e).into_response(),
+        Err(e) => query_error_response(e, &id, metadata),
     }
 }
 
@@ -2274,17 +3009,22 @@ async fn toc(
 ) -> impl IntoResponse {
     let handle = get_corpus!(&state, &id);
     let offset = req.offset.unwrap_or(0);
-    // Omitting `limit` means "no limit" — return the whole TOC so callers that
-    // paginate client-side (e.g. the MCP `ministr_toc` handler) see every
-    // section and can page past the first 100. An explicit `limit` still caps.
-    let limit = req.limit.unwrap_or(usize::MAX);
+    let requested_limit = req.limit.unwrap_or(100);
+    let limit = pagination(0, offset, requested_limit, 500).limit;
     let session_id = req.session_id.clone();
     let summary = req.document_id.as_deref().unwrap_or("<root>").to_string();
     let result = handle.service.toc(req.document_id.as_deref()).await;
+    let metadata = query_metadata(&handle, "toc").await;
     drop(handle);
     match result {
         Ok(entries) => {
             let total = entries.len();
+            let claims = entries.iter().map(|entry| entry.claims_available).sum();
+            let documents = entries
+                .iter()
+                .map(|entry| entry.document_id.as_ref())
+                .collect::<std::collections::HashSet<_>>()
+                .len();
             let body = query::TocResponse {
                 entries: entries
                     .into_iter()
@@ -2293,6 +3033,10 @@ async fn toc(
                     .map(convert::toc_entry)
                     .collect(),
                 total,
+                documents,
+                claims,
+                pagination: pagination(total, offset, requested_limit, 500),
+                metadata,
             };
             let summary = format!("{summary} ({total})");
             if let Some(sid) = session_id {
@@ -2321,16 +3065,51 @@ async fn related(
         )
     };
     let session_id = req.session_id.clone();
+    let requested_limit = req.limit.unwrap_or(50);
     let summary = req.claim_id.clone();
     let result = handle
         .service
         .related_claims(&req.claim_id, relation_types.as_deref())
         .await;
+    let metadata = query_metadata(&handle, "related").await;
     drop(handle);
     match result {
         Ok(claims) => {
+            let offset = match req.cursor.as_deref() {
+                Some(cursor) if cursor.starts_with("related:") => claims
+                    .iter()
+                    .position(|claim| ministr_core::service::related_claim_cursor(claim) == cursor)
+                    .map(|index| index + 1),
+                Some(cursor) => cursor
+                    .strip_prefix("offset:")
+                    .unwrap_or(cursor)
+                    .parse::<usize>()
+                    .ok(),
+                None => Some(req.offset.unwrap_or(0)),
+            };
+            let Some(offset) = offset else {
+                return err(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_parameters",
+                    "related cursor no longer identifies an edge; restart pagination",
+                )
+                .into_response();
+            };
+            let limit = pagination(0, offset, requested_limit, 500).limit;
+            let total = claims.len();
+            let claims: Vec<_> = claims.into_iter().skip(offset).take(limit).collect();
+            let mut page = pagination(total, offset, requested_limit, 500);
+            page.cursor = req.cursor;
+            if page.has_more {
+                page.next_cursor = claims
+                    .last()
+                    .map(ministr_core::service::related_claim_cursor);
+            }
             let body = query::RelatedResponse {
                 claims: claims.into_iter().map(convert::related_claim).collect(),
+                total,
+                pagination: page,
+                metadata,
             };
             let summary = format!("{summary} ({n})", n = body.claims.len());
             if let Some(sid) = session_id {
@@ -2348,7 +3127,9 @@ async fn bridge(
     Json(req): Json<query::BridgeRequest>,
 ) -> impl IntoResponse {
     let handle = get_corpus!(&state, &id);
-    let limit = req.limit.unwrap_or(50);
+    let offset = req.offset.unwrap_or(0);
+    let requested_limit = req.limit.unwrap_or(50);
+    let limit = pagination(0, offset, requested_limit, 500).limit;
     let session_id = req.session_id.clone();
     let summary = {
         let mut parts: Vec<String> = Vec::new();
@@ -2379,15 +3160,21 @@ async fn bridge(
             req.file_path.as_deref(),
         )
         .await;
+    let metadata = query_metadata(&handle, "bridge").await;
     drop(handle);
     match result {
         Ok(links) => {
+            let total = links.len();
             let body = query::BridgeResponse {
                 links: links
                     .into_iter()
+                    .skip(offset)
                     .take(limit)
                     .map(convert::bridge_link)
                     .collect(),
+                total,
+                pagination: pagination(total, offset, requested_limit, 500),
+                metadata,
             };
             let summary = format!("{summary} ({n})", n = body.links.len());
             if let Some(sid) = session_id {
@@ -2449,6 +3236,7 @@ async fn bridge_graph(
 // Compress
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_lines)]
 async fn compress_content(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -2457,17 +3245,125 @@ async fn compress_content(
     let _permit = state.query_semaphore.acquire().await;
     let handle = get_corpus!(&state, &id);
     let session_id = req.session_id.clone();
-    let summary = format!("compress {n} items", n = req.content_ids.len());
-    let result = handle.service.compress_content(&req.content_ids).await;
-    drop(handle);
+    if let Some(identity) = req
+        .identities
+        .iter()
+        .find(|identity| identity.corpus_id != id)
+    {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "invalid_parameters",
+            format!(
+                "identity corpus '{}' does not match routed corpus '{id}'",
+                identity.corpus_id
+            ),
+        )
+        .into_response();
+    }
+    let mut identities = req.identities.clone();
+    let delivered = if let Some(sid) = session_id.as_deref() {
+        handle
+            .sessions
+            .lock()
+            .await
+            .get_session(sid)
+            .map(|entry| entry.session.delivered_identities())
+            .unwrap_or_default()
+    } else {
+        std::collections::HashSet::new()
+    };
+    for content_id in &req.content_ids {
+        let matching: Vec<_> = delivered
+            .iter()
+            .filter(|identity| identity.corpus_id == id && identity.content_id == *content_id)
+            .map(|identity| ministr_api::metadata::DeliveryIdentity {
+                corpus_id: identity.corpus_id.clone(),
+                content_id: identity.content_id.clone(),
+                resolution: identity.resolution.clone(),
+            })
+            .collect();
+        if matching.is_empty() {
+            identities.push(ministr_api::metadata::DeliveryIdentity {
+                corpus_id: id.clone(),
+                content_id: content_id.clone(),
+                resolution: "legacy".to_string(),
+            });
+        } else {
+            identities.extend(matching);
+        }
+    }
+    identities.sort_by(|left, right| {
+        (&left.corpus_id, &left.content_id, &left.resolution).cmp(&(
+            &right.corpus_id,
+            &right.content_id,
+            &right.resolution,
+        ))
+    });
+    identities.dedup();
+    let content_ids: Vec<String> = identities
+        .iter()
+        .map(|identity| identity.content_id.clone())
+        .collect();
+    let summary = format!("compress {n} items", n = identities.len());
+    let result = handle.service.compress_content(&content_ids).await;
     match result {
         Ok(items) => {
-            let body = ministr_api::session::CompressResponse {
-                summaries: items.into_iter().map(convert::compressed_item).collect(),
-            };
+            let mut pending: std::collections::HashMap<
+                String,
+                std::collections::VecDeque<ministr_api::metadata::DeliveryIdentity>,
+            > = std::collections::HashMap::new();
+            for identity in identities {
+                pending
+                    .entry(identity.content_id.clone())
+                    .or_default()
+                    .push_back(identity);
+            }
+            let summaries: Vec<_> = items
+                .into_iter()
+                .filter_map(|item| {
+                    let identity = pending
+                        .get_mut(&item.original_id)
+                        .and_then(std::collections::VecDeque::pop_front)?;
+                    let mut wire = convert::compressed_item(item);
+                    wire.identity = Some(identity);
+                    Some(wire)
+                })
+                .collect();
+
+            if let Some(sid) = session_id.as_deref() {
+                let mut sessions = handle.sessions.lock().await;
+                if let Some(entry) = sessions.get_session_mut(sid) {
+                    for compressed in &summaries {
+                        let Some(identity) = compressed.identity.as_ref() else {
+                            continue;
+                        };
+                        let identity = ministr_core::types::DeliveryIdentity::new(
+                            identity.corpus_id.clone(),
+                            identity.content_id.clone(),
+                            identity.resolution.clone(),
+                        );
+                        if entry.session.is_identity_delivered(&identity) {
+                            entry.session.set_identity_compressed_summary(
+                                &identity,
+                                compressed.summary.clone(),
+                                ministr_core::session::CompressionTier::Extractive,
+                                compressed.compressed_tokens,
+                            );
+                            entry.budget.force_evict_identity(&identity);
+                            let _ = entry.budget.record_tokens(
+                                &identity.storage_key(),
+                                compressed.compressed_tokens,
+                            );
+                        }
+                    }
+                    let _ = handle.storage.save_session(&entry.session).await;
+                }
+            }
+            let body = ministr_api::session::CompressResponse { summaries };
             if let Some(sid) = session_id {
                 tick_session_turn(&state, &id, &sid, "compress", response_tokens(&body)).await;
             }
+            drop(handle);
             with_summary(Json(body), summary)
         }
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, "compress_failed", e).into_response(),
@@ -2847,7 +3743,9 @@ const TOPICAL_PREFETCH_K: usize = 8;
 ///
 /// Cross-session prefetch requires per-section co-access analytics that
 /// the storage layer doesn't yet track; left as a future strategy.
+#[allow(clippy::too_many_lines)]
 async fn trigger_prefetch(
+    corpus_id: &str,
     section_id: &str,
     storage: &ministr_core::storage::SqliteStorage,
     prefetch: &tokio::sync::Mutex<ministr_core::session::prefetch::PrefetchEngine>,
@@ -2870,7 +3768,7 @@ async fn trigger_prefetch(
     {
         let mut pf = prefetch.lock().await;
         pf.advance_turn();
-        pf.prefetch_sequential(next_section, claims_count);
+        pf.prefetch_sequential_for(corpus_id, next_section, claims_count);
     }
 
     // ── Structural ────────────────────────────────────────────────────
@@ -2893,7 +3791,13 @@ async fn trigger_prefetch(
                 }
             }
             let mut pf = prefetch.lock().await;
-            pf.prefetch_structural(siblings, &claims_counts);
+            pf.prefetch_sections_for(
+                corpus_id,
+                ministr_core::session::prefetch::PrefetchStrategy::Structural,
+                siblings,
+                &claims_counts,
+                3,
+            );
         }
     }
 
@@ -2960,7 +3864,13 @@ async fn trigger_prefetch(
 
     if !candidates.is_empty() {
         let mut pf = prefetch.lock().await;
-        pf.prefetch_topical(candidates, &claims_counts);
+        pf.prefetch_sections_for(
+            corpus_id,
+            ministr_core::session::prefetch::PrefetchStrategy::Topical,
+            candidates,
+            &claims_counts,
+            usize::MAX,
+        );
     }
 }
 
@@ -3208,10 +4118,48 @@ async fn drop_content(
         Some(entry) => {
             let mut dropped = Vec::new();
             let mut not_found = Vec::new();
+            let mut dropped_identities = Vec::new();
+            let mut not_found_identities = Vec::new();
+
+            for identity in &req.identities {
+                let core_identity = ministr_core::types::DeliveryIdentity::new(
+                    identity.corpus_id.clone(),
+                    identity.content_id.clone(),
+                    identity.resolution.clone(),
+                );
+                if identity.corpus_id == id
+                    && entry
+                        .session
+                        .remove_delivered_identity(&core_identity)
+                        .is_some()
+                {
+                    entry.budget.force_evict(&core_identity.storage_key());
+                    dropped_identities.push(identity.clone());
+                } else {
+                    not_found_identities.push(identity.clone());
+                }
+            }
 
             for id_str in &req.content_ids {
-                let content_id = ministr_core::types::ContentId(id_str.clone());
-                if entry.session.remove_delivered(&content_id).is_some() {
+                let mut matching: Vec<_> = entry
+                    .session
+                    .delivered_identities()
+                    .into_iter()
+                    .filter(|identity| {
+                        identity.content_id == *id_str
+                            && (identity.corpus_id == id
+                                || identity.corpus_id == ministr_core::types::PRIMARY_CORPUS_ID)
+                    })
+                    .collect();
+                matching.sort_by_key(ministr_core::types::DeliveryIdentity::storage_key);
+                let mut removed = false;
+                for identity in &matching {
+                    if entry.session.remove_delivered_identity(identity).is_some() {
+                        entry.budget.force_evict(&identity.storage_key());
+                        removed = true;
+                    }
+                }
+                if removed {
                     entry.budget.force_evict(id_str);
                     dropped.push(id_str.clone());
                 } else {
@@ -3219,7 +4167,14 @@ async fn drop_content(
                 }
             }
 
-            Json(ministr_api::session::DropResponse { dropped, not_found }).into_response()
+            let _ = handle.storage.save_session(&entry.session).await;
+            Json(ministr_api::session::DropResponse {
+                dropped,
+                not_found,
+                dropped_identities,
+                not_found_identities,
+            })
+            .into_response()
         }
         None => err(
             StatusCode::NOT_FOUND,
@@ -3273,6 +4228,68 @@ mod tests {
     use axum::body::Body;
     use http::StatusCode;
     use tower::ServiceExt;
+
+    #[test]
+    fn api_errors_distinguish_request_absence_access_and_backend_failures() {
+        use ministr_api::metadata::CompletenessState;
+
+        let invalid = api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_parameters",
+            "bad cursor",
+            None,
+        );
+        assert!(!invalid.retryable);
+        assert_eq!(
+            invalid.completeness.completeness,
+            CompletenessState::Complete
+        );
+        assert!(invalid.completeness.absence_is_conclusive);
+
+        let not_found = api_error(StatusCode::NOT_FOUND, "not_found", "missing", None);
+        assert!(!not_found.retryable);
+        assert_eq!(
+            not_found.completeness.completeness,
+            CompletenessState::Complete
+        );
+        assert!(not_found.completeness.absence_is_conclusive);
+
+        let unavailable = api_error(
+            StatusCode::NOT_FOUND,
+            "unavailable_corpus",
+            "cold corpus",
+            Some("corpus-a".into()),
+        );
+        assert!(unavailable.retryable);
+        assert_eq!(unavailable.corpus_id.as_deref(), Some("corpus-a"));
+        assert_eq!(
+            unavailable.completeness.completeness,
+            CompletenessState::Unavailable
+        );
+        assert!(!unavailable.completeness.absence_is_conclusive);
+
+        let permission = api_error(
+            StatusCode::FORBIDDEN,
+            "permission_denied",
+            "forbidden",
+            Some("private".into()),
+        );
+        assert!(!permission.retryable);
+        assert!(!permission.completeness.absence_is_conclusive);
+
+        let backend = api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "query_failed",
+            "storage offline",
+            None,
+        );
+        assert!(backend.retryable);
+        assert_eq!(
+            backend.completeness.completeness,
+            CompletenessState::Unavailable
+        );
+        assert!(!backend.completeness.absence_is_conclusive);
+    }
 
     fn test_state() -> AppState {
         use ministr_core::config::MinistrConfig;

@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use ministr_core::session::DeliveredItem;
-use ministr_core::types::ContentId;
+use ministr_core::types::{ContentId, DeliveryIdentity};
 use rusqlite::params;
 use tracing::warn;
 
@@ -18,7 +18,7 @@ pub struct SavedSession {
     pub budget_tokens: usize,
     pub current_turn: u32,
     pub delivered: BTreeMap<String, DeliveredItem>,
-    pub trajectory: Vec<ContentId>,
+    pub trajectory: Vec<DeliveryIdentity>,
 }
 
 /// Ensure the session persistence table exists.
@@ -55,12 +55,57 @@ pub fn save_session(
     delivered: &BTreeMap<String, DeliveredItem>,
     trajectory: &[ContentId],
 ) -> Result<(), rusqlite::Error> {
+    let identities: Vec<DeliveryIdentity> = trajectory
+        .iter()
+        .map(|content_id| {
+            delivered
+                .values()
+                .find(|item| item.content_id == *content_id)
+                .map_or_else(
+                    || DeliveryIdentity::new(corpus_id, &content_id.0, "section_full"),
+                    |item| {
+                        let mut identity = item.identity();
+                        identity.corpus_id = corpus_id.to_string();
+                        identity
+                    },
+                )
+        })
+        .collect();
+    save_session_identities(
+        db_path,
+        corpus_id,
+        session_id,
+        budget_tokens,
+        current_turn,
+        delivered,
+        &identities,
+    )
+}
+
+/// Corpus-aware session persistence entry point.
+///
+/// # Errors
+///
+/// Returns a `SQLite` error when the session database cannot be opened,
+/// migrated, or updated.
+pub fn save_session_identities(
+    db_path: &Path,
+    corpus_id: &str,
+    session_id: &str,
+    budget_tokens: usize,
+    current_turn: u32,
+    delivered: &BTreeMap<String, DeliveredItem>,
+    trajectory: &[DeliveryIdentity],
+) -> Result<(), rusqlite::Error> {
     let conn = rusqlite::Connection::open(db_path)?;
     ensure_table(&conn)?;
 
-    let delivered_json = serde_json::to_string(delivered).unwrap_or_default();
-    let trajectory_ids: Vec<&str> = trajectory.iter().map(|c| c.0.as_str()).collect();
-    let trajectory_json = serde_json::to_string(&trajectory_ids).unwrap_or_default();
+    let normalized: BTreeMap<String, &DeliveredItem> = delivered
+        .values()
+        .map(|item| (item.identity().storage_key(), item))
+        .collect();
+    let delivered_json = serde_json::to_string(&normalized).unwrap_or_default();
+    let trajectory_json = serde_json::to_string(trajectory).unwrap_or_default();
 
     conn.execute(
         "INSERT INTO daemon_sessions (corpus_id, session_id, budget_tokens, current_turn, delivered_json, trajectory_json, updated_at)
@@ -102,11 +147,48 @@ pub fn load_sessions(
             let delivered_json: String = row.get(3)?;
             let trajectory_json: String = row.get(4)?;
 
-            let delivered: BTreeMap<String, DeliveredItem> =
+            let delivered_legacy: BTreeMap<String, DeliveredItem> =
                 serde_json::from_str(&delivered_json).unwrap_or_default();
-            let trajectory_strs: Vec<String> =
-                serde_json::from_str(&trajectory_json).unwrap_or_default();
-            let trajectory: Vec<ContentId> = trajectory_strs.into_iter().map(ContentId).collect();
+            let delivered: BTreeMap<String, DeliveredItem> = delivered_legacy
+                .into_values()
+                .map(|mut item| {
+                    if item.corpus_id == "primary" {
+                        item.corpus_id = corpus_id.to_string();
+                    }
+                    (item.identity().storage_key(), item)
+                })
+                .collect();
+            let trajectory: Vec<DeliveryIdentity> = serde_json::from_str::<Vec<DeliveryIdentity>>(
+                &trajectory_json,
+            )
+            .map_or_else(
+                |_| {
+                    serde_json::from_str::<Vec<String>>(&trajectory_json)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|content_id| {
+                            delivered
+                                .values()
+                                .find(|item| item.content_id.0 == content_id)
+                                .map_or_else(
+                                    || DeliveryIdentity::new(corpus_id, content_id, "section_full"),
+                                    DeliveredItem::identity,
+                                )
+                        })
+                        .collect()
+                },
+                |identities| {
+                    identities
+                        .into_iter()
+                        .map(|mut identity| {
+                            if identity.corpus_id == "primary" {
+                                identity.corpus_id = corpus_id.to_string();
+                            }
+                            identity
+                        })
+                        .collect()
+                },
+            );
 
             Ok(SavedSession {
                 session_id,
@@ -160,6 +242,8 @@ mod tests {
             DeliveredItem {
                 content_id: ContentId(id.to_string()),
                 resolution: Resolution::Section,
+                corpus_id: "primary".into(),
+                delivery_resolution: "section".into(),
                 token_count: tokens,
                 turn_delivered: turn,
                 content_hash: format!("hash-{id}"),
@@ -202,11 +286,35 @@ mod tests {
         assert_eq!(s.budget_tokens, 50_000);
         assert_eq!(s.current_turn, 3);
         assert_eq!(s.delivered.len(), 2);
-        assert_eq!(s.delivered["sec-1"].token_count, 100);
-        assert_eq!(s.delivered["sec-2"].token_count, 200);
+        assert_eq!(
+            s.delivered
+                .values()
+                .find(|item| item.content_id.0 == "sec-1")
+                .unwrap()
+                .token_count,
+            100
+        );
+        assert_eq!(
+            s.delivered
+                .values()
+                .find(|item| item.content_id.0 == "sec-2")
+                .unwrap()
+                .token_count,
+            200
+        );
         assert_eq!(s.trajectory.len(), 3);
-        assert_eq!(s.trajectory[0].0, "sec-1");
-        assert_eq!(s.trajectory[2].0, "sec-1");
+        assert_eq!(s.trajectory[0].content_id, "sec-1");
+        assert_eq!(s.trajectory[2].content_id, "sec-1");
+        assert!(
+            s.trajectory
+                .iter()
+                .all(|identity| identity.corpus_id == "corpus-a")
+        );
+        assert!(
+            s.delivered
+                .values()
+                .all(|item| item.corpus_id == "corpus-a")
+        );
     }
 
     #[test]
@@ -383,8 +491,22 @@ mod tests {
         assert_eq!(s.budget_tokens, 50_000);
         assert_eq!(s.current_turn, 2);
         assert_eq!(s.delivered.len(), 2);
-        assert_eq!(s.delivered["sec-1"].token_count, 100);
-        assert_eq!(s.delivered["sec-2"].content_hash, "hash-sec-2");
+        assert_eq!(
+            s.delivered
+                .values()
+                .find(|item| item.content_id.0 == "sec-1")
+                .unwrap()
+                .token_count,
+            100
+        );
+        assert_eq!(
+            s.delivered
+                .values()
+                .find(|item| item.content_id.0 == "sec-2")
+                .unwrap()
+                .content_hash,
+            "hash-sec-2"
+        );
         assert_eq!(s.trajectory.len(), 2);
     }
 }

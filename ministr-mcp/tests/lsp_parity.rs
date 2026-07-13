@@ -97,7 +97,12 @@ async fn lsp_parity_gate() {
 
     // ── textDocument/definition (hover: signature/doc ride along) ───────────
     let def = backend
-        .definition(None, None, &helper_id)
+        .definition(
+            None,
+            None,
+            &helper_id,
+            ministr_core::service::DefinitionOptions::default(),
+        )
         .await
         .expect("definition");
     assert!(

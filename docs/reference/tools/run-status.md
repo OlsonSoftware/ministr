@@ -10,6 +10,16 @@
 |---|---|---|---|
 | `run_id` | string | yes | Run id from ministr_run |
 
+## Output
+
+| Field | Type | Description |
+|---|---|---|
+| `bytes_total` | integer | Exact bytes produced so far (final after exit). |
+| `duration_ms` | integer | Wall-clock duration in milliseconds. |
+| `exit_code` | integer | Exit code (None while running or signal-killed). |
+| `run_id` | string | Run id. |
+| `status` | string | Lifecycle state: `running` \| `exited` \| `killed` \| `timed_out`. |
+
 Annotations: read-only · idempotent.
 
 <small>This block is generated from the live tool schema — the same definition agents receive.</small>

@@ -10,12 +10,97 @@
 //! method only requires adding one converter here per new return type.
 
 use ministr_core::service::{
-    ClaimResult, CompressedItem, ImpactCaller, ImpactResult, ImpactRisk, RelatedClaimResult,
-    SectionDetail, SolidComponent, SolidEdge, SolidFinding, SolidParams, SolidPrinciple,
-    SolidSymbolRef, SurveyResult, SymbolDefinition, SymbolRefResult,
+    ClaimResult, CompressedItem, ImpactCaller, ImpactResult, ImpactRisk, InspectImpactSummary,
+    InspectNextAction, InspectPartialError, InspectReferenceGroup, InspectResult,
+    RelatedClaimResult, SectionDetail, SolidComponent, SolidEdge, SolidFinding, SolidParams,
+    SolidPrinciple, SolidSymbolRef, SurveyResult, SymbolDefinition, SymbolRefResult,
 };
 use ministr_core::storage::{BridgeLinkDetail, SymbolRecord};
 use ministr_core::types::{ContentId, SectionId, SymbolId, TocEntry};
+
+pub(super) fn api_identity_to_core(
+    identity: ministr_api::metadata::DeliveryIdentity,
+) -> ministr_core::types::DeliveryIdentity {
+    ministr_core::types::DeliveryIdentity::new(
+        identity.corpus_id,
+        identity.content_id,
+        identity.resolution,
+    )
+}
+
+fn api_locator_to_core(
+    locator: ministr_api::metadata::ResultLocator,
+) -> ministr_core::types::ResultLocator {
+    ministr_core::types::ResultLocator {
+        identity: api_identity_to_core(locator.identity),
+        project: locator.project,
+        source_corpus: locator.source_corpus,
+        tenant: locator.tenant,
+    }
+}
+
+fn api_score_to_core(
+    score: ministr_api::metadata::ScoreExplanation,
+) -> ministr_core::types::ScoreExplanation {
+    ministr_core::types::ScoreExplanation {
+        dense_rank: score.dense_rank,
+        dense_score: score.dense_score,
+        sparse_rank: score.sparse_rank,
+        sparse_score: score.sparse_score,
+        rrf_score: score.rrf_score,
+        exact_match: score.exact_match,
+        prefix_match: score.prefix_match,
+        identifier_match: score.identifier_match,
+        intent: score.intent,
+        intent_boost: score.intent_boost,
+        reranked: score.reranked,
+        matryoshka: score.matryoshka,
+        diversity_selected: score.diversity_selected,
+        quota_selected: score.quota_selected,
+        graph_expanded: score.graph_expanded,
+        final_score: score.final_score,
+    }
+}
+
+fn api_provenance_to_core(
+    provenance: ministr_api::metadata::ContentProvenance,
+) -> ministr_core::types::ContentProvenance {
+    use ministr_api::metadata::ContentProvenance as Api;
+    use ministr_core::types::ContentProvenance as Core;
+    match provenance {
+        Api::Production => Core::Production,
+        Api::Test => Core::Test,
+        Api::Generated => Core::Generated,
+        Api::Fixture => Core::Fixture,
+        Api::Benchmark => Core::Benchmark,
+        Api::Vendor => Core::Vendor,
+        Api::Documentation => Core::Documentation,
+        Api::Migration => Core::Migration,
+        Api::Example => Core::Example,
+        Api::Unknown => Core::Unknown,
+    }
+}
+
+fn api_text_metadata_to_core(
+    metadata: ministr_api::metadata::TextDeliveryMetadata,
+) -> ministr_core::types::TextDeliveryMetadata {
+    use ministr_api::metadata::TextRepresentation as Api;
+    use ministr_core::types::TextRepresentation as Core;
+    ministr_core::types::TextDeliveryMetadata {
+        truncated: metadata.truncated,
+        original_bytes: metadata.original_bytes,
+        original_tokens: metadata.original_tokens,
+        returned_bytes: metadata.returned_bytes,
+        returned_tokens: metadata.returned_tokens,
+        representation: match metadata.representation {
+            Api::Full => Core::Full,
+            Api::StoredSummary => Core::StoredSummary,
+            Api::Excerpt | Api::Outline => Core::QueryExcerpt,
+            Api::SymbolStub => Core::SymbolStub,
+        },
+        continuation: metadata.continuation.map(api_locator_to_core),
+    }
+}
 
 pub(super) fn api_survey_to_service(r: ministr_api::query::SurveyResult) -> SurveyResult {
     SurveyResult {
@@ -25,6 +110,10 @@ pub(super) fn api_survey_to_service(r: ministr_api::query::SurveyResult) -> Surv
         text: r.text,
         heading_path: r.heading_path,
         source_corpus: r.source_corpus,
+        locator: api_locator_to_core(r.locator),
+        text_metadata: api_text_metadata_to_core(r.text_metadata),
+        provenance: api_provenance_to_core(r.provenance),
+        score_explanation: api_score_to_core(r.score_explanation),
     }
 }
 
@@ -64,6 +153,41 @@ pub(super) fn api_symbol_def_to_service(
         line_end: s.line_end,
         heading_path: s.heading_path,
         source_context: s.source_context,
+        truncated: s.truncated,
+        omitted_lines: s.omitted_lines,
+        original_line_range: ministr_core::service::SourceLineRange {
+            start: s.original_line_range.start,
+            end: s.original_line_range.end,
+        },
+        returned_line_range: ministr_core::service::SourceLineRange {
+            start: s.returned_line_range.start,
+            end: s.returned_line_range.end,
+        },
+        continuation: s.continuation.map(|continuation| {
+            ministr_core::service::DefinitionContinuation {
+                symbol_id: continuation.symbol_id,
+                start_line: continuation.start_line,
+                max_lines: continuation.max_lines,
+                start_byte: continuation.start_byte,
+                max_bytes: continuation.max_bytes,
+            }
+        }),
+        outline_only: s.outline_only,
+        child_symbols: s
+            .child_symbols
+            .into_iter()
+            .map(|child| ministr_core::service::DefinitionChild {
+                id: child.id,
+                name: child.name,
+                kind: child.kind,
+                file_path: child.file_path,
+                line_start: child.line_start,
+                line_end: child.line_end,
+                locator: api_locator_to_core(child.locator),
+            })
+            .collect(),
+        locator: api_locator_to_core(s.locator),
+        source_error: s.source_error,
     }
 }
 
@@ -101,6 +225,72 @@ pub(super) fn api_symbol_reference_to_service(
         to_file: r.to_file,
         to_line: r.to_line,
         ref_kind: r.ref_kind,
+    }
+}
+
+fn api_inspect_group_to_service(
+    group: ministr_api::query::InspectReferenceGroup,
+) -> InspectReferenceGroup {
+    InspectReferenceGroup {
+        items: group
+            .items
+            .into_iter()
+            .map(api_symbol_reference_to_service)
+            .collect(),
+        total: group.total,
+        omitted_count: group.omitted_count,
+        pagination: ministr_core::types::Pagination {
+            limit: group.pagination.limit,
+            offset: group.pagination.offset,
+            cursor: group.pagination.cursor,
+            next_cursor: group.pagination.next_cursor,
+            total: group.pagination.total,
+            has_more: group.pagination.has_more,
+            omitted_count: group.pagination.omitted_count,
+        },
+    }
+}
+
+pub(super) fn api_inspect_to_service(
+    response: ministr_api::query::InspectResponse,
+) -> InspectResult {
+    InspectResult {
+        symbol_id: response.symbol_id,
+        locator: api_locator_to_core(response.locator),
+        definition: response.definition.map(api_symbol_def_to_service),
+        callers: api_inspect_group_to_service(response.callers),
+        callees: api_inspect_group_to_service(response.callees),
+        implementors: api_inspect_group_to_service(response.implementors),
+        imports: api_inspect_group_to_service(response.imports),
+        tests: api_inspect_group_to_service(response.tests),
+        bridges: api_inspect_group_to_service(response.bridges),
+        impact: InspectImpactSummary {
+            direct_callers: response.impact.direct_callers,
+            direct_callees: response.impact.direct_callees,
+            affected_files: response.impact.affected_files,
+            relevant_tests: response.impact.relevant_tests,
+            risk: api_impact_risk_to_service(response.impact.risk),
+        },
+        partial_errors: response
+            .partial_errors
+            .into_iter()
+            .map(|error| InspectPartialError {
+                group: error.group,
+                message: error.message,
+            })
+            .collect(),
+        next_actions: response
+            .next_actions
+            .into_iter()
+            .map(|action| InspectNextAction {
+                action: action.action,
+                locator: api_locator_to_core(action.locator),
+                reason: action.reason,
+            })
+            .collect(),
+        truncated: response.truncated,
+        original_bytes: response.original_bytes,
+        returned_bytes: response.returned_bytes,
     }
 }
 
@@ -375,6 +565,7 @@ pub(super) fn service_solid_params_to_api(p: SolidParams) -> ministr_api::query:
         shotgun_skip_conventional_names: Some(p.shotgun_skip_conventional_names),
         cyclic_min_edges_per_direction: Some(p.cyclic_min_edges_per_direction),
         cyclic_skip_test_paths: Some(p.cyclic_skip_test_paths),
+        offset: None,
     }
 }
 
@@ -399,6 +590,26 @@ pub(super) fn api_compressed_to_service(
         original_tokens: c.original_tokens,
         compressed_tokens: c.compressed_tokens,
         method: c.method,
+    }
+}
+
+pub(super) fn api_compressed_delivery_to_service(
+    item: ministr_api::session::CompressedItemApi,
+    fallback_corpus_id: &str,
+) -> super::CompressedDelivery {
+    let identity = item.identity.clone().map_or_else(
+        || {
+            ministr_core::types::DeliveryIdentity::new(
+                fallback_corpus_id,
+                item.original_id.clone(),
+                "legacy",
+            )
+        },
+        api_identity_to_core,
+    );
+    super::CompressedDelivery {
+        identity,
+        item: api_compressed_to_service(item),
     }
 }
 
@@ -475,6 +686,10 @@ mod tests {
             text: "the body".into(),
             heading_path: Some(vec!["A".into(), "B".into()]),
             source_corpus: Some("atlas/react".into()),
+            locator: ministr_api::metadata::ResultLocator::default(),
+            text_metadata: ministr_api::metadata::TextDeliveryMetadata::default(),
+            provenance: ministr_api::metadata::ContentProvenance::default(),
+            score_explanation: ministr_api::metadata::ScoreExplanation::default(),
         };
         let svc = api_survey_to_service(api.clone());
         assert_eq!(svc.content_id, api.content_id);
@@ -524,6 +739,8 @@ mod tests {
                 line: 100,
                 depth: 1,
             }],
+            pagination: ministr_api::metadata::Pagination::default(),
+            metadata: ministr_api::metadata::QueryMetadata::default(),
         };
         let svc = api_impact_to_service(api.clone());
         assert_eq!(svc.target_symbol_id, api.target_symbol_id);
@@ -576,6 +793,7 @@ mod tests {
     #[test]
     fn compressed_round_trips_every_field() {
         let api = ministr_api::session::CompressedItemApi {
+            identity: None,
             original_id: "doc.md#a".into(),
             summary: "short".into(),
             original_tokens: 100,

@@ -10,6 +10,13 @@
 |---|---|---|---|
 | `run_id` | string | yes | Run id from ministr_run |
 
+## Output
+
+| Field | Type | Description |
+|---|---|---|
+| `killed` | boolean | True when the run was still active and cancellation was requested. |
+| `run_id` | string | Run id. |
+
 Annotations: destructive · idempotent.
 
 <small>This block is generated from the live tool schema — the same definition agents receive.</small>

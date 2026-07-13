@@ -87,7 +87,7 @@ async fn an1_session_tracks_unflushed_items_correctly() {
     let (new, prev) = entry.session.unflushed_co_access_items();
     assert_eq!(new.len(), 2);
     assert!(prev.is_empty());
-    let ids: Vec<String> = new.iter().map(|c| c.0.clone()).collect();
+    let ids: Vec<String> = new.iter().map(|c| c.content_id.clone()).collect();
     assert!(ids.contains(&"a".to_string()));
     assert!(ids.contains(&"b".to_string()));
     entry.session.mark_co_access_flushed(new);
@@ -109,7 +109,7 @@ async fn an1_session_tracks_unflushed_items_correctly() {
         .record_delivery(&cid("c"), Resolution::Section, 100, 4, "h3".into());
     let (new, prev) = entry.session.unflushed_co_access_items();
     assert_eq!(new.len(), 1);
-    assert_eq!(new[0], cid("c"));
+    assert_eq!(new[0].content_id, "c");
     assert_eq!(prev.len(), 2);
 }
 

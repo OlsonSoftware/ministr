@@ -45,6 +45,26 @@ symbol graph.
 
 What "current" means to you is the [freshness](freshness.md) contract.
 
+## Query completeness
+
+Query responses make index state explicit. `completeness` is `complete`,
+`partial`, `stale`, or `unavailable`, accompanied where known by indexed and
+estimated-total file/item counts, affected capabilities, and the index
+generation/version. `absence_is_conclusive` is false while ingestion is
+active, an index is stale, or a corpus could not be reached.
+
+This distinction applies to positive and negative answers. A partial survey
+may still contain useful hits, but an empty partial symbol or reference result
+is not proof that the symbol or edge does not exist. Linked and cross-corpus
+queries report completeness per corpus and preserve successful members when
+another member fails.
+
+Operational failures use the separate response `status`: `ok`, `partial`, or
+`error`, with a stable error code, retryability, a concise message, and the
+failed corpus/backend when applicable. Invalid parameters, permission failure,
+backend failure, unavailable corpus, incomplete indexing, and a conclusive
+no-match answer are therefore distinct machine-readable states.
+
 ## Storage
 
 One SQLite database per corpus under `~/.ministr` holds documents, sections,

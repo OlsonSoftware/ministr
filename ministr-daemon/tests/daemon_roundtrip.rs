@@ -2,8 +2,9 @@
 
 mod common;
 
+use ministr_api::client::ClientError;
 use ministr_api::query::{
-    BridgeRequest, ExtractRequest, RelatedRequest, SymbolsRequest, TocRequest,
+    BridgeRequest, ExtractRequest, ReferencesRequest, RelatedRequest, SymbolsRequest, TocRequest,
 };
 use ministr_core::types::{ContentId, DocumentTree, Section, SectionId};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -40,6 +41,59 @@ async fn test_corpus_status() {
     let info = client.corpus_status(&daemon.corpus_id).await.unwrap();
     assert_eq!(info.id, daemon.corpus_id);
     assert_eq!(info.sections_count, 3);
+}
+
+#[tokio::test]
+async fn api_error_envelopes_classify_invalid_parameters_and_unavailable_corpus() {
+    let daemon = TestDaemon::start().await;
+    let client = daemon.client();
+
+    let invalid = client
+        .references_req(
+            &daemon.corpus_id,
+            "sym-config::MinistrConfig",
+            &ReferencesRequest {
+                ref_kind: Some("not-a-reference-kind".into()),
+                through_implementors: None,
+                session_id: None,
+                offset: None,
+                limit: None,
+                cursor: None,
+            },
+        )
+        .await
+        .expect_err("invalid reference kind must fail");
+    let ClientError::Api(invalid) = invalid else {
+        panic!("expected structured ApiError")
+    };
+    assert_eq!(invalid.error_code, "invalid_parameters");
+    assert!(!invalid.retryable);
+    assert!(invalid.completeness.absence_is_conclusive);
+
+    let missing = client
+        .extract(
+            "corpus-that-does-not-exist",
+            &ExtractRequest {
+                section_id: "anything#missing".into(),
+                query: None,
+                session_id: None,
+                offset: None,
+                cursor: None,
+                limit: None,
+            },
+        )
+        .await
+        .expect_err("missing corpus must fail");
+    let ClientError::Api(missing) = missing else {
+        panic!("expected structured ApiError")
+    };
+    assert_eq!(missing.error_code, "unavailable_corpus");
+    assert!(missing.retryable);
+    assert_eq!(
+        missing.corpus_id.as_deref(),
+        Some("corpus-that-does-not-exist")
+    );
+    assert!(!missing.completeness.absence_is_conclusive);
 }
 
 #[tokio::test]
@@ -80,10 +134,89 @@ async fn test_survey() {
         .await
         .unwrap();
     assert!(!resp.results.is_empty(), "survey should return results");
+    assert_eq!(
+        resp.metadata.completeness.completeness,
+        ministr_api::metadata::CompletenessState::Stale,
+        "the fixture's indexed records intentionally have no matching source files"
+    );
+    assert!(!resp.metadata.completeness.absence_is_conclusive);
     for r in &resp.results {
         assert!(r.score > 0.0, "score should be positive");
         assert!(!r.content_id.is_empty());
     }
+}
+
+#[tokio::test]
+async fn survey_session_dedup_accounts_and_drop_reenables_exact_identity() {
+    let daemon = TestDaemon::start().await;
+    let client = daemon.client();
+    let session = client
+        .create_session(&daemon.corpus_id, Some(50_000))
+        .await
+        .unwrap();
+    let request = ministr_api::query::SurveyRequest {
+        query: "JWT authentication tokens".into(),
+        top_k: Some(5),
+        limit: None,
+        offset: None,
+        cursor: None,
+        session_id: Some(session.session_id.clone()),
+        exclude: Vec::new(),
+        max_result_bytes: None,
+        max_result_tokens: None,
+        max_total_bytes: None,
+        max_total_tokens: None,
+    };
+
+    let first = client
+        .survey_req(&daemon.corpus_id, &request)
+        .await
+        .unwrap();
+    let delivered = first.results.first().unwrap().locator.identity.clone();
+    let second = client
+        .survey_req(&daemon.corpus_id, &request)
+        .await
+        .unwrap();
+    assert!(second.deduplicated_count.unwrap_or(0) > 0);
+    assert!(second.suppressed_identities.contains(&delivered));
+    assert!(
+        second
+            .results
+            .iter()
+            .all(|result| result.locator.identity != delivered)
+    );
+    let listed = client.list_sessions().await.unwrap();
+    let metrics = listed
+        .iter()
+        .find(|entry| entry.session_id == session.session_id)
+        .unwrap();
+    assert!(metrics.dedup_hits > 0);
+    assert!(metrics.total_tokens_saved > 0);
+
+    let dropped = client
+        .drop_content(
+            &daemon.corpus_id,
+            &session.session_id,
+            &ministr_api::session::DropRequest {
+                content_ids: Vec::new(),
+                identities: vec![delivered.clone()],
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(dropped.dropped_identities, vec![delivered.clone()]);
+
+    let third = client
+        .survey_req(&daemon.corpus_id, &request)
+        .await
+        .unwrap();
+    assert!(
+        third
+            .results
+            .iter()
+            .any(|result| result.locator.identity == delivered),
+        "dropping one exact identity must make it eligible again"
+    );
 }
 
 #[tokio::test]
@@ -113,9 +246,19 @@ async fn test_symbols() {
         visibility: None,
         file_path: None,
         limit: None,
+        offset: None,
         session_id: None,
     };
     let resp = client.symbols(&daemon.corpus_id, &req).await.unwrap();
+    assert_eq!(
+        resp.metadata.status,
+        ministr_api::metadata::ResponseStatus::Partial
+    );
+    assert_eq!(
+        resp.metadata.completeness.completeness,
+        ministr_api::metadata::CompletenessState::Stale
+    );
+    assert!(!resp.metadata.completeness.absence_is_conclusive);
     assert!(!resp.symbols.is_empty(), "should find MinistrConfig symbol");
     assert_eq!(resp.symbols[0].name, "MinistrConfig");
     assert_eq!(resp.symbols[0].kind, "struct");
@@ -126,15 +269,122 @@ async fn test_definition() {
     let daemon = TestDaemon::start().await;
     let client = daemon.client();
 
-    let def = client
-        .definition(&daemon.corpus_id, "sym-config::MinistrConfig", None)
+    let response = client
+        .definition_response_req(
+            &daemon.corpus_id,
+            "sym-config::MinistrConfig",
+            &ministr_api::query::DefinitionRequest::default(),
+        )
         .await
         .unwrap();
+    assert_eq!(
+        response.metadata.status,
+        ministr_api::metadata::ResponseStatus::Partial
+    );
+    assert_eq!(
+        response.metadata.completeness.completeness,
+        ministr_api::metadata::CompletenessState::Partial
+    );
+    assert_eq!(
+        response
+            .metadata
+            .error
+            .as_ref()
+            .map(|error| error.error_code.as_str()),
+        Some("file_unavailable")
+    );
+    assert!(!response.metadata.completeness.absence_is_conclusive);
+    let def = response.definition;
     assert_eq!(def.name, "MinistrConfig");
     assert_eq!(def.kind, "struct");
     assert_eq!(def.visibility, "pub");
     assert_eq!(def.line_start, 10);
     assert_eq!(def.line_end, 25);
+}
+
+#[tokio::test]
+async fn active_ingestion_navigation_miss_is_retryable_and_nonconclusive() {
+    let daemon = TestDaemon::start().await;
+    daemon.progress.start(10);
+    daemon.progress.increment_done();
+    let error = daemon
+        .client()
+        .definition_response_req(
+            &daemon.corpus_id,
+            "sym-not-indexed-yet",
+            &ministr_api::query::DefinitionRequest::default(),
+        )
+        .await
+        .unwrap_err();
+    let ministr_api::client::ClientError::Api(error) = error else {
+        panic!("expected structured daemon API error");
+    };
+    assert_eq!(error.error_code, "not_found");
+    assert!(error.retryable);
+    assert_eq!(
+        error.completeness.completeness,
+        ministr_api::metadata::CompletenessState::Partial
+    );
+    assert!(!error.completeness.absence_is_conclusive);
+}
+
+#[tokio::test]
+async fn inspect_roundtrips_bounded_groups_and_pagination() {
+    let daemon = TestDaemon::start().await;
+    let response = daemon
+        .client()
+        .inspect(
+            &daemon.corpus_id,
+            &ministr_api::query::InspectRequest {
+                symbol_id: Some("sym-config::MinistrConfig".to_string()),
+                file: None,
+                line: None,
+                col: None,
+                include: vec![
+                    ministr_api::query::InspectInclude::Definition,
+                    ministr_api::query::InspectInclude::Callers,
+                ],
+                max_per_group: Some(1),
+                max_source_lines: Some(20),
+                session_id: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.symbol_id, "sym-config::MinistrConfig");
+    assert!(response.definition.is_some());
+    assert_eq!(response.callers.pagination.total, response.callers.total);
+    assert_eq!(response.callers.pagination.limit, 1);
+    assert!(response.returned_bytes <= 65_536);
+    assert_ne!(
+        response.metadata.completeness.completeness,
+        ministr_api::metadata::CompletenessState::Complete,
+        "fixture roots are intentionally unavailable, so inspect must preserve stale state"
+    );
+
+    let default_groups = daemon
+        .client()
+        .inspect(
+            &daemon.corpus_id,
+            &ministr_api::query::InspectRequest {
+                symbol_id: Some("sym-config::MinistrConfig".to_string()),
+                file: None,
+                line: None,
+                col: None,
+                include: Vec::new(),
+                max_per_group: Some(10),
+                max_source_lines: Some(20),
+                session_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(default_groups.definition.is_some());
+    assert!(
+        !default_groups.imports.items.is_empty(),
+        "an omitted include list must retain the all-groups default through daemon transport"
+    );
 }
 
 #[tokio::test]
@@ -146,6 +396,15 @@ async fn test_references() {
         .references(&daemon.corpus_id, "sym-config::MinistrConfig", None, false)
         .await
         .unwrap();
+    assert_eq!(
+        resp.metadata.status,
+        ministr_api::metadata::ResponseStatus::Partial
+    );
+    assert_eq!(
+        resp.metadata.completeness.completeness,
+        ministr_api::metadata::CompletenessState::Stale
+    );
+    assert!(!resp.metadata.completeness.absence_is_conclusive);
     assert!(
         !resp.references.is_empty(),
         "MinistrConfig should have references"
@@ -167,6 +426,15 @@ async fn test_toc() {
         session_id: None,
     };
     let resp = client.toc(&daemon.corpus_id, &req).await.unwrap();
+    assert_eq!(
+        resp.metadata.status,
+        ministr_api::metadata::ResponseStatus::Partial
+    );
+    assert_eq!(
+        resp.metadata.completeness.completeness,
+        ministr_api::metadata::CompletenessState::Stale
+    );
+    assert!(!resp.metadata.completeness.absence_is_conclusive);
     assert!(resp.total >= 3, "should have at least 3 sections");
     assert!(!resp.entries.is_empty());
 }
@@ -196,15 +464,13 @@ fn big_doc(n: usize) -> DocumentTree {
 }
 
 #[tokio::test]
-async fn toc_pagination_returns_sections_past_the_old_100_cap() {
-    // Regression (f-toc-deep-pagination): the daemon TOC handler used to default
-    // `limit` to 100, so an unfiltered toc over a corpus with >100 sections
-    // capped at 100 and offset:100 returned empty — the MCP `ministr_toc`
-    // deep-pagination bug. Omitting `limit` must now return every section.
+async fn toc_pagination_returns_continuation_past_the_default_page() {
+    // Collection responses are bounded by default but expose accurate totals
+    // and continuation metadata so the later page remains reachable.
     let daemon = TestDaemon::start_with_corpus(vec![big_doc(150)]).await;
     let client = daemon.client();
 
-    // `limit` omitted → all 150 sections, with an accurate total.
+    // `limit` omitted → bounded default page, with an accurate total.
     let all = client
         .toc(
             &daemon.corpus_id,
@@ -218,11 +484,9 @@ async fn toc_pagination_returns_sections_past_the_old_100_cap() {
         .await
         .unwrap();
     assert_eq!(all.total, 150);
-    assert_eq!(
-        all.entries.len(),
-        150,
-        "omitting limit must return every section, not cap at 100"
-    );
+    assert_eq!(all.entries.len(), 100);
+    assert!(all.pagination.has_more);
+    assert_eq!(all.pagination.omitted_count, 50);
 
     // Offset past the old 100 cap returns the later page (was empty before).
     let page = client
@@ -311,12 +575,68 @@ async fn test_extract() {
         section_id: "docs/auth.md#tokens".into(),
         query: None,
         session_id: None,
+        offset: None,
+        cursor: None,
+        limit: None,
     };
     let resp = client.extract(&daemon.corpus_id, &req).await.unwrap();
+    assert_eq!(
+        resp.metadata.status,
+        ministr_api::metadata::ResponseStatus::Partial
+    );
+    assert_eq!(
+        resp.metadata.completeness.completeness,
+        ministr_api::metadata::CompletenessState::Stale
+    );
+    assert!(!resp.metadata.completeness.absence_is_conclusive);
     assert_eq!(resp.claims.len(), 2, "tokens section has 2 claims");
     let claim_texts: Vec<&str> = resp.claims.iter().map(|c| c.text.as_str()).collect();
     assert!(claim_texts.iter().any(|t| t.contains("RS256")));
     assert!(claim_texts.iter().any(|t| t.contains("24 hours")));
+}
+
+#[tokio::test]
+async fn extract_pages_large_claim_collection_without_gaps() {
+    let daemon = TestDaemon::start().await;
+    let client = daemon.client();
+
+    let first = client
+        .extract(
+            &daemon.corpus_id,
+            &ExtractRequest {
+                section_id: "docs/auth.md#many-claims".into(),
+                query: None,
+                session_id: None,
+                offset: None,
+                cursor: None,
+                limit: Some(25),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.total, 75);
+    assert_eq!(first.claims.len(), 25);
+    assert!(first.pagination.has_more);
+    assert_eq!(first.pagination.omitted_count, 50);
+
+    let second = client
+        .extract(
+            &daemon.corpus_id,
+            &ExtractRequest {
+                section_id: "docs/auth.md#many-claims".into(),
+                query: None,
+                session_id: None,
+                offset: None,
+                cursor: first.pagination.next_cursor,
+                limit: Some(25),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.pagination.offset, Some(25));
+    assert_eq!(second.claims.len(), 25);
+    assert_eq!(first.claims.last().unwrap().claim_id, "catalog-c024");
+    assert_eq!(second.claims.first().unwrap().claim_id, "catalog-c025");
 }
 
 #[tokio::test]
@@ -328,6 +648,9 @@ async fn test_related() {
         claim_id: "auth-c1".into(),
         relation_types: vec![],
         session_id: None,
+        offset: None,
+        cursor: None,
+        limit: None,
     };
     let resp = client.related(&daemon.corpus_id, &req).await.unwrap();
     assert!(
@@ -348,6 +671,7 @@ async fn test_bridge() {
         source_language: None,
         file_path: None,
         limit: None,
+        offset: None,
         session_id: None,
     };
     let resp = client.bridge(&daemon.corpus_id, &req).await.unwrap();
@@ -381,6 +705,7 @@ async fn bridge_file_path_filter_is_honored() {
         source_language: None,
         file_path: file_path.map(String::from),
         limit: None,
+        offset: None,
         session_id: None,
     };
 
@@ -444,6 +769,7 @@ async fn test_compress() {
 
     let req = ministr_api::session::CompressRequest {
         content_ids: vec!["docs/auth.md#tokens".into()],
+        identities: vec![],
         session_id: None,
     };
     let resp = client.compress(&daemon.corpus_id, &req).await.unwrap();
@@ -463,10 +789,50 @@ async fn test_compress_unknown_ids() {
 
     let req = ministr_api::session::CompressRequest {
         content_ids: vec!["nonexistent#section".into()],
+        identities: vec![],
         session_id: None,
     };
     let resp = client.compress(&daemon.corpus_id, &req).await.unwrap();
     assert!(resp.summaries.is_empty());
+}
+
+#[tokio::test]
+async fn test_compress_exact_identity_roundtrip_and_corpus_validation() {
+    let daemon = TestDaemon::start().await;
+    let client = daemon.client();
+    let identity = ministr_api::metadata::DeliveryIdentity {
+        corpus_id: daemon.corpus_id.clone(),
+        content_id: "docs/auth.md#tokens".into(),
+        resolution: "section_full".into(),
+    };
+    let resp = client
+        .compress(
+            &daemon.corpus_id,
+            &ministr_api::session::CompressRequest {
+                content_ids: Vec::new(),
+                identities: vec![identity.clone()],
+                session_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    if let Some(item) = resp.summaries.first() {
+        assert_eq!(item.identity.as_ref(), Some(&identity));
+    }
+
+    let mut wrong = identity;
+    wrong.corpus_id = "another-corpus".into();
+    let rejected = client
+        .compress(
+            &daemon.corpus_id,
+            &ministr_api::session::CompressRequest {
+                content_ids: Vec::new(),
+                identities: vec![wrong],
+                session_id: None,
+            },
+        )
+        .await;
+    assert!(rejected.is_err(), "cross-corpus identity must be rejected");
 }
 
 #[tokio::test]
@@ -483,6 +849,7 @@ async fn test_drop_content() {
     // Evict content IDs (not previously delivered — should be not_found).
     let req = ministr_api::session::DropRequest {
         content_ids: vec!["docs/auth.md#tokens".into(), "nonexistent".into()],
+        identities: Vec::new(),
     };
     let resp = client
         .drop_content(&daemon.corpus_id, &session.session_id, &req)
@@ -501,6 +868,7 @@ async fn test_evict_nonexistent_session() {
 
     let req = ministr_api::session::DropRequest {
         content_ids: vec!["docs/auth.md#tokens".into()],
+        identities: Vec::new(),
     };
     let result = client
         .drop_content(&daemon.corpus_id, "sess-nonexistent", &req)

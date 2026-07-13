@@ -32,7 +32,7 @@ use std::collections::{HashMap, VecDeque};
 use serde::Serialize;
 
 use crate::token::count_tokens;
-use crate::types::Resolution;
+use crate::types::{DeliveryIdentity, PRIMARY_CORPUS_ID, Resolution};
 
 /// Default number of items the prefetch cache can hold.
 const DEFAULT_CACHE_CAPACITY: usize = 50;
@@ -65,6 +65,10 @@ pub enum PrefetchStrategy {
     SurveyExpand,
     /// Agent intent prediction: sections predicted from tool call patterns.
     AgentPlan,
+    /// Exact symbol definition warmed from a symbol-search result.
+    SymbolSearch,
+    /// Symbol definition warmed after traversing its references.
+    ReferenceFollow,
 }
 
 /// A pre-computed cache entry ready for immediate delivery.
@@ -107,6 +111,26 @@ pub struct PrefetchMetrics {
     pub survey_expand_hits: u64,
     /// Hits from agent-plan intent prediction entries.
     pub agent_plan_hits: u64,
+    pub symbol_search_hits: u64,
+    pub reference_follow_hits: u64,
+    /// Cache entries issued by all strategies.
+    pub prefetches_issued: u64,
+    /// Issued entries evicted or invalidated before their first use.
+    pub prefetches_never_consumed: u64,
+    /// Warm-served tokens (avoided cold retrieval work).
+    pub tokens_saved: u64,
+    /// Warm-served UTF-8 bytes (avoided cold retrieval work).
+    pub bytes_saved: u64,
+    /// Conservative modeled latency avoided (50ms per warm hit).
+    pub latency_saved_ms: u64,
+    pub sequential_issued: u64,
+    pub topical_issued: u64,
+    pub structural_issued: u64,
+    pub cross_session_issued: u64,
+    pub survey_expand_issued: u64,
+    pub agent_plan_issued: u64,
+    pub symbol_search_issued: u64,
+    pub reference_follow_issued: u64,
 }
 
 impl PrefetchMetrics {
@@ -152,8 +176,20 @@ impl PrefetchMetrics {
             PrefetchStrategy::CrossSession => self.cross_session_hits,
             PrefetchStrategy::SurveyExpand => self.survey_expand_hits,
             PrefetchStrategy::AgentPlan => self.agent_plan_hits,
+            PrefetchStrategy::SymbolSearch => self.symbol_search_hits,
+            PrefetchStrategy::ReferenceFollow => self.reference_follow_hits,
         };
         strategy_hits as f64 / total as f64
+    }
+
+    /// Fraction of issued prefetches discarded without a hit.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn waste_rate(&self) -> f64 {
+        if self.prefetches_issued == 0 {
+            return 0.0;
+        }
+        self.prefetches_never_consumed as f64 / self.prefetches_issued as f64
     }
 }
 
@@ -304,6 +340,10 @@ pub struct PrefetchEngine {
     topic_tracker: TopicTracker,
     /// Agent intent tracker for tool-call-pattern-based prediction.
     intent_tracker: IntentTracker,
+    /// Typed symbol definitions corresponding to surrogate entries in the
+    /// priority cache. The priority cache remains the single metrics/eviction
+    /// authority; this map only preserves definition metadata for warm hits.
+    definition_cache: HashMap<String, crate::service::SymbolDefinition>,
 }
 
 impl PrefetchEngine {
@@ -314,6 +354,7 @@ impl PrefetchEngine {
             cache: PriorityCache::new(cache_capacity),
             topic_tracker: TopicTracker::with_defaults(),
             intent_tracker: IntentTracker::default(),
+            definition_cache: HashMap::new(),
         }
     }
 
@@ -324,6 +365,7 @@ impl PrefetchEngine {
             cache: PriorityCache::new(DEFAULT_CACHE_CAPACITY),
             topic_tracker: TopicTracker::with_defaults(),
             intent_tracker: IntentTracker::default(),
+            definition_cache: HashMap::new(),
         }
     }
 
@@ -338,12 +380,141 @@ impl PrefetchEngine {
     /// Returns `Some(entry)` if the content is pre-warmed, `None` for a
     /// cache miss (requiring cold retrieval).
     pub fn try_serve(&mut self, section_id: &str) -> Option<CacheEntry> {
-        self.cache.get(section_id).cloned()
+        self.try_serve_identity(&DeliveryIdentity::new(
+            PRIMARY_CORPUS_ID,
+            section_id,
+            "section_full",
+        ))
+    }
+
+    /// Try to serve one exact corpus/content/resolution cache entry.
+    pub fn try_serve_identity(&mut self, identity: &DeliveryIdentity) -> Option<CacheEntry> {
+        self.cache.get(&identity.storage_key()).cloned()
+    }
+
+    /// Try to serve the default bounded definition warmed by symbol navigation.
+    pub fn try_serve_definition(
+        &mut self,
+        corpus_id: &str,
+        symbol_id: &str,
+    ) -> Option<crate::service::SymbolDefinition> {
+        let identity = DeliveryIdentity::new(corpus_id, symbol_id, "symbol_definition_default");
+        let key = identity.storage_key();
+        self.cache.get(&key)?;
+        self.definition_cache.get(&key).cloned()
+    }
+
+    /// Whether a default bounded definition is already warm.
+    #[must_use]
+    pub fn has_definition(&self, corpus_id: &str, symbol_id: &str) -> bool {
+        let identity = DeliveryIdentity::new(corpus_id, symbol_id, "symbol_definition_default");
+        self.cache.peek(&identity.storage_key()).is_some()
+    }
+
+    /// Warm one default bounded symbol definition through the shared priority
+    /// cache so hits, misses, bytes, tokens, latency, and waste are measurable.
+    pub fn prefetch_definition(
+        &mut self,
+        corpus_id: &str,
+        definition: crate::service::SymbolDefinition,
+        strategy: PrefetchStrategy,
+    ) {
+        debug_assert!(matches!(
+            strategy,
+            PrefetchStrategy::SymbolSearch | PrefetchStrategy::ReferenceFollow
+        ));
+        let identity = DeliveryIdentity::new(
+            corpus_id,
+            definition.id.clone(),
+            "symbol_definition_default",
+        );
+        let key = identity.storage_key();
+        if self.cache.peek(&key).is_some() {
+            return;
+        }
+        let source = definition.source_context.clone();
+        let entry = CacheEntry {
+            content_id: definition.id.clone(),
+            token_count: count_tokens(&source),
+            text: source,
+            heading_path: Some(definition.heading_path.clone()),
+            summary: definition.doc_comment.clone(),
+            resolution: Resolution::SymbolFull,
+            claims_available: 0,
+            strategy,
+        };
+        self.cache.insert_default(key.clone(), entry);
+        self.definition_cache.insert(key, definition);
+        self.definition_cache
+            .retain(|key, _| self.cache.peek(key).is_some());
+    }
+
+    /// Warm a fully resolved section returned by a remote/linked backend.
+    pub fn prefetch_section_detail(
+        &mut self,
+        corpus_id: &str,
+        detail: crate::service::SectionDetail,
+        strategy: PrefetchStrategy,
+    ) {
+        let identity = DeliveryIdentity::new(corpus_id, &detail.section_id, "section_full");
+        let key = identity.storage_key();
+        if self.cache.peek(&key).is_some() {
+            return;
+        }
+        let entry = CacheEntry {
+            content_id: detail.section_id,
+            token_count: count_tokens(&detail.text),
+            text: detail.text,
+            heading_path: Some(detail.heading_path),
+            summary: detail.summary,
+            resolution: Resolution::Section,
+            claims_available: detail.claims_available,
+            strategy,
+        };
+        self.cache.insert_default(key, entry);
     }
 
     /// Record a miss (cold retrieval) in the metrics.
     pub fn record_miss(&mut self) {
         self.cache.record_miss();
+    }
+
+    /// Corpus-aware bulk warming primitive shared by every strategy.
+    pub fn prefetch_sections_for(
+        &mut self,
+        corpus_id: &str,
+        strategy: PrefetchStrategy,
+        sections: Vec<crate::storage::SectionRecord>,
+        claims_counts: &HashMap<String, usize>,
+        limit: usize,
+    ) {
+        let mut inserted = 0;
+        for section in sections {
+            if inserted >= limit {
+                break;
+            }
+            let identity = DeliveryIdentity::new(corpus_id, section.id.0.clone(), "section_full");
+            let key = identity.storage_key();
+            if self.cache.peek(&key).is_some() || self.cache.peek(&section.id.0).is_some() {
+                continue;
+            }
+            let claims = claims_counts.get(&section.id.0).copied().unwrap_or(0);
+            let token_count = count_tokens(&section.text);
+            self.cache.insert_default(
+                key,
+                CacheEntry {
+                    content_id: section.id.0,
+                    text: section.text,
+                    token_count,
+                    heading_path: Some(section.heading_path),
+                    summary: section.summary,
+                    resolution: Resolution::Section,
+                    claims_available: claims,
+                    strategy,
+                },
+            );
+            inserted += 1;
+        }
     }
 
     /// Pre-warm the cache after a read operation using sequential prefetch.
@@ -360,20 +531,25 @@ impl PrefetchEngine {
         next_section: Option<crate::storage::SectionRecord>,
         claims_count: Option<usize>,
     ) {
+        self.prefetch_sequential_for(PRIMARY_CORPUS_ID, next_section, claims_count);
+    }
+
+    /// Corpus-aware sequential warming.
+    pub fn prefetch_sequential_for(
+        &mut self,
+        corpus_id: &str,
+        next_section: Option<crate::storage::SectionRecord>,
+        claims_count: Option<usize>,
+    ) {
         let Some(section) = next_section else { return };
-        let token_count = count_tokens(&section.text);
-        self.cache.insert_default(
-            section.id.0.clone(),
-            CacheEntry {
-                content_id: section.id.0,
-                text: section.text,
-                token_count,
-                heading_path: Some(section.heading_path),
-                summary: section.summary,
-                resolution: Resolution::Section,
-                claims_available: claims_count.unwrap_or(0),
-                strategy: PrefetchStrategy::Sequential,
-            },
+        let mut counts = HashMap::new();
+        counts.insert(section.id.0.clone(), claims_count.unwrap_or(0));
+        self.prefetch_sections_for(
+            corpus_id,
+            PrefetchStrategy::Sequential,
+            vec![section],
+            &counts,
+            1,
         );
     }
 
@@ -387,32 +563,13 @@ impl PrefetchEngine {
         siblings: Vec<crate::storage::SectionRecord>,
         claims_counts: &HashMap<String, usize>,
     ) {
-        let mut inserted = 0;
-        for section in siblings {
-            if inserted >= MAX_STRUCTURAL_PREFETCH {
-                break;
-            }
-            // Skip sections already in cache
-            if self.cache.peek(&section.id.0).is_some() {
-                continue;
-            }
-            let claims = claims_counts.get(&section.id.0).copied().unwrap_or(0);
-            let token_count = count_tokens(&section.text);
-            self.cache.insert_default(
-                section.id.0.clone(),
-                CacheEntry {
-                    content_id: section.id.0,
-                    text: section.text,
-                    token_count,
-                    heading_path: Some(section.heading_path),
-                    summary: section.summary,
-                    resolution: Resolution::Section,
-                    claims_available: claims,
-                    strategy: PrefetchStrategy::Structural,
-                },
-            );
-            inserted += 1;
-        }
+        self.prefetch_sections_for(
+            PRIMARY_CORPUS_ID,
+            PrefetchStrategy::Structural,
+            siblings,
+            claims_counts,
+            MAX_STRUCTURAL_PREFETCH,
+        );
     }
 
     /// Pre-warm the cache with topically similar sections.
@@ -424,27 +581,13 @@ impl PrefetchEngine {
         candidates: Vec<crate::storage::SectionRecord>,
         claims_counts: &HashMap<String, usize>,
     ) {
-        for section in candidates {
-            // Skip sections already in cache
-            if self.cache.peek(&section.id.0).is_some() {
-                continue;
-            }
-            let claims = claims_counts.get(&section.id.0).copied().unwrap_or(0);
-            let token_count = count_tokens(&section.text);
-            self.cache.insert_default(
-                section.id.0.clone(),
-                CacheEntry {
-                    content_id: section.id.0,
-                    text: section.text,
-                    token_count,
-                    heading_path: Some(section.heading_path),
-                    summary: section.summary,
-                    resolution: Resolution::Section,
-                    claims_available: claims,
-                    strategy: PrefetchStrategy::Topical,
-                },
-            );
-        }
+        self.prefetch_sections_for(
+            PRIMARY_CORPUS_ID,
+            PrefetchStrategy::Topical,
+            candidates,
+            claims_counts,
+            usize::MAX,
+        );
     }
 
     /// Pre-warm the cache with sections from cross-session analytics.
@@ -457,26 +600,13 @@ impl PrefetchEngine {
         candidates: Vec<crate::storage::SectionRecord>,
         claims_counts: &HashMap<String, usize>,
     ) {
-        for section in candidates {
-            if self.cache.peek(&section.id.0).is_some() {
-                continue;
-            }
-            let claims = claims_counts.get(&section.id.0).copied().unwrap_or(0);
-            let token_count = count_tokens(&section.text);
-            self.cache.insert_default(
-                section.id.0.clone(),
-                CacheEntry {
-                    content_id: section.id.0,
-                    text: section.text,
-                    token_count,
-                    heading_path: Some(section.heading_path),
-                    summary: section.summary,
-                    resolution: Resolution::Section,
-                    claims_available: claims,
-                    strategy: PrefetchStrategy::CrossSession,
-                },
-            );
-        }
+        self.prefetch_sections_for(
+            PRIMARY_CORPUS_ID,
+            PrefetchStrategy::CrossSession,
+            candidates,
+            claims_counts,
+            usize::MAX,
+        );
     }
 
     /// Pre-warm the cache with parent sections of claim-level survey hits.
@@ -490,26 +620,13 @@ impl PrefetchEngine {
         sections: Vec<crate::storage::SectionRecord>,
         claims_counts: &HashMap<String, usize>,
     ) {
-        for section in sections {
-            if self.cache.peek(&section.id.0).is_some() {
-                continue;
-            }
-            let claims = claims_counts.get(&section.id.0).copied().unwrap_or(0);
-            let token_count = count_tokens(&section.text);
-            self.cache.insert_default(
-                section.id.0.clone(),
-                CacheEntry {
-                    content_id: section.id.0,
-                    text: section.text,
-                    token_count,
-                    heading_path: Some(section.heading_path),
-                    summary: section.summary,
-                    resolution: Resolution::Section,
-                    claims_available: claims,
-                    strategy: PrefetchStrategy::SurveyExpand,
-                },
-            );
-        }
+        self.prefetch_sections_for(
+            PRIMARY_CORPUS_ID,
+            PrefetchStrategy::SurveyExpand,
+            sections,
+            claims_counts,
+            usize::MAX,
+        );
     }
 
     /// Record a section embedding for topical prefetch tracking.
@@ -558,7 +675,17 @@ impl PrefetchEngine {
     /// Clears previous survey predictions and stores the new section IDs.
     /// These become `AgentPlan` prefetch candidates on the next prefetch cycle.
     pub fn record_survey_results(&mut self, section_ids: Vec<String>) {
-        self.intent_tracker.pending_survey_ids = section_ids;
+        self.record_survey_identities(
+            section_ids
+                .into_iter()
+                .map(|id| DeliveryIdentity::new(PRIMARY_CORPUS_ID, id, "section_full"))
+                .collect(),
+        );
+    }
+
+    /// Record corpus-aware survey predictions.
+    pub fn record_survey_identities(&mut self, identities: Vec<DeliveryIdentity>) {
+        self.intent_tracker.pending_survey_ids = identities;
     }
 
     /// Prefetch sections predicted by agent intent analysis.
@@ -576,39 +703,30 @@ impl PrefetchEngine {
         sections: Vec<crate::storage::SectionRecord>,
         claims_counts: &HashMap<String, usize>,
     ) {
-        let mut inserted = 0;
-        for section in sections {
-            if inserted >= MAX_INTENT_PREFETCH {
-                break;
-            }
-            if self.cache.peek(&section.id.0).is_some() {
-                continue;
-            }
-            let token_count = crate::token::count_tokens(&section.text);
-            let claims = claims_counts.get(&section.id.0).copied().unwrap_or(0);
-            let key = section.id.0.clone();
-            self.cache.insert_default(
-                key,
-                CacheEntry {
-                    content_id: section.id.0,
-                    text: section.text,
-                    token_count,
-                    heading_path: Some(section.heading_path),
-                    summary: section.summary,
-                    resolution: Resolution::Section,
-                    claims_available: claims,
-                    strategy: PrefetchStrategy::AgentPlan,
-                },
-            );
-            inserted += 1;
-        }
+        self.prefetch_sections_for(
+            PRIMARY_CORPUS_ID,
+            PrefetchStrategy::AgentPlan,
+            sections,
+            claims_counts,
+            MAX_INTENT_PREFETCH,
+        );
     }
 
     /// Get predicted section IDs from the intent tracker.
     ///
     /// Returns the pending survey result IDs that haven't been prefetched yet.
     #[must_use]
-    pub fn predicted_section_ids(&self) -> &[String] {
+    pub fn predicted_section_ids(&self) -> Vec<&str> {
+        self.intent_tracker
+            .pending_survey_ids
+            .iter()
+            .map(|identity| identity.content_id.as_str())
+            .collect()
+    }
+
+    /// Corpus-aware intent predictions.
+    #[must_use]
+    pub fn predicted_identities(&self) -> &[DeliveryIdentity] {
         &self.intent_tracker.pending_survey_ids
     }
 
@@ -618,7 +736,15 @@ impl PrefetchEngine {
     /// serving stale pre-warmed content after file modifications.
     pub fn invalidate(&mut self, stale_section_ids: &[String]) {
         for id in stale_section_ids {
-            self.cache.remove(id);
+            let identity = DeliveryIdentity::new(PRIMARY_CORPUS_ID, id, "section_full");
+            self.cache.remove(&identity.storage_key());
+        }
+    }
+
+    /// Evict exact corpus-aware cache entries.
+    pub fn invalidate_identities(&mut self, stale: &[DeliveryIdentity]) {
+        for identity in stale {
+            self.cache.remove(&identity.storage_key());
         }
     }
 
@@ -640,7 +766,7 @@ struct IntentTracker {
     /// Recent tool calls for pattern matching.
     recent_calls: VecDeque<ToolCallSignal>,
     /// Section IDs from the most recent `ministr_survey` — likely next reads.
-    pending_survey_ids: Vec<String>,
+    pending_survey_ids: Vec<DeliveryIdentity>,
 }
 
 /// A recorded tool call for intent analysis.
@@ -909,6 +1035,7 @@ mod tests {
             cross_session_hits: 0,
             survey_expand_hits: 0,
             agent_plan_hits: 0,
+            ..PrefetchMetrics::default()
         };
 
         assert!((metrics.strategy_hit_rate(PrefetchStrategy::Sequential) - 0.2).abs() < 1e-5);
@@ -1722,10 +1849,10 @@ mod tests {
     fn record_survey_results_replaces_previous() {
         let mut engine = PrefetchEngine::with_default_capacity();
         engine.record_survey_results(vec!["s1".into(), "s2".into()]);
-        assert_eq!(engine.predicted_section_ids(), &["s1", "s2"]);
+        assert_eq!(engine.predicted_section_ids(), vec!["s1", "s2"]);
 
         engine.record_survey_results(vec!["s3".into()]);
-        assert_eq!(engine.predicted_section_ids(), &["s3"]);
+        assert_eq!(engine.predicted_section_ids(), vec!["s3"]);
     }
 
     #[test]
@@ -1827,5 +1954,115 @@ mod tests {
         // the agent isn't wrongly told there are no claims to extract.
         let entry = engine.try_serve("doc#s1").unwrap();
         assert_eq!(entry.claims_available, 2);
+    }
+
+    #[test]
+    fn prefetch_keys_do_not_collide_across_corpora() {
+        use crate::storage::SectionRecord;
+        use crate::types::{ContentId, SectionId};
+
+        let section = |text: &str| SectionRecord {
+            id: SectionId("same".into()),
+            document_id: ContentId("doc".into()),
+            heading_path: vec!["Same".into()],
+            depth: 1,
+            text: text.into(),
+            summary: None,
+            position: 0,
+        };
+        let mut engine = PrefetchEngine::with_default_capacity();
+        engine.prefetch_sections_for(
+            "left",
+            PrefetchStrategy::Sequential,
+            vec![section("left text")],
+            &HashMap::new(),
+            1,
+        );
+        engine.prefetch_sections_for(
+            "right",
+            PrefetchStrategy::Sequential,
+            vec![section("right text")],
+            &HashMap::new(),
+            1,
+        );
+
+        let left = DeliveryIdentity::new("left", "same", "section_full");
+        let right = DeliveryIdentity::new("right", "same", "section_full");
+        assert_eq!(engine.try_serve_identity(&left).unwrap().text, "left text");
+        assert_eq!(
+            engine.try_serve_identity(&right).unwrap().text,
+            "right text"
+        );
+        let metrics = engine.metrics();
+        assert_eq!(metrics.prefetches_issued, 2);
+        assert_eq!(metrics.hits, 2);
+        assert!(metrics.tokens_saved > 0);
+        assert!(metrics.bytes_saved > 0);
+        assert_eq!(metrics.latency_saved_ms, 100);
+    }
+
+    #[test]
+    fn symbol_definition_prefetch_is_corpus_aware_and_measured() {
+        use crate::service::{SourceLineRange, SymbolDefinition};
+        use crate::types::ResultLocator;
+
+        let definition = |corpus: &str, source: &str| SymbolDefinition {
+            id: "sym-same".into(),
+            name: "same".into(),
+            kind: "function".into(),
+            visibility: "pub".into(),
+            signature: "fn same()".into(),
+            doc_comment: None,
+            file_path: format!("{corpus}.rs"),
+            line_start: 1,
+            line_end: 1,
+            heading_path: vec!["same".into()],
+            source_context: source.into(),
+            truncated: false,
+            omitted_lines: 0,
+            original_line_range: SourceLineRange { start: 1, end: 1 },
+            returned_line_range: SourceLineRange { start: 1, end: 1 },
+            continuation: None,
+            outline_only: false,
+            child_symbols: vec![],
+            locator: ResultLocator::primary("sym-same", "symbol_full")
+                .routed(corpus, None, None, None),
+            source_error: None,
+        };
+
+        let mut engine = PrefetchEngine::new(8);
+        engine.prefetch_definition(
+            "left",
+            definition("left", "fn same() { left(); }"),
+            PrefetchStrategy::SymbolSearch,
+        );
+        engine.prefetch_definition(
+            "right",
+            definition("right", "fn same() { right(); }"),
+            PrefetchStrategy::ReferenceFollow,
+        );
+
+        assert!(
+            engine
+                .try_serve_definition("left", "sym-same")
+                .unwrap()
+                .source_context
+                .contains("left")
+        );
+        assert!(
+            engine
+                .try_serve_definition("right", "sym-same")
+                .unwrap()
+                .source_context
+                .contains("right")
+        );
+        let metrics = engine.metrics();
+        assert_eq!(metrics.prefetches_issued, 2);
+        assert_eq!(metrics.symbol_search_issued, 1);
+        assert_eq!(metrics.reference_follow_issued, 1);
+        assert_eq!(metrics.symbol_search_hits, 1);
+        assert_eq!(metrics.reference_follow_hits, 1);
+        assert!(metrics.bytes_saved > 0);
+        assert!(metrics.tokens_saved > 0);
     }
 }

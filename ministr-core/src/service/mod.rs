@@ -6,14 +6,16 @@
 //! transport adapters (e.g. the MCP server in `ministr-mcp`).
 
 mod code;
+pub use code::symbol_reference_cursor;
 mod compress;
 mod diagnostics;
 mod query;
+pub use query::bound_survey_results;
 mod solid;
 
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 use crate::embedding::{DualEmbedder, Embedder, Reranker, SparseEmbedder};
@@ -21,7 +23,10 @@ use crate::error::{IndexError, StorageError};
 use crate::index::{SparseIndex, VectorIndex};
 use crate::storage::{SqliteStorage, Storage};
 use crate::token::count_tokens;
-use crate::types::{ContentId, CorpusRoot, TocEntry};
+use crate::types::{
+    ContentId, ContentProvenance, CorpusRoot, Pagination, ResultLocator, ScoreExplanation,
+    TextDeliveryMetadata, TocEntry,
+};
 
 // Re-export the language-agnostic diagnostics types (defined alongside the
 // toolchain registry in `crate::code::diagnostics`) so transport crates import
@@ -50,6 +55,43 @@ pub struct SurveyResult {
     /// colliding `content_id` strings across corpora.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_corpus: Option<String>,
+    /// Corpus-aware, executable result locator.
+    pub locator: ResultLocator,
+    /// Explicit excerpt/full-body size and continuation metadata.
+    pub text_metadata: TextDeliveryMetadata,
+    /// Source classification used by ranking and trust decisions.
+    #[serde(default)]
+    pub provenance: ContentProvenance,
+    /// Compact evidence behind the final ranking score.
+    #[serde(default)]
+    pub score_explanation: ScoreExplanation,
+}
+
+/// Output-cost controls for discovery search.
+///
+/// The existing [`QueryService::survey`] method uses these defaults; transport
+/// adapters can call `survey_with_options` to request a smaller bounded page.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SurveyOptions {
+    /// Maximum UTF-8 bytes returned in one result's `text` field.
+    pub max_result_bytes: usize,
+    /// Maximum estimated tokens returned in one result's `text` field.
+    pub max_result_tokens: usize,
+    /// Maximum UTF-8 bytes across all returned result text.
+    pub max_total_bytes: usize,
+    /// Maximum estimated tokens across all returned result text.
+    pub max_total_tokens: usize,
+}
+
+impl Default for SurveyOptions {
+    fn default() -> Self {
+        Self {
+            max_result_bytes: 2_048,
+            max_result_tokens: 512,
+            max_total_bytes: 12_288,
+            max_total_tokens: 3_072,
+        }
+    }
 }
 
 /// Detailed section content returned by `read_section`.
@@ -113,6 +155,81 @@ pub struct RelatedClaimResult {
     pub confidence: f32,
 }
 
+/// Stable opaque cursor for a related-claim edge.
+#[must_use]
+pub fn related_claim_cursor(related: &RelatedClaimResult) -> String {
+    let identity = serde_json::json!([
+        related.claim_id,
+        related.relation_type,
+        related.source_section,
+    ]);
+    let encoded = serde_json::to_vec(&identity).unwrap_or_default();
+    format!("related:{}", blake3::hash(&encoded).to_hex())
+}
+
+/// Options for bounded symbol-definition retrieval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DefinitionOptions {
+    /// Maximum source lines returned. Clamped to `1..=1000`.
+    pub max_lines: usize,
+    /// Context lines before and after a normal-sized definition.
+    pub context_lines: usize,
+    /// Include the symbol body. When false, return declaration/outline only.
+    pub include_body: bool,
+    /// Force an outline even for an ordinary-sized symbol.
+    pub outline_only: bool,
+    /// Optional 1-based continuation/range start line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<u32>,
+    /// Optional UTF-8 byte offset within the selected line range.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_byte: Option<usize>,
+}
+
+impl Default for DefinitionOptions {
+    fn default() -> Self {
+        Self {
+            max_lines: 160,
+            context_lines: 3,
+            include_body: true,
+            outline_only: false,
+            start_line: None,
+            start_byte: None,
+        }
+    }
+}
+
+/// Inclusive source line range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SourceLineRange {
+    pub start: u32,
+    pub end: u32,
+}
+
+/// Parameters for retrieving the next bounded definition range.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DefinitionContinuation {
+    pub symbol_id: String,
+    pub start_line: u32,
+    pub max_lines: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_byte: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<usize>,
+}
+
+/// A syntactic child surfaced by a container outline.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct DefinitionChild {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub file_path: String,
+    pub line_start: u32,
+    pub line_end: u32,
+    pub locator: ResultLocator,
+}
+
 /// A symbol definition with source context and module hierarchy.
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct SymbolDefinition {
@@ -139,6 +256,27 @@ pub struct SymbolDefinition {
     pub heading_path: Vec<String>,
     /// Source code of the symbol with 3 lines of surrounding context.
     pub source_context: String,
+    /// True when the complete requested source range was not returned.
+    pub truncated: bool,
+    /// Source lines omitted from the symbol's complete context range.
+    pub omitted_lines: usize,
+    /// Complete symbol-plus-context range.
+    pub original_line_range: SourceLineRange,
+    /// Range represented by `source_context`.
+    pub returned_line_range: SourceLineRange,
+    /// Executable next range, when more source remains.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation: Option<DefinitionContinuation>,
+    /// True when source was deliberately represented as an outline.
+    pub outline_only: bool,
+    /// Child symbol locators for large containers/modules/impls.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub child_symbols: Vec<DefinitionChild>,
+    /// Corpus-aware locator for this definition.
+    pub locator: ResultLocator,
+    /// Stable partial-data error when indexed source cannot be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_error: Option<String>,
 }
 
 /// A symbol reference result from cross-reference queries.
@@ -162,6 +300,117 @@ pub struct SymbolRefResult {
     pub to_line: u32,
     /// The kind of reference.
     pub ref_kind: String,
+}
+
+/// One bounded reference group in a compound inspection.
+#[derive(Debug, Clone, Default, Serialize, schemars::JsonSchema)]
+pub struct InspectReferenceGroup {
+    pub items: Vec<SymbolRefResult>,
+    pub total: usize,
+    pub omitted_count: usize,
+    pub pagination: Pagination,
+}
+
+impl InspectReferenceGroup {
+    fn is_empty(&self) -> bool {
+        self.items.is_empty() && self.total == 0
+    }
+}
+
+/// Optional groups returned by [`QueryService::inspect_symbol`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InspectInclude {
+    Definition,
+    Callers,
+    Callees,
+    Implementors,
+    Imports,
+    Tests,
+    Bridges,
+}
+
+/// Bounded compound-navigation options.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct InspectOptions {
+    pub include: Vec<InspectInclude>,
+    pub max_per_group: usize,
+    pub max_source_lines: usize,
+}
+
+impl Default for InspectOptions {
+    fn default() -> Self {
+        Self {
+            include: vec![
+                InspectInclude::Definition,
+                InspectInclude::Callers,
+                InspectInclude::Callees,
+                InspectInclude::Implementors,
+                InspectInclude::Imports,
+                InspectInclude::Tests,
+                InspectInclude::Bridges,
+            ],
+            max_per_group: 10,
+            max_source_lines: 160,
+        }
+    }
+}
+
+/// Compact impact counts derived from direct inspect groups.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct InspectImpactSummary {
+    pub direct_callers: usize,
+    pub direct_callees: usize,
+    pub affected_files: usize,
+    pub relevant_tests: usize,
+    pub risk: ImpactRisk,
+}
+
+/// Explicit non-fatal group failure in a compound inspection.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct InspectPartialError {
+    pub group: String,
+    pub message: String,
+}
+
+/// Suggested granular follow-up when a bounded group omitted data.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct InspectNextAction {
+    pub action: String,
+    pub locator: ResultLocator,
+    pub reason: String,
+}
+
+/// Compound, bounded symbol-navigation result.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct InspectResult {
+    pub symbol_id: String,
+    pub locator: ResultLocator,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<SymbolDefinition>,
+    #[serde(default, skip_serializing_if = "InspectReferenceGroup::is_empty")]
+    pub callers: InspectReferenceGroup,
+    #[serde(default, skip_serializing_if = "InspectReferenceGroup::is_empty")]
+    pub callees: InspectReferenceGroup,
+    #[serde(default, skip_serializing_if = "InspectReferenceGroup::is_empty")]
+    pub implementors: InspectReferenceGroup,
+    #[serde(default, skip_serializing_if = "InspectReferenceGroup::is_empty")]
+    pub imports: InspectReferenceGroup,
+    #[serde(default, skip_serializing_if = "InspectReferenceGroup::is_empty")]
+    pub tests: InspectReferenceGroup,
+    #[serde(default, skip_serializing_if = "InspectReferenceGroup::is_empty")]
+    pub bridges: InspectReferenceGroup,
+    pub impact: InspectImpactSummary,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub partial_errors: Vec<InspectPartialError>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub next_actions: Vec<InspectNextAction>,
+    /// True when the compound response needed additional overall shaping.
+    pub truncated: bool,
+    /// Serialized size before the overall response budget was applied.
+    pub original_bytes: usize,
+    /// Serialized size after the overall response budget was applied.
+    pub returned_bytes: usize,
 }
 
 /// Risk level for an impact analysis result.
@@ -188,6 +437,14 @@ pub struct ImpactCaller {
     pub line: u32,
     /// Depth in the call graph (1 = direct caller).
     pub depth: u32,
+}
+
+/// Stable opaque cursor for a mutable impact traversal.
+#[must_use]
+pub fn impact_caller_cursor(caller: &ImpactCaller) -> String {
+    let identity = serde_json::json!([caller.symbol_id, caller.file, caller.line, caller.depth,]);
+    let encoded = serde_json::to_vec(&identity).unwrap_or_default();
+    format!("impact:{}", blake3::hash(&encoded).to_hex())
 }
 
 /// Direction to walk the call graph for [`QueryService::compute_impact`].
@@ -681,6 +938,8 @@ pub struct QueryService {
     dual_embedder: Option<Arc<dyn DualEmbedder>>,
     /// Number of coarse candidates to rescore with full-dim vectors.
     matryoshka_rerank_depth: usize,
+    #[cfg(test)]
+    inspect_reference_failure: Option<String>,
 }
 
 impl QueryService {
@@ -701,7 +960,15 @@ impl QueryService {
             reranker: None,
             dual_embedder: None,
             matryoshka_rerank_depth: 100,
+            #[cfg(test)]
+            inspect_reference_failure: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_inspect_reference_failure(mut self, message: impl Into<String>) -> Self {
+        self.inspect_reference_failure = Some(message.into());
+        self
     }
 
     /// Add sparse search components for hybrid retrieval, fusing dense and
@@ -856,8 +1123,8 @@ mod tests {
     use crate::index::HnswIndex;
     use crate::storage::{SqliteStorage, SymbolFilter, SymbolRecord};
     use crate::types::{
-        Claim, ClaimId, ClaimRelationship, ContentId, DocumentTree, RelationType, Section,
-        SectionId, SymbolId,
+        Claim, ClaimId, ClaimRelationship, ContentId, DeliveryIdentity, DocumentTree, RelationType,
+        Section, SectionId, SymbolId,
     };
 
     /// Deterministic mock embedder for testing.
@@ -1797,6 +2064,66 @@ mod tests {
             assert_ne!(r.content_id, "docs/auth.md");
         }
         assert!(dedup_count > 0 || results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn detailed_survey_exclusion_reports_exact_suppressed_identity() {
+        let service = setup_service_with_reranker(Arc::new(LengthReranker)).await;
+        let empty = HashSet::new();
+        let (baseline, suppressed) = service
+            .survey_excluding_identities_detailed_with_options(
+                "JWT tokens",
+                5,
+                "corpus-a",
+                &empty,
+                SurveyOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert!(suppressed.is_empty());
+        let identity = baseline.first().unwrap().locator.identity.clone();
+
+        let exclude = [identity.clone()].into_iter().collect();
+        let (filtered, suppressed) = service
+            .survey_excluding_identities_detailed_with_options(
+                "JWT tokens",
+                5,
+                "corpus-a",
+                &exclude,
+                SurveyOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert!(suppressed.contains(&identity));
+        assert!(
+            filtered
+                .iter()
+                .all(|result| result.locator.identity != identity)
+        );
+
+        let collision = DeliveryIdentity::new(
+            "corpus-b",
+            identity.content_id.clone(),
+            identity.resolution.clone(),
+        );
+        let wrong_corpus = [collision].into_iter().collect();
+        let (not_filtered, suppressed) = service
+            .survey_excluding_identities_detailed_with_options(
+                "JWT tokens",
+                5,
+                "corpus-a",
+                &wrong_corpus,
+                SurveyOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert!(suppressed.is_empty());
+        assert!(
+            not_filtered
+                .iter()
+                .any(|result| result.locator.identity == identity),
+            "same content ID and resolution in another corpus must not suppress"
+        );
     }
 
     #[tokio::test]

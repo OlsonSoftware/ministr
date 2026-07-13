@@ -9,12 +9,276 @@ use std::path::Path;
 use tracing::instrument;
 
 use crate::storage::{BridgeLinkDetail, Storage, SymbolFilter, SymbolRecord};
-use crate::types::{RefKind, RootKind, SymbolId};
+use crate::types::{Pagination, RefKind, ResultLocator, RootKind, SymbolId};
 
 use super::{
-    CallDirection, DeadSymbol, DiffChangeAuthor, DiffChangedSymbol, DiffImpactResult, ImpactCaller,
-    ImpactResult, ImpactRisk, QueryError, QueryService, SymbolDefinition, SymbolRefResult,
+    CallDirection, DeadSymbol, DefinitionChild, DefinitionContinuation, DefinitionOptions,
+    DiffChangeAuthor, DiffChangedSymbol, DiffImpactResult, ImpactCaller, ImpactResult, ImpactRisk,
+    InspectImpactSummary, InspectInclude, InspectNextAction, InspectOptions, InspectPartialError,
+    InspectReferenceGroup, InspectResult, QueryError, QueryService, SourceLineRange,
+    SymbolDefinition, SymbolRefResult,
 };
+
+#[derive(Debug)]
+struct SourceSlice {
+    text: String,
+    truncated: bool,
+    omitted_lines: usize,
+    original: SourceLineRange,
+    returned: SourceLineRange,
+    continuation: Option<DefinitionContinuation>,
+    source_error: Option<String>,
+}
+
+fn bounded_reference_group(
+    mut items: Vec<SymbolRefResult>,
+    max_per_group: usize,
+) -> InspectReferenceGroup {
+    shape_reference_results(&mut items);
+    let total = items.len();
+    items.truncate(max_per_group);
+    let returned = items.len();
+    let has_more = returned < total;
+    let next_cursor = has_more
+        .then(|| items.last().map(symbol_reference_cursor))
+        .flatten();
+    InspectReferenceGroup {
+        items,
+        total,
+        omitted_count: total.saturating_sub(returned),
+        pagination: Pagination {
+            limit: max_per_group,
+            offset: Some(0),
+            cursor: None,
+            next_cursor,
+            total,
+            has_more,
+            omitted_count: total.saturating_sub(returned),
+        },
+    }
+}
+
+const MAX_INSPECT_RESPONSE_BYTES: usize = 65_536;
+const MAX_DEFINITION_SOURCE_BYTES: usize = 32_768;
+
+/// Stable opaque cursor for a reference edge.
+#[must_use]
+pub fn symbol_reference_cursor(reference: &SymbolRefResult) -> String {
+    let identity = serde_json::json!([
+        reference.from_symbol_id,
+        reference.from_file,
+        reference.from_line,
+        reference.to_symbol_id,
+        reference.to_file,
+        reference.to_line,
+        reference.ref_kind,
+    ]);
+    let encoded = serde_json::to_vec(&identity).unwrap_or_default();
+    format!("ref:{}", blake3::hash(&encoded).to_hex())
+}
+
+fn refresh_inspect_group(group: &mut InspectReferenceGroup) {
+    let returned = group.items.len();
+    group.omitted_count = group.total.saturating_sub(returned);
+    group.pagination.total = group.total;
+    group.pagination.has_more = returned < group.total;
+    group.pagination.omitted_count = group.omitted_count;
+    group.pagination.next_cursor = group
+        .pagination
+        .has_more
+        .then(|| group.items.last().map(symbol_reference_cursor))
+        .flatten();
+}
+
+fn serialized_inspect_bytes(result: &InspectResult) -> usize {
+    serde_json::to_vec(result).map_or(usize::MAX, |value| value.len())
+}
+
+fn truncate_unicode(value: &mut String, max_bytes: usize) -> bool {
+    if value.len() <= max_bytes {
+        return false;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value.truncate(end);
+    true
+}
+
+fn clip_definition_for_inspect(definition: &mut SymbolDefinition) -> bool {
+    if definition.source_context.len() <= 1_024 {
+        return false;
+    }
+    let mut target = definition.source_context.len() * 3 / 4;
+    while target > 0 && !definition.source_context.is_char_boundary(target) {
+        target -= 1;
+    }
+    let boundary = definition.source_context[..target]
+        .rfind('\n')
+        .unwrap_or(target);
+    if boundary == 0 {
+        return false;
+    }
+    definition.source_context.truncate(boundary);
+    let returned_lines = definition.source_context.lines().count().max(1);
+    let start = definition.returned_line_range.start;
+    let end = start
+        .saturating_add(u32::try_from(returned_lines).unwrap_or(u32::MAX))
+        .saturating_sub(1)
+        .min(definition.original_line_range.end);
+    definition.returned_line_range.end = end;
+    let original_lines = usize::try_from(
+        definition
+            .original_line_range
+            .end
+            .saturating_sub(definition.original_line_range.start)
+            .saturating_add(1),
+    )
+    .unwrap_or(usize::MAX);
+    definition.omitted_lines = original_lines.saturating_sub(returned_lines);
+    definition.truncated = true;
+    definition.continuation =
+        (end < definition.original_line_range.end).then(|| DefinitionContinuation {
+            symbol_id: definition.id.clone(),
+            start_line: end.saturating_add(1),
+            max_lines: returned_lines,
+            start_byte: None,
+            max_bytes: None,
+        });
+    true
+}
+
+fn bound_inspect_response(mut result: InspectResult) -> InspectResult {
+    // Measure the unbounded wire representation with its size metadata included.
+    // The fixed point normally converges in two iterations (only the decimal digit
+    // count can change), while the guard keeps pathological serializers harmless.
+    for _ in 0..8 {
+        let bytes = serialized_inspect_bytes(&result);
+        if result.original_bytes == bytes && result.returned_bytes == bytes {
+            break;
+        }
+        result.original_bytes = bytes;
+        result.returned_bytes = bytes;
+    }
+    while serialized_inspect_bytes(&result) > MAX_INSPECT_RESPONSE_BYTES.saturating_sub(128) {
+        let lengths = [
+            result.callers.items.len(),
+            result.callees.items.len(),
+            result.implementors.items.len(),
+            result.imports.items.len(),
+            result.tests.items.len(),
+            result.bridges.items.len(),
+        ];
+        if let Some((largest, _)) = lengths
+            .iter()
+            .enumerate()
+            .filter(|(_, length)| **length > 0)
+            .max_by_key(|(_, length)| **length)
+        {
+            let group = match largest {
+                0 => &mut result.callers,
+                1 => &mut result.callees,
+                2 => &mut result.implementors,
+                3 => &mut result.imports,
+                4 => &mut result.tests,
+                _ => &mut result.bridges,
+            };
+            // Trim geometrically so adversarially large groups cannot turn
+            // response shaping into an O(n²) serialization loop.
+            let keep = group.items.len() / 2;
+            group.items.truncate(keep);
+            refresh_inspect_group(group);
+            result.truncated = true;
+            continue;
+        }
+        if result
+            .definition
+            .as_mut()
+            .is_some_and(clip_definition_for_inspect)
+        {
+            result.truncated = true;
+            continue;
+        }
+        if let Some(definition) = result.definition.as_mut() {
+            let mut clipped = truncate_unicode(&mut definition.signature, 2_048);
+            if let Some(doc) = definition.doc_comment.as_mut() {
+                clipped |= truncate_unicode(doc, 2_048);
+            }
+            for heading in &mut definition.heading_path {
+                clipped |= truncate_unicode(heading, 512);
+            }
+            if definition.child_symbols.len() > 50 {
+                definition.child_symbols.truncate(50);
+                clipped = true;
+            }
+            if clipped {
+                result.truncated = true;
+                continue;
+            }
+        }
+        break;
+    }
+    for _ in 0..8 {
+        let bytes = serialized_inspect_bytes(&result);
+        if result.returned_bytes == bytes {
+            break;
+        }
+        result.returned_bytes = bytes;
+    }
+    result
+}
+
+fn is_large_container(kind: &str) -> bool {
+    matches!(
+        kind.to_ascii_lowercase().as_str(),
+        "impl" | "class" | "module" | "mod" | "trait" | "interface"
+    )
+}
+
+fn bridge_mentions_symbol(link: &BridgeLinkDetail, symbol: &SymbolRecord) -> bool {
+    let id_matches = link.export_symbol_id.as_deref() == Some(symbol.id.0.as_str())
+        || link.import_symbol_id.as_deref() == Some(symbol.id.0.as_str());
+    let name_matches = link.export_symbol.eq_ignore_ascii_case(&symbol.name)
+        || link.import_symbol.eq_ignore_ascii_case(&symbol.name);
+    let export_span_matches = link.export_file == symbol.file_path
+        && (symbol.line_start..=symbol.line_end).contains(&link.export_line);
+    let import_span_matches = link.import_file == symbol.file_path
+        && (symbol.line_start..=symbol.line_end).contains(&link.import_line);
+    id_matches || name_matches || export_span_matches || import_span_matches
+}
+
+fn shape_reference_results(results: &mut Vec<SymbolRefResult>) {
+    let mut seen = HashSet::new();
+    results.retain(|result| {
+        seen.insert((
+            result.from_symbol_id.clone(),
+            result.from_file.clone(),
+            result.from_line,
+            result.to_symbol_id.clone(),
+            result.to_file.clone(),
+            result.to_line,
+            result.ref_kind.clone(),
+        ))
+    });
+    let kind_rank = |kind: &str| match kind {
+        "calls" => 0,
+        "implements" => 1,
+        "uses" => 2,
+        "imports" => 3,
+        "bridge" => 4,
+        _ => 5,
+    };
+    results.sort_by(|a, b| {
+        let a_test = is_test_path(&a.from_file);
+        let b_test = is_test_path(&b.from_file);
+        a_test
+            .cmp(&b_test)
+            .then_with(|| kind_rank(&a.ref_kind).cmp(&kind_rank(&b.ref_kind)))
+            .then_with(|| a.from_file.cmp(&b.from_file))
+            .then_with(|| a.from_line.cmp(&b.from_line))
+    });
+}
 
 impl QueryService {
     /// Search the symbol index with optional filters.
@@ -74,6 +338,25 @@ impl QueryService {
         &self,
         symbol_id: &str,
     ) -> Result<SymbolDefinition, QueryError> {
+        self.get_symbol_definition_with_options(symbol_id, DefinitionOptions::default())
+            .await
+    }
+
+    /// Get a definition using explicit source-body, outline, and range bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::SymbolNotFound`] if no symbol with the given ID
+    /// exists, or [`QueryError::Storage`] on database errors.
+    #[allow(clippy::too_many_lines)] // one bounded-definition assembly path keeps range metadata coherent
+    #[instrument(skip(self))]
+    pub async fn get_symbol_definition_with_options(
+        &self,
+        symbol_id: &str,
+        mut options: DefinitionOptions,
+    ) -> Result<SymbolDefinition, QueryError> {
+        options.max_lines = options.max_lines.clamp(1, 1_000);
+        options.context_lines = options.context_lines.min(32);
         let sid = SymbolId(symbol_id.to_string());
         let symbol =
             self.storage
@@ -92,11 +375,68 @@ impl QueryService {
             .collect();
         heading_path.push(symbol.name.clone());
 
-        // Read source file and extract context lines
-        let source_context = self
-            .read_source_context(&symbol.file_path, symbol.line_start, symbol.line_end)
-            .await;
+        let symbol_lines = symbol
+            .line_end
+            .saturating_sub(symbol.line_start)
+            .saturating_add(1) as usize;
+        let auto_outline = options.start_line.is_none()
+            && symbol_lines > options.max_lines
+            && is_large_container(&symbol.kind);
+        let outline_only = options.outline_only || !options.include_body || auto_outline;
+        let child_symbols = if outline_only || auto_outline {
+            self.definition_children(&symbol, 50).await?
+        } else {
+            Vec::new()
+        };
+        let source = if outline_only {
+            let original = SourceLineRange {
+                start: symbol.line_start,
+                end: symbol.line_end,
+            };
+            let returned = SourceLineRange {
+                start: symbol.line_start,
+                end: symbol.line_start,
+            };
+            SourceSlice {
+                text: symbol.signature.clone(),
+                truncated: symbol.line_end > symbol.line_start,
+                omitted_lines: symbol_lines.saturating_sub(1),
+                original,
+                returned,
+                continuation: (symbol.line_end > symbol.line_start).then(|| {
+                    DefinitionContinuation {
+                        symbol_id: symbol.id.0.clone(),
+                        start_line: symbol.line_start,
+                        max_lines: options.max_lines,
+                        start_byte: None,
+                        max_bytes: None,
+                    }
+                }),
+                source_error: None,
+            }
+        } else {
+            self.read_source_slice(
+                &symbol.file_path,
+                symbol.line_start,
+                symbol.line_end,
+                symbol.id.0.as_str(),
+                options,
+            )
+            .await?
+        };
 
+        let delivery_resolution = if outline_only {
+            "symbol_outline".to_string()
+        } else if source.truncated {
+            format!(
+                "symbol_slice:{}:{}:{}",
+                source.returned.start,
+                source.returned.end,
+                options.start_byte.unwrap_or(0)
+            )
+        } else {
+            "symbol_full".to_string()
+        };
         Ok(SymbolDefinition {
             id: symbol.id.0.clone(),
             name: symbol.name,
@@ -108,8 +448,58 @@ impl QueryService {
             line_start: symbol.line_start,
             line_end: symbol.line_end,
             heading_path,
-            source_context,
+            source_context: source.text,
+            truncated: source.truncated,
+            omitted_lines: source.omitted_lines,
+            original_line_range: source.original,
+            returned_line_range: source.returned,
+            continuation: source.continuation,
+            outline_only,
+            child_symbols,
+            locator: ResultLocator::primary(symbol_id, delivery_resolution),
+            source_error: source.source_error,
         })
+    }
+
+    async fn definition_children(
+        &self,
+        parent: &SymbolRecord,
+        limit: usize,
+    ) -> Result<Vec<DefinitionChild>, QueryError> {
+        let filter = SymbolFilter {
+            file_path: Some(parent.file_path.clone()),
+            ..SymbolFilter::default()
+        };
+        let mut children: Vec<SymbolRecord> = self
+            .storage
+            .list_symbols(&filter)
+            .await?
+            .into_iter()
+            .filter(|child| {
+                child.id != parent.id
+                    && child.line_start >= parent.line_start
+                    && child.line_end <= parent.line_end
+            })
+            .collect();
+        children.sort_by(|a, b| {
+            a.line_start
+                .cmp(&b.line_start)
+                .then_with(|| a.line_end.cmp(&b.line_end))
+                .then_with(|| a.id.0.cmp(&b.id.0))
+        });
+        children.truncate(limit);
+        Ok(children
+            .into_iter()
+            .map(|child| DefinitionChild {
+                locator: ResultLocator::primary(child.id.0.clone(), "symbol_stub"),
+                id: child.id.0,
+                name: child.name,
+                kind: child.kind,
+                file_path: child.file_path,
+                line_start: child.line_start,
+                line_end: child.line_end,
+            })
+            .collect())
     }
 
     /// Get all references for a symbol, optionally filtered by reference kind.
@@ -143,20 +533,36 @@ impl QueryService {
         // Include standard symbol refs unless we're filtering to bridge-only
         if ref_kind != Some(RefKind::Bridge) {
             let refs = self.storage.query_refs(&sid, ref_kind).await?;
-
+            let symbol_ids: Vec<SymbolId> = refs
+                .iter()
+                .flat_map(|reference| {
+                    [
+                        reference.from_symbol_id.clone(),
+                        reference.to_symbol_id.clone(),
+                    ]
+                })
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
+            let symbols: HashMap<SymbolId, SymbolRecord> = self
+                .storage
+                .get_symbols(&symbol_ids)
+                .await?
+                .into_iter()
+                .map(|symbol| (symbol.id.clone(), symbol))
+                .collect();
             for r in refs {
-                let from = self.storage.get_symbol(&r.from_symbol_id).await?;
-                let to = self.storage.get_symbol(&r.to_symbol_id).await?;
-
-                if let (Some(from_sym), Some(to_sym)) = (from, to) {
+                if let (Some(from_sym), Some(to_sym)) =
+                    (symbols.get(&r.from_symbol_id), symbols.get(&r.to_symbol_id))
+                {
                     results.push(SymbolRefResult {
-                        from_symbol_id: from_sym.id.0,
-                        from_name: from_sym.name,
-                        from_file: from_sym.file_path,
+                        from_symbol_id: from_sym.id.0.clone(),
+                        from_name: from_sym.name.clone(),
+                        from_file: from_sym.file_path.clone(),
                         from_line: from_sym.line_start,
-                        to_symbol_id: to_sym.id.0,
-                        to_name: to_sym.name,
-                        to_file: to_sym.file_path,
+                        to_symbol_id: to_sym.id.0.clone(),
+                        to_name: to_sym.name.clone(),
+                        to_file: to_sym.file_path.clone(),
                         to_line: to_sym.line_start,
                         ref_kind: r.ref_kind.to_string(),
                     });
@@ -171,7 +577,10 @@ impl QueryService {
                 .query_bridge_links(Some(&symbol.file_path), None)
                 .await?;
 
-            for link in bridge_links {
+            for link in bridge_links
+                .into_iter()
+                .filter(|link| bridge_mentions_symbol(link, &symbol))
+            {
                 // Map bridge links to SymbolRefResult: export → from, import → to
                 results.push(SymbolRefResult {
                     from_symbol_id: String::new(),
@@ -187,7 +596,209 @@ impl QueryService {
             }
         }
 
+        shape_reference_results(&mut results);
         Ok(results)
+    }
+
+    /// Inspect a symbol and its direct navigation neighbourhood in one bounded call.
+    ///
+    /// The method deliberately reuses definition and reference operations so
+    /// grouping semantics cannot drift from the granular tools.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::SymbolNotFound`] when the target is absent.
+    #[allow(clippy::similar_names, clippy::too_many_lines)]
+    #[instrument(skip(self, options))]
+    pub async fn inspect_symbol(
+        &self,
+        symbol_id: &str,
+        options: &InspectOptions,
+    ) -> Result<InspectResult, QueryError> {
+        let includes: HashSet<InspectInclude> = options.include.iter().copied().collect();
+        let max_per_group = options.max_per_group.clamp(1, 50);
+        let locator = ResultLocator::primary(symbol_id, "symbol_full");
+
+        // Verify the target even when the caller omitted the definition group.
+        if self
+            .storage
+            .get_symbol(&SymbolId(symbol_id.to_string()))
+            .await?
+            .is_none()
+        {
+            return Err(QueryError::SymbolNotFound {
+                id: symbol_id.to_string(),
+            });
+        }
+
+        let definition = if includes.contains(&InspectInclude::Definition) {
+            Some(
+                self.get_symbol_definition_with_options(
+                    symbol_id,
+                    DefinitionOptions {
+                        max_lines: options.max_source_lines.clamp(1, 1_000),
+                        ..DefinitionOptions::default()
+                    },
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+
+        let mut partial_errors = Vec::new();
+        #[cfg(test)]
+        let references_result = if let Some(message) = &self.inspect_reference_failure {
+            Err(QueryError::Storage(crate::error::StorageError::Database {
+                reason: message.clone(),
+            }))
+        } else {
+            self.get_symbol_references(symbol_id, None).await
+        };
+        #[cfg(not(test))]
+        let references_result = self.get_symbol_references(symbol_id, None).await;
+        let references = match references_result {
+            Ok(references) => references,
+            Err(error) => {
+                partial_errors.push(InspectPartialError {
+                    group: "references".to_string(),
+                    message: error.to_string(),
+                });
+                Vec::new()
+            }
+        };
+
+        let select = |include: InspectInclude, predicate: &dyn Fn(&SymbolRefResult) -> bool| {
+            if includes.contains(&include) {
+                references
+                    .iter()
+                    .filter(|reference| predicate(reference))
+                    .cloned()
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        };
+
+        let callers_all = select(InspectInclude::Callers, &|reference| {
+            reference.ref_kind == "calls" && reference.to_symbol_id == symbol_id
+        });
+        let callees_all = select(InspectInclude::Callees, &|reference| {
+            reference.ref_kind == "calls" && reference.from_symbol_id == symbol_id
+        });
+        let implementors_all = select(InspectInclude::Implementors, &|reference| {
+            reference.ref_kind == "implements"
+        });
+        let imports_all = select(InspectInclude::Imports, &|reference| {
+            matches!(reference.ref_kind.as_str(), "imports" | "uses")
+        });
+        let tests_all = select(InspectInclude::Tests, &|reference| {
+            is_test_path(&reference.from_file)
+        });
+        let bridges_all = select(InspectInclude::Bridges, &|reference| {
+            reference.ref_kind == "bridge"
+        });
+
+        let direct_callers = callers_all.len();
+        let direct_callees = callees_all.len();
+        let relevant_tests = tests_all.len();
+        let impact_edges: Vec<&SymbolRefResult> = callers_all
+            .iter()
+            .chain(&callees_all)
+            .chain(&implementors_all)
+            .chain(&imports_all)
+            .chain(&tests_all)
+            .chain(&bridges_all)
+            .collect();
+        let unique_relationships: HashSet<String> = impact_edges
+            .iter()
+            .map(|reference| symbol_reference_cursor(reference))
+            .collect();
+        let affected_files: HashSet<&str> = impact_edges
+            .iter()
+            .flat_map(|reference| [reference.from_file.as_str(), reference.to_file.as_str()])
+            .filter(|file| !file.is_empty())
+            .collect();
+        let impact = InspectImpactSummary {
+            direct_callers,
+            direct_callees,
+            affected_files: affected_files.len(),
+            relevant_tests,
+            risk: compute_risk(
+                unique_relationships.len(),
+                affected_files.len(),
+                relevant_tests,
+            ),
+        };
+
+        let callers = bounded_reference_group(callers_all, max_per_group);
+        let callees = bounded_reference_group(callees_all, max_per_group);
+        let implementors = bounded_reference_group(implementors_all, max_per_group);
+        let imports = bounded_reference_group(imports_all, max_per_group);
+        let tests = bounded_reference_group(tests_all, max_per_group);
+        let bridges = bounded_reference_group(bridges_all, max_per_group);
+
+        let omitted = callers.omitted_count
+            + callees.omitted_count
+            + implementors.omitted_count
+            + imports.omitted_count
+            + tests.omitted_count
+            + bridges.omitted_count;
+        let mut next_actions = Vec::new();
+        if omitted > 0 {
+            next_actions.push(InspectNextAction {
+                action: "ministr_references".to_string(),
+                locator: locator.clone(),
+                reason: format!("{omitted} direct relationships were omitted by group bounds"),
+            });
+        }
+        if definition.as_ref().is_some_and(|item| item.truncated) {
+            next_actions.push(InspectNextAction {
+                action: "ministr_definition".to_string(),
+                locator: locator.clone(),
+                reason: "definition source is truncated; follow its continuation range".to_string(),
+            });
+        }
+
+        Ok(bound_inspect_response(InspectResult {
+            symbol_id: symbol_id.to_string(),
+            locator,
+            definition,
+            callers,
+            callees,
+            implementors,
+            imports,
+            tests,
+            bridges,
+            impact,
+            partial_errors,
+            next_actions,
+            truncated: false,
+            original_bytes: 0,
+            returned_bytes: 0,
+        }))
+    }
+
+    /// Position-addressed variant of [`Self::inspect_symbol`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::SymbolNotFound`] when no occurrence covers the
+    /// supplied position.
+    pub async fn inspect_at_position(
+        &self,
+        file_path: &str,
+        line: u32,
+        col: u32,
+        options: &InspectOptions,
+    ) -> Result<InspectResult, QueryError> {
+        let symbol_id = self
+            .symbol_at_position(file_path, line, col)
+            .await?
+            .ok_or_else(|| QueryError::SymbolNotFound {
+                id: format!("{file_path}:{line}:{col}"),
+            })?;
+        self.inspect_symbol(&symbol_id, options).await
     }
 
     /// Type-hierarchy-aware references (FL3b): the normal references of
@@ -815,10 +1426,8 @@ impl QueryService {
             })
     }
 
-    /// Read source file lines for symbol context display.
-    ///
-    /// Returns the symbol's source lines with 3 lines of surrounding context.
-    /// Falls back to a placeholder if the file cannot be read.
+    /// Legacy full symbol context used by compression and existing callers.
+    /// Definition responses use [`Self::read_source_slice`] for bounded output.
     pub(super) async fn read_source_context(
         &self,
         file_path: &str,
@@ -829,19 +1438,123 @@ impl QueryService {
         let Ok(content) = tokio::fs::read_to_string(&resolved).await else {
             return format!("[source unavailable: {file_path}]");
         };
+        let lines: Vec<&str> = content.lines().collect();
+        let total = lines.len();
+        let start = (line_start as usize).saturating_sub(1).saturating_sub(3);
+        let end = (line_end as usize).min(total).saturating_add(3).min(total);
+        lines[start..end].join("\n")
+    }
+
+    /// Read a bounded, line-safe definition slice with continuation metadata.
+    #[allow(clippy::too_many_lines)] // line and byte continuations share one UTF-8-safe slicing path
+    async fn read_source_slice(
+        &self,
+        file_path: &str,
+        line_start: u32,
+        line_end: u32,
+        symbol_id: &str,
+        options: DefinitionOptions,
+    ) -> Result<SourceSlice, QueryError> {
+        let resolved = self.resolve_source_path(file_path).await;
+        let content = match tokio::fs::read_to_string(&resolved).await {
+            Ok(content) => content,
+            Err(source) => {
+                let range = SourceLineRange {
+                    start: line_start,
+                    end: line_end.max(line_start),
+                };
+                let error_code = if source.kind() == std::io::ErrorKind::PermissionDenied {
+                    "permission_denied"
+                } else {
+                    "file_unavailable"
+                };
+                return Ok(SourceSlice {
+                    text: format!("[source unavailable: {file_path}]"),
+                    truncated: true,
+                    omitted_lines: usize::try_from(
+                        line_end.saturating_sub(line_start).saturating_add(1),
+                    )
+                    .unwrap_or(usize::MAX),
+                    original: range,
+                    returned: SourceLineRange {
+                        start: line_start,
+                        end: line_start,
+                    },
+                    continuation: None,
+                    source_error: Some(error_code.to_string()),
+                });
+            }
+        };
 
         let lines: Vec<&str> = content.lines().collect();
         let total = lines.len();
-
-        // 3 lines of context before and after, clamped to file bounds
-        let ctx = 3;
-        let start = (line_start as usize).saturating_sub(1).saturating_sub(ctx);
-        let end = (line_end as usize)
+        let original_start = (line_start as usize)
+            .saturating_sub(1)
+            .saturating_sub(options.context_lines);
+        let original_end_exclusive = (line_end as usize)
             .min(total)
-            .saturating_add(ctx)
+            .saturating_add(options.context_lines)
             .min(total);
-
-        lines[start..end].join("\n")
+        let requested_start = options
+            .start_line
+            .map_or(original_start, |line| line.saturating_sub(1) as usize)
+            .clamp(original_start, original_end_exclusive.saturating_sub(1));
+        let returned_end_exclusive = requested_start
+            .saturating_add(options.max_lines)
+            .min(original_end_exclusive);
+        let original_count = original_end_exclusive.saturating_sub(original_start);
+        let returned_count = returned_end_exclusive.saturating_sub(requested_start);
+        let line_number = |line: usize| u32::try_from(line).unwrap_or(u32::MAX);
+        let original = SourceLineRange {
+            start: line_number(original_start.saturating_add(1)),
+            end: line_number(original_end_exclusive.max(original_start + 1)),
+        };
+        let returned = SourceLineRange {
+            start: line_number(requested_start.saturating_add(1)),
+            end: line_number(returned_end_exclusive.max(requested_start + 1)),
+        };
+        let full_text = lines[requested_start..returned_end_exclusive].join("\n");
+        let mut byte_start = options.start_byte.unwrap_or(0).min(full_text.len());
+        while byte_start < full_text.len() && !full_text.is_char_boundary(byte_start) {
+            byte_start += 1;
+        }
+        let mut byte_end = byte_start
+            .saturating_add(MAX_DEFINITION_SOURCE_BYTES)
+            .min(full_text.len());
+        while byte_end > byte_start && !full_text.is_char_boundary(byte_end) {
+            byte_end -= 1;
+        }
+        let byte_has_more = byte_end < full_text.len();
+        let line_has_more = returned_end_exclusive < original_end_exclusive;
+        let continuation = if byte_has_more {
+            Some(DefinitionContinuation {
+                symbol_id: symbol_id.to_string(),
+                start_line: line_number(requested_start.saturating_add(1)),
+                max_lines: options.max_lines,
+                start_byte: Some(byte_end),
+                max_bytes: Some(MAX_DEFINITION_SOURCE_BYTES),
+            })
+        } else {
+            line_has_more.then(|| DefinitionContinuation {
+                symbol_id: symbol_id.to_string(),
+                start_line: line_number(returned_end_exclusive.saturating_add(1)),
+                max_lines: options.max_lines,
+                start_byte: None,
+                max_bytes: None,
+            })
+        };
+        Ok(SourceSlice {
+            text: full_text[byte_start..byte_end].to_string(),
+            truncated: returned_count < original_count
+                || requested_start > original_start
+                || byte_start > 0
+                || byte_has_more,
+            omitted_lines: original_count.saturating_sub(returned_count),
+            original,
+            returned,
+            continuation,
+            source_error: None,
+        })
     }
 }
 
@@ -884,8 +1597,452 @@ fn is_entry_point(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_risk, is_entry_point, is_test_path};
-    use crate::service::ImpactRisk;
+    use super::{
+        MAX_DEFINITION_SOURCE_BYTES, MAX_INSPECT_RESPONSE_BYTES, bound_inspect_response,
+        bounded_reference_group, compute_risk, is_entry_point, is_large_container, is_test_path,
+        shape_reference_results,
+    };
+    use crate::embedding::Embedder;
+    use crate::error::IndexError;
+    use crate::index::HnswIndex;
+    use crate::service::{
+        DefinitionOptions, ImpactRisk, InspectImpactSummary, InspectInclude, InspectOptions,
+        InspectReferenceGroup, InspectResult, QueryService, SymbolRefResult,
+    };
+    use crate::storage::{SqliteStorage, Storage, SymbolRecord, SymbolRefRecord};
+    use crate::types::{RefKind, ResultLocator, SymbolId};
+    use std::sync::Arc;
+
+    struct ZeroEmbedder;
+
+    impl Embedder for ZeroEmbedder {
+        fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, IndexError> {
+            Ok(vec![vec![0.0; 4]; texts.len()])
+        }
+
+        fn dimension(&self) -> usize {
+            4
+        }
+    }
+
+    fn query_service(storage: SqliteStorage) -> QueryService {
+        QueryService::new(
+            storage,
+            Arc::new(ZeroEmbedder),
+            Arc::new(HnswIndex::new(4, 100).unwrap()),
+        )
+    }
+
+    fn stored_symbol(
+        id: &str,
+        name: &str,
+        kind: &str,
+        file: &str,
+        start: u32,
+        end: u32,
+    ) -> SymbolRecord {
+        SymbolRecord {
+            id: SymbolId(id.to_string()),
+            file_path: file.to_string(),
+            name: name.to_string(),
+            kind: kind.to_string(),
+            visibility: "pub".to_string(),
+            signature: format!("pub {kind} {name}"),
+            doc_comment: None,
+            module_path: "fixture".to_string(),
+            line_start: start,
+            line_end: end,
+            cyclomatic_complexity: None,
+        }
+    }
+
+    fn reference(from_file: &str, from_line: u32, kind: &str) -> SymbolRefResult {
+        SymbolRefResult {
+            from_symbol_id: format!("sym-{from_file}-{from_line}"),
+            from_name: "caller".into(),
+            from_file: from_file.into(),
+            from_line,
+            to_symbol_id: "sym-target".into(),
+            to_name: "target".into(),
+            to_file: "src/target.rs".into(),
+            to_line: 1,
+            ref_kind: kind.into(),
+        }
+    }
+
+    #[test]
+    fn container_kind_classifier_covers_impl_class_and_module() {
+        for kind in ["impl", "class", "module", "mod", "trait", "interface"] {
+            assert!(is_large_container(kind), "{kind} should outline when large");
+        }
+        assert!(!is_large_container("function"));
+    }
+
+    #[tokio::test]
+    async fn definitions_bound_large_bodies_outline_containers_and_continue_ranges() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("generated_bindings.rs");
+        let source = (1..=1_000)
+            .map(|line| format!("// 行🙂 {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&path, source).unwrap();
+        let file = path.to_string_lossy().into_owned();
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        storage
+            .insert_symbols(&[
+                stored_symbol("sym-ordinary", "ordinary", "function", &file, 1, 5),
+                stored_symbol("sym-impl", "ServiceImpl", "impl", &file, 10, 220),
+                stored_symbol("sym-impl::run", "run", "function", &file, 20, 30),
+                stored_symbol("sym-class", "Controller", "class", &file, 230, 440),
+                stored_symbol("sym-class::send", "send", "method", &file, 240, 250),
+                stored_symbol("sym-module", "runtime", "module", &file, 450, 660),
+                stored_symbol("sym-module::tick", "tick", "function", &file, 460, 470),
+                stored_symbol(
+                    "sym-generated",
+                    "generated_call",
+                    "function",
+                    &file,
+                    670,
+                    950,
+                ),
+            ])
+            .await
+            .unwrap();
+        let service = query_service(storage);
+
+        let ordinary = service.get_symbol_definition("sym-ordinary").await.unwrap();
+        assert!(!ordinary.truncated);
+        assert!(!ordinary.outline_only);
+        assert!(ordinary.source_context.contains("行🙂"));
+
+        for id in ["sym-impl", "sym-class", "sym-module"] {
+            let definition = service.get_symbol_definition(id).await.unwrap();
+            assert!(definition.truncated, "{id}");
+            assert!(definition.outline_only, "{id}");
+            assert!(!definition.child_symbols.is_empty(), "{id}");
+            assert!(definition.continuation.is_some(), "{id}");
+        }
+
+        let generated = service
+            .get_symbol_definition("sym-generated")
+            .await
+            .unwrap();
+        assert!(generated.truncated);
+        assert!(!generated.outline_only);
+        assert_eq!(
+            generated.returned_line_range.end - generated.returned_line_range.start + 1,
+            160
+        );
+        let continuation = generated.continuation.clone().unwrap();
+        let next = service
+            .get_symbol_definition_with_options(
+                "sym-generated",
+                DefinitionOptions {
+                    max_lines: 80,
+                    start_line: Some(continuation.start_line),
+                    ..DefinitionOptions::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(next.returned_line_range.start, continuation.start_line);
+        assert!(std::str::from_utf8(next.source_context.as_bytes()).is_ok());
+    }
+
+    #[tokio::test]
+    async fn definitions_bound_minified_unicode_lines_and_continue_by_byte() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("generated.min.rs");
+        let source = "資料🙂".repeat(20_000);
+        std::fs::write(&path, &source).unwrap();
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        storage
+            .insert_symbols(&[stored_symbol(
+                "sym-minified",
+                "minified",
+                "function",
+                &path.to_string_lossy(),
+                1,
+                1,
+            )])
+            .await
+            .unwrap();
+        let service = query_service(storage);
+
+        let first = service.get_symbol_definition("sym-minified").await.unwrap();
+        assert!(first.truncated);
+        assert!(first.source_context.len() <= MAX_DEFINITION_SOURCE_BYTES);
+        assert!(std::str::from_utf8(first.source_context.as_bytes()).is_ok());
+        let continuation = first.continuation.unwrap();
+        assert!(continuation.start_byte.is_some());
+        let second = service
+            .get_symbol_definition_with_options(
+                "sym-minified",
+                DefinitionOptions {
+                    start_line: Some(continuation.start_line),
+                    start_byte: continuation.start_byte,
+                    ..DefinitionOptions::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_ne!(first.source_context, second.source_context);
+        assert_ne!(
+            first.locator.identity.resolution, second.locator.identity.resolution,
+            "continuation pages must account as distinct deliveries"
+        );
+        assert!(second.source_context.len() <= MAX_DEFINITION_SOURCE_BYTES);
+    }
+
+    #[tokio::test]
+    async fn definition_reports_missing_source_as_explicit_partial_data() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        storage
+            .insert_symbols(&[stored_symbol(
+                "sym-missing-source",
+                "missing",
+                "function",
+                "/definitely/missing/source.rs",
+                1,
+                2,
+            )])
+            .await
+            .unwrap();
+        let definition = query_service(storage)
+            .get_symbol_definition("sym-missing-source")
+            .await
+            .unwrap();
+        assert_eq!(definition.source_error.as_deref(), Some("file_unavailable"));
+        assert!(definition.truncated);
+        assert!(definition.source_context.contains("source unavailable"));
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // one fixture proves all inspect group classifications together
+    async fn inspect_groups_direct_edges_deterministically_and_reports_omissions() {
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        let symbol = |id: &str, file: &str| stored_symbol(id, id, "function", file, 1, 2);
+        storage
+            .insert_symbols(&[
+                symbol("target", "src/target.rs"),
+                symbol("caller-a", "src/a.rs"),
+                symbol("caller-b", "src/b.rs"),
+                symbol("test-caller", "tests/target_test.rs"),
+                symbol("callee", "src/callee.rs"),
+                symbol("implementor", "src/impl.rs"),
+                symbol("importer", "src/importer.rs"),
+                symbol("bridge-client", "web/client.ts"),
+            ])
+            .await
+            .unwrap();
+        storage
+            .insert_symbol_refs(&[
+                SymbolRefRecord {
+                    from_symbol_id: SymbolId("caller-a".to_string()),
+                    to_symbol_id: SymbolId("target".to_string()),
+                    ref_kind: RefKind::Calls,
+                },
+                SymbolRefRecord {
+                    from_symbol_id: SymbolId("caller-b".to_string()),
+                    to_symbol_id: SymbolId("target".to_string()),
+                    ref_kind: RefKind::Calls,
+                },
+                SymbolRefRecord {
+                    from_symbol_id: SymbolId("test-caller".to_string()),
+                    to_symbol_id: SymbolId("target".to_string()),
+                    ref_kind: RefKind::Calls,
+                },
+                SymbolRefRecord {
+                    from_symbol_id: SymbolId("target".to_string()),
+                    to_symbol_id: SymbolId("callee".to_string()),
+                    ref_kind: RefKind::Calls,
+                },
+                SymbolRefRecord {
+                    from_symbol_id: SymbolId("implementor".to_string()),
+                    to_symbol_id: SymbolId("target".to_string()),
+                    ref_kind: RefKind::Implements,
+                },
+                SymbolRefRecord {
+                    from_symbol_id: SymbolId("importer".to_string()),
+                    to_symbol_id: SymbolId("target".to_string()),
+                    ref_kind: RefKind::Imports,
+                },
+                SymbolRefRecord {
+                    from_symbol_id: SymbolId("bridge-client".to_string()),
+                    to_symbol_id: SymbolId("target".to_string()),
+                    ref_kind: RefKind::Bridge,
+                },
+            ])
+            .await
+            .unwrap();
+        let service = query_service(storage);
+        let result = service
+            .inspect_symbol(
+                "target",
+                &InspectOptions {
+                    include: vec![
+                        InspectInclude::Callers,
+                        InspectInclude::Callees,
+                        InspectInclude::Implementors,
+                        InspectInclude::Imports,
+                        InspectInclude::Tests,
+                        InspectInclude::Bridges,
+                    ],
+                    max_per_group: 1,
+                    max_source_lines: 10,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.callers.total, 3);
+        assert_eq!(result.callers.items.len(), 1);
+        assert_eq!(result.callers.omitted_count, 2);
+        assert_eq!(result.callers.pagination.total, 3);
+        assert!(result.callers.pagination.has_more);
+        assert_eq!(result.callers.pagination.omitted_count, 2);
+        assert!(
+            result
+                .callers
+                .pagination
+                .next_cursor
+                .as_deref()
+                .is_some_and(|cursor| cursor.starts_with("ref:"))
+        );
+        assert_eq!(result.callees.total, 1);
+        assert_eq!(result.implementors.total, 1);
+        assert_eq!(result.imports.total, 1);
+        assert_eq!(result.tests.total, 1);
+        assert_eq!(result.bridges.total, 1);
+        assert_eq!(result.impact.direct_callers, 3);
+        assert!(result.impact.affected_files >= 7);
+        assert!(!matches!(result.impact.risk, ImpactRisk::Low));
+        assert!(!result.next_actions.is_empty());
+        assert!(result.partial_errors.is_empty());
+        assert!(!result.truncated);
+        assert_eq!(
+            result.returned_bytes,
+            serde_json::to_vec(&result).unwrap().len()
+        );
+        assert_eq!(result.original_bytes, result.returned_bytes);
+    }
+
+    #[tokio::test]
+    async fn inspect_preserves_definition_when_reference_group_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("target.rs");
+        std::fs::write(&path, "pub fn target() {}\n").unwrap();
+        let storage = SqliteStorage::open_in_memory().unwrap();
+        storage
+            .insert_symbols(&[stored_symbol(
+                "target",
+                "target",
+                "function",
+                &path.to_string_lossy(),
+                1,
+                1,
+            )])
+            .await
+            .unwrap();
+        let service = query_service(storage).with_inspect_reference_failure("injected failure");
+
+        let result = service
+            .inspect_symbol(
+                "target",
+                &InspectOptions {
+                    include: vec![InspectInclude::Definition, InspectInclude::Callers],
+                    max_per_group: 10,
+                    max_source_lines: 20,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(result.definition.is_some());
+        assert!(result.callers.items.is_empty());
+        assert_eq!(result.partial_errors.len(), 1);
+        assert_eq!(result.partial_errors[0].group, "references");
+        assert!(
+            result.partial_errors[0]
+                .message
+                .contains("injected failure")
+        );
+    }
+
+    #[test]
+    fn inspect_overall_budget_is_unicode_safe_and_preserves_group_continuation() {
+        let long = "路径🙂".repeat(1_024);
+        let references = (1..=200)
+            .map(|line| SymbolRefResult {
+                from_symbol_id: format!("caller-{line}-{long}"),
+                from_name: long.clone(),
+                from_file: format!("src/{long}/{line}.rs"),
+                from_line: line,
+                to_symbol_id: "target".to_string(),
+                to_name: "target".to_string(),
+                to_file: "src/target.rs".to_string(),
+                to_line: 1,
+                ref_kind: "calls".to_string(),
+            })
+            .collect();
+        let result = bound_inspect_response(InspectResult {
+            symbol_id: "target".to_string(),
+            locator: ResultLocator::primary("target", "symbol_full"),
+            definition: None,
+            callers: bounded_reference_group(references, 200),
+            callees: InspectReferenceGroup::default(),
+            implementors: InspectReferenceGroup::default(),
+            imports: InspectReferenceGroup::default(),
+            tests: InspectReferenceGroup::default(),
+            bridges: InspectReferenceGroup::default(),
+            impact: InspectImpactSummary {
+                direct_callers: 200,
+                direct_callees: 0,
+                affected_files: 200,
+                relevant_tests: 0,
+                risk: ImpactRisk::High,
+            },
+            partial_errors: Vec::new(),
+            next_actions: Vec::new(),
+            truncated: false,
+            original_bytes: 0,
+            returned_bytes: 0,
+        });
+
+        let serialized = serde_json::to_vec(&result).unwrap();
+        assert!(result.truncated);
+        assert!(serialized.len() <= MAX_INSPECT_RESPONSE_BYTES);
+        assert_eq!(result.returned_bytes, serialized.len());
+        assert!(result.original_bytes > result.returned_bytes);
+        assert!(result.callers.omitted_count > 0);
+        assert!(result.callers.pagination.has_more);
+        assert!(
+            result
+                .callers
+                .pagination
+                .next_cursor
+                .as_deref()
+                .is_some_and(|cursor| cursor.starts_with("ref:"))
+        );
+        assert!(std::str::from_utf8(&serialized).is_ok());
+    }
+
+    #[test]
+    fn references_are_deduplicated_and_production_callers_rank_first() {
+        let call = reference("src/caller.rs", 10, "calls");
+        let mut results = vec![
+            reference("tests/caller_test.rs", 2, "calls"),
+            reference("src/importer.rs", 1, "imports"),
+            call.clone(),
+            call,
+        ];
+        shape_reference_results(&mut results);
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].from_file, "src/caller.rs");
+        assert_eq!(results[1].from_file, "src/importer.rs");
+        assert_eq!(results[2].from_file, "tests/caller_test.rs");
+    }
 
     #[test]
     fn test_path_recognises_common_test_layouts() {

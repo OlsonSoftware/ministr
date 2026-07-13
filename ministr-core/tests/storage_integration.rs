@@ -10,8 +10,8 @@ use ministr_core::storage::{
     SymbolRefRecord,
 };
 use ministr_core::types::{
-    Claim, ClaimId, ClaimRelationship, ContentId, DocumentTree, RefKind, RelationType, Resolution,
-    Section, SectionId, SymbolId,
+    Claim, ClaimId, ClaimRelationship, ContentId, DeliveryIdentity, DocumentTree, RefKind,
+    RelationType, Resolution, Section, SectionId, SymbolId,
 };
 
 /// Build a sample document tree for testing.
@@ -569,9 +569,64 @@ async fn migration_rollforward() {
     assert_eq!(docs.len(), 1);
 
     // Current version should match (bump in lockstep with new migrations —
-    // last bumped to 25 when the V25 `index_meta` table landed, holding the
-    // `vector_generation` HNSW-cache freshness counter).
-    assert_eq!(CURRENT_SCHEMA_VERSION, 25);
+    // last bumped to 26 when corpus-aware delivery identity rebuilt the
+    // session-delivery primary key).
+    assert_eq!(CURRENT_SCHEMA_VERSION, 26);
+}
+
+#[tokio::test]
+async fn v25_bare_delivery_rows_migrate_to_primary_identity() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    {
+        let conn = rusqlite::Connection::open(tmp.path()).unwrap();
+        conn.execute_batch(
+            "
+            PRAGMA user_version = 25;
+            PRAGMA foreign_keys = ON;
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY NOT NULL,
+                context_budget INTEGER NOT NULL,
+                current_turn INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT '',
+                metrics_json TEXT,
+                recent_queries_json TEXT
+            );
+            CREATE TABLE session_deliveries (
+                session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                content_id TEXT NOT NULL,
+                resolution TEXT NOT NULL,
+                token_count INTEGER NOT NULL,
+                turn_delivered INTEGER NOT NULL,
+                content_hash TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                compression_tier TEXT NOT NULL DEFAULT 'full',
+                compressed_summary TEXT,
+                PRIMARY KEY (session_id, content_id)
+            );
+            CREATE INDEX idx_session_deliveries_session
+                ON session_deliveries(session_id);
+            INSERT INTO sessions (id, context_budget, current_turn)
+                VALUES ('legacy', 1000, 1);
+            INSERT INTO session_deliveries
+                (session_id, content_id, resolution, token_count,
+                 turn_delivered, content_hash, position)
+                VALUES ('legacy', 'same:id|with:delimiters', 'section',
+                        12, 1, 'h', 0);
+            ",
+        )
+        .unwrap();
+    }
+
+    let storage = SqliteStorage::open(tmp.path()).unwrap();
+    let loaded = storage
+        .load_session(&SessionId::from("legacy".to_string()))
+        .await
+        .unwrap()
+        .unwrap();
+    let identity = DeliveryIdentity::primary("same:id|with:delimiters", "section");
+    assert!(loaded.is_identity_delivered(&identity));
+    assert_eq!(loaded.delivered_count(), 1);
 }
 
 /// F-CodeExplorer v2: occurrences round-trip through the V23 table —
@@ -777,6 +832,47 @@ async fn save_and_load_session_roundtrip() {
 }
 
 #[tokio::test]
+async fn session_persistence_distinguishes_corpus_and_delivery_resolution() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let mut session = Session::new(
+        SessionId::from("identity-roundtrip".to_string()),
+        100_000,
+        DropPolicy::Fifo,
+    );
+    let linked_excerpt = DeliveryIdentity::new("linked", "same-id", "section_excerpt");
+    let linked_full = DeliveryIdentity::new("linked", "same-id", "section_full");
+    let atlas_excerpt = DeliveryIdentity::new("atlas/pkg", "same-id", "section_excerpt");
+    for (turn, identity) in [
+        linked_excerpt.clone(),
+        linked_full.clone(),
+        atlas_excerpt.clone(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        session.record_delivery_identity(
+            &identity,
+            Resolution::Section,
+            10,
+            u32::try_from(turn + 1).unwrap(),
+            format!("h{turn}"),
+        );
+    }
+
+    storage.save_session(&session).await.unwrap();
+    let loaded = storage
+        .load_session(&SessionId::from("identity-roundtrip".to_string()))
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(loaded.delivered_count(), 3);
+    assert!(loaded.is_identity_delivered(&linked_excerpt));
+    assert!(loaded.is_identity_delivered(&linked_full));
+    assert!(loaded.is_identity_delivered(&atlas_excerpt));
+}
+
+#[tokio::test]
 async fn save_session_overwrites_on_re_save() {
     let storage = SqliteStorage::open_in_memory().unwrap();
     let mut session = make_test_session();
@@ -888,9 +984,9 @@ async fn session_trajectory_ordering_preserved() {
 
     let trajectory = loaded.trajectory();
     assert_eq!(trajectory.len(), 3);
-    assert_eq!(trajectory[0], ContentId::from("alpha".to_string()));
-    assert_eq!(trajectory[1], ContentId::from("beta".to_string()));
-    assert_eq!(trajectory[2], ContentId::from("gamma".to_string()));
+    assert_eq!(trajectory[0].content_id, "alpha");
+    assert_eq!(trajectory[1].content_id, "beta");
+    assert_eq!(trajectory[2].content_id, "gamma");
 }
 
 #[tokio::test]
@@ -1565,6 +1661,22 @@ async fn get_nonexistent_symbol_returns_none() {
 }
 
 #[tokio::test]
+async fn get_symbols_batches_ids_in_one_storage_operation() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    storage.insert_symbols(&sample_symbols()).await.unwrap();
+    let symbols = storage
+        .get_symbols(&[
+            SymbolId("sym-service::helper".into()),
+            SymbolId("missing".into()),
+            SymbolId("sym-config::MinistrConfig".into()),
+        ])
+        .await
+        .unwrap();
+    let ids: Vec<_> = symbols.iter().map(|symbol| symbol.id.as_ref()).collect();
+    assert_eq!(ids, ["sym-config::MinistrConfig", "sym-service::helper"]);
+}
+
+#[tokio::test]
 async fn list_symbols_no_filter_returns_all() {
     let storage = SqliteStorage::open_in_memory().unwrap();
     let symbols = sample_symbols();
@@ -1687,6 +1799,42 @@ async fn list_symbols_filter_by_name() {
         .unwrap();
     assert_eq!(results.len(), 2);
     assert!(results.iter().all(|s| s.name.contains("Config")));
+}
+
+#[tokio::test]
+async fn list_symbols_ranks_exact_then_prefix_before_substring() {
+    let storage = SqliteStorage::open_in_memory().unwrap();
+    let symbol = |id: &str, name: &str, file: &str| SymbolRecord {
+        id: SymbolId(id.into()),
+        file_path: file.into(),
+        name: name.into(),
+        kind: "function".into(),
+        visibility: "pub".into(),
+        signature: String::new(),
+        doc_comment: None,
+        module_path: String::new(),
+        line_start: 1,
+        line_end: 2,
+        cyclomatic_complexity: None,
+    };
+    storage
+        .insert_symbols(&[
+            symbol("sym-a", "researchConfig", "a.rs"),
+            symbol("sym-z", "Config", "z.rs"),
+            symbol("sym-b", "Configuration", "b.rs"),
+        ])
+        .await
+        .unwrap();
+
+    let results = storage
+        .list_symbols(&SymbolFilter {
+            name: Some("Config".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let names: Vec<_> = results.iter().map(|symbol| symbol.name.as_str()).collect();
+    assert_eq!(names, ["Config", "Configuration", "researchConfig"]);
 }
 
 #[tokio::test]

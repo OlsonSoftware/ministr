@@ -8,27 +8,43 @@
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `container_kinds` | array of string | no | Override container kinds for SRP detection. Defaults: ['impl','struct','class','mod'] |
-| `cyclic_min_edges_per_direction` | integer | no | CyclicDependency: minimum distinct cross-package edges per direction. Single-edge cycles are usually phantom name-resolution artefacts. Default 2. |
-| `cyclic_skip_test_paths` | boolean | no | CyclicDependency: skip edges touching test/fixture paths. Sample data shouldn't drive the workspace dependency graph. Default true. |
-| `interface_kinds` | array of string | no | Override interface kinds for ISP/DIP detection. Defaults: ['trait','interface','protocol'] |
-| `isp_max_overlap_fraction` | number | no | Implementor under-using cutoff (fraction of trait methods overlapped). Default 0.33. |
-| `isp_min_methods` | integer | no | Minimum interface method count before ISP fires. Default 6. |
-| `jaccard_threshold` | number | no | Jaccard threshold over callee-sets for DRY/OCP. Default 0.4. |
-| `kind` | string | no | Optional symbol kind filter (e.g. 'function', 'struct') |
-| `limit` | integer | no | Maximum findings to return. Default 50, capped at 500. |
-| `max_pairs` | integer | no | Hard cap on pairwise comparisons inside any DRY/OCP bucket. Default 100k. |
-| `min_lines` | integer | no | Skip candidate symbols shorter than this many lines. Default 5. |
-| `module` | string | no | Optional module path prefix filter |
-| `principles` | array of string | no | Principles to evaluate: 'dry_ocp', 'srp', 'isp', 'dip', 'shotgun_surgery', 'cyclic_dependency'. Omit or pass empty to run all six. |
-| `project` | string | no | Optional linked-project label. Omit for primary corpus. |
-| `representative_count` | integer | no | Maximum representative members per component list. Larger arrays are truncated and reported via `*_omitted`. Default 5. |
-| `shotgun_max_jaccard` | number | no | Maximum callee-set Jaccard for ShotgunSurgery. Above this the group is treated as a Type-4 clone and handled by 'dry_ocp'. Default 0.5. |
-| `shotgun_min_packages` | integer | no | Minimum distinct packages a Shotgun-Surgery group must span. Default 2. |
-| `shotgun_min_sites` | integer | no | Minimum file count before a Shotgun-Surgery finding fires. Default 3. |
-| `shotgun_skip_conventional_names` | boolean | no | Skip Shotgun-Surgery groups whose name is universally conventional (new/default/fmt/clone/as_str/parse/main/etc.). Default true. |
-| `similarity_threshold` | number | no | Cosine threshold for DRY/OCP clone detection. Default 0.86. |
-| `srp_cohesion_threshold` | number | no | Cosine threshold for SRP within-container cohesion edges. Default 0.7. |
+| `container_kinds` | array of string | no | SRP container kinds. |
+| `cursor` | string | no | Cursor. |
+| `cyclic_min_edges_per_direction` | integer | no | Cycle edges per direction. |
+| `cyclic_skip_test_paths` | boolean | no | Ignore test/fixture cycle edges. |
+| `interface_kinds` | array of string | no | Interface kinds. |
+| `isp_max_overlap_fraction` | number | no | ISP usage cutoff. |
+| `isp_min_methods` | integer | no | ISP minimum method count. |
+| `jaccard_threshold` | number | no | Callee Jaccard threshold. |
+| `kind` | string | no | Symbol-kind filter. |
+| `limit` | integer | no | Finding limit (cap 500). |
+| `max_pairs` | integer | no | Comparison cap. |
+| `min_lines` | integer | no | Minimum symbol lines. |
+| `module` | string | no | Module-path prefix. |
+| `offset` | integer | no | Offset. |
+| `principles` | array of string | no | Principles: dry_ocp, srp, isp, dip, shotgun_surgery, cyclic_dependency; empty runs all. |
+| `project` | string | no | Linked project. |
+| `representative_count` | integer | no | Members per group; excess omitted. |
+| `shotgun_max_jaccard` | number | no | Shotgun maximum callee Jaccard. |
+| `shotgun_min_packages` | integer | no | Shotgun minimum packages. |
+| `shotgun_min_sites` | integer | no | Shotgun minimum sites. |
+| `shotgun_skip_conventional_names` | boolean | no | Skip conventional Shotgun names. |
+| `similarity_threshold` | number | no | Clone cosine threshold. |
+| `srp_cohesion_threshold` | number | no | SRP cohesion threshold. |
+
+## Output
+
+| Field | Type | Description |
+|---|---|---|
+| `coherence_alerts` | array | Pending coherence alerts (present when underlying content has changed). |
+| `completeness` | any | Whether absence is conclusive for the index generation queried. |
+| `corpora` | array | Per-corpus status for fan-out/routed operations. |
+| `error` | … | Stable error detail for partial/error responses. |
+| `indexing_in_progress` | boolean | True when background corpus ingestion is still running. |
+| `indexing_message` | string | Human-readable ingestion status message (e.g. "Checking 12/42 files"). |
+| `next_actions` | array | Concrete next-tool-call suggestions, in priority order.  Coherence-driven (re-read changed sections) plus any per-handler hints (e.g. survey's top-result follow-up). Budget pressure no longer contributes entries here — see the struct-level note. |
+| `result` | … | The tool-specific result data (varying — placed last for prefix stability). |
+| `status` | any | Machine-readable operation status; empty successful results remain `ok`. |
 
 Annotations: read-only · idempotent.
 

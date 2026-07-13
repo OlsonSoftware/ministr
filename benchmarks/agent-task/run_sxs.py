@@ -33,8 +33,10 @@ Usage:
 """
 
 import argparse
+import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -300,8 +302,11 @@ def selftest(tasks):
 # One (task, arm, model) run
 # --------------------------------------------------------------------------
 
-def build_claude_cmd(arm_key, workdir, prompt, model, budget, mcp_config_path):
+def build_claude_cmd(arm_key, workdir, prompt, model, budget, mcp_config_path,
+                     persist_session=None):
     label, allowed, uses_ministr = ARMS[arm_key]
+    if persist_session is None:
+        persist_session = uses_ministr
     cmd = [
         "claude", "-p", prompt,
         "--output-format", "json",
@@ -310,7 +315,7 @@ def build_claude_cmd(arm_key, workdir, prompt, model, budget, mcp_config_path):
         # Arm A keeps its session transcript so the run can be VALIDITY-
         # CHECKED (>=1 ministr call, else the arm label lies about the
         # treatment — the 06-11 confound). Arm B stays ephemeral.
-        *([] if uses_ministr else ["--no-session-persistence"]),
+        *([] if persist_session else ["--no-session-persistence"]),
         "--setting-sources", "project,local",
         "--strict-mcp-config",
         "--add-dir", workdir,
@@ -380,6 +385,7 @@ def run_one(task, arm_key, model, budget, keep, dry_run):
                 shutil.rmtree(os.path.dirname(workdir), ignore_errors=True)
             return res
 
+    checkpoint = transcript_checkpoint(workdir) if uses_ministr else None
     cmd = build_claude_cmd(arm_key, workdir, prompt, model, budget, mcp_config_path)
     t0 = time.time()
     code, out, err = sh(cmd, cwd=workdir, timeout=2400, env=run_env)
@@ -404,6 +410,11 @@ def run_one(task, arm_key, model, budget, keep, dry_run):
     passed, summary = validate(task, workdir)
     res["validator_passed"] = passed
     res["validator_summary"] = summary
+    if uses_ministr:
+        res["ministr_calls"] = count_ministr_calls(workdir, checkpoint=checkpoint)
+        if not res["ministr_calls"]:
+            res["error"] = (res.get("error") or "") + \
+                " VALIDITY: arm A made zero mcp__ministr__ calls (treatment not received)"
 
     if not keep:
         shutil.rmtree(os.path.dirname(workdir), ignore_errors=True)
@@ -535,7 +546,13 @@ def fidelity_probe(task, base, model="haiku"):
             mcp_config_path = os.path.join(base["work"], "ministr-mcp.json")
             with open(mcp_config_path, "w") as fh:
                 json.dump(mcp, fh)
-        cmd = build_claude_cmd(arm_key, repo, FIDELITY_PROMPT, model, 1.0, mcp_config_path)
+        # The fidelity probe persists both arms so execution is proven from
+        # protocol events rather than trusting the model's wording.
+        checkpoint = transcript_checkpoint(repo)
+        cmd = build_claude_cmd(
+            arm_key, repo, FIDELITY_PROMPT, model, 1.0, mcp_config_path,
+            persist_session=True,
+        )
         code, out, err = sh(cmd, cwd=repo, timeout=600, env=run_env)
         try:
             payload = json.loads(out)
@@ -543,15 +560,19 @@ def fidelity_probe(task, base, model="haiku"):
         except json.JSONDecodeError:
             results[label] = {"ok": False, "detail": f"unparseable output (exit {code})"}
             continue
-        ministr_calls = count_ministr_calls(repo) if uses_ministr else 0
+        grep_outcome = bash_grep_outcome(repo, checkpoint=checkpoint)
+        ministr_calls = count_ministr_calls(
+            repo, checkpoint=checkpoint, wait_seconds=0
+        )
         if uses_ministr:
-            denied = any(k in text.lower() for k in ("denied", "redirect", "ministr_survey", "not permitted", "blocked"))
+            denied = grep_outcome == "denied"
             ok = denied and ministr_calls > 0
             results[label] = {"ok": ok, "grep_denied_observed": denied,
                               "ministr_calls": ministr_calls, "report": text[:400]}
         else:
-            ok = "executed" in text.lower() or "def " in text
-            results[label] = {"ok": ok, "report": text[:400]}
+            ok = grep_outcome == "executed" and ministr_calls == 0
+            results[label] = {"ok": ok, "grep_outcome": grep_outcome,
+                              "ministr_calls": ministr_calls, "report": text[:400]}
     return results
 
 
@@ -578,6 +599,7 @@ def run_in_base(task, base, arm_key, model, budget):
         mcp_config_path = os.path.join(base["work"], "ministr-mcp.json")
         with open(mcp_config_path, "w") as fh:
             json.dump(mcp, fh)
+    checkpoint = transcript_checkpoint(repo) if uses_ministr else None
     cmd = build_claude_cmd(arm_key, repo, prompt, model, budget, mcp_config_path)
     t0 = time.time()
     code, out, err = sh(cmd, cwd=repo, timeout=2400, env=run_env)
@@ -600,39 +622,137 @@ def run_in_base(task, base, arm_key, model, budget):
     res["validator_passed"] = passed
     res["validator_summary"] = summary
     if res.get("uses_ministr"):
-        res["ministr_calls"] = count_ministr_calls(repo)
+        res["ministr_calls"] = count_ministr_calls(repo, checkpoint=checkpoint)
         if not res["ministr_calls"]:
             res["error"] = (res.get("error") or "") + \
                 " VALIDITY: arm A made zero mcp__ministr__ calls (treatment not received)"
     return res
 
 
-def count_ministr_calls(repo):
-    """Count mcp__ministr__ tool_use events in the newest persisted session
-    transcript for this repo's cwd-slug project dir (validity gate)."""
-    import glob as _glob
-    # Claude slugs the REALPATH cwd (macOS $TMPDIR /var/... resolves to
-    # /private/var/...) — resolve before slugging or the lookup misses.
-    slug = os.path.realpath(repo).replace("/", "-")
-    proj = os.path.expanduser(f"~/.claude/projects/{slug}")
-    files = sorted(_glob.glob(os.path.join(proj, "*.jsonl")), key=os.path.getsize)
-    if not files:
-        return 0
-    n = 0
-    # Largest file = the real transcript (sessions also write a tiny
-    # title-only stub with the same mtime).
-    for line in open(files[-1], errors="replace"):
-        try:
-            e = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        content = (e.get("message", {}) or {}).get("content")
-        if isinstance(content, list):
-            for c in content:
-                if (isinstance(c, dict) and c.get("type") == "tool_use"
-                        and c.get("name", "").startswith("mcp__ministr__")):
-                    n += 1
-    return n
+def transcript_project_dirs(repo, projects_root=None):
+    """Return compatible Claude persisted-transcript directories for ``repo``."""
+    # Claude resolves the cwd, then replaces every non-alphanumeric character
+    # (including tempfile's underscore suffix) with '-'. Keep narrower legacy
+    # candidates for older Claude Code releases that only normalized separators.
+    real_repo = os.path.realpath(repo)
+    slugs = [
+        re.sub(r"[^A-Za-z0-9-]", "-", real_repo),
+        real_repo.replace("_", "-").replace("/", "-").replace("\\", "-"),
+        real_repo.replace("/", "-").replace("\\", "-"),
+    ]
+    root = projects_root or os.path.expanduser("~/.claude/projects")
+    return [os.path.join(root, slug) for slug in dict.fromkeys(slugs)]
+
+
+def transcript_project_dir(repo, projects_root=None):
+    """Return the current Claude transcript directory for ``repo``."""
+    return transcript_project_dirs(repo, projects_root)[0]
+
+
+def transcript_checkpoint(repo, projects_root=None):
+    """Snapshot transcript byte offsets immediately before an agent run.
+
+    A checkpoint prevents an earlier run in the shared real-repo worktree from
+    satisfying the current run's treatment-validity gate.
+    """
+    paths = []
+    for project_dir in transcript_project_dirs(repo, projects_root):
+        paths.extend(glob.glob(os.path.join(project_dir, "**", "*.jsonl"), recursive=True))
+    return {path: os.path.getsize(path) for path in paths}
+
+
+def _transcript_protocol_records(path, start_offset):
+    """Return tool uses/results from complete JSONL records after an offset."""
+    tool_uses = {}
+    tool_results = {}
+    with open(path, errors="replace") as transcript:
+        if start_offset and os.path.getsize(path) >= start_offset:
+            transcript.seek(start_offset)
+        for line_number, line in enumerate(transcript, 1):
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            stack = [event]
+            ordinal = 0
+            while stack:
+                value = stack.pop()
+                if isinstance(value, dict):
+                    if value.get("type") == "tool_use":
+                        ordinal += 1
+                        # The same event can be mirrored into a parent and a
+                        # subagent transcript. IDs make the count exact; the
+                        # location fallback keeps older transcript formats useful.
+                        event_id = value.get("id") or f"{path}:{line_number}:{ordinal}"
+                        tool_uses[event_id] = value
+                    elif value.get("type") == "tool_result" and value.get("tool_use_id"):
+                        tool_results[value["tool_use_id"]] = value
+                    stack.extend(value.values())
+                elif isinstance(value, list):
+                    stack.extend(value)
+    return tool_uses, tool_results
+
+
+def _new_transcript_records(repo, checkpoint, projects_root):
+    tool_uses = {}
+    tool_results = {}
+    paths = []
+    for project_dir in transcript_project_dirs(repo, projects_root):
+        paths.extend(glob.glob(os.path.join(project_dir, "**", "*.jsonl"), recursive=True))
+    for path in paths:
+        size = os.path.getsize(path)
+        previous_size = checkpoint.get(path, 0)
+        # A rewritten/truncated transcript must be read from the start.
+        start_offset = previous_size if size >= previous_size else 0
+        new_uses, new_results = _transcript_protocol_records(path, start_offset)
+        tool_uses.update(new_uses)
+        tool_results.update(new_results)
+    return tool_uses, tool_results
+
+
+def count_ministr_calls(repo, checkpoint=None, wait_seconds=5.0, projects_root=None):
+    """Count ministr tool calls produced after ``checkpoint``.
+
+    Claude Code can finish printing its ``--output-format json`` response just
+    before the persisted JSONL writer flushes the final assistant event. Poll a
+    bounded five seconds instead of turning that persistence race into a false
+    treatment failure. Parse every current session/subagent transcript rather
+    than assuming the largest file is the current session.
+    """
+    checkpoint = checkpoint or {}
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        tool_uses, _tool_results = _new_transcript_records(
+            repo, checkpoint, projects_root
+        )
+        found = {
+            event_id for event_id, event in tool_uses.items()
+            if event.get("name", "").startswith("mcp__ministr__")
+        }
+        if found or time.monotonic() >= deadline:
+            return len(found)
+        time.sleep(0.05)
+
+
+def bash_grep_outcome(repo, checkpoint=None, wait_seconds=5.0, projects_root=None):
+    """Return ``executed``, ``denied``, or ``missing`` for the fidelity grep."""
+    checkpoint = checkpoint or {}
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        tool_uses, tool_results = _new_transcript_records(
+            repo, checkpoint, projects_root
+        )
+        for event_id, event in tool_uses.items():
+            command = (event.get("input") or {}).get("command", "")
+            if (event.get("name") == "Bash"
+                    and 'grep -rn "def " .' in command
+                    and "head -3" in command):
+                result = tool_results.get(event_id)
+                if result is not None:
+                    return "denied" if result.get("is_error") else "executed"
+        if time.monotonic() >= deadline:
+            return "missing"
+        time.sleep(0.05)
 
 
 # --------------------------------------------------------------------------

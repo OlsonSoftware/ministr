@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::DaemonBackend;
+use super::{BackendError, DaemonBackend};
 
 /// A daemon-forwarding backend that knows about multiple corpora.
 ///
@@ -31,23 +31,37 @@ impl DaemonMultiBackend {
     }
 
     /// Return the sub-backend for `project`, or the default when `None`.
+    /// Unknown labels are rejected so a routed query can never silently
+    /// return results from the primary corpus.
     ///
-    /// Unknown labels also fall back to the default so an agent typo or
-    /// stale tool argument doesn't make the call fail — the agent simply
-    /// sees results from the primary corpus and can re-call with the
-    /// correct label after consulting [`Self::labels`].
-    #[must_use]
-    pub fn for_project(&self, project: Option<&str>) -> &Arc<DaemonBackend> {
+    /// # Errors
+    ///
+    /// Returns [`BackendError::UnknownProject`] for an unregistered label.
+    pub fn for_project(&self, project: Option<&str>) -> Result<&Arc<DaemonBackend>, BackendError> {
         match project {
-            None => &self.default,
-            Some(label) => self.linked.get(label).unwrap_or(&self.default),
+            None => Ok(&self.default),
+            Some(label) => self
+                .linked
+                .get(label)
+                .or_else(|| {
+                    (self.default.corpus_id() == label)
+                        .then_some(&self.default)
+                        .or_else(|| {
+                            self.linked
+                                .values()
+                                .find(|backend| backend.corpus_id() == label)
+                        })
+                })
+                .ok_or_else(|| BackendError::UnknownProject(label.to_string())),
         }
     }
 
-    /// The configured linked-project labels, in declaration order.
+    /// The configured linked-project labels in deterministic lexical order.
     #[must_use]
     pub fn labels(&self) -> Vec<String> {
-        self.linked.keys().cloned().collect()
+        let mut labels: Vec<_> = self.linked.keys().cloned().collect();
+        labels.sort();
+        labels
     }
 
     /// Borrow the default backend (for `ministr_clone` and other
@@ -55,5 +69,69 @@ impl DaemonMultiBackend {
     #[must_use]
     pub fn default_backend(&self) -> &Arc<DaemonBackend> {
         &self.default
+    }
+
+    /// Every routed backend, with the primary first and linked corpora in
+    /// deterministic corpus-id order.
+    #[must_use]
+    pub fn all_backends(&self) -> Vec<&Arc<DaemonBackend>> {
+        let mut linked: Vec<_> = self.linked.values().collect();
+        linked.sort_by(|a, b| a.corpus_id().cmp(b.corpus_id()));
+        std::iter::once(&self.default).chain(linked).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ministr_api::client::DaemonClient;
+
+    fn backend(corpus_id: &str) -> Arc<DaemonBackend> {
+        Arc::new(DaemonBackend::new(
+            Arc::new(DaemonClient::new()),
+            corpus_id.to_string(),
+            None,
+        ))
+    }
+
+    #[test]
+    fn routes_by_linked_label_or_durable_corpus_id() {
+        let primary = backend("corpus-primary-uuid");
+        let linked = backend("corpus-linked-uuid");
+        let router = DaemonMultiBackend::new(
+            Arc::clone(&primary),
+            HashMap::from([("ministr".to_string(), Arc::clone(&linked))]),
+        );
+
+        assert!(Arc::ptr_eq(router.for_project(None).unwrap(), &primary));
+        assert!(Arc::ptr_eq(
+            router.for_project(Some("corpus-primary-uuid")).unwrap(),
+            &primary
+        ));
+        assert!(Arc::ptr_eq(
+            router.for_project(Some("ministr")).unwrap(),
+            &linked
+        ));
+        assert!(Arc::ptr_eq(
+            router.for_project(Some("corpus-linked-uuid")).unwrap(),
+            &linked
+        ));
+        assert!(matches!(
+            router.for_project(Some("unknown")),
+            Err(BackendError::UnknownProject(_))
+        ));
+    }
+
+    #[test]
+    fn labels_are_deterministically_sorted() {
+        let router = DaemonMultiBackend::new(
+            backend("primary"),
+            HashMap::from([
+                ("zeta".to_string(), backend("z")),
+                ("alpha".to_string(), backend("a")),
+                ("middle".to_string(), backend("m")),
+            ]),
+        );
+        assert_eq!(router.labels(), ["alpha", "middle", "zeta"]);
     }
 }

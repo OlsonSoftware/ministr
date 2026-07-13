@@ -8,7 +8,7 @@ restrict normal shell work.
 
 ## Exploration tools
 
-The full 25-tool surface is documented in the
+The full 26-tool surface is documented in the
 [tool reference](docs/reference/tools/README.md). The core loop:
 
 | Tool | Purpose |

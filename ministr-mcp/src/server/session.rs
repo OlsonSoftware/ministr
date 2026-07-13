@@ -5,13 +5,17 @@
 //! background compression of evicted entries.
 
 use serde::Serialize;
+use std::collections::HashSet;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use ministr_api::SessionSnapshot;
 use ministr_core::session::{
     AccessMode, CompressionTier, SessionEntry, SessionId, SessionRegistry, UsageStatus,
 };
+use ministr_core::storage::Storage;
 use ministr_core::token::count_tokens;
-use ministr_core::types::{ContentId, Resolution};
+use ministr_core::types::{ContentId, DeliveryIdentity, Resolution};
 
 use super::MinistrServer;
 use super::types::{NextAction, ToolResponse};
@@ -60,31 +64,196 @@ async fn try_restore_session(reg: &mut SessionRegistry, session_id: &str) {
 /// `opened_at` and `last_seen_at` both carry the current wall-clock. The
 /// Postgres UPSERT preserves `opened_at` across re-saves so the FIRST
 /// insert captures the actual opening time and later calls only advance
-/// `last_seen_at`. `corpus_id` is intentionally `None` for v0 —
-/// `record_section_delivery` doesn't carry the bound corpus; threading
-/// it through is a follow-up. `coherence_score` is 0.0 as a placeholder
-/// (the field is non-optional in the snapshot schema but no consumer
-/// reads it yet).
+/// `last_seen_at`. A single-corpus session records that corpus directly;
+/// mixed-corpus sessions keep `corpus_id = None` and carry every corpus in
+/// the structured state payload. `coherence_score` remains the aggregate
+/// value expected by existing storage backends.
 ///
 /// [`PostgresSessionStorage`]: ministr_cloud::session_storage::PostgresSessionStorage
 fn emit_session_snapshot(reg: &SessionRegistry, session_id: &str, status: &UsageStatus) {
     let Some(tenant_id) = crate::tenant_scope::current() else {
         return;
     };
+    emit_session_snapshot_for_tenant(reg, session_id, status, tenant_id);
+}
+
+fn emit_session_snapshot_for_tenant(
+    reg: &SessionRegistry,
+    session_id: &str,
+    status: &UsageStatus,
+    tenant_id: String,
+) {
     let now = iso8601_now();
+    let state = reg.snapshot_state(session_id, next_snapshot_revision());
+    let mut corpus_ids = state
+        .delivered
+        .iter()
+        .map(|delivery| delivery.identity.corpus_id.clone())
+        .collect::<Vec<_>>();
+    corpus_ids.sort();
+    corpus_ids.dedup();
     let snapshot = SessionSnapshot {
         session_id: session_id.to_owned(),
         tenant_id,
-        corpus_id: None,
+        corpus_id: (corpus_ids.len() == 1).then(|| corpus_ids[0].clone()),
         opened_at: now.clone(),
         last_seen_at: now,
         budget_used: i64::try_from(status.tokens_used).unwrap_or(i64::MAX),
         coherence_score: 0.0,
+        state,
     };
     reg.persist_snapshot(snapshot);
 }
 
+fn next_snapshot_revision() -> u64 {
+    static LAST_REVISION: AtomicU64 = AtomicU64::new(0);
+    let wall_clock = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX)
+        });
+    let mut previous = LAST_REVISION.load(Ordering::Relaxed);
+    loop {
+        let next = wall_clock.max(previous.saturating_add(1));
+        match LAST_REVISION.compare_exchange_weak(
+            previous,
+            next,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return next,
+            Err(actual) => previous = actual,
+        }
+    }
+}
+
 impl MinistrServer {
+    #[allow(clippy::too_many_lines)] // one metadata snapshot keeps progress and freshness fields mutually consistent
+    async fn local_idle_query_metadata(
+        &self,
+    ) -> (
+        ministr_api::metadata::ResponseStatus,
+        ministr_api::metadata::Completeness,
+        Option<ministr_api::metadata::ResponseError>,
+    ) {
+        use ministr_api::metadata::{
+            Completeness, CompletenessState, ResponseError, ResponseStatus,
+        };
+
+        let Some(storage) = self.storage.as_ref() else {
+            return (ResponseStatus::Ok, Completeness::default(), None);
+        };
+        let (sections, symbols, records) = tokio::join!(
+            storage.section_count(),
+            storage.symbol_count(),
+            storage.list_file_hashes()
+        );
+        let (Ok(sections), Ok(symbols), Ok(mut records)) = (sections, symbols, records) else {
+            return (
+                ResponseStatus::Error,
+                Completeness {
+                    completeness: CompletenessState::Unavailable,
+                    indexed_items: 0,
+                    estimated_total_items: None,
+                    affected_capabilities: vec!["search".to_string(), "navigation".to_string()],
+                    index_generation: None,
+                    absence_is_conclusive: false,
+                    retry_guidance: Some(
+                        "Repair or reopen the local corpus, then retry.".to_string(),
+                    ),
+                },
+                Some(ResponseError {
+                    error_code: "local_index_unavailable".to_string(),
+                    retryable: true,
+                    message: "Local index metadata could not be read.".to_string(),
+                    corpus_id: Some(ministr_core::types::PRIMARY_CORPUS_ID.to_string()),
+                    backend: Some("local".to_string()),
+                }),
+            );
+        };
+        let indexed_items = sections.saturating_add(symbols);
+        records.sort_by(|a, b| a.path.cmp(&b.path));
+        let generation = blake3::hash(
+            &serde_json::to_vec(
+                &records
+                    .iter()
+                    .map(|record| (&record.path, &record.content_hash))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap_or_default(),
+        )
+        .to_hex()
+        .to_string();
+
+        let stale = if records.is_empty() {
+            indexed_items > 0
+        } else {
+            let Ok(root) = std::env::current_dir() else {
+                return (
+                    ResponseStatus::Partial,
+                    Completeness {
+                        completeness: CompletenessState::Stale,
+                        indexed_items,
+                        estimated_total_items: Some(indexed_items),
+                        affected_capabilities: vec!["search".to_string(), "navigation".to_string()],
+                        index_generation: Some(generation),
+                        absence_is_conclusive: false,
+                        retry_guidance: Some(
+                            "Retry after the local working directory is available.".to_string(),
+                        ),
+                    },
+                    None,
+                );
+            };
+            let freshness_records = records.clone();
+            tokio::task::spawn_blocking(move || {
+                ministr_core::freshness::compute_freshness(&[root], &freshness_records, &[])
+            })
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .is_none_or(|files| {
+                files
+                    .iter()
+                    .any(|file| file.state != ministr_core::freshness::FreshnessState::Current)
+            })
+        };
+        let completeness = Completeness {
+            completeness: if stale {
+                CompletenessState::Stale
+            } else {
+                CompletenessState::Complete
+            },
+            indexed_items,
+            estimated_total_items: Some(indexed_items),
+            affected_capabilities: if stale {
+                vec!["search".to_string(), "navigation".to_string()]
+            } else {
+                Vec::new()
+            },
+            index_generation: Some(format!("local:{generation}")),
+            absence_is_conclusive: !stale,
+            retry_guidance: stale.then(|| {
+                "Refresh the local corpus before treating absence as conclusive.".to_string()
+            }),
+        };
+        (
+            if stale {
+                ResponseStatus::Partial
+            } else {
+                ResponseStatus::Ok
+            },
+            completeness,
+            None,
+        )
+    }
+
+    /// Hydrate the active session before any exclusion/dedup decision.
+    pub(super) async fn restore_active_session(&self) {
+        let mut registry = self.registry.lock().await;
+        try_restore_session(&mut registry, &self.effective_session_id()).await;
+    }
+
     /// Resolve the active session entry, bootstrapping it lazily if missing.
     ///
     /// Tool handlers used to call
@@ -150,35 +319,40 @@ impl MinistrServer {
     /// Returns the budget status snapshot after recording.
     pub(super) async fn record_section_delivery(
         &self,
-        section_id: &str,
+        identity: &DeliveryIdentity,
         text: &str,
         content_hash: String,
     ) -> UsageStatus {
         let token_count = count_tokens(text);
-        let content_id = ContentId(section_id.to_string());
         let mut reg = self.registry.lock().await;
         // Hydrate from durable storage on first access this pod.
         try_restore_session(&mut reg, &self.effective_session_id()).await;
         let entry = self.ensure_session_mut(&mut reg);
         let turn = entry.session.current_turn() + 1;
-        entry.session.record_delivery(
-            &content_id,
+        entry.session.record_delivery_identity(
+            identity,
             Resolution::Section,
             token_count,
             turn,
             content_hash,
         );
-        let evicted_ids = entry.budget.record_tokens(section_id, token_count);
+        let evicted_ids = entry
+            .budget
+            .record_tokens(&identity.storage_key(), token_count);
+        let evicted_identities: Vec<DeliveryIdentity> = evicted_ids
+            .iter()
+            .map(|key| DeliveryIdentity::from_storage_key(key, "section_full"))
+            .collect();
+        let evicted_content_ids: Vec<String> = evicted_identities
+            .iter()
+            .map(|evicted| evicted.content_id.clone())
+            .collect();
 
         let status = entry.budget.usage_status();
 
         // Persist eviction events to the drops ledger before releasing
         // the registry lock.
-        emit_section_drops(&reg, &self.effective_session_id(), &evicted_ids);
-
-        // Checkpoint the session snapshot (budget_used + timestamps) so a
-        // fresh pod can lazy-restore it via SessionRegistry::try_restore.
-        emit_session_snapshot(&reg, &self.effective_session_id(), &status);
+        emit_section_drops(&reg, &self.effective_session_id(), &evicted_content_ids);
 
         drop(reg);
 
@@ -187,18 +361,23 @@ impl MinistrServer {
         // in local-engine mode. In daemon-forward mode we skip heading-path
         // enrichment — the daemon owns the section delivery state and
         // doesn't need the proxy to bookmark it.
-        if !evicted_ids.is_empty()
+        if !evicted_identities.is_empty()
             && let Some(ref service) = self.service
         {
-            let mut heading_paths = Vec::with_capacity(evicted_ids.len());
-            for evicted_id in &evicted_ids {
-                heading_paths.push(service.section_heading_path(evicted_id).await);
+            let mut heading_paths = Vec::with_capacity(evicted_identities.len());
+            for evicted in &evicted_identities {
+                if evicted.corpus_id == ministr_core::types::PRIMARY_CORPUS_ID {
+                    heading_paths.push(service.section_heading_path(&evicted.content_id).await);
+                } else {
+                    heading_paths.push(Vec::new());
+                }
             }
             let mut reg = self.registry.lock().await;
             if let Some(entry) = reg.get_session_mut(&self.effective_session_id()) {
-                for (evicted_id, heading_path) in evicted_ids.iter().zip(&heading_paths) {
-                    let evicted_cid = ContentId(evicted_id.clone());
-                    entry.session.mask_to_bookmark(&evicted_cid, heading_path);
+                for (evicted, heading_path) in evicted_identities.iter().zip(&heading_paths) {
+                    entry
+                        .session
+                        .mask_identity_to_bookmark(evicted, heading_path);
                 }
             }
             drop(reg);
@@ -210,13 +389,18 @@ impl MinistrServer {
         // local. The daemon's compression is reachable via the backend
         // trait but isn't useful here because the session shadow lives in
         // this process.
-        if !evicted_ids.is_empty()
+        let local_evicted: Vec<String> = evicted_identities
+            .iter()
+            .filter(|evicted| evicted.corpus_id == ministr_core::types::PRIMARY_CORPUS_ID)
+            .map(|evicted| evicted.content_id.clone())
+            .collect();
+        if !local_evicted.is_empty()
             && let Some(service) = self.service.clone()
         {
             let registry = self.registry.clone();
             let session_id = self.active_session_id.clone();
             tokio::spawn(async move {
-                if let Ok(compressed) = service.compress_content(&evicted_ids).await {
+                if let Ok(compressed) = service.compress_content(&local_evicted).await {
                     let mut reg = registry.lock().await;
                     if let Some(entry) = reg.get_session_mut(&session_id) {
                         for item in compressed {
@@ -268,7 +452,44 @@ impl MinistrServer {
         try_restore_session(&mut reg, &self.effective_session_id()).await;
         let entry = self.ensure_session_mut(&mut reg);
         let alerts = entry.session.drain_alerts();
+        let persisted_status = entry.budget.usage_status();
+        // One response-boundary checkpoint owns cloud persistence for every
+        // delivery, drop, and compression path. This avoids partial handlers
+        // racing separate fire-and-forget saves for the same session.
+        emit_session_snapshot(&reg, &self.effective_session_id(), &persisted_status);
         drop(reg);
+
+        let mut stale_identities: Vec<DeliveryIdentity> = alerts
+            .iter()
+            .flat_map(|alert| alert.stale_identities.iter().cloned())
+            .collect();
+        for identity in stale_identities.clone() {
+            if identity.resolution.starts_with("symbol") {
+                stale_identities.push(DeliveryIdentity::new(
+                    &identity.corpus_id,
+                    &identity.content_id,
+                    "symbol_definition_default",
+                ));
+            }
+        }
+        if !stale_identities.is_empty() {
+            self.prefetch
+                .lock()
+                .await
+                .invalidate_identities(&stale_identities);
+            let stale_keys: HashSet<String> = stale_identities
+                .iter()
+                .map(DeliveryIdentity::storage_key)
+                .collect();
+            self.prefetch_definition_metadata
+                .lock()
+                .await
+                .retain(|key, _| !stale_keys.contains(key));
+            self.prefetch_section_metadata
+                .lock()
+                .await
+                .retain(|key, _| !stale_keys.contains(key));
+        }
 
         // Budget pressure is tracked internally (UsageTracker keeps
         // recording for compression/dedup) but never surfaced to the
@@ -289,14 +510,38 @@ impl MinistrServer {
 
         let next_actions = build_next_actions(&alerts, extra_next_actions);
 
+        let (status, completeness, error) = if indexing {
+            (
+                ministr_api::metadata::ResponseStatus::Partial,
+                ministr_api::metadata::Completeness {
+                    completeness: ministr_api::metadata::CompletenessState::Partial,
+                    indexed_items: progress.files_done(),
+                    estimated_total_items: Some(progress.files_total()),
+                    affected_capabilities: vec!["search".to_string(), "navigation".to_string()],
+                    index_generation: None,
+                    absence_is_conclusive: false,
+                    retry_guidance: Some(
+                        "Indexing is active; retry negative queries after completion.".to_string(),
+                    ),
+                },
+                None,
+            )
+        } else {
+            self.local_idle_query_metadata().await
+        };
+
         ToolResponse {
+            status,
+            completeness,
+            corpora: Vec::new(),
+            error,
             usage_status,
             coherence_alerts: alerts,
             indexing_in_progress: indexing,
             indexing_message,
             drop_suggestions,
             next_actions,
-            result: data,
+            result: Some(data),
         }
     }
 }
@@ -319,6 +564,42 @@ fn build_next_actions(
 
     // Coherence-driven: re-read changed sections so the agent gets a delta.
     for alert in coherence_alerts {
+        if !alert.stale_identities.is_empty() {
+            for identity in &alert.stale_identities {
+                let (action, argument, content_id) = if identity.resolution.starts_with("symbol") {
+                    (
+                        "ministr_definition",
+                        "symbol_id",
+                        identity.content_id.clone(),
+                    )
+                } else if identity.resolution.starts_with("claim") {
+                    (
+                        "ministr_read",
+                        "section_id",
+                        ministr_core::types::parent_section_id(&identity.content_id)
+                            .unwrap_or(&identity.content_id)
+                            .to_string(),
+                    )
+                } else {
+                    ("ministr_read", "section_id", identity.content_id.clone())
+                };
+                let mut args = serde_json::Value::Object(serde_json::Map::from_iter([(
+                    argument.to_string(),
+                    serde_json::Value::String(content_id),
+                )]));
+                if identity.corpus_id != ministr_core::types::PRIMARY_CORPUS_ID {
+                    args["project"] = serde_json::Value::String(identity.corpus_id.clone());
+                    args["source_corpus"] = serde_json::Value::String(identity.corpus_id.clone());
+                }
+                actions.push(NextAction {
+                    action: action.to_string(),
+                    args,
+                    reason: "Indexed content changed since last delivery; fetch the routed delta"
+                        .to_string(),
+                });
+            }
+            continue;
+        }
         for section_id in &alert.changed_sections {
             actions.push(NextAction {
                 action: "ministr_read".to_string(),
@@ -492,8 +773,13 @@ mod tests {
     #[tokio::test]
     async fn emit_session_snapshot_fires_when_tenant_scoped() {
         let stub = Arc::new(StubStorage::default());
-        let registry = SessionRegistry::new(UsageConfig::default())
+        let mut registry = SessionRegistry::new(UsageConfig::default())
             .with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
+        let identity = DeliveryIdentity::new("corpus-a", "shared-id", "section_excerpt");
+        registry
+            .create_session("agent-session-1", None, AccessMode::ReadWrite)
+            .session
+            .record_delivery_identity(&identity, Resolution::Section, 18, 1, "content-hash".into());
         let status = fixture_status(5_000);
 
         crate::tenant_scope::scope_for_test(Some("tenant-x".into()), None, async {
@@ -518,8 +804,16 @@ mod tests {
         let snap = &snapshots[0];
         assert_eq!(snap.session_id, "agent-session-1");
         assert_eq!(snap.tenant_id, "tenant-x");
-        assert_eq!(snap.corpus_id, None);
+        assert_eq!(snap.corpus_id.as_deref(), Some("corpus-a"));
         assert_eq!(snap.budget_used, 5_000);
+        assert_eq!(snap.state.version, ministr_api::SESSION_STATE_VERSION);
+        assert_eq!(snap.state.delivered.len(), 1);
+        assert_eq!(snap.state.delivered[0].identity.corpus_id, "corpus-a");
+        assert_eq!(snap.state.delivered[0].identity.content_id, "shared-id");
+        assert_eq!(
+            snap.state.delivered[0].identity.resolution,
+            "section_excerpt"
+        );
         assert!(!snap.opened_at.is_empty());
         assert_eq!(snap.opened_at, snap.last_seen_at);
     }
@@ -573,6 +867,7 @@ mod tests {
             last_seen_at: "2026-05-21T00:00:00Z".into(),
             budget_used: 1_234,
             coherence_score: 0.0,
+            state: ministr_api::SessionStateSnapshot::default(),
         };
         stub.saves
             .lock()
@@ -678,6 +973,7 @@ mod tests {
         let alerts = vec![CoherenceAlert {
             changed_sections: vec!["docs/a.md#x".into(), "docs/b.md#y".into()],
             stale_content_ids: vec![],
+            stale_identities: vec![],
         }];
         let actions = build_next_actions(&alerts, Vec::new());
 
@@ -685,6 +981,52 @@ mod tests {
         assert_eq!(actions[0].action, "ministr_read");
         assert_eq!(actions[0].args["section_id"], "docs/a.md#x");
         assert_eq!(actions[1].args["section_id"], "docs/b.md#y");
+    }
+
+    #[test]
+    fn coherence_actions_preserve_corpus_route_from_exact_identity() {
+        let alerts = vec![CoherenceAlert {
+            changed_sections: vec!["docs/a.md#x".into()],
+            stale_content_ids: vec!["docs/a.md#x".into()],
+            stale_identities: vec![ministr_core::types::DeliveryIdentity::new(
+                "linked-corpus",
+                "docs/a.md#x",
+                "section_full",
+            )],
+        }];
+        let actions = build_next_actions(&alerts, Vec::new());
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].args["section_id"], "docs/a.md#x");
+        assert_eq!(actions[0].args["project"], "linked-corpus");
+        assert_eq!(actions[0].args["source_corpus"], "linked-corpus");
+    }
+
+    #[test]
+    fn coherence_actions_are_resolution_aware_and_executable() {
+        let alerts = vec![CoherenceAlert {
+            changed_sections: vec!["claim-1".into(), "symbol-1".into()],
+            stale_content_ids: vec!["claim-1".into(), "symbol-1".into()],
+            stale_identities: vec![
+                ministr_core::types::DeliveryIdentity::new(
+                    "linked-corpus",
+                    "docs/a.md#x:c0",
+                    "claim_excerpt",
+                ),
+                ministr_core::types::DeliveryIdentity::new(
+                    "linked-corpus",
+                    "sym-src/a.rs::run",
+                    "symbol_full",
+                ),
+            ],
+        }];
+        let actions = build_next_actions(&alerts, Vec::new());
+
+        assert_eq!(actions[0].action, "ministr_read");
+        assert_eq!(actions[0].args["section_id"], "docs/a.md#x");
+        assert_eq!(actions[0].args["project"], "linked-corpus");
+        assert_eq!(actions[1].action, "ministr_definition");
+        assert_eq!(actions[1].args["symbol_id"], "sym-src/a.rs::run");
+        assert_eq!(actions[1].args["source_corpus"], "linked-corpus");
     }
 
     /// Regression guard for the budget-hint removal: even with coherence
@@ -696,6 +1038,7 @@ mod tests {
         let alerts = vec![CoherenceAlert {
             changed_sections: vec!["docs/a.md#x".into()],
             stale_content_ids: vec![],
+            stale_identities: vec![],
         }];
         let actions = build_next_actions(&alerts, Vec::new());
 
@@ -719,6 +1062,7 @@ mod tests {
         let alerts = vec![CoherenceAlert {
             changed_sections: vec!["docs/a.md#x".into()],
             stale_content_ids: vec![],
+            stale_identities: vec![],
         }];
         let actions = build_next_actions(&alerts, extras);
 

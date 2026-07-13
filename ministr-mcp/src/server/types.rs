@@ -37,6 +37,18 @@ use ministr_core::session::{CoherenceAlert, UsageStatus};
 /// first, varying tool-specific payload last.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct ToolResponse<T: Serialize + schemars::JsonSchema> {
+    /// Machine-readable operation status; empty successful results remain `ok`.
+    pub(crate) status: ministr_api::metadata::ResponseStatus,
+    /// Whether absence is conclusive for the index generation queried.
+    pub(crate) completeness: ministr_api::metadata::Completeness,
+    /// Per-corpus status for fan-out/routed operations.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    #[schemars(default)]
+    pub(crate) corpora: Vec<ministr_api::metadata::CorpusOperationStatus>,
+    /// Stable error detail for partial/error responses.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(default)]
+    pub(crate) error: Option<ministr_api::metadata::ResponseError>,
     /// Internal budget snapshot — tracked, never sent to the agent.
     /// See the struct-level note on why this is `skip_serializing`.
     ///
@@ -82,7 +94,36 @@ pub(crate) struct ToolResponse<T: Serialize + schemars::JsonSchema> {
     #[schemars(default)]
     pub(crate) next_actions: Vec<NextAction>,
     /// The tool-specific result data (varying — placed last for prefix stability).
-    pub(crate) result: T,
+    pub(crate) result: Option<T>,
+}
+
+impl<T: Serialize + schemars::JsonSchema> ToolResponse<T> {
+    pub(crate) fn apply_query_metadata(&mut self, metadata: ministr_api::metadata::QueryMetadata) {
+        // `build_response_with` derives live local-ingestion state from the
+        // shared progress tracker. A local backend's default/complete query
+        // metadata must not erase that stronger signal, otherwise an empty
+        // result during active indexing masquerades as conclusive absence.
+        if self.indexing_in_progress {
+            self.status = if metadata.status == ministr_api::metadata::ResponseStatus::Error {
+                ministr_api::metadata::ResponseStatus::Error
+            } else {
+                ministr_api::metadata::ResponseStatus::Partial
+            };
+            if metadata.completeness.completeness
+                != ministr_api::metadata::CompletenessState::Complete
+            {
+                self.completeness = metadata.completeness;
+            }
+            self.completeness.absence_is_conclusive = false;
+            self.corpora = metadata.corpora;
+            self.error = metadata.error;
+            return;
+        }
+        self.status = metadata.status;
+        self.completeness = metadata.completeness;
+        self.corpora = metadata.corpora;
+        self.error = metadata.error;
+    }
 }
 
 /// A concrete suggested next tool call the agent should consider making.
@@ -108,6 +149,8 @@ pub(crate) struct SurveyResponse {
     pub(crate) results: Vec<SurveyResult>,
     /// Number of results filtered out by deduplication.
     pub(crate) deduplicated_count: usize,
+    pub(crate) pagination: ministr_api::metadata::Pagination,
+    pub(crate) total_is_exact: bool,
 }
 
 /// Wrapper for extract responses.
@@ -115,6 +158,8 @@ pub(crate) struct SurveyResponse {
 pub(crate) struct ExtractResponse {
     /// The extracted claims.
     pub(crate) claims: Vec<ministr_core::service::ClaimResult>,
+    pub(crate) total: usize,
+    pub(crate) pagination: ministr_api::metadata::Pagination,
 }
 
 /// Response when a section has already been delivered and is unchanged.
@@ -138,6 +183,12 @@ pub(crate) struct DroppedResponse {
     pub(crate) dropped: Vec<String>,
     /// Content IDs that were not found in the session.
     pub(crate) not_found: Vec<String>,
+    /// Exact identities successfully removed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) dropped_identities: Vec<ministr_core::types::DeliveryIdentity>,
+    /// Exact identities not present in the session.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) not_found_identities: Vec<ministr_core::types::DeliveryIdentity>,
 }
 
 /// Parameters for the `ministr_survey` tool.
@@ -145,20 +196,30 @@ pub(crate) struct DroppedResponse {
 pub struct SurveyParams {
     /// Natural language query to search for relevant content.
     #[serde(default, deserialize_with = "coerce::lenient_string")]
-    #[schemars(description = "Natural language query to search the corpus")]
+    #[schemars(description = "Natural-language search query.")]
     pub query: String,
 
     /// Maximum number of results to return (default: 10).
     #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
-    #[schemars(description = "Maximum number of results to return")]
+    #[schemars(description = "Legacy limit (default 10).")]
     pub top_k: Option<usize>,
+
+    /// Preferred result limit. `top_k` remains a compatibility alias.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Limit (cap 100).")]
+    pub limit: Option<usize>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Offset.")]
+    pub offset: Option<usize>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(description = "Cursor.")]
+    pub cursor: Option<String>,
 
     /// Optional linked-project label. Omit for the session's primary corpus.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(
-        description = "Optional linked-project label (from .ministr.toml [[linked]]). \
-                       Omit for the session's primary corpus. Call ministr_projects to list labels."
-    )]
+    #[schemars(description = "Linked project.")]
     pub project: Option<String>,
 
     /// Cross-corpus fan-out. When set and non-empty, runs the
@@ -169,11 +230,7 @@ pub struct SurveyParams {
     /// corpus resolved through `project`). Mutually compatible with
     /// `project`: when both are set, `corpus_ids` wins.
     #[serde(default, deserialize_with = "coerce::opt_string_or_seq")]
-    #[schemars(
-        description = "Optional cross-corpus list. When set and non-empty, fans the query out \
-                       across each corpus_id (own corpora or Atlas slugs), tags hits with \
-                       source_corpus, and merges results by score. Omit to query a single corpus."
-    )]
+    #[schemars(description = "Corpus IDs/Atlas slugs; overrides project.")]
     pub corpus_ids: Option<Vec<String>>,
 
     /// Per-corpus score multipliers for cross-corpus ranking.
@@ -183,11 +240,7 @@ pub struct SurveyParams {
     /// clamped to `[0.0, 10.0]` and any non-finite (NaN, ±∞) value is
     /// rejected back to 1.0. Only consulted when `corpus_ids` is set.
     #[serde(default, deserialize_with = "coerce::lenient_opt_f32_map")]
-    #[schemars(
-        description = "Optional per-corpus score multipliers for cross-corpus ranking. \
-                       Map<corpus_id, multiplier>; absent corpora default to 1.0; clamped to [0, 10]. \
-                       Use 2.0 to float your own repo above Atlas hits, 0.0 to suppress a corpus."
-    )]
+    #[schemars(description = "Corpus score multipliers (0..10).")]
     pub corpus_boost: Option<std::collections::HashMap<String, f32>>,
 }
 
@@ -201,8 +254,14 @@ pub struct ReadParams {
 
     /// Optional linked-project label.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    #[schemars(description = "Linked project.")]
     pub project: Option<String>,
+
+    /// Durable corpus route copied from a result locator. Used when `project`
+    /// is absent; retained separately so generated actions are self-contained.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(description = "Source corpus fallback.")]
+    pub source_corpus: Option<String>,
 }
 
 /// Parameters for the `ministr_dropped` tool.
@@ -212,6 +271,12 @@ pub struct DroppedParams {
     #[serde(default, deserialize_with = "coerce::string_or_seq")]
     #[schemars(description = "Content IDs the agent has dropped from its context")]
     pub content_ids: Vec<String>,
+    /// Exact corpus/content/resolution deliveries to make eligible again.
+    #[serde(default)]
+    #[schemars(
+        description = "Exact delivery identities to drop. Prefer this for linked/cross-corpus results."
+    )]
+    pub identities: Vec<ministr_core::types::DeliveryIdentity>,
 }
 
 /// Parameters for the `ministr_extract` tool.
@@ -227,9 +292,21 @@ pub struct ExtractParams {
     #[schemars(description = "Optional query to filter claims by relevance")]
     pub query: Option<String>,
 
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Offset.")]
+    pub offset: Option<usize>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(description = "Cursor.")]
+    pub cursor: Option<String>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Limit (cap 500).")]
+    pub limit: Option<usize>,
+
     /// Optional linked-project label.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    #[schemars(description = "Linked project.")]
     pub project: Option<String>,
 }
 
@@ -240,10 +317,27 @@ pub struct CompressParams {
     #[serde(default, deserialize_with = "coerce::string_or_seq")]
     #[schemars(description = "Content IDs (section IDs) to generate compressed summaries for")]
     pub content_ids: Vec<String>,
+    /// Exact delivered identities to compress. Prefer this for linked or
+    /// cross-corpus content; legacy `content_ids` use `project` as the corpus.
+    #[serde(default)]
+    #[schemars(description = "Exact corpus/content/resolution identities to compress.")]
+    pub identities: Vec<ministr_core::types::DeliveryIdentity>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Offset.")]
+    pub offset: Option<usize>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(description = "Cursor.")]
+    pub cursor: Option<String>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Limit (cap 500).")]
+    pub limit: Option<usize>,
 
     /// Optional linked-project label.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    #[schemars(description = "Linked project.")]
     pub project: Option<String>,
 }
 
@@ -262,6 +356,8 @@ pub(crate) struct UsageResponse {
     pub(crate) drop_candidates: Vec<DropCandidate>,
     /// Prefetch cache hit/miss metrics by strategy.
     pub(crate) prefetch_metrics: ministr_core::session::PrefetchMetrics,
+    /// Fraction of issued prefetches never consumed (0 when none issued).
+    pub(crate) prefetch_waste_rate: f64,
     /// Cumulative session token economics.
     pub(crate) session_metrics: SessionMetricsResponse,
     /// Total tokens consumed by MCP tool schemas (descriptions + parameters).
@@ -314,9 +410,21 @@ pub struct RelatedParams {
     )]
     pub relation_types: Option<Vec<String>>,
 
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Offset.")]
+    pub offset: Option<usize>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Maximum entries. Default 100, capped at 500.")]
+    pub limit: Option<usize>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(description = "Cursor.")]
+    pub cursor: Option<String>,
+
     /// Optional linked-project label.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    #[schemars(description = "Linked project.")]
     pub project: Option<String>,
 }
 
@@ -325,19 +433,30 @@ pub struct RelatedParams {
 pub(crate) struct RelatedResponse {
     /// Related claims with relationship metadata.
     pub(crate) related: Vec<RelatedClaimResult>,
+    pub(crate) pagination: ministr_api::metadata::Pagination,
 }
 
 /// Response from the `ministr_compress` tool.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct CompressResponse {
     /// Compressed summaries for the requested content.
-    pub(crate) summaries: Vec<CompressedItem>,
+    pub(crate) summaries: Vec<CompressedDeliveryResponse>,
+    pub(crate) total: usize,
+    pub(crate) pagination: ministr_api::metadata::Pagination,
     /// Total original tokens across all compressed items.
     pub(crate) total_original_tokens: usize,
     /// Total compressed tokens across all compressed items.
     pub(crate) total_compressed_tokens: usize,
     /// Aggregate compression ratio (compressed / original). Lower is better.
     pub(crate) compression_ratio: f64,
+}
+
+/// Backward-compatible compressed item fields plus exact session identity.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct CompressedDeliveryResponse {
+    pub(crate) identity: ministr_core::types::DeliveryIdentity,
+    #[serde(flatten)]
+    pub(crate) item: CompressedItem,
 }
 
 /// Parameters for the `ministr_toc` tool.
@@ -360,10 +479,18 @@ pub struct TocParams {
     #[schemars(description = "Maximum number of entries to return (default: 100)")]
     pub limit: Option<usize>,
 
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(description = "Cursor.")]
+    pub cursor: Option<String>,
+
     /// Optional linked-project label.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    #[schemars(description = "Linked project.")]
     pub project: Option<String>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(description = "Source corpus fallback.")]
+    pub source_corpus: Option<String>,
 }
 
 /// Parameters for the `ministr_fetch` tool.
@@ -558,40 +685,48 @@ pub(crate) struct TaskStatusResponse {
 pub struct SymbolsParams {
     /// Fuzzy name search (case-insensitive substring match).
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(description = "Fuzzy symbol name search (case-insensitive substring match)")]
+    #[schemars(description = "Case-insensitive symbol-name query.")]
     pub query: Option<String>,
 
     /// Exact kind filter (e.g. "function", "struct", "trait", "enum", "impl").
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
     #[schemars(
-        description = "Exact kind filter: 'function', 'struct', 'trait', 'enum', 'impl', 'const', 'static', 'type', 'mod'"
+        description = "Exact symbol kind (function, struct, trait, enum, impl, const, static, type, mod)."
     )]
     pub kind: Option<String>,
 
     /// Module path prefix filter (e.g. "config" matches `config::sub`).
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(description = "Module path prefix filter (e.g. 'config' matches config::sub)")]
+    #[schemars(description = "Module-path prefix.")]
     pub module: Option<String>,
 
     /// Exact visibility filter (e.g. "pub", "pub(crate)", "").
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(description = "Exact visibility filter: 'pub', 'pub(crate)', 'pub(super)', ''")]
+    #[schemars(description = "Exact visibility (pub, pub(crate), pub(super), or empty).")]
     pub visibility: Option<String>,
 
     /// Number of entries to skip (default: 0). Use with `limit` for pagination.
     #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
-    #[schemars(description = "Number of entries to skip (default: 0)")]
+    #[schemars(description = "Offset.")]
     pub offset: Option<usize>,
 
     /// Maximum number of entries to return (default: 100).
     #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
-    #[schemars(description = "Maximum number of entries to return (default: 100)")]
+    #[schemars(description = "Limit.")]
     pub limit: Option<usize>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(description = "Cursor.")]
+    pub cursor: Option<String>,
 
     /// Optional linked-project label.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    #[schemars(description = "Linked project.")]
     pub project: Option<String>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(description = "Source corpus fallback.")]
+    pub source_corpus: Option<String>,
 }
 
 /// Parameters for the `ministr_definition` tool.
@@ -599,40 +734,98 @@ pub struct SymbolsParams {
 pub struct DefinitionParams {
     /// The symbol ID to look up.
     #[serde(default, deserialize_with = "coerce::lenient_string")]
-    #[schemars(description = "Symbol ID to get the definition for (from ministr_symbols results)")]
+    #[schemars(description = "Symbol ID.")]
     pub symbol_id: String,
 
     /// Position-addressed lookup: file path of the cursor. When `symbol_id`
     /// is empty and `file`+`line`+`col` are supplied, the symbol under the
     /// cursor is resolved via the occurrence index (LSP-style addressing).
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(
-        description = "Position-addressed alternative to symbol_id: file path (with line+col) to resolve the symbol under the cursor"
-    )]
+    #[schemars(description = "Position file.")]
     pub file: Option<String>,
 
     /// 1-based line of the cursor position.
     #[serde(default, deserialize_with = "coerce::lenient_opt_u32")]
-    #[schemars(description = "1-based line for position-addressed lookup (requires file+col)")]
+    #[schemars(description = "Position line (1-based).")]
     pub line: Option<u32>,
 
     /// 0-based byte column of the cursor position.
     #[serde(default, deserialize_with = "coerce::lenient_opt_u32")]
-    #[schemars(
-        description = "0-based byte column for position-addressed lookup (requires file+line)"
-    )]
+    #[schemars(description = "Position byte column.")]
     pub col: Option<u32>,
 
     /// FL7 — attach git blame/authorship metadata for the symbol's line range.
     #[serde(default, deserialize_with = "coerce::lenient_opt_bool")]
-    #[schemars(
-        description = "When true, attach git blame metadata (per-author line counts + last commit) for the symbol's line range. Omitted when not a git repo."
-    )]
+    #[schemars(description = "Include git blame.")]
     pub blame: Option<bool>,
+
+    /// Maximum source lines returned; clamped to 1..=1000.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Line limit (cap 1000).")]
+    pub max_lines: Option<usize>,
+
+    /// Surrounding context lines for normal-sized definitions.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Context lines.")]
+    pub context_lines: Option<usize>,
+
+    /// Whether to include the symbol body.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_bool")]
+    #[schemars(description = "Include body.")]
+    pub include_body: Option<bool>,
+
+    /// Force a declaration/child outline instead of a large body.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_bool")]
+    #[schemars(description = "Outline only.")]
+    pub outline_only: Option<bool>,
+
+    /// 1-based start line for continuation/range retrieval.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_u32")]
+    #[schemars(description = "Continuation line.")]
+    pub start_line: Option<u32>,
+
+    /// UTF-8 byte continuation offset within the selected source range.
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Continuation byte.")]
+    pub start_byte: Option<usize>,
 
     /// Optional linked-project label.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    #[schemars(description = "Linked project.")]
+    pub project: Option<String>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(description = "Source corpus fallback.")]
+    pub source_corpus: Option<String>,
+}
+
+/// Parameters for the bounded `ministr_inspect` compound workflow.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct InspectParams {
+    #[serde(default, deserialize_with = "coerce::lenient_string")]
+    #[schemars(default)]
+    #[schemars(description = "Symbol ID, or use file+line+col.")]
+    pub symbol_id: String,
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    pub file: Option<String>,
+    #[serde(default, deserialize_with = "coerce::lenient_opt_u32")]
+    pub line: Option<u32>,
+    #[serde(default, deserialize_with = "coerce::lenient_opt_u32")]
+    pub col: Option<u32>,
+    #[serde(default)]
+    #[schemars(default)]
+    #[schemars(
+        description = "Groups: definition, callers, callees, implementors, imports, tests, bridges; empty means all."
+    )]
+    pub include: Vec<ministr_core::service::InspectInclude>,
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Per-group limit (cap 50).")]
+    pub max_per_group: Option<usize>,
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Source-line limit (cap 1000).")]
+    pub max_source_lines: Option<usize>,
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(description = "Linked project.")]
     pub project: Option<String>,
 }
 
@@ -655,58 +848,54 @@ pub(crate) struct DefinitionResponse {
 pub struct ReferencesParams {
     /// The symbol ID to find references for.
     #[serde(default, deserialize_with = "coerce::lenient_string")]
-    #[schemars(description = "Symbol ID to find references for (from ministr_symbols results)")]
+    #[schemars(description = "Symbol ID.")]
     pub symbol_id: String,
 
     /// Position-addressed lookup: file path of the cursor. When `symbol_id`
     /// is empty and `file`+`line`+`col` are supplied, references to the
     /// symbol under the cursor are returned (LSP-style addressing).
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(
-        description = "Position-addressed alternative to symbol_id: file path (with line+col) to resolve the symbol under the cursor"
-    )]
+    #[schemars(description = "Position file.")]
     pub file: Option<String>,
 
     /// 1-based line of the cursor position.
     #[serde(default, deserialize_with = "coerce::lenient_opt_u32")]
-    #[schemars(description = "1-based line for position-addressed lookup (requires file+col)")]
+    #[schemars(description = "Position line (1-based).")]
     pub line: Option<u32>,
 
     /// 0-based byte column of the cursor position.
     #[serde(default, deserialize_with = "coerce::lenient_opt_u32")]
-    #[schemars(
-        description = "0-based byte column for position-addressed lookup (requires file+line)"
-    )]
+    #[schemars(description = "Position byte column.")]
     pub col: Option<u32>,
 
     /// Optional reference kind filter.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(
-        description = "Optional reference kind filter: 'calls', 'implements', 'imports', 'uses', 'bridge'"
-    )]
+    #[schemars(description = "Kind: calls, implements, imports, uses, bridge.")]
     pub ref_kind: Option<String>,
 
     /// Type-hierarchy expansion (FL3b): also include callers of the same-named
     /// method on co-implementor types.
     #[serde(default, deserialize_with = "coerce::lenient_opt_bool")]
-    #[schemars(
-        description = "When true, also include callers of the same-named method on co-implementor types (LSP references-including-overrides / type hierarchy). Bounded; combine with ref_kind 'calls' or omit ref_kind."
-    )]
+    #[schemars(description = "Include co-implementor callers.")]
     pub through_implementors: Option<bool>,
 
     /// Number of entries to skip (default: 0). Use with `limit` for pagination.
     #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
-    #[schemars(description = "Number of entries to skip (default: 0)")]
+    #[schemars(description = "Offset.")]
     pub offset: Option<usize>,
 
     /// Maximum number of entries to return (default: 100).
     #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
-    #[schemars(description = "Maximum number of entries to return (default: 100)")]
+    #[schemars(description = "Limit.")]
     pub limit: Option<usize>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(description = "Cursor.")]
+    pub cursor: Option<String>,
 
     /// Optional linked-project label.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    #[schemars(description = "Linked project.")]
     pub project: Option<String>,
 }
 
@@ -715,48 +904,50 @@ pub struct ReferencesParams {
 pub struct ImpactParams {
     /// The symbol ID whose blast radius should be analyzed.
     #[serde(default, deserialize_with = "coerce::lenient_string")]
-    #[schemars(
-        description = "Symbol ID whose blast radius should be analyzed (from ministr_symbols results)"
-    )]
+    #[schemars(description = "Symbol ID.")]
     pub symbol_id: String,
 
     /// FL7 — a git revision range. When set, the diff's changed symbols are
     /// resolved and their blast radius is unioned (`symbol_id` is ignored).
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(
-        description = "Git revision range (e.g. 'main..HEAD', 'HEAD~3'). When set, analyzes the diff-aware blast radius: which indexed symbols the range touched and the union of what they can break. Overrides symbol_id."
-    )]
+    #[schemars(description = "Git range; overrides symbol_id.")]
     pub range: Option<String>,
 
     /// Working directory for the git range (default: the server's cwd).
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(
-        description = "Path inside the git work tree to resolve `range` against. Defaults to the server's working directory. Only used with `range`."
-    )]
+    #[schemars(description = "Git work tree.")]
     pub repo_path: Option<String>,
 
     /// Maximum BFS depth to walk (default 3, capped at 10).
     #[serde(default, deserialize_with = "coerce::lenient_opt_u32")]
-    #[schemars(description = "Maximum BFS depth to walk the call graph. Default 3, capped at 10.")]
+    #[schemars(description = "Depth (cap 10).")]
     pub max_depth: Option<u32>,
 
     /// Call-graph direction: `incoming` (callers, default) or `outgoing` (callees).
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(
-        description = "Call-graph direction: 'incoming' = transitive callers / blast radius (default), 'outgoing' = transitive callees (what this symbol calls)."
-    )]
+    #[schemars(description = "Direction: incoming or outgoing.")]
     pub direction: Option<String>,
 
     /// Restrict results to nodes in test files (test↔code mapping).
     #[serde(default, deserialize_with = "coerce::lenient_opt_bool")]
-    #[schemars(
-        description = "When true, keep only nodes in test files. With direction 'incoming' this answers 'which tests transitively exercise this symbol' (the minimal test set for a change)."
-    )]
+    #[schemars(description = "Tests only.")]
     pub tests_only: Option<bool>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Offset.")]
+    pub offset: Option<usize>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Limit (cap 500).")]
+    pub limit: Option<usize>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(description = "Cursor.")]
+    pub cursor: Option<String>,
 
     /// Optional linked-project label.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    #[schemars(description = "Linked project.")]
     pub project: Option<String>,
 }
 
@@ -785,9 +976,17 @@ pub struct DeadCodeParams {
     #[schemars(description = "Maximum results to return. Default 50, capped at 500.")]
     pub limit: Option<usize>,
 
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Offset.")]
+    pub offset: Option<usize>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(description = "Cursor.")]
+    pub cursor: Option<String>,
+
     /// Optional linked-project label.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    #[schemars(description = "Linked project.")]
     pub project: Option<String>,
 }
 
@@ -800,6 +999,7 @@ pub(crate) struct SymbolsResponse {
     pub(crate) total: usize,
     /// Offset of the first returned entry within the full list.
     pub(crate) offset: usize,
+    pub(crate) pagination: ministr_api::metadata::Pagination,
 }
 
 /// A compact symbol summary for search results.
@@ -837,6 +1037,7 @@ pub(crate) struct ReferencesResponse {
     pub(crate) total: usize,
     /// Offset of the first returned entry within the full list.
     pub(crate) offset: usize,
+    pub(crate) pagination: ministr_api::metadata::Pagination,
 }
 
 /// Response from the `ministr_impact` tool.
@@ -850,6 +1051,7 @@ pub(crate) struct ImpactResponse {
     /// the range touched, whose union blast radius `impact` describes).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) changed: Option<DiffSeed>,
+    pub(crate) pagination: ministr_api::metadata::Pagination,
 }
 
 /// FL7 — the symbols a git revision range touched (the seed set behind a
@@ -886,6 +1088,7 @@ pub(crate) struct DeadCodeResponse {
     pub(crate) symbols: Vec<DeadSymbol>,
     /// Total number of candidates that matched (before the limit cap).
     pub(crate) total: usize,
+    pub(crate) pagination: ministr_api::metadata::Pagination,
 }
 
 /// Parameters for the `ministr_diagnostics` tool.
@@ -903,9 +1106,17 @@ pub struct DiagnosticsParams {
     #[schemars(description = "Maximum diagnostics to return. Default 100, capped at 500.")]
     pub limit: Option<usize>,
 
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Number of diagnostics to skip. Default 0.")]
+    pub offset: Option<usize>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(description = "Cursor.")]
+    pub cursor: Option<String>,
+
     /// Optional linked-project label.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    #[schemars(description = "Linked project.")]
     pub project: Option<String>,
 }
 
@@ -916,6 +1127,7 @@ pub(crate) struct DiagnosticsResponse {
     pub(crate) diagnostics: Vec<Diagnostic>,
     /// Total diagnostics returned (after the limit cap).
     pub(crate) total: usize,
+    pub(crate) pagination: ministr_api::metadata::Pagination,
 }
 
 /// Parameters for the `ministr_solid` tool.
@@ -924,146 +1136,130 @@ pub struct SolidParams {
     /// Optional symbol-kind filter for the candidate set
     /// (e.g. `"function"`).
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(description = "Optional symbol kind filter (e.g. 'function', 'struct')")]
+    #[schemars(description = "Symbol-kind filter.")]
     pub kind: Option<String>,
 
     /// Module-path prefix filter (e.g. `"server"`).
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(description = "Optional module path prefix filter")]
+    #[schemars(description = "Module-path prefix.")]
     pub module: Option<String>,
 
     /// Which principles to evaluate: any subset of `dry_ocp`, `srp`, `isp`,
     /// `dip`, `shotgun_surgery`, `cyclic_dependency`. Empty / omitted = all six.
     #[serde(default, deserialize_with = "coerce::string_or_seq")]
     #[schemars(
-        description = "Principles to evaluate: 'dry_ocp', 'srp', 'isp', 'dip', 'shotgun_surgery', 'cyclic_dependency'. Omit or pass empty to run all six."
+        description = "Principles: dry_ocp, srp, isp, dip, shotgun_surgery, cyclic_dependency; empty runs all."
     )]
     pub principles: Vec<String>,
 
     /// Override container kinds (defaults cover Rust/TS/Python).
     #[serde(default, deserialize_with = "coerce::string_or_seq")]
-    #[schemars(
-        description = "Override container kinds for SRP detection. Defaults: ['impl','struct','class','mod']"
-    )]
+    #[schemars(description = "SRP container kinds.")]
     pub container_kinds: Vec<String>,
 
     /// Override interface kinds.
     #[serde(default, deserialize_with = "coerce::string_or_seq")]
-    #[schemars(
-        description = "Override interface kinds for ISP/DIP detection. Defaults: ['trait','interface','protocol']"
-    )]
+    #[schemars(description = "Interface kinds.")]
     pub interface_kinds: Vec<String>,
 
     /// Cosine threshold for DRY/OCP clone detection (default 0.86).
     #[serde(default, deserialize_with = "coerce::lenient_opt_f32")]
-    #[schemars(description = "Cosine threshold for DRY/OCP clone detection. Default 0.86.")]
+    #[schemars(description = "Clone cosine threshold.")]
     pub similarity_threshold: Option<f32>,
 
     /// Jaccard threshold over callee-sets for DRY/OCP (default 0.4).
     #[serde(default, deserialize_with = "coerce::lenient_opt_f32")]
-    #[schemars(description = "Jaccard threshold over callee-sets for DRY/OCP. Default 0.4.")]
+    #[schemars(description = "Callee Jaccard threshold.")]
     pub jaccard_threshold: Option<f32>,
 
     /// Cosine threshold for SRP cohesion edges (default 0.7).
     #[serde(default, deserialize_with = "coerce::lenient_opt_f32")]
-    #[schemars(
-        description = "Cosine threshold for SRP within-container cohesion edges. Default 0.7."
-    )]
+    #[schemars(description = "SRP cohesion threshold.")]
     pub srp_cohesion_threshold: Option<f32>,
 
     /// Minimum method count for ISP to fire (default 6).
     #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
-    #[schemars(description = "Minimum interface method count before ISP fires. Default 6.")]
+    #[schemars(description = "ISP minimum method count.")]
     pub isp_min_methods: Option<usize>,
 
     /// Implementor counts as "under-using" at or below this fraction
     /// (default 0.33).
     #[serde(default, deserialize_with = "coerce::lenient_opt_f32")]
-    #[schemars(
-        description = "Implementor under-using cutoff (fraction of trait methods overlapped). Default 0.33."
-    )]
+    #[schemars(description = "ISP usage cutoff.")]
     pub isp_max_overlap_fraction: Option<f32>,
 
     /// Skip candidate symbols shorter than this many lines (default 5).
     #[serde(default, deserialize_with = "coerce::lenient_opt_u32")]
-    #[schemars(description = "Skip candidate symbols shorter than this many lines. Default 5.")]
+    #[schemars(description = "Minimum symbol lines.")]
     pub min_lines: Option<u32>,
 
     /// Maximum findings to return (default 50, capped at 500).
     #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
-    #[schemars(description = "Maximum findings to return. Default 50, capped at 500.")]
+    #[schemars(description = "Finding limit (cap 500).")]
     pub limit: Option<usize>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Offset.")]
+    pub offset: Option<usize>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(description = "Cursor.")]
+    pub cursor: Option<String>,
 
     /// Hard cap on pairwise comparisons inside any single DRY/OCP bucket
     /// (default 100k).
     #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
-    #[schemars(
-        description = "Hard cap on pairwise comparisons inside any DRY/OCP bucket. Default 100k."
-    )]
+    #[schemars(description = "Comparison cap.")]
     pub max_pairs: Option<usize>,
 
     /// Maximum representative members included per finding component list.
     /// When a list exceeds this it's truncated and the remainder is
     /// reported as `*_omitted` (default 5).
     #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
-    #[schemars(
-        description = "Maximum representative members per component list. Larger arrays are truncated and reported via `*_omitted`. Default 5."
-    )]
+    #[schemars(description = "Members per group; excess omitted.")]
     pub representative_count: Option<usize>,
 
     /// Minimum file count before a Shotgun-Surgery finding fires (default 3).
     #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
-    #[schemars(
-        description = "Minimum file count before a Shotgun-Surgery finding fires. Default 3."
-    )]
+    #[schemars(description = "Shotgun minimum sites.")]
     pub shotgun_min_sites: Option<usize>,
 
     /// Max callee-set Jaccard for Shotgun-Surgery. Above this the group is a
     /// real Type-4 clone, handled by `dry_ocp` instead (default 0.5).
     #[serde(default, deserialize_with = "coerce::lenient_opt_f32")]
-    #[schemars(
-        description = "Maximum callee-set Jaccard for ShotgunSurgery. Above this the group is treated as a Type-4 clone and handled by 'dry_ocp'. Default 0.5."
-    )]
+    #[schemars(description = "Shotgun maximum callee Jaccard.")]
     pub shotgun_max_jaccard: Option<f32>,
 
     /// Shotgun-Surgery sites must span at least this many distinct package
     /// prefixes (default 2). Single-crate fan-out is typically intentional
     /// polymorphism, not a cross-layer smell.
     #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
-    #[schemars(
-        description = "Minimum distinct packages a Shotgun-Surgery group must span. Default 2."
-    )]
+    #[schemars(description = "Shotgun minimum packages.")]
     pub shotgun_min_packages: Option<usize>,
 
     /// Whether to drop Shotgun-Surgery candidates with conventional method
     /// names (`new`, `default`, `fmt`, `clone`, `as_str`, `parse`,
     /// `main`, ...). Default `true`.
     #[serde(default, deserialize_with = "coerce::lenient_opt_bool")]
-    #[schemars(
-        description = "Skip Shotgun-Surgery groups whose name is universally conventional (new/default/fmt/clone/as_str/parse/main/etc.). Default true."
-    )]
+    #[schemars(description = "Skip conventional Shotgun names.")]
     pub shotgun_skip_conventional_names: Option<bool>,
 
     /// Minimum cross-package edges per direction before two packages
     /// count as mutually dependent (default 2). Filters phantom cycles
     /// from ambiguous symbol-name resolution.
     #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
-    #[schemars(
-        description = "CyclicDependency: minimum distinct cross-package edges per direction. Single-edge cycles are usually phantom name-resolution artefacts. Default 2."
-    )]
+    #[schemars(description = "Cycle edges per direction.")]
     pub cyclic_min_edges_per_direction: Option<usize>,
 
     /// Whether the cycle detector skips edges whose source or target
     /// lives in a test / fixture path. Default `true`.
     #[serde(default, deserialize_with = "coerce::lenient_opt_bool")]
-    #[schemars(
-        description = "CyclicDependency: skip edges touching test/fixture paths. Sample data shouldn't drive the workspace dependency graph. Default true."
-    )]
+    #[schemars(description = "Ignore test/fixture cycle edges.")]
     pub cyclic_skip_test_paths: Option<bool>,
 
     /// Optional linked-project label.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    #[schemars(description = "Linked project.")]
     pub project: Option<String>,
 }
 
@@ -1074,6 +1270,7 @@ pub(crate) struct SolidResponse {
     pub(crate) findings: Vec<SolidFinding>,
     /// Total findings (≤ `limit`).
     pub(crate) total: usize,
+    pub(crate) pagination: ministr_api::metadata::Pagination,
 }
 
 /// Parameters for the `ministr_bridge` tool.
@@ -1082,33 +1279,39 @@ pub(crate) struct SolidResponse {
 pub struct BridgeParams {
     /// Optional search query to filter bridge links by binding key or symbol name.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(
-        description = "Search query to filter by binding key or symbol name (case-insensitive substring match)"
-    )]
+    #[schemars(description = "Binding-key or symbol query.")]
     pub query: Option<String>,
 
     /// Optional bridge kind filter.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(
-        description = "Filter by bridge kind: 'tauri_command', 'tauri_event', 'napi', 'wasm_bindgen', 'pyo3', 'http_route', 'ffi', 'cgo', 'jni', 'uni_ffi', 'grpc', 'flutter_channel', 'electron_ipc'"
-    )]
+    #[schemars(description = "Bridge kind (for example tauri_command, pyo3, napi, http_route).")]
     pub bridge_kind: Option<String>,
 
     /// Optional language filter.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(
-        description = "Filter links involving this language (e.g. 'rust', 'typescript', 'javascript', 'python')"
-    )]
+    #[schemars(description = "Endpoint language.")]
     pub language: Option<String>,
 
     /// Optional file path filter.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(description = "Filter links where either endpoint is in this file path")]
+    #[schemars(description = "Endpoint file path.")]
     pub file_path: Option<String>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Offset.")]
+    pub offset: Option<usize>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Limit (cap 500).")]
+    pub limit: Option<usize>,
+
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(description = "Cursor.")]
+    pub cursor: Option<String>,
 
     /// Optional linked-project label.
     #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
-    #[schemars(description = "Optional linked-project label. Omit for primary corpus.")]
+    #[schemars(description = "Linked project.")]
     pub project: Option<String>,
 }
 
@@ -1119,6 +1322,7 @@ pub(crate) struct BridgeResponse {
     pub(crate) links: Vec<BridgeLinkSummary>,
     /// Total number of links returned.
     pub(crate) total: usize,
+    pub(crate) pagination: ministr_api::metadata::Pagination,
 }
 
 /// A single entry in the `ministr_projects` response.
@@ -1138,6 +1342,22 @@ pub(crate) struct ProjectsResponse {
     pub(crate) projects: Vec<ProjectEntry>,
     /// Human-readable hint about how to use linked projects.
     pub(crate) hint: String,
+    pub(crate) total: usize,
+    pub(crate) pagination: ministr_api::metadata::Pagination,
+}
+
+/// Parameters for paginating the linked-project catalog.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ProjectsParams {
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Projects to skip. Default 0.")]
+    pub offset: Option<usize>,
+    #[serde(default, deserialize_with = "coerce::lenient_opt_string")]
+    #[schemars(description = "Continuation cursor from a prior page.")]
+    pub cursor: Option<String>,
+    #[serde(default, deserialize_with = "coerce::lenient_opt_usize")]
+    #[schemars(description = "Maximum projects. Default 100, capped at 500.")]
+    pub limit: Option<usize>,
 }
 
 /// A compact bridge link summary for search results.
@@ -1196,6 +1416,7 @@ pub(crate) struct TocResponse {
     pub(crate) roots: Vec<ministr_core::types::CorpusRoot>,
     /// Table of contents entries (metadata only, no text).
     pub(crate) entries: Vec<ministr_core::types::TocEntry>,
+    pub(crate) pagination: ministr_api::metadata::Pagination,
 }
 
 // -- Union output types for tools that return different response shapes --
@@ -1311,18 +1532,142 @@ fn strip_numeric_formats_value(value: &mut serde_json::Value) {
     }
 }
 
-/// Return `tool` with its input and output schemas cleaned of non-standard
-/// `schemars` numeric `format` annotations before it is served to a client.
-/// See [`strip_schemars_numeric_formats`].
+/// Remove schema annotations that add wire cost without affecting validation.
+fn compact_schema_annotations(schema: &mut serde_json::Map<String, serde_json::Value>) {
+    schema.remove("$schema");
+    schema.remove("title");
+    schema.remove("description");
+    schema.remove("default");
+    if let Some(serde_json::Value::Object(definitions)) = schema.get_mut("$defs") {
+        for (name, definition) in definitions {
+            if let serde_json::Value::Object(definition) = definition {
+                // The referencing property describes how the type is used;
+                // repeating Rust type-level prose does not aid tool choice.
+                definition.remove("title");
+                definition.remove("description");
+                if name == "DeliveryIdentity" {
+                    remove_nested_descriptions(definition);
+                }
+            }
+        }
+    }
+    for value in schema.values_mut() {
+        compact_schema_value(value);
+    }
+}
+
+fn remove_nested_descriptions(schema: &mut serde_json::Map<String, serde_json::Value>) {
+    schema.remove("description");
+    for value in schema.values_mut() {
+        match value {
+            serde_json::Value::Object(map) => remove_nested_descriptions(map),
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    if let serde_json::Value::Object(map) = item {
+                        remove_nested_descriptions(map);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn compact_schema_value(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            // `default` is an annotation, not a validation rule. Schemars emits
+            // null/empty defaults for nearly every serde-defaulted field;
+            // handler defaults remain documented on relevant properties.
+            map.remove("default");
+            for child in map.values_mut() {
+                compact_schema_value(child);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for child in items {
+                compact_schema_value(child);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Return `tool` with compact, standards-compatible input and output schemas.
+///
+/// Validation keywords and property descriptions are preserved. Redundant
+/// root metadata, generated defaults, and non-standard numeric `format`
+/// annotations are removed before the catalog crosses the MCP boundary.
 pub(crate) fn sanitize_tool_schemas(mut tool: rmcp::model::Tool) -> rmcp::model::Tool {
     let mut input = (*tool.input_schema).clone();
     strip_schemars_numeric_formats(&mut input);
+    compact_schema_annotations(&mut input);
     tool.input_schema = std::sync::Arc::new(input);
 
     if let Some(output) = tool.output_schema.as_deref() {
         let mut output = output.clone();
         strip_schemars_numeric_formats(&mut output);
+        compact_schema_annotations(&mut output);
         tool.output_schema = Some(std::sync::Arc::new(output));
     }
     tool
+}
+
+#[cfg(test)]
+mod schema_compaction_tests {
+    use super::compact_schema_annotations;
+    use serde_json::json;
+
+    #[test]
+    fn schema_compaction_removes_annotations_but_preserves_validation_and_property_docs() {
+        let mut schema = json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "Params",
+            "description": "Redundant with the tool description",
+            "type": "object",
+            "$defs": {
+                "Mode": {
+                    "title": "Mode",
+                    "description": "Rust type-level prose",
+                    "enum": ["fast", "full"]
+                }
+            },
+            "properties": {
+                "limit": {
+                    "type": ["integer", "null"],
+                    "minimum": 1,
+                    "maximum": 50,
+                    "default": null,
+                    "description": "Maximum results; defaults to 10."
+                },
+                "timestamp": {
+                    "type": "string",
+                    "format": "date-time"
+                }
+            },
+            "required": ["timestamp"]
+        })
+        .as_object()
+        .expect("fixture is an object")
+        .clone();
+
+        compact_schema_annotations(&mut schema);
+
+        assert!(!schema.contains_key("$schema"));
+        assert!(!schema.contains_key("title"));
+        assert!(!schema.contains_key("description"));
+        assert_eq!(schema["type"], "object");
+        assert!(schema["$defs"]["Mode"].get("title").is_none());
+        assert!(schema["$defs"]["Mode"].get("description").is_none());
+        assert_eq!(schema["$defs"]["Mode"]["enum"], json!(["fast", "full"]));
+        assert_eq!(schema["required"], json!(["timestamp"]));
+        assert_eq!(schema["properties"]["limit"]["minimum"], 1);
+        assert_eq!(schema["properties"]["limit"]["maximum"], 50);
+        assert_eq!(
+            schema["properties"]["limit"]["description"],
+            "Maximum results; defaults to 10."
+        );
+        assert!(schema["properties"]["limit"].get("default").is_none());
+        assert_eq!(schema["properties"]["timestamp"]["format"], "date-time");
+    }
 }

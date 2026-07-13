@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 
 use super::{CacheEntry, PrefetchMetrics, PrefetchStrategy};
+use crate::types::{DeliveryIdentity, PRIMARY_CORPUS_ID};
 
 /// Default strategy weights for priority computation.
 #[derive(Debug, Clone, PartialEq)]
@@ -20,6 +21,8 @@ pub struct StrategyWeights {
     pub cross_session: f32,
     pub survey_expand: f32,
     pub agent_plan: f32,
+    pub symbol_search: f32,
+    pub reference_follow: f32,
 }
 
 impl Default for StrategyWeights {
@@ -31,6 +34,8 @@ impl Default for StrategyWeights {
             cross_session: 0.6,
             survey_expand: 0.9,
             agent_plan: 0.5,
+            symbol_search: 1.0,
+            reference_follow: 0.95,
         }
     }
 }
@@ -46,6 +51,8 @@ impl StrategyWeights {
             PrefetchStrategy::CrossSession => self.cross_session,
             PrefetchStrategy::SurveyExpand => self.survey_expand,
             PrefetchStrategy::AgentPlan => self.agent_plan,
+            PrefetchStrategy::SymbolSearch => self.symbol_search,
+            PrefetchStrategy::ReferenceFollow => self.reference_follow,
         }
     }
 }
@@ -121,8 +128,29 @@ impl PriorityCache {
     ///
     /// Records a hit or miss in the metrics.
     pub fn get(&mut self, key: &str) -> Option<&CacheEntry> {
-        if let Some(entry) = self.entries.get_mut(key) {
+        let actual_key = if self.entries.contains_key(key) {
+            key.to_string()
+        } else {
+            // Compatibility with pre-corpus cache entries inserted by older
+            // callers/tests. New callers always pass a structured key.
+            let structured = DeliveryIdentity::from_storage_key(key, "section_full");
+            if structured.storage_key() == key {
+                // `key` was already structured but absent. There may still be
+                // a legacy bare primary entry for the same content.
+                if structured.corpus_id == PRIMARY_CORPUS_ID {
+                    structured.content_id
+                } else {
+                    key.to_string()
+                }
+            } else {
+                DeliveryIdentity::new(PRIMARY_CORPUS_ID, key, "section_full").storage_key()
+            }
+        };
+        if let Some(entry) = self.entries.get_mut(&actual_key) {
             self.metrics.hits += 1;
+            self.metrics.tokens_saved += entry.entry.token_count as u64;
+            self.metrics.bytes_saved += entry.entry.text.len() as u64;
+            self.metrics.latency_saved_ms += 50;
             match entry.entry.strategy {
                 PrefetchStrategy::Sequential => self.metrics.sequential_hits += 1,
                 PrefetchStrategy::Topical => self.metrics.topical_hits += 1,
@@ -130,6 +158,8 @@ impl PriorityCache {
                 PrefetchStrategy::CrossSession => self.metrics.cross_session_hits += 1,
                 PrefetchStrategy::SurveyExpand => self.metrics.survey_expand_hits += 1,
                 PrefetchStrategy::AgentPlan => self.metrics.agent_plan_hits += 1,
+                PrefetchStrategy::SymbolSearch => self.metrics.symbol_search_hits += 1,
+                PrefetchStrategy::ReferenceFollow => self.metrics.reference_follow_hits += 1,
             }
             entry.access_count += 1;
             entry.priority = compute_priority(
@@ -150,7 +180,14 @@ impl PriorityCache {
     /// Look up an entry without updating metrics or priority.
     #[must_use]
     pub fn peek(&self, key: &str) -> Option<&CacheEntry> {
-        self.entries.get(key).map(|e| &e.entry)
+        self.entries
+            .get(key)
+            .or_else(|| {
+                let primary =
+                    DeliveryIdentity::new(PRIMARY_CORPUS_ID, key, "section_full").storage_key();
+                self.entries.get(&primary)
+            })
+            .map(|e| &e.entry)
     }
 
     /// Insert an entry with confidence score.
@@ -185,11 +222,12 @@ impl PriorityCache {
             self.evict_lowest();
         }
 
+        let strategy = entry.strategy;
         let priority = compute_priority(
             &self.weights,
             self.current_turn,
             confidence,
-            entry.strategy,
+            strategy,
             self.current_turn,
             0,
         );
@@ -203,6 +241,17 @@ impl PriorityCache {
                 confidence,
             },
         );
+        self.metrics.prefetches_issued += 1;
+        match strategy {
+            PrefetchStrategy::Sequential => self.metrics.sequential_issued += 1,
+            PrefetchStrategy::Topical => self.metrics.topical_issued += 1,
+            PrefetchStrategy::Structural => self.metrics.structural_issued += 1,
+            PrefetchStrategy::CrossSession => self.metrics.cross_session_issued += 1,
+            PrefetchStrategy::SurveyExpand => self.metrics.survey_expand_issued += 1,
+            PrefetchStrategy::AgentPlan => self.metrics.agent_plan_issued += 1,
+            PrefetchStrategy::SymbolSearch => self.metrics.symbol_search_issued += 1,
+            PrefetchStrategy::ReferenceFollow => self.metrics.reference_follow_issued += 1,
+        }
     }
 
     /// Insert with default confidence (1.0) for backward compatibility.
@@ -212,13 +261,23 @@ impl PriorityCache {
 
     /// Remove an entry by key.
     pub fn remove(&mut self, key: &str) -> Option<CacheEntry> {
-        self.entries.remove(key).map(|e| e.entry)
+        let actual_key = if self.entries.contains_key(key) {
+            key.to_string()
+        } else {
+            DeliveryIdentity::new(PRIMARY_CORPUS_ID, key, "section_full").storage_key()
+        };
+        self.entries.remove(&actual_key).map(|e| {
+            if e.access_count == 0 {
+                self.metrics.prefetches_never_consumed += 1;
+            }
+            e.entry
+        })
     }
 
     /// Remove entries for stale section IDs (coherence invalidation).
     pub fn invalidate(&mut self, stale_ids: &[String]) {
         for id in stale_ids {
-            self.entries.remove(id);
+            let _ = self.remove(id);
         }
     }
 
@@ -253,6 +312,11 @@ impl PriorityCache {
 
     /// Drop every cached entry. Used after a full re-index.
     pub fn clear(&mut self) {
+        self.metrics.prefetches_never_consumed += self
+            .entries
+            .values()
+            .filter(|entry| entry.access_count == 0)
+            .count() as u64;
         self.entries.clear();
     }
 
@@ -270,7 +334,7 @@ impl PriorityCache {
     /// Evict the entry with the lowest priority score.
     fn evict_lowest(&mut self) {
         if let Some(key) = self.lowest_priority_key() {
-            self.entries.remove(&key);
+            let _ = self.remove(&key);
         }
     }
 

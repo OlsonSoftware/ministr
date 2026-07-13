@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::drops::{DropCandidate, DropRanker};
 use super::types::Session;
 use super::window::WindowEstimator;
+use crate::types::DeliveryIdentity;
 
 /// Pressure level indicating how close the agent is to its context budget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
@@ -195,6 +196,21 @@ impl UsageTracker {
         self.window.record(content_id, token_count)
     }
 
+    /// Corpus-aware budget accounting. Returned identities are exact
+    /// eviction targets rather than ambiguous bare ids.
+    #[must_use]
+    pub fn record_identity_tokens(
+        &mut self,
+        identity: &DeliveryIdentity,
+        token_count: usize,
+    ) -> Vec<DeliveryIdentity> {
+        self.window
+            .record(&identity.storage_key(), token_count)
+            .into_iter()
+            .map(|key| DeliveryIdentity::from_storage_key(&key, "section_full"))
+            .collect()
+    }
+
     /// Record a token delivery with FSRS-aware eviction.
     ///
     /// Under the [`DropPolicy::Fsrs`] policy, the memory tracker's
@@ -220,6 +236,11 @@ impl UsageTracker {
     /// Mark content as recently accessed (LRU policy only).
     pub fn touch(&mut self, content_id: &str) {
         self.window.touch(content_id);
+    }
+
+    /// Mark one exact delivery recently accessed.
+    pub fn touch_identity(&mut self, identity: &DeliveryIdentity) {
+        self.window.touch(&identity.storage_key());
     }
 
     /// Current pressure level based on token utilization.
@@ -275,6 +296,12 @@ impl UsageTracker {
         self.window.is_in_window(content_id)
     }
 
+    /// Check one exact delivery identity.
+    #[must_use]
+    pub fn is_identity_in_window(&self, identity: &DeliveryIdentity) -> bool {
+        self.window.is_in_window(&identity.storage_key())
+    }
+
     /// Force-evict a content ID from the budget tracker's window.
     ///
     /// Used when the agent signals that content has been dropped, either
@@ -282,6 +309,11 @@ impl UsageTracker {
     /// Returns `true` if the content was found and removed.
     pub fn force_evict(&mut self, content_id: &str) -> bool {
         self.window.force_evict(content_id)
+    }
+
+    /// Force-evict one exact corpus/content/resolution identity.
+    pub fn force_evict_identity(&mut self, identity: &DeliveryIdentity) -> bool {
+        self.window.force_evict(&identity.storage_key())
     }
 
     /// Get eviction candidates ranked by priority.

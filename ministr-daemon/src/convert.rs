@@ -5,6 +5,92 @@
 
 use ministr_api::query;
 
+fn delivery_identity(
+    identity: ministr_core::types::DeliveryIdentity,
+) -> ministr_api::metadata::DeliveryIdentity {
+    ministr_api::metadata::DeliveryIdentity {
+        corpus_id: identity.corpus_id,
+        content_id: identity.content_id,
+        resolution: identity.resolution,
+    }
+}
+
+fn result_locator(
+    locator: ministr_core::types::ResultLocator,
+) -> ministr_api::metadata::ResultLocator {
+    ministr_api::metadata::ResultLocator {
+        identity: delivery_identity(locator.identity),
+        project: locator.project,
+        source_corpus: locator.source_corpus,
+        tenant: locator.tenant,
+    }
+}
+
+fn score_explanation(
+    score: ministr_core::types::ScoreExplanation,
+) -> ministr_api::metadata::ScoreExplanation {
+    ministr_api::metadata::ScoreExplanation {
+        dense_rank: score.dense_rank,
+        dense_score: score.dense_score,
+        sparse_rank: score.sparse_rank,
+        sparse_score: score.sparse_score,
+        rrf_score: score.rrf_score,
+        exact_match: score.exact_match,
+        prefix_match: score.prefix_match,
+        identifier_match: score.identifier_match,
+        intent: score.intent,
+        intent_boost: score.intent_boost,
+        reranked: score.reranked,
+        matryoshka: score.matryoshka,
+        diversity_selected: score.diversity_selected,
+        quota_selected: score.quota_selected,
+        graph_expanded: score.graph_expanded,
+        final_score: score.final_score,
+    }
+}
+
+fn text_metadata(
+    metadata: ministr_core::types::TextDeliveryMetadata,
+) -> ministr_api::metadata::TextDeliveryMetadata {
+    use ministr_api::metadata::TextRepresentation as Api;
+    use ministr_core::types::TextRepresentation as Core;
+
+    ministr_api::metadata::TextDeliveryMetadata {
+        truncated: metadata.truncated,
+        original_bytes: metadata.original_bytes,
+        original_tokens: metadata.original_tokens,
+        returned_bytes: metadata.returned_bytes,
+        returned_tokens: metadata.returned_tokens,
+        representation: match metadata.representation {
+            Core::Full => Api::Full,
+            Core::StoredSummary => Api::StoredSummary,
+            Core::QueryExcerpt => Api::Excerpt,
+            Core::SymbolStub => Api::SymbolStub,
+        },
+        continuation: metadata.continuation.map(result_locator),
+    }
+}
+
+fn provenance(
+    provenance: ministr_core::types::ContentProvenance,
+) -> ministr_api::metadata::ContentProvenance {
+    use ministr_api::metadata::ContentProvenance as Api;
+    use ministr_core::types::ContentProvenance as Core;
+
+    match provenance {
+        Core::Production => Api::Production,
+        Core::Test => Api::Test,
+        Core::Generated => Api::Generated,
+        Core::Fixture => Api::Fixture,
+        Core::Benchmark => Api::Benchmark,
+        Core::Vendor => Api::Vendor,
+        Core::Documentation => Api::Documentation,
+        Core::Migration => Api::Migration,
+        Core::Example => Api::Example,
+        Core::Unknown => Api::Unknown,
+    }
+}
+
 #[must_use]
 pub fn survey_result(r: ministr_core::service::SurveyResult) -> query::SurveyResult {
     query::SurveyResult {
@@ -14,6 +100,10 @@ pub fn survey_result(r: ministr_core::service::SurveyResult) -> query::SurveyRes
         text: r.text,
         heading_path: r.heading_path,
         source_corpus: r.source_corpus,
+        locator: result_locator(r.locator),
+        text_metadata: text_metadata(r.text_metadata),
+        provenance: provenance(r.provenance),
+        score_explanation: score_explanation(r.score_explanation),
     }
 }
 
@@ -27,6 +117,7 @@ pub fn section_detail(d: ministr_core::service::SectionDetail) -> query::Section
         claims_available: d.claims_available,
         status: None,
         usage_status: None,
+        metadata: ministr_api::metadata::QueryMetadata::default(),
     }
 }
 
@@ -53,13 +144,48 @@ pub fn symbol_definition(s: ministr_core::service::SymbolDefinition) -> query::S
         line_end: s.line_end,
         heading_path: s.heading_path,
         source_context: s.source_context,
+        truncated: s.truncated,
+        omitted_lines: s.omitted_lines,
+        original_line_range: query::SourceLineRange {
+            start: s.original_line_range.start,
+            end: s.original_line_range.end,
+        },
+        returned_line_range: query::SourceLineRange {
+            start: s.returned_line_range.start,
+            end: s.returned_line_range.end,
+        },
+        continuation: s
+            .continuation
+            .map(|continuation| query::DefinitionContinuation {
+                symbol_id: continuation.symbol_id,
+                start_line: continuation.start_line,
+                max_lines: continuation.max_lines,
+                start_byte: continuation.start_byte,
+                max_bytes: continuation.max_bytes,
+            }),
+        outline_only: s.outline_only,
+        child_symbols: s
+            .child_symbols
+            .into_iter()
+            .map(|child| query::DefinitionChild {
+                id: child.id,
+                name: child.name,
+                kind: child.kind,
+                file_path: child.file_path,
+                line_start: child.line_start,
+                line_end: child.line_end,
+                locator: result_locator(child.locator),
+            })
+            .collect(),
+        locator: result_locator(s.locator),
+        source_error: s.source_error,
     }
 }
 
 #[must_use]
 pub fn symbol_from_record(s: ministr_core::storage::SymbolRecord) -> query::SymbolDefinition {
     query::SymbolDefinition {
-        id: s.id.0,
+        id: s.id.0.clone(),
         name: s.name,
         kind: s.kind,
         visibility: s.visibility,
@@ -75,6 +201,30 @@ pub fn symbol_from_record(s: ministr_core::storage::SymbolRecord) -> query::Symb
             .map(String::from)
             .collect(),
         source_context: String::new(),
+        truncated: false,
+        omitted_lines: 0,
+        original_line_range: query::SourceLineRange {
+            start: s.line_start,
+            end: s.line_end,
+        },
+        returned_line_range: query::SourceLineRange {
+            start: s.line_start,
+            end: s.line_end,
+        },
+        continuation: None,
+        outline_only: true,
+        child_symbols: Vec::new(),
+        locator: ministr_api::metadata::ResultLocator {
+            identity: ministr_api::metadata::DeliveryIdentity {
+                corpus_id: ministr_core::types::PRIMARY_CORPUS_ID.to_string(),
+                content_id: s.id.0,
+                resolution: "symbol_stub".to_string(),
+            },
+            project: None,
+            source_corpus: None,
+            tenant: None,
+        },
+        source_error: None,
     }
 }
 
@@ -90,6 +240,71 @@ pub fn symbol_reference(r: ministr_core::service::SymbolRefResult) -> query::Sym
         to_file: r.to_file,
         to_line: r.to_line,
         ref_kind: r.ref_kind,
+    }
+}
+
+fn inspect_group(
+    group: ministr_core::service::InspectReferenceGroup,
+) -> query::InspectReferenceGroup {
+    query::InspectReferenceGroup {
+        items: group.items.into_iter().map(symbol_reference).collect(),
+        total: group.total,
+        omitted_count: group.omitted_count,
+        pagination: ministr_api::metadata::Pagination {
+            limit: group.pagination.limit,
+            offset: group.pagination.offset,
+            cursor: group.pagination.cursor,
+            next_cursor: group.pagination.next_cursor,
+            total: group.pagination.total,
+            has_more: group.pagination.has_more,
+            omitted_count: group.pagination.omitted_count,
+        },
+    }
+}
+
+#[must_use]
+pub fn inspect_response(
+    result: ministr_core::service::InspectResult,
+    metadata: ministr_api::metadata::QueryMetadata,
+) -> query::InspectResponse {
+    query::InspectResponse {
+        symbol_id: result.symbol_id,
+        locator: result_locator(result.locator),
+        definition: result.definition.map(symbol_definition),
+        callers: inspect_group(result.callers),
+        callees: inspect_group(result.callees),
+        implementors: inspect_group(result.implementors),
+        imports: inspect_group(result.imports),
+        tests: inspect_group(result.tests),
+        bridges: inspect_group(result.bridges),
+        impact: query::InspectImpactSummary {
+            direct_callers: result.impact.direct_callers,
+            direct_callees: result.impact.direct_callees,
+            affected_files: result.impact.affected_files,
+            relevant_tests: result.impact.relevant_tests,
+            risk: impact_risk(result.impact.risk),
+        },
+        partial_errors: result
+            .partial_errors
+            .into_iter()
+            .map(|error| query::InspectPartialError {
+                group: error.group,
+                message: error.message,
+            })
+            .collect(),
+        next_actions: result
+            .next_actions
+            .into_iter()
+            .map(|action| query::InspectNextAction {
+                action: action.action,
+                locator: result_locator(action.locator),
+                reason: action.reason,
+            })
+            .collect(),
+        truncated: result.truncated,
+        original_bytes: result.original_bytes,
+        returned_bytes: result.returned_bytes,
+        metadata,
     }
 }
 
@@ -125,6 +340,8 @@ pub fn impact_response(r: ministr_core::service::ImpactResult) -> query::ImpactR
         tests: r.tests,
         risk: impact_risk(r.risk),
         callers: r.callers.into_iter().map(impact_caller).collect(),
+        pagination: ministr_api::metadata::Pagination::default(),
+        metadata: ministr_api::metadata::QueryMetadata::default(),
     }
 }
 
@@ -541,6 +758,7 @@ pub fn compressed_item(
     c: ministr_core::service::CompressedItem,
 ) -> ministr_api::session::CompressedItemApi {
     ministr_api::session::CompressedItemApi {
+        identity: None,
         original_id: c.original_id,
         summary: c.summary,
         original_tokens: c.original_tokens,
@@ -591,6 +809,22 @@ pub fn prefetch_metrics(
         cross_session_hits: m.cross_session_hits,
         survey_expand_hits: m.survey_expand_hits,
         agent_plan_hits: m.agent_plan_hits,
+        symbol_search_hits: m.symbol_search_hits,
+        reference_follow_hits: m.reference_follow_hits,
+        prefetches_issued: m.prefetches_issued,
+        prefetches_never_consumed: m.prefetches_never_consumed,
+        waste_rate: m.waste_rate(),
+        bytes_saved: m.bytes_saved,
+        tokens_saved: m.tokens_saved,
+        latency_saved_ms: m.latency_saved_ms,
+        sequential_issued: m.sequential_issued,
+        topical_issued: m.topical_issued,
+        structural_issued: m.structural_issued,
+        cross_session_issued: m.cross_session_issued,
+        survey_expand_issued: m.survey_expand_issued,
+        agent_plan_issued: m.agent_plan_issued,
+        symbol_search_issued: m.symbol_search_issued,
+        reference_follow_issued: m.reference_follow_issued,
         cache_size,
         cache_capacity,
     }

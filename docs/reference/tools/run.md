@@ -13,6 +13,18 @@
 | `cwd` | string | no | Working directory; defaults to the first corpus root |
 | `timeout_secs` | integer | no | Timeout seconds (default 600, max 3600) |
 
+## Output
+
+| Field | Type | Description |
+|---|---|---|
+| `bytes_total` | integer | Exact bytes the command produced. |
+| `capture_truncated` | boolean | True when the engine's capture guard dropped middle output. |
+| `digest` | … | Token-lean digest (None for background starts). |
+| `duration_ms` | integer | Wall-clock duration in milliseconds. |
+| `exit_code` | integer | Exit code (None while running or signal-killed). |
+| `run_id` | string | Run id (use with `ministr_run_logs` / `ministr_run_status`). |
+| `status` | string | Lifecycle state: `running` \| `exited` \| `killed` \| `timed_out`. |
+
 Annotations: destructive · open-world.
 
 <small>This block is generated from the live tool schema — the same definition agents receive.</small>

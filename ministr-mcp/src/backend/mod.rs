@@ -37,12 +37,12 @@ use std::sync::Arc;
 use ministr_api::TenantCorpusFilter;
 use ministr_api::client::{ClientError, DaemonClient};
 use ministr_core::service::{
-    CallDirection, ClaimResult, CompressedItem, DeadSymbol, Diagnostic, ImpactResult, QueryError,
-    QueryService, RelatedClaimResult, SectionDetail, SolidFinding, SolidParams, SurveyResult,
-    SymbolDefinition, SymbolRefResult,
+    CallDirection, ClaimResult, CompressedItem, DeadSymbol, DefinitionOptions, Diagnostic,
+    ImpactResult, InspectOptions, InspectResult, QueryError, QueryService, RelatedClaimResult,
+    SectionDetail, SolidFinding, SolidParams, SurveyResult, SymbolDefinition, SymbolRefResult,
 };
 use ministr_core::storage::{BridgeLinkDetail, SymbolFilter, SymbolRecord};
-use ministr_core::types::{RefKind, RelationType, TocEntry};
+use ministr_core::types::{DeliveryIdentity, RefKind, RelationType, TocEntry};
 use thiserror::Error;
 
 mod convert;
@@ -62,7 +62,305 @@ pub enum BackendError {
     Query(#[from] QueryError),
     /// HTTP forwarder failed.
     #[error(transparent)]
-    Client(#[from] ClientError),
+    Client(Box<ClientError>),
+    /// The requested linked project/corpus is not configured on this backend.
+    #[error("unknown project or corpus: {0}")]
+    UnknownProject(String),
+    /// Tenant policy rejected the requested corpus.
+    #[error("permission denied for corpus: {0}")]
+    PermissionDenied(String),
+    /// Tool parameters or continuation cursor were invalid.
+    #[error("invalid parameters: {0}")]
+    InvalidParameters(String),
+}
+
+impl From<ClientError> for BackendError {
+    fn from(error: ClientError) -> Self {
+        Self::Client(Box::new(error))
+    }
+}
+
+/// Survey payload plus transport/index state used by MCP response envelopes.
+pub struct SurveyBackendResponse {
+    pub results: Vec<SurveyResult>,
+    pub deduplicated_count: usize,
+    pub suppressed_identities: Vec<DeliveryIdentity>,
+    pub metadata: ministr_api::metadata::QueryMetadata,
+}
+
+/// Backend data paired with honest index/transport metadata.
+pub struct BackendResponse<T> {
+    pub data: T,
+    pub metadata: ministr_api::metadata::QueryMetadata,
+}
+
+/// One bounded reference page with transport-preserved continuation state.
+pub struct ReferencesBackendResponse {
+    pub references: Vec<SymbolRefResult>,
+    pub pagination: ministr_api::metadata::Pagination,
+    pub metadata: ministr_api::metadata::QueryMetadata,
+}
+
+/// One bounded collection page with transport-preserved total/continuation.
+pub struct CollectionBackendResponse<T> {
+    pub data: Vec<T>,
+    pub pagination: ministr_api::metadata::Pagination,
+    pub metadata: ministr_api::metadata::QueryMetadata,
+}
+
+/// One bounded impact page with its aggregate summary intact.
+pub struct ImpactBackendResponse {
+    pub impact: ImpactResult,
+    pub pagination: ministr_api::metadata::Pagination,
+    pub metadata: ministr_api::metadata::QueryMetadata,
+}
+
+/// One TOC page plus corpus-level aggregates from the unpaginated set.
+pub struct TocBackendResponse {
+    pub entries: Vec<TocEntry>,
+    pub documents: usize,
+    pub claims: usize,
+    pub pagination: ministr_api::metadata::Pagination,
+    pub metadata: ministr_api::metadata::QueryMetadata,
+}
+
+fn survey_candidate_options() -> ministr_core::service::SurveyOptions {
+    ministr_core::service::SurveyOptions {
+        max_total_bytes: 1_048_576,
+        max_total_tokens: 262_144,
+        ..ministr_core::service::SurveyOptions::default()
+    }
+}
+
+impl<T> BackendResponse<T> {
+    fn complete(data: T) -> Self {
+        Self {
+            data,
+            metadata: ministr_api::metadata::QueryMetadata::default(),
+        }
+    }
+}
+
+impl<T> std::ops::Deref for BackendResponse<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+impl<T> std::ops::DerefMut for BackendResponse<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.data
+    }
+}
+
+/// One compressed representation tied to the exact delivered identity whose
+/// session/budget state must be updated.
+#[derive(Debug, Clone)]
+pub struct CompressedDelivery {
+    pub identity: DeliveryIdentity,
+    pub item: CompressedItem,
+}
+
+async fn compress_with_service(
+    service: &QueryService,
+    identities: &[DeliveryIdentity],
+) -> Result<Vec<CompressedDelivery>, BackendError> {
+    let content_ids: Vec<String> = identities
+        .iter()
+        .map(|identity| identity.content_id.clone())
+        .collect();
+    let items = service.compress_content(&content_ids).await?;
+    let mut pending: std::collections::HashMap<
+        String,
+        std::collections::VecDeque<DeliveryIdentity>,
+    > = std::collections::HashMap::new();
+    for identity in identities {
+        pending
+            .entry(identity.content_id.clone())
+            .or_default()
+            .push_back(identity.clone());
+    }
+    Ok(items
+        .into_iter()
+        .filter_map(|item| {
+            pending
+                .get_mut(&item.original_id)
+                .and_then(std::collections::VecDeque::pop_front)
+                .map(|identity| CompressedDelivery { identity, item })
+        })
+        .collect())
+}
+
+fn paginate_references(
+    references: Vec<SymbolRefResult>,
+    metadata: ministr_api::metadata::QueryMetadata,
+    requested_offset: Option<usize>,
+    cursor: Option<&str>,
+    requested_limit: usize,
+) -> Result<ReferencesBackendResponse, BackendError> {
+    let total = references.len();
+    let limit = requested_limit.clamp(1, 500);
+    let offset = match cursor {
+        Some(value) if value.starts_with("ref:") => references
+            .iter()
+            .position(|reference| {
+                ministr_core::service::symbol_reference_cursor(reference) == value
+            })
+            .map(|index| index + 1)
+            .ok_or_else(|| {
+                BackendError::InvalidParameters(
+                    "reference cursor no longer identifies an item; restart pagination".to_string(),
+                )
+            })?,
+        Some(value) => value
+            .strip_prefix("offset:")
+            .unwrap_or(value)
+            .parse::<usize>()
+            .map_err(|_| {
+                BackendError::InvalidParameters("invalid pagination cursor".to_string())
+            })?,
+        None => requested_offset.unwrap_or(0),
+    };
+    let page: Vec<_> = references.into_iter().skip(offset).take(limit).collect();
+    let consumed = offset.saturating_add(page.len()).min(total);
+    let has_more = consumed < total;
+    let pagination = ministr_api::metadata::Pagination {
+        limit,
+        offset: Some(offset),
+        cursor: cursor.map(str::to_string),
+        next_cursor: has_more
+            .then(|| {
+                page.last()
+                    .map(ministr_core::service::symbol_reference_cursor)
+            })
+            .flatten(),
+        total,
+        has_more,
+        omitted_count: total.saturating_sub(consumed),
+    };
+    Ok(ReferencesBackendResponse {
+        references: page,
+        pagination,
+        metadata,
+    })
+}
+
+fn paginate_collection<T>(
+    items: Vec<T>,
+    metadata: ministr_api::metadata::QueryMetadata,
+    offset: usize,
+    requested_limit: usize,
+) -> CollectionBackendResponse<T> {
+    let total = items.len();
+    let limit = requested_limit.clamp(1, 500);
+    let page: Vec<_> = items.into_iter().skip(offset).take(limit).collect();
+    let consumed = offset.saturating_add(page.len()).min(total);
+    CollectionBackendResponse {
+        data: page,
+        pagination: ministr_api::metadata::Pagination {
+            limit,
+            offset: Some(offset),
+            cursor: None,
+            next_cursor: (consumed < total).then(|| format!("offset:{consumed}")),
+            total,
+            has_more: consumed < total,
+            omitted_count: total.saturating_sub(consumed),
+        },
+        metadata,
+    }
+}
+
+fn paginate_related(
+    items: Vec<RelatedClaimResult>,
+    metadata: ministr_api::metadata::QueryMetadata,
+    requested_offset: Option<usize>,
+    cursor: Option<&str>,
+    requested_limit: usize,
+) -> Result<CollectionBackendResponse<RelatedClaimResult>, BackendError> {
+    let offset = match cursor {
+        Some(value) if value.starts_with("related:") => items
+            .iter()
+            .position(|item| ministr_core::service::related_claim_cursor(item) == value)
+            .map(|index| index + 1)
+            .ok_or_else(|| {
+                BackendError::InvalidParameters(
+                    "related cursor no longer identifies an edge; restart pagination".to_string(),
+                )
+            })?,
+        Some(value) => value
+            .strip_prefix("offset:")
+            .unwrap_or(value)
+            .parse::<usize>()
+            .map_err(|_| BackendError::InvalidParameters("invalid pagination cursor".into()))?,
+        None => requested_offset.unwrap_or(0),
+    };
+    let mut response = paginate_collection(items, metadata, offset, requested_limit);
+    response.pagination.cursor = cursor.map(str::to_string);
+    if response.pagination.has_more {
+        response.pagination.next_cursor = response
+            .data
+            .last()
+            .map(ministr_core::service::related_claim_cursor);
+    }
+    Ok(response)
+}
+
+fn paginate_impact(
+    mut impact: ImpactResult,
+    metadata: ministr_api::metadata::QueryMetadata,
+    requested_offset: Option<usize>,
+    cursor: Option<&str>,
+    requested_limit: usize,
+) -> Result<ImpactBackendResponse, BackendError> {
+    let total = impact.callers.len();
+    let offset = match cursor {
+        Some(value) if value.starts_with("impact:") => impact
+            .callers
+            .iter()
+            .position(|caller| ministr_core::service::impact_caller_cursor(caller) == value)
+            .map(|index| index + 1)
+            .ok_or_else(|| {
+                BackendError::InvalidParameters(
+                    "impact cursor no longer identifies an item; restart pagination".to_string(),
+                )
+            })?,
+        Some(value) => value
+            .strip_prefix("offset:")
+            .unwrap_or(value)
+            .parse::<usize>()
+            .map_err(|_| BackendError::InvalidParameters("invalid pagination cursor".into()))?,
+        None => requested_offset.unwrap_or(0),
+    };
+    let limit = requested_limit.clamp(1, 500);
+    impact.callers = impact
+        .callers
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .collect();
+    let consumed = offset.saturating_add(impact.callers.len()).min(total);
+    Ok(ImpactBackendResponse {
+        pagination: ministr_api::metadata::Pagination {
+            limit,
+            offset: Some(offset),
+            cursor: cursor.map(str::to_string),
+            next_cursor: (consumed < total)
+                .then(|| {
+                    impact
+                        .callers
+                        .last()
+                        .map(ministr_core::service::impact_caller_cursor)
+                })
+                .flatten(),
+            total,
+            has_more: consumed < total,
+            omitted_count: total.saturating_sub(consumed),
+        },
+        impact,
+        metadata,
+    })
 }
 
 /// The abstract contract MCP tool handlers code against.
@@ -82,40 +380,57 @@ pub trait QueryBackend: Send + Sync {
     /// Semantic search excluding content IDs already delivered in this
     /// session. Returns the result set plus a count of deduplicated IDs.
     ///
-    /// The daemon backend ignores `exclude_ids` — it dedupes server-side
-    /// using the `session_id` captured at construction. The local backend
-    /// needs the exclude set explicitly.
+    /// Every backend consumes the exact exclusion set. In daemon-forward mode
+    /// the MCP proxy is the single delivery/dedup authority; direct daemon API
+    /// sessions remain daemon-owned and are a separate transport contract.
     fn survey_with_exclude(
         &self,
         query: &str,
         top_k: usize,
-        exclude_ids: &std::collections::HashSet<String>,
-    ) -> impl Future<Output = Result<(Vec<SurveyResult>, usize), BackendError>> + Send;
+        exclude_ids: &std::collections::HashSet<DeliveryIdentity>,
+    ) -> impl Future<Output = Result<SurveyBackendResponse, BackendError>> + Send;
 
     /// Read a section by ID.
     fn read_section(
         &self,
         section_id: &str,
-    ) -> impl Future<Output = Result<SectionDetail, BackendError>> + Send;
+    ) -> impl Future<Output = Result<BackendResponse<SectionDetail>, BackendError>> + Send;
 
     /// Pull atomic claims from a section, optionally query-filtered.
     fn extract_claims(
         &self,
         section_id: &str,
         query: Option<&str>,
-    ) -> impl Future<Output = Result<Vec<ClaimResult>, BackendError>> + Send;
+    ) -> impl Future<Output = Result<BackendResponse<Vec<ClaimResult>>, BackendError>> + Send;
 
     /// Search the symbol index with optional filters.
     fn search_symbols(
         &self,
         filter: SymbolFilter,
-    ) -> impl Future<Output = Result<Vec<SymbolRecord>, BackendError>> + Send;
+    ) -> impl Future<Output = Result<BackendResponse<Vec<SymbolRecord>>, BackendError>> + Send;
 
     /// Full definition of a symbol by ID.
     fn definition(
         &self,
         symbol_id: &str,
-    ) -> impl Future<Output = Result<SymbolDefinition, BackendError>> + Send;
+        options: DefinitionOptions,
+    ) -> impl Future<Output = Result<BackendResponse<SymbolDefinition>, BackendError>> + Send;
+
+    /// Bounded compound symbol navigation.
+    fn inspect_symbol(
+        &self,
+        symbol_id: &str,
+        options: InspectOptions,
+    ) -> impl Future<Output = Result<BackendResponse<InspectResult>, BackendError>> + Send;
+
+    /// Position-addressed bounded compound symbol navigation.
+    fn inspect_at_position(
+        &self,
+        file_path: &str,
+        line: u32,
+        col: u32,
+        options: InspectOptions,
+    ) -> impl Future<Output = Result<BackendResponse<InspectResult>, BackendError>> + Send;
 
     /// Callers, implementors, importers, and bridge links for a symbol.
     fn references(
@@ -123,7 +438,7 @@ pub trait QueryBackend: Send + Sync {
         symbol_id: &str,
         ref_kind: Option<RefKind>,
         through_implementors: bool,
-    ) -> impl Future<Output = Result<Vec<SymbolRefResult>, BackendError>> + Send;
+    ) -> impl Future<Output = Result<BackendResponse<Vec<SymbolRefResult>>, BackendError>> + Send;
 
     /// Transitive call hierarchy of a symbol in one direction (incoming =
     /// callers / blast radius, outgoing = callees). `tests_only` restricts the
@@ -134,7 +449,7 @@ pub trait QueryBackend: Send + Sync {
         max_depth: u32,
         direction: CallDirection,
         tests_only: bool,
-    ) -> impl Future<Output = Result<ImpactResult, BackendError>> + Send;
+    ) -> impl Future<Output = Result<BackendResponse<ImpactResult>, BackendError>> + Send;
 
     /// Zero-reference symbol candidates.
     fn dead_code(
@@ -143,7 +458,7 @@ pub trait QueryBackend: Send + Sync {
         module: Option<&str>,
         min_lines: u32,
         limit: usize,
-    ) -> impl Future<Output = Result<Vec<DeadSymbol>, BackendError>> + Send;
+    ) -> impl Future<Output = Result<BackendResponse<Vec<DeadSymbol>>, BackendError>> + Send;
 
     /// Structured compiler/linter diagnostics from the project's own
     /// toolchain(s) (FL5 — the "verify" stage). `languages` optionally
@@ -152,26 +467,26 @@ pub trait QueryBackend: Send + Sync {
         &self,
         languages: Option<&[String]>,
         limit: usize,
-    ) -> impl Future<Output = Result<Vec<Diagnostic>, BackendError>> + Send;
+    ) -> impl Future<Output = Result<BackendResponse<Vec<Diagnostic>>, BackendError>> + Send;
 
     /// Deterministic SOLID-violation candidates.
     fn solid(
         &self,
         params: &SolidParams,
-    ) -> impl Future<Output = Result<Vec<SolidFinding>, BackendError>> + Send;
+    ) -> impl Future<Output = Result<BackendResponse<Vec<SolidFinding>>, BackendError>> + Send;
 
     /// Follow claim-relationship edges.
     fn related_claims(
         &self,
         claim_id: &str,
         relation_types: Option<&[RelationType]>,
-    ) -> impl Future<Output = Result<Vec<RelatedClaimResult>, BackendError>> + Send;
+    ) -> impl Future<Output = Result<BackendResponse<Vec<RelatedClaimResult>>, BackendError>> + Send;
 
     /// Extractive TF-IDF summarisation for a batch of content IDs.
     fn compress(
         &self,
-        content_ids: &[String],
-    ) -> impl Future<Output = Result<Vec<CompressedItem>, BackendError>> + Send;
+        identities: &[DeliveryIdentity],
+    ) -> impl Future<Output = Result<Vec<CompressedDelivery>, BackendError>> + Send;
 
     /// Structural TOC entries for the corpus or a specific document.
     ///
@@ -182,7 +497,7 @@ pub trait QueryBackend: Send + Sync {
     fn toc(
         &self,
         document_id: Option<&str>,
-    ) -> impl Future<Output = Result<Vec<TocEntry>, BackendError>> + Send;
+    ) -> impl Future<Output = Result<BackendResponse<Vec<TocEntry>>, BackendError>> + Send;
 
     /// Cross-language bridge links with optional filters.
     ///
@@ -197,7 +512,7 @@ pub trait QueryBackend: Send + Sync {
         kind: Option<&str>,
         language: Option<&str>,
         file_path: Option<&str>,
-    ) -> impl Future<Output = Result<Vec<BridgeLinkDetail>, BackendError>> + Send;
+    ) -> impl Future<Output = Result<BackendResponse<Vec<BridgeLinkDetail>>, BackendError>> + Send;
 
     /// Resolve a file position (1-based `line`, 0-based byte `col`) to the
     /// symbol id of the identifier under the cursor, or `None` when the
@@ -252,7 +567,27 @@ pub enum Backend {
     },
 }
 
+#[allow(clippy::missing_errors_doc, clippy::too_many_arguments)] // dispatch methods share one explicit routing contract
 impl Backend {
+    /// Canonical corpus id for a routed call when it is known without I/O.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackendError::UnknownProject`] when the route is not registered.
+    pub fn routed_corpus_id(&self, project: Option<&str>) -> Result<String, BackendError> {
+        self.validate_project_route(project)?;
+        match self {
+            Self::Local(_) => Ok(ministr_core::types::PRIMARY_CORPUS_ID.to_string()),
+            Self::Daemon(backend) => Ok(backend.corpus_id().to_string()),
+            Self::DaemonMulti(backends) => {
+                Ok(backends.for_project(project)?.corpus_id().to_string())
+            }
+            Self::Registry { .. } => Ok(project
+                .unwrap_or(ministr_core::types::PRIMARY_CORPUS_ID)
+                .to_string()),
+        }
+    }
+
     /// Construct a local backend from an existing [`QueryService`].
     #[must_use]
     pub fn local(service: Arc<QueryService>) -> Self {
@@ -329,7 +664,7 @@ impl Backend {
         match self {
             Self::Local(_) | Self::Registry { .. } => None,
             Self::Daemon(b) => Some(b),
-            Self::DaemonMulti(m) => Some(m.for_project(project)),
+            Self::DaemonMulti(m) => m.for_project(project).ok(),
         }
     }
 
@@ -340,6 +675,465 @@ impl Backend {
         match self {
             Self::DaemonMulti(m) => m.labels(),
             Self::Local(_) | Self::Daemon(_) | Self::Registry { .. } => Vec::new(),
+        }
+    }
+
+    /// Fetch daemon-owned prefetch measurements for the selected route.
+    ///
+    /// # Errors
+    ///
+    /// Returns a backend error when the route is invalid or the daemon request fails.
+    pub async fn daemon_prefetch_metrics(
+        &self,
+        project: Option<&str>,
+    ) -> Result<Option<ministr_api::session::PrefetchMetricsResponse>, BackendError> {
+        let Some(backend) = self.daemon_for_project(project) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            backend
+                .client()
+                .prefetch_metrics(backend.corpus_id())
+                .await?,
+        ))
+    }
+
+    /// Fetch daemon-owned prefetch measurements for every routed corpus.
+    pub async fn all_daemon_prefetch_metrics(
+        &self,
+    ) -> Vec<ministr_api::session::PrefetchMetricsResponse> {
+        let backends: Vec<&Arc<DaemonBackend>> = match self {
+            Self::Daemon(backend) => vec![backend],
+            Self::DaemonMulti(backends) => backends.all_backends(),
+            Self::Local(_) | Self::Registry { .. } => return Vec::new(),
+        };
+        let mut metrics = Vec::with_capacity(backends.len());
+        for backend in backends {
+            if let Ok(value) = backend.client().prefetch_metrics(backend.corpus_id()).await {
+                metrics.push(value);
+            }
+        }
+        metrics
+    }
+
+    /// Remove exact deliveries from whichever daemon corpus owns them.
+    ///
+    /// Local and registry backends deduplicate from the MCP exclusion set, so
+    /// their session shadow is updated by the caller and needs no second write.
+    pub async fn drop_deliveries(
+        &self,
+        identities: &[DeliveryIdentity],
+        content_ids: &[String],
+    ) -> Result<(), BackendError> {
+        match self {
+            Self::Local(_) | Self::Registry { .. } => Ok(()),
+            Self::Daemon(backend) => {
+                let owned: Vec<_> = identities
+                    .iter()
+                    .filter(|identity| identity.corpus_id == backend.corpus_id())
+                    .cloned()
+                    .collect();
+                backend.drop_deliveries(&owned, content_ids).await
+            }
+            Self::DaemonMulti(backends) => {
+                let primary_corpus = backends.default_backend().corpus_id();
+                for backend in backends.all_backends() {
+                    let owned: Vec<_> = identities
+                        .iter()
+                        .filter(|identity| identity.corpus_id == backend.corpus_id())
+                        .cloned()
+                        .collect();
+                    let legacy_ids = if backend.corpus_id() == primary_corpus {
+                        content_ids
+                    } else {
+                        &[]
+                    };
+                    backend.drop_deliveries(&owned, legacy_ids).await?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Return one reference page without truncating daemon results before the
+    /// MCP pagination layer sees their total or continuation.
+    pub async fn references_page(
+        &self,
+        tenant_subject: Option<&str>,
+        project: Option<&str>,
+        symbol_id: &str,
+        ref_kind: Option<RefKind>,
+        through_implementors: bool,
+        offset: Option<usize>,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<ReferencesBackendResponse, BackendError> {
+        self.validate_project_route(project)?;
+        self.validate_registry_project(tenant_subject, project)
+            .await?;
+        match self {
+            Self::Daemon(backend) => {
+                backend
+                    .references_page(
+                        symbol_id,
+                        ref_kind,
+                        through_implementors,
+                        offset,
+                        cursor,
+                        limit,
+                    )
+                    .await
+            }
+            Self::DaemonMulti(backends) => {
+                backends
+                    .for_project(project)?
+                    .references_page(
+                        symbol_id,
+                        ref_kind,
+                        through_implementors,
+                        offset,
+                        cursor,
+                        limit,
+                    )
+                    .await
+            }
+            Self::Local(_) | Self::Registry { .. } => {
+                let response = self
+                    .references(
+                        tenant_subject,
+                        project,
+                        symbol_id,
+                        ref_kind,
+                        through_implementors,
+                    )
+                    .await?;
+                paginate_references(response.data, response.metadata, offset, cursor, limit)
+            }
+        }
+    }
+
+    /// Return one extracted-claim page while preserving daemon totals.
+    pub async fn extract_claims_page(
+        &self,
+        tenant_subject: Option<&str>,
+        project: Option<&str>,
+        section_id: &str,
+        query: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<CollectionBackendResponse<ClaimResult>, BackendError> {
+        match self {
+            Self::Daemon(backend) => {
+                backend
+                    .extract_claims_page(section_id, query, offset, limit)
+                    .await
+            }
+            Self::DaemonMulti(backends) => {
+                backends
+                    .for_project(project)?
+                    .extract_claims_page(section_id, query, offset, limit)
+                    .await
+            }
+            Self::Local(_) | Self::Registry { .. } => {
+                let response = self
+                    .extract_claims(tenant_subject, project, section_id, query)
+                    .await?;
+                Ok(paginate_collection(
+                    response.data,
+                    response.metadata,
+                    offset,
+                    limit,
+                ))
+            }
+        }
+    }
+
+    /// Return one symbol page while preserving daemon totals.
+    pub async fn search_symbols_page(
+        &self,
+        tenant_subject: Option<&str>,
+        project: Option<&str>,
+        filter: SymbolFilter,
+        offset: usize,
+        limit: usize,
+    ) -> Result<CollectionBackendResponse<SymbolRecord>, BackendError> {
+        match self {
+            Self::Daemon(backend) => backend.search_symbols_page(filter, offset, limit).await,
+            Self::DaemonMulti(backends) => {
+                backends
+                    .for_project(project)?
+                    .search_symbols_page(filter, offset, limit)
+                    .await
+            }
+            Self::Local(_) | Self::Registry { .. } => {
+                let response = self.search_symbols(tenant_subject, project, filter).await?;
+                Ok(paginate_collection(
+                    response.data,
+                    response.metadata,
+                    offset,
+                    limit,
+                ))
+            }
+        }
+    }
+
+    /// Return one impact page using a stable item cursor.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn impact_page(
+        &self,
+        tenant_subject: Option<&str>,
+        project: Option<&str>,
+        symbol_id: &str,
+        max_depth: u32,
+        direction: CallDirection,
+        tests_only: bool,
+        offset: Option<usize>,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<ImpactBackendResponse, BackendError> {
+        match self {
+            Self::Daemon(backend) => {
+                backend
+                    .impact_page(
+                        symbol_id, max_depth, direction, tests_only, offset, cursor, limit,
+                    )
+                    .await
+            }
+            Self::DaemonMulti(backends) => {
+                backends
+                    .for_project(project)?
+                    .impact_page(
+                        symbol_id, max_depth, direction, tests_only, offset, cursor, limit,
+                    )
+                    .await
+            }
+            Self::Local(_) | Self::Registry { .. } => {
+                let response = self
+                    .impact(
+                        tenant_subject,
+                        project,
+                        symbol_id,
+                        max_depth,
+                        direction,
+                        tests_only,
+                    )
+                    .await?;
+                paginate_impact(response.data, response.metadata, offset, cursor, limit)
+            }
+        }
+    }
+
+    /// Return one dead-code page while preserving daemon totals.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn dead_code_page(
+        &self,
+        tenant_subject: Option<&str>,
+        project: Option<&str>,
+        kind: Option<&str>,
+        module: Option<&str>,
+        min_lines: u32,
+        offset: usize,
+        limit: usize,
+    ) -> Result<CollectionBackendResponse<DeadSymbol>, BackendError> {
+        match self {
+            Self::Daemon(backend) => {
+                backend
+                    .dead_code_page(kind, module, min_lines, offset, limit)
+                    .await
+            }
+            Self::DaemonMulti(backends) => {
+                backends
+                    .for_project(project)?
+                    .dead_code_page(kind, module, min_lines, offset, limit)
+                    .await
+            }
+            Self::Local(_) | Self::Registry { .. } => {
+                let response = self
+                    .dead_code(tenant_subject, project, kind, module, min_lines, 500)
+                    .await?;
+                Ok(paginate_collection(
+                    response.data,
+                    response.metadata,
+                    offset,
+                    limit,
+                ))
+            }
+        }
+    }
+
+    /// Return one diagnostics page while preserving daemon totals.
+    pub async fn diagnostics_page(
+        &self,
+        tenant_subject: Option<&str>,
+        project: Option<&str>,
+        languages: Option<&[String]>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<CollectionBackendResponse<Diagnostic>, BackendError> {
+        match self {
+            Self::Daemon(backend) => backend.diagnostics_page(languages, offset, limit).await,
+            Self::DaemonMulti(backends) => {
+                backends
+                    .for_project(project)?
+                    .diagnostics_page(languages, offset, limit)
+                    .await
+            }
+            Self::Local(_) | Self::Registry { .. } => {
+                let response = self
+                    .diagnostics(tenant_subject, project, languages, 500)
+                    .await?;
+                Ok(paginate_collection(
+                    response.data,
+                    response.metadata,
+                    offset,
+                    limit,
+                ))
+            }
+        }
+    }
+
+    /// Return one SOLID finding page while preserving daemon totals.
+    pub async fn solid_page(
+        &self,
+        tenant_subject: Option<&str>,
+        project: Option<&str>,
+        params: &SolidParams,
+        offset: usize,
+        limit: usize,
+    ) -> Result<CollectionBackendResponse<SolidFinding>, BackendError> {
+        match self {
+            Self::Daemon(backend) => backend.solid_page(params, offset, limit).await,
+            Self::DaemonMulti(backends) => {
+                backends
+                    .for_project(project)?
+                    .solid_page(params, offset, limit)
+                    .await
+            }
+            Self::Local(_) | Self::Registry { .. } => {
+                let mut full_params = params.clone();
+                full_params.limit = 500;
+                let response = self.solid(tenant_subject, project, &full_params).await?;
+                Ok(paginate_collection(
+                    response.data,
+                    response.metadata,
+                    offset,
+                    limit,
+                ))
+            }
+        }
+    }
+
+    /// Return one related-claim page using a stable edge cursor.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn related_claims_page(
+        &self,
+        tenant_subject: Option<&str>,
+        project: Option<&str>,
+        claim_id: &str,
+        relation_types: Option<&[RelationType]>,
+        offset: Option<usize>,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<CollectionBackendResponse<RelatedClaimResult>, BackendError> {
+        match self {
+            Self::Daemon(backend) => {
+                backend
+                    .related_claims_page(claim_id, relation_types, offset, cursor, limit)
+                    .await
+            }
+            Self::DaemonMulti(backends) => {
+                backends
+                    .for_project(project)?
+                    .related_claims_page(claim_id, relation_types, offset, cursor, limit)
+                    .await
+            }
+            Self::Local(_) | Self::Registry { .. } => {
+                let response = self
+                    .related_claims(tenant_subject, project, claim_id, relation_types)
+                    .await?;
+                paginate_related(response.data, response.metadata, offset, cursor, limit)
+            }
+        }
+    }
+
+    /// Return one TOC page while preserving daemon totals.
+    pub async fn toc_page(
+        &self,
+        tenant_subject: Option<&str>,
+        project: Option<&str>,
+        document_id: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<TocBackendResponse, BackendError> {
+        match self {
+            Self::Daemon(backend) => backend.toc_page(document_id, offset, limit).await,
+            Self::DaemonMulti(backends) => {
+                backends
+                    .for_project(project)?
+                    .toc_page(document_id, offset, limit)
+                    .await
+            }
+            Self::Local(_) | Self::Registry { .. } => {
+                let response = self.toc(tenant_subject, project, document_id).await?;
+                let claims = response
+                    .data
+                    .iter()
+                    .map(|entry| entry.claims_available)
+                    .sum();
+                let documents = response
+                    .data
+                    .iter()
+                    .map(|entry| entry.document_id.as_ref())
+                    .collect::<std::collections::HashSet<_>>()
+                    .len();
+                let page = paginate_collection(response.data, response.metadata, offset, limit);
+                Ok(TocBackendResponse {
+                    entries: page.data,
+                    documents,
+                    claims,
+                    pagination: page.pagination,
+                    metadata: page.metadata,
+                })
+            }
+        }
+    }
+
+    /// Return one bridge page while preserving daemon totals.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn bridges_page(
+        &self,
+        tenant_subject: Option<&str>,
+        project: Option<&str>,
+        query: Option<&str>,
+        kind: Option<&str>,
+        language: Option<&str>,
+        file_path: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<CollectionBackendResponse<BridgeLinkDetail>, BackendError> {
+        match self {
+            Self::Daemon(backend) => {
+                backend
+                    .bridges_page(query, kind, language, file_path, offset, limit)
+                    .await
+            }
+            Self::DaemonMulti(backends) => {
+                backends
+                    .for_project(project)?
+                    .bridges_page(query, kind, language, file_path, offset, limit)
+                    .await
+            }
+            Self::Local(_) | Self::Registry { .. } => {
+                let response = self
+                    .bridges(tenant_subject, project, query, kind, language, file_path)
+                    .await?;
+                Ok(paginate_collection(
+                    response.data,
+                    response.metadata,
+                    offset,
+                    limit,
+                ))
+            }
         }
     }
 
@@ -463,8 +1257,60 @@ impl Backend {
 /// underlying [`QueryError`] or [`ClientError`]); per-method `# Errors`
 /// blocks are omitted here because the failure mode is the same shape
 /// across the entire surface.
-#[allow(clippy::missing_errors_doc)]
+#[allow(clippy::missing_errors_doc, clippy::too_many_arguments)]
 impl Backend {
+    fn validate_project_route(&self, project: Option<&str>) -> Result<(), BackendError> {
+        let Some(project) = project else {
+            return Ok(());
+        };
+        match self {
+            Self::Local(_) if project != ministr_core::types::PRIMARY_CORPUS_ID => {
+                Err(BackendError::UnknownProject(project.to_string()))
+            }
+            Self::Daemon(backend) if project != backend.corpus_id() => {
+                Err(BackendError::UnknownProject(project.to_string()))
+            }
+            Self::Local(_) | Self::Daemon(_) | Self::DaemonMulti(_) | Self::Registry { .. } => {
+                Ok(())
+            }
+        }
+    }
+
+    async fn validate_registry_project(
+        &self,
+        tenant_subject: Option<&str>,
+        project: Option<&str>,
+    ) -> Result<(), BackendError> {
+        let (
+            Self::Registry {
+                registry,
+                tenant_filter,
+                ..
+            },
+            Some(corpus_id),
+        ) = (self, project)
+        else {
+            return Ok(());
+        };
+
+        if let Some(filter) = tenant_filter {
+            let Some(subject) = tenant_subject else {
+                return Err(BackendError::PermissionDenied(corpus_id.to_string()));
+            };
+            match filter.allowed(subject, corpus_id).await {
+                Ok(true) => {}
+                Ok(false) | Err(_) => {
+                    return Err(BackendError::PermissionDenied(corpus_id.to_string()));
+                }
+            }
+        }
+        registry
+            .ensure_present(corpus_id)
+            .await
+            .map(|_| ())
+            .map_err(|_| BackendError::UnknownProject(corpus_id.to_string()))
+    }
+
     pub async fn survey(
         &self,
         tenant_subject: Option<&str>,
@@ -472,10 +1318,13 @@ impl Backend {
         query: &str,
         top_k: usize,
     ) -> Result<Vec<SurveyResult>, BackendError> {
+        self.validate_project_route(project)?;
+        self.validate_registry_project(tenant_subject, project)
+            .await?;
         match self {
             Self::Local(b) => b.survey(query, top_k).await,
             Self::Daemon(b) => b.survey(query, top_k).await,
-            Self::DaemonMulti(m) => m.for_project(project).survey(query, top_k).await,
+            Self::DaemonMulti(m) => m.for_project(project)?.survey(query, top_k).await,
             Self::Registry {
                 default_service,
                 registry,
@@ -495,19 +1344,93 @@ impl Backend {
         }
     }
 
+    /// Ranked survey candidates without session exclusion, for continuation
+    /// paging where offset must be applied before deduplication.
+    pub async fn survey_window(
+        &self,
+        tenant_subject: Option<&str>,
+        project: Option<&str>,
+        query: &str,
+        top_k: usize,
+    ) -> Result<SurveyBackendResponse, BackendError> {
+        self.validate_project_route(project)?;
+        self.validate_registry_project(tenant_subject, project)
+            .await?;
+        let empty = std::collections::HashSet::new();
+        match self {
+            Self::Local(backend) => backend.survey_with_exclude(query, top_k, &empty).await,
+            Self::Daemon(backend) => backend.survey_window(query, top_k).await,
+            Self::DaemonMulti(backends) => {
+                backends
+                    .for_project(project)?
+                    .survey_window(query, top_k)
+                    .await
+            }
+            Self::Registry {
+                default_service,
+                registry,
+                tenant_filter,
+            } => {
+                let (results, suppressed_identities) = match Self::resolve_registry_handle(
+                    default_service,
+                    registry,
+                    tenant_filter.as_ref(),
+                    tenant_subject,
+                    project,
+                )
+                .await
+                {
+                    Ok(handle) => {
+                        let corpus_id = handle.current_info().await.id;
+                        handle
+                            .service
+                            .survey_excluding_identities_detailed_with_options(
+                                query,
+                                top_k,
+                                &corpus_id,
+                                &empty,
+                                survey_candidate_options(),
+                            )
+                            .await?
+                    }
+                    Err(default) => {
+                        default
+                            .survey_excluding_identities_detailed_with_options(
+                                query,
+                                top_k,
+                                ministr_core::types::PRIMARY_CORPUS_ID,
+                                &empty,
+                                survey_candidate_options(),
+                            )
+                            .await?
+                    }
+                };
+                Ok(SurveyBackendResponse {
+                    results,
+                    deduplicated_count: suppressed_identities.len(),
+                    suppressed_identities,
+                    metadata: ministr_api::metadata::QueryMetadata::default(),
+                })
+            }
+        }
+    }
+
     pub async fn survey_with_exclude(
         &self,
         tenant_subject: Option<&str>,
         project: Option<&str>,
         query: &str,
         top_k: usize,
-        exclude_ids: &std::collections::HashSet<String>,
-    ) -> Result<(Vec<SurveyResult>, usize), BackendError> {
+        exclude_ids: &std::collections::HashSet<DeliveryIdentity>,
+    ) -> Result<SurveyBackendResponse, BackendError> {
+        self.validate_project_route(project)?;
+        self.validate_registry_project(tenant_subject, project)
+            .await?;
         match self {
             Self::Local(b) => b.survey_with_exclude(query, top_k, exclude_ids).await,
             Self::Daemon(b) => b.survey_with_exclude(query, top_k, exclude_ids).await,
             Self::DaemonMulti(m) => {
-                m.for_project(project)
+                m.for_project(project)?
                     .survey_with_exclude(query, top_k, exclude_ids)
                     .await
             }
@@ -524,11 +1447,44 @@ impl Backend {
             )
             .await
             {
-                Ok(handle) => Ok(handle
-                    .service
-                    .survey_excluding(query, top_k, exclude_ids)
-                    .await?),
-                Err(default) => Ok(default.survey_excluding(query, top_k, exclude_ids).await?),
+                Ok(handle) => {
+                    let corpus_id = handle.current_info().await.id;
+                    let (results, suppressed_identities) = handle
+                        .service
+                        .survey_excluding_identities_detailed_with_options(
+                            query,
+                            top_k,
+                            &corpus_id,
+                            exclude_ids,
+                            survey_candidate_options(),
+                        )
+                        .await?;
+                    let deduplicated_count = suppressed_identities.len();
+                    Ok(SurveyBackendResponse {
+                        results,
+                        deduplicated_count,
+                        suppressed_identities,
+                        metadata: ministr_api::metadata::QueryMetadata::default(),
+                    })
+                }
+                Err(default) => {
+                    let (results, suppressed_identities) = default
+                        .survey_excluding_identities_detailed_with_options(
+                            query,
+                            top_k,
+                            ministr_core::types::PRIMARY_CORPUS_ID,
+                            exclude_ids,
+                            survey_candidate_options(),
+                        )
+                        .await?;
+                    let deduplicated_count = suppressed_identities.len();
+                    Ok(SurveyBackendResponse {
+                        results,
+                        deduplicated_count,
+                        suppressed_identities,
+                        metadata: ministr_api::metadata::QueryMetadata::default(),
+                    })
+                }
             },
         }
     }
@@ -538,11 +1494,14 @@ impl Backend {
         tenant_subject: Option<&str>,
         project: Option<&str>,
         section_id: &str,
-    ) -> Result<SectionDetail, BackendError> {
+    ) -> Result<BackendResponse<SectionDetail>, BackendError> {
+        self.validate_project_route(project)?;
+        self.validate_registry_project(tenant_subject, project)
+            .await?;
         match self {
             Self::Local(b) => b.read_section(section_id).await,
             Self::Daemon(b) => b.read_section(section_id).await,
-            Self::DaemonMulti(m) => m.for_project(project).read_section(section_id).await,
+            Self::DaemonMulti(m) => m.for_project(project)?.read_section(section_id).await,
             Self::Registry {
                 default_service,
                 registry,
@@ -556,8 +1515,12 @@ impl Backend {
             )
             .await
             {
-                Ok(handle) => Ok(handle.service.read_section(section_id).await?),
-                Err(default) => Ok(default.read_section(section_id).await?),
+                Ok(handle) => Ok(BackendResponse::complete(
+                    handle.service.read_section(section_id).await?,
+                )),
+                Err(default) => Ok(BackendResponse::complete(
+                    default.read_section(section_id).await?,
+                )),
             },
         }
     }
@@ -568,12 +1531,15 @@ impl Backend {
         project: Option<&str>,
         section_id: &str,
         query: Option<&str>,
-    ) -> Result<Vec<ClaimResult>, BackendError> {
+    ) -> Result<BackendResponse<Vec<ClaimResult>>, BackendError> {
+        self.validate_project_route(project)?;
+        self.validate_registry_project(tenant_subject, project)
+            .await?;
         match self {
             Self::Local(b) => b.extract_claims(section_id, query).await,
             Self::Daemon(b) => b.extract_claims(section_id, query).await,
             Self::DaemonMulti(m) => {
-                m.for_project(project)
+                m.for_project(project)?
                     .extract_claims(section_id, query)
                     .await
             }
@@ -590,8 +1556,12 @@ impl Backend {
             )
             .await
             {
-                Ok(handle) => Ok(handle.service.extract_claims(section_id, query).await?),
-                Err(default) => Ok(default.extract_claims(section_id, query).await?),
+                Ok(handle) => Ok(BackendResponse::complete(
+                    handle.service.extract_claims(section_id, query).await?,
+                )),
+                Err(default) => Ok(BackendResponse::complete(
+                    default.extract_claims(section_id, query).await?,
+                )),
             },
         }
     }
@@ -601,11 +1571,14 @@ impl Backend {
         tenant_subject: Option<&str>,
         project: Option<&str>,
         filter: SymbolFilter,
-    ) -> Result<Vec<SymbolRecord>, BackendError> {
+    ) -> Result<BackendResponse<Vec<SymbolRecord>>, BackendError> {
+        self.validate_project_route(project)?;
+        self.validate_registry_project(tenant_subject, project)
+            .await?;
         match self {
             Self::Local(b) => b.search_symbols(filter).await,
             Self::Daemon(b) => b.search_symbols(filter).await,
-            Self::DaemonMulti(m) => m.for_project(project).search_symbols(filter).await,
+            Self::DaemonMulti(m) => m.for_project(project)?.search_symbols(filter).await,
             Self::Registry {
                 default_service,
                 registry,
@@ -619,8 +1592,12 @@ impl Backend {
             )
             .await
             {
-                Ok(handle) => Ok(handle.service.search_symbols(&filter).await?),
-                Err(default) => Ok(default.search_symbols(&filter).await?),
+                Ok(handle) => Ok(BackendResponse::complete(
+                    handle.service.search_symbols(&filter).await?,
+                )),
+                Err(default) => Ok(BackendResponse::complete(
+                    default.search_symbols(&filter).await?,
+                )),
             },
         }
     }
@@ -630,11 +1607,15 @@ impl Backend {
         tenant_subject: Option<&str>,
         project: Option<&str>,
         symbol_id: &str,
-    ) -> Result<SymbolDefinition, BackendError> {
+        options: DefinitionOptions,
+    ) -> Result<BackendResponse<SymbolDefinition>, BackendError> {
+        self.validate_project_route(project)?;
+        self.validate_registry_project(tenant_subject, project)
+            .await?;
         match self {
-            Self::Local(b) => b.definition(symbol_id).await,
-            Self::Daemon(b) => b.definition(symbol_id).await,
-            Self::DaemonMulti(m) => m.for_project(project).definition(symbol_id).await,
+            Self::Local(b) => b.definition(symbol_id, options).await,
+            Self::Daemon(b) => b.definition(symbol_id, options).await,
+            Self::DaemonMulti(m) => m.for_project(project)?.definition(symbol_id, options).await,
             Self::Registry {
                 default_service,
                 registry,
@@ -648,8 +1629,116 @@ impl Backend {
             )
             .await
             {
-                Ok(handle) => Ok(handle.service.get_symbol_definition(symbol_id).await?),
-                Err(default) => Ok(default.get_symbol_definition(symbol_id).await?),
+                Ok(handle) => Ok(BackendResponse::complete(
+                    handle
+                        .service
+                        .get_symbol_definition_with_options(symbol_id, options)
+                        .await?,
+                )),
+                Err(default) => Ok(BackendResponse::complete(
+                    default
+                        .get_symbol_definition_with_options(symbol_id, options)
+                        .await?,
+                )),
+            },
+        }
+    }
+
+    pub async fn inspect_symbol(
+        &self,
+        tenant_subject: Option<&str>,
+        project: Option<&str>,
+        symbol_id: &str,
+        options: InspectOptions,
+    ) -> Result<BackendResponse<InspectResult>, BackendError> {
+        self.validate_project_route(project)?;
+        self.validate_registry_project(tenant_subject, project)
+            .await?;
+        match self {
+            Self::Local(backend) => backend.inspect_symbol(symbol_id, options).await,
+            Self::Daemon(backend) => backend.inspect_symbol(symbol_id, options).await,
+            Self::DaemonMulti(backends) => {
+                backends
+                    .for_project(project)?
+                    .inspect_symbol(symbol_id, options)
+                    .await
+            }
+            Self::Registry {
+                default_service,
+                registry,
+                tenant_filter,
+            } => match Self::resolve_registry_handle(
+                default_service,
+                registry,
+                tenant_filter.as_ref(),
+                tenant_subject,
+                project,
+            )
+            .await
+            {
+                Ok(handle) => Ok(BackendResponse::complete(
+                    handle.service.inspect_symbol(symbol_id, &options).await?,
+                )),
+                Err(default) => Ok(BackendResponse::complete(
+                    default.inspect_symbol(symbol_id, &options).await?,
+                )),
+            },
+        }
+    }
+
+    pub async fn inspect_at_position(
+        &self,
+        tenant_subject: Option<&str>,
+        project: Option<&str>,
+        file_path: &str,
+        line: u32,
+        col: u32,
+        options: InspectOptions,
+    ) -> Result<BackendResponse<InspectResult>, BackendError> {
+        self.validate_project_route(project)?;
+        self.validate_registry_project(tenant_subject, project)
+            .await?;
+        match self {
+            Self::Local(backend) => {
+                backend
+                    .inspect_at_position(file_path, line, col, options)
+                    .await
+            }
+            Self::Daemon(backend) => {
+                backend
+                    .inspect_at_position(file_path, line, col, options)
+                    .await
+            }
+            Self::DaemonMulti(backends) => {
+                backends
+                    .for_project(project)?
+                    .inspect_at_position(file_path, line, col, options)
+                    .await
+            }
+            Self::Registry {
+                default_service,
+                registry,
+                tenant_filter,
+            } => match Self::resolve_registry_handle(
+                default_service,
+                registry,
+                tenant_filter.as_ref(),
+                tenant_subject,
+                project,
+            )
+            .await
+            {
+                Ok(handle) => Ok(BackendResponse::complete(
+                    handle
+                        .service
+                        .inspect_at_position(file_path, line, col, &options)
+                        .await?,
+                )),
+                Err(default) => Ok(BackendResponse::complete(
+                    default
+                        .inspect_at_position(file_path, line, col, &options)
+                        .await?,
+                )),
             },
         }
     }
@@ -661,7 +1750,10 @@ impl Backend {
         symbol_id: &str,
         ref_kind: Option<RefKind>,
         through_implementors: bool,
-    ) -> Result<Vec<SymbolRefResult>, BackendError> {
+    ) -> Result<BackendResponse<Vec<SymbolRefResult>>, BackendError> {
+        self.validate_project_route(project)?;
+        self.validate_registry_project(tenant_subject, project)
+            .await?;
         match self {
             Self::Local(b) => {
                 b.references(symbol_id, ref_kind, through_implementors)
@@ -672,7 +1764,7 @@ impl Backend {
                     .await
             }
             Self::DaemonMulti(m) => {
-                m.for_project(project)
+                m.for_project(project)?
                     .references(symbol_id, ref_kind, through_implementors)
                     .await
             }
@@ -689,18 +1781,26 @@ impl Backend {
             )
             .await
             {
-                Ok(handle) if through_implementors => Ok(handle
-                    .service
-                    .get_symbol_references_through_implementors(symbol_id, ref_kind, 50)
-                    .await?),
-                Ok(handle) => Ok(handle
-                    .service
-                    .get_symbol_references(symbol_id, ref_kind)
-                    .await?),
-                Err(default) if through_implementors => Ok(default
-                    .get_symbol_references_through_implementors(symbol_id, ref_kind, 50)
-                    .await?),
-                Err(default) => Ok(default.get_symbol_references(symbol_id, ref_kind).await?),
+                Ok(handle) if through_implementors => Ok(BackendResponse::complete(
+                    handle
+                        .service
+                        .get_symbol_references_through_implementors(symbol_id, ref_kind, 500)
+                        .await?,
+                )),
+                Ok(handle) => Ok(BackendResponse::complete(
+                    handle
+                        .service
+                        .get_symbol_references(symbol_id, ref_kind)
+                        .await?,
+                )),
+                Err(default) if through_implementors => Ok(BackendResponse::complete(
+                    default
+                        .get_symbol_references_through_implementors(symbol_id, ref_kind, 500)
+                        .await?,
+                )),
+                Err(default) => Ok(BackendResponse::complete(
+                    default.get_symbol_references(symbol_id, ref_kind).await?,
+                )),
             },
         }
     }
@@ -713,12 +1813,15 @@ impl Backend {
         max_depth: u32,
         direction: CallDirection,
         tests_only: bool,
-    ) -> Result<ImpactResult, BackendError> {
+    ) -> Result<BackendResponse<ImpactResult>, BackendError> {
+        self.validate_project_route(project)?;
+        self.validate_registry_project(tenant_subject, project)
+            .await?;
         match self {
             Self::Local(b) => b.impact(symbol_id, max_depth, direction, tests_only).await,
             Self::Daemon(b) => b.impact(symbol_id, max_depth, direction, tests_only).await,
             Self::DaemonMulti(m) => {
-                m.for_project(project)
+                m.for_project(project)?
                     .impact(symbol_id, max_depth, direction, tests_only)
                     .await
             }
@@ -735,13 +1838,17 @@ impl Backend {
             )
             .await
             {
-                Ok(handle) => Ok(handle
-                    .service
-                    .compute_impact(symbol_id, max_depth, direction, tests_only)
-                    .await?),
-                Err(default) => Ok(default
-                    .compute_impact(symbol_id, max_depth, direction, tests_only)
-                    .await?),
+                Ok(handle) => Ok(BackendResponse::complete(
+                    handle
+                        .service
+                        .compute_impact(symbol_id, max_depth, direction, tests_only)
+                        .await?,
+                )),
+                Err(default) => Ok(BackendResponse::complete(
+                    default
+                        .compute_impact(symbol_id, max_depth, direction, tests_only)
+                        .await?,
+                )),
             },
         }
     }
@@ -754,12 +1861,15 @@ impl Backend {
         module: Option<&str>,
         min_lines: u32,
         limit: usize,
-    ) -> Result<Vec<DeadSymbol>, BackendError> {
+    ) -> Result<BackendResponse<Vec<DeadSymbol>>, BackendError> {
+        self.validate_project_route(project)?;
+        self.validate_registry_project(tenant_subject, project)
+            .await?;
         match self {
             Self::Local(b) => b.dead_code(kind, module, min_lines, limit).await,
             Self::Daemon(b) => b.dead_code(kind, module, min_lines, limit).await,
             Self::DaemonMulti(m) => {
-                m.for_project(project)
+                m.for_project(project)?
                     .dead_code(kind, module, min_lines, limit)
                     .await
             }
@@ -776,13 +1886,17 @@ impl Backend {
             )
             .await
             {
-                Ok(handle) => Ok(handle
-                    .service
-                    .find_dead_code(kind, module, min_lines, limit)
-                    .await?),
-                Err(default) => Ok(default
-                    .find_dead_code(kind, module, min_lines, limit)
-                    .await?),
+                Ok(handle) => Ok(BackendResponse::complete(
+                    handle
+                        .service
+                        .find_dead_code(kind, module, min_lines, limit)
+                        .await?,
+                )),
+                Err(default) => Ok(BackendResponse::complete(
+                    default
+                        .find_dead_code(kind, module, min_lines, limit)
+                        .await?,
+                )),
             },
         }
     }
@@ -793,11 +1907,14 @@ impl Backend {
         project: Option<&str>,
         languages: Option<&[String]>,
         limit: usize,
-    ) -> Result<Vec<Diagnostic>, BackendError> {
+    ) -> Result<BackendResponse<Vec<Diagnostic>>, BackendError> {
+        self.validate_project_route(project)?;
+        self.validate_registry_project(tenant_subject, project)
+            .await?;
         match self {
             Self::Local(b) => b.diagnostics(languages, limit).await,
             Self::Daemon(b) => b.diagnostics(languages, limit).await,
-            Self::DaemonMulti(m) => m.for_project(project).diagnostics(languages, limit).await,
+            Self::DaemonMulti(m) => m.for_project(project)?.diagnostics(languages, limit).await,
             Self::Registry {
                 default_service,
                 registry,
@@ -811,8 +1928,12 @@ impl Backend {
             )
             .await
             {
-                Ok(handle) => Ok(handle.service.diagnostics(languages, limit).await?),
-                Err(default) => Ok(default.diagnostics(languages, limit).await?),
+                Ok(handle) => Ok(BackendResponse::complete(
+                    handle.service.diagnostics(languages, limit).await?,
+                )),
+                Err(default) => Ok(BackendResponse::complete(
+                    default.diagnostics(languages, limit).await?,
+                )),
             },
         }
     }
@@ -822,11 +1943,14 @@ impl Backend {
         tenant_subject: Option<&str>,
         project: Option<&str>,
         params: &SolidParams,
-    ) -> Result<Vec<SolidFinding>, BackendError> {
+    ) -> Result<BackendResponse<Vec<SolidFinding>>, BackendError> {
+        self.validate_project_route(project)?;
+        self.validate_registry_project(tenant_subject, project)
+            .await?;
         match self {
             Self::Local(b) => b.solid(params).await,
             Self::Daemon(b) => b.solid(params).await,
-            Self::DaemonMulti(m) => m.for_project(project).solid(params).await,
+            Self::DaemonMulti(m) => m.for_project(project)?.solid(params).await,
             Self::Registry {
                 default_service,
                 registry,
@@ -840,8 +1964,12 @@ impl Backend {
             )
             .await
             {
-                Ok(handle) => Ok(handle.service.detect_solid_violations(params).await?),
-                Err(default) => Ok(default.detect_solid_violations(params).await?),
+                Ok(handle) => Ok(BackendResponse::complete(
+                    handle.service.detect_solid_violations(params).await?,
+                )),
+                Err(default) => Ok(BackendResponse::complete(
+                    default.detect_solid_violations(params).await?,
+                )),
             },
         }
     }
@@ -852,12 +1980,15 @@ impl Backend {
         project: Option<&str>,
         claim_id: &str,
         relation_types: Option<&[RelationType]>,
-    ) -> Result<Vec<RelatedClaimResult>, BackendError> {
+    ) -> Result<BackendResponse<Vec<RelatedClaimResult>>, BackendError> {
+        self.validate_project_route(project)?;
+        self.validate_registry_project(tenant_subject, project)
+            .await?;
         match self {
             Self::Local(b) => b.related_claims(claim_id, relation_types).await,
             Self::Daemon(b) => b.related_claims(claim_id, relation_types).await,
             Self::DaemonMulti(m) => {
-                m.for_project(project)
+                m.for_project(project)?
                     .related_claims(claim_id, relation_types)
                     .await
             }
@@ -874,11 +2005,15 @@ impl Backend {
             )
             .await
             {
-                Ok(handle) => Ok(handle
-                    .service
-                    .related_claims(claim_id, relation_types)
-                    .await?),
-                Err(default) => Ok(default.related_claims(claim_id, relation_types).await?),
+                Ok(handle) => Ok(BackendResponse::complete(
+                    handle
+                        .service
+                        .related_claims(claim_id, relation_types)
+                        .await?,
+                )),
+                Err(default) => Ok(BackendResponse::complete(
+                    default.related_claims(claim_id, relation_types).await?,
+                )),
             },
         }
     }
@@ -919,12 +2054,15 @@ impl Backend {
         &self,
         tenant_subject: Option<&str>,
         project: Option<&str>,
-        content_ids: &[String],
-    ) -> Result<Vec<CompressedItem>, BackendError> {
+        identities: &[DeliveryIdentity],
+    ) -> Result<Vec<CompressedDelivery>, BackendError> {
+        self.validate_project_route(project)?;
+        self.validate_registry_project(tenant_subject, project)
+            .await?;
         match self {
-            Self::Local(b) => b.compress(content_ids).await,
-            Self::Daemon(b) => b.compress(content_ids).await,
-            Self::DaemonMulti(m) => m.for_project(project).compress(content_ids).await,
+            Self::Local(b) => b.compress(identities).await,
+            Self::Daemon(b) => b.compress(identities).await,
+            Self::DaemonMulti(m) => m.for_project(project)?.compress(identities).await,
             Self::Registry {
                 default_service,
                 registry,
@@ -938,8 +2076,8 @@ impl Backend {
             )
             .await
             {
-                Ok(handle) => Ok(handle.service.compress_content(content_ids).await?),
-                Err(default) => Ok(default.compress_content(content_ids).await?),
+                Ok(handle) => compress_with_service(&handle.service, identities).await,
+                Err(default) => compress_with_service(default, identities).await,
             },
         }
     }
@@ -949,11 +2087,14 @@ impl Backend {
         tenant_subject: Option<&str>,
         project: Option<&str>,
         document_id: Option<&str>,
-    ) -> Result<Vec<TocEntry>, BackendError> {
+    ) -> Result<BackendResponse<Vec<TocEntry>>, BackendError> {
+        self.validate_project_route(project)?;
+        self.validate_registry_project(tenant_subject, project)
+            .await?;
         match self {
             Self::Local(b) => b.toc(document_id).await,
             Self::Daemon(b) => b.toc(document_id).await,
-            Self::DaemonMulti(m) => m.for_project(project).toc(document_id).await,
+            Self::DaemonMulti(m) => m.for_project(project)?.toc(document_id).await,
             Self::Registry {
                 default_service,
                 registry,
@@ -967,8 +2108,10 @@ impl Backend {
             )
             .await
             {
-                Ok(handle) => Ok(handle.service.toc(document_id).await?),
-                Err(default) => Ok(default.toc(document_id).await?),
+                Ok(handle) => Ok(BackendResponse::complete(
+                    handle.service.toc(document_id).await?,
+                )),
+                Err(default) => Ok(BackendResponse::complete(default.toc(document_id).await?)),
             },
         }
     }
@@ -981,12 +2124,15 @@ impl Backend {
         kind: Option<&str>,
         language: Option<&str>,
         file_path: Option<&str>,
-    ) -> Result<Vec<BridgeLinkDetail>, BackendError> {
+    ) -> Result<BackendResponse<Vec<BridgeLinkDetail>>, BackendError> {
+        self.validate_project_route(project)?;
+        self.validate_registry_project(tenant_subject, project)
+            .await?;
         match self {
             Self::Local(b) => b.bridges(query, kind, language, file_path).await,
             Self::Daemon(b) => b.bridges(query, kind, language, file_path).await,
             Self::DaemonMulti(m) => {
-                m.for_project(project)
+                m.for_project(project)?
                     .bridges(query, kind, language, file_path)
                     .await
             }
@@ -1003,13 +2149,17 @@ impl Backend {
             )
             .await
             {
-                Ok(handle) => Ok(handle
-                    .service
-                    .query_bridges(query, kind, language, file_path)
-                    .await?),
-                Err(default) => Ok(default
-                    .query_bridges(query, kind, language, file_path)
-                    .await?),
+                Ok(handle) => Ok(BackendResponse::complete(
+                    handle
+                        .service
+                        .query_bridges(query, kind, language, file_path)
+                        .await?,
+                )),
+                Err(default) => Ok(BackendResponse::complete(
+                    default
+                        .query_bridges(query, kind, language, file_path)
+                        .await?,
+                )),
             },
         }
     }
@@ -1022,11 +2172,14 @@ impl Backend {
         line: u32,
         col: u32,
     ) -> Result<Option<String>, BackendError> {
+        self.validate_project_route(project)?;
+        self.validate_registry_project(tenant_subject, project)
+            .await?;
         match self {
             Self::Local(b) => b.symbol_at_position(file_path, line, col).await,
             Self::Daemon(b) => b.symbol_at_position(file_path, line, col).await,
             Self::DaemonMulti(m) => {
-                m.for_project(project)
+                m.for_project(project)?
                     .symbol_at_position(file_path, line, col)
                     .await
             }
@@ -1068,6 +2221,41 @@ mod tests {
     //!   back to `default_service` when that returns `None` or `Err`.
 
     use super::*;
+
+    fn related(id: &str) -> RelatedClaimResult {
+        RelatedClaimResult {
+            claim_id: id.to_string(),
+            text: format!("claim {id}"),
+            relation_type: "references".to_string(),
+            source_section: "docs/test.md#claims".to_string(),
+            confidence: 1.0,
+        }
+    }
+
+    #[test]
+    fn related_cursor_remains_stable_when_an_edge_is_inserted_before_it() {
+        let first = paginate_related(
+            vec![related("b"), related("c"), related("d")],
+            ministr_api::metadata::QueryMetadata::default(),
+            None,
+            None,
+            2,
+        )
+        .unwrap();
+        let cursor = first.pagination.next_cursor.unwrap();
+        assert_eq!(first.data[1].claim_id, "c");
+
+        let second = paginate_related(
+            vec![related("a"), related("b"), related("c"), related("d")],
+            ministr_api::metadata::QueryMetadata::default(),
+            None,
+            Some(&cursor),
+            2,
+        )
+        .unwrap();
+        assert_eq!(second.data.len(), 1);
+        assert_eq!(second.data[0].claim_id, "d");
+    }
     use ministr_api::tenant_filter::{
         DefaultCorpusFuture, TenantCorpusFilter, TenantFilterError, TenantFilterFuture,
     };

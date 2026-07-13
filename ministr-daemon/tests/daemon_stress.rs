@@ -51,6 +51,9 @@ async fn test_concurrent_proxies_mixed_queries() {
                                 section_id: "docs/auth.md#tokens".into(),
                                 query: None,
                                 session_id: None,
+                                offset: None,
+                                cursor: None,
+                                limit: None,
                             };
                             let resp = client.extract(&corpus_id, &req).await.unwrap();
                             assert_eq!(resp.claims.len(), 2);
@@ -186,6 +189,7 @@ async fn test_concurrent_mixed_symbol_queries() {
                     visibility: None,
                     file_path: None,
                     limit: None,
+                    offset: None,
                     session_id: None,
                 };
                 let resp = client.symbols(&corpus_id, &req).await.unwrap();

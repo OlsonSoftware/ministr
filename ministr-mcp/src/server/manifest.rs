@@ -18,7 +18,7 @@
 //! cargo run -p ministr-mcp --example gen_tool_docs
 //! ```
 
-use super::MinistrServer;
+use super::{MinistrServer, types};
 
 /// Opening marker of the generated block in a tool reference page.
 /// Everything between the markers is machine-owned; prose outside them is
@@ -31,7 +31,8 @@ pub const DOC_BLOCK_END: &str = "<!-- @generated tool-docs end -->";
 
 /// The full tool surface as a JSON array, sorted by tool name.
 ///
-/// Each entry: `{ "name", "description", "input_schema", "annotations"? }`,
+/// Each entry: `{ "name", "description", "input_schema", "output_schema"?,
+/// "annotations"? }`,
 /// exactly as served in `tools/list` (modulo runtime pruning).
 #[must_use]
 pub fn tool_manifest() -> serde_json::Value {
@@ -40,6 +41,7 @@ pub fn tool_manifest() -> serde_json::Value {
     serde_json::Value::Array(
         tools
             .into_iter()
+            .map(types::sanitize_tool_schemas)
             .map(|t| {
                 let mut entry = serde_json::Map::new();
                 entry.insert("name".into(), t.name.as_ref().into());
@@ -53,6 +55,12 @@ pub fn tool_manifest() -> serde_json::Value {
                     "input_schema".into(),
                     serde_json::Value::Object((*t.input_schema).clone()),
                 );
+                if let Some(output_schema) = &t.output_schema {
+                    entry.insert(
+                        "output_schema".into(),
+                        serde_json::Value::Object((**output_schema).clone()),
+                    );
+                }
                 if let Some(annotations) = &t.annotations
                     && let Ok(a) = serde_json::to_value(annotations)
                 {
@@ -246,17 +254,35 @@ fn block_for(tool: &serde_json::Value) -> String {
         lines.push("|---|---|---|---|".into());
         for name in names {
             let p = &props[name];
-            let nullable = p["type"]
-                .as_array()
-                .is_some_and(|a| a.iter().any(|x| x == "null"));
-            let required =
-                required_list.contains(&name.as_str()) || (!nullable && p["default"].is_null());
+            let required = required_list.contains(&name.as_str());
             lines.push(format!(
                 "| `{name}` | {} | {} | {} |",
                 type_of(p),
                 if required { "yes" } else { "no" },
                 cell(p["description"].as_str().unwrap_or_default())
             ));
+        }
+    }
+    if let Some(output) = tool.get("output_schema") {
+        lines.push(String::new());
+        lines.push("## Output".into());
+        lines.push(String::new());
+        let output_props = output["properties"].as_object().unwrap_or(&empty);
+        let mut output_names: Vec<&String> = output_props.keys().collect();
+        output_names.sort();
+        if output_names.is_empty() {
+            lines.push("Structured output (see the manifest schema).".into());
+        } else {
+            lines.push("| Field | Type | Description |".into());
+            lines.push("|---|---|---|".into());
+            for name in output_names {
+                let p = &output_props[name];
+                lines.push(format!(
+                    "| `{name}` | {} | {} |",
+                    type_of(p),
+                    cell(p["description"].as_str().unwrap_or_default())
+                ));
+            }
         }
     }
     let a = &tool["annotations"];
@@ -321,6 +347,26 @@ mod tests {
                 "{} missing description",
                 t["name"]
             );
+            assert!(
+                t["output_schema"].is_object(),
+                "{} missing output schema",
+                t["name"]
+            );
         }
+    }
+
+    #[test]
+    fn generated_docs_use_the_schema_required_list_verbatim() {
+        let manifest = tool_manifest();
+        let inspect = manifest
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "ministr_inspect")
+            .unwrap();
+        assert!(inspect["input_schema"]["required"].is_null());
+        let block = block_for(inspect);
+        assert!(block.contains("| `include` | array | no |"));
+        assert!(block.contains("| `symbol_id` | string | no |"));
     }
 }

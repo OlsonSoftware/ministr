@@ -28,6 +28,8 @@ fn bg1_ranker_handles_current_turn_below_turn_delivered() {
         DeliveredItem {
             content_id: ContentId(cid.to_string()),
             resolution: Resolution::Section,
+            corpus_id: "primary".into(),
+            delivery_resolution: "section".into(),
             token_count: 200,
             turn_delivered: 100, // > current_turn below
             content_hash: "h".into(),
@@ -80,6 +82,8 @@ fn bg1_zero_current_turn_short_circuit_is_safe() {
         DeliveredItem {
             content_id: ContentId(cid.to_string()),
             resolution: Resolution::Section,
+            corpus_id: "primary".into(),
+            delivery_resolution: "section".into(),
             token_count: 100,
             turn_delivered: 50,
             content_hash: "h".into(),

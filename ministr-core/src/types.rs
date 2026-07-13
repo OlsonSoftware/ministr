@@ -22,6 +22,318 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ContentId(pub String);
 
+/// Stable name used for the local corpus when no linked project or daemon
+/// corpus id was supplied. Persisted legacy session rows are migrated into
+/// this namespace so they keep their historical local-dedup behaviour without
+/// suppressing matching ids in linked or Atlas corpora.
+pub const PRIMARY_CORPUS_ID: &str = "primary";
+
+/// Durable identity for one delivered representation of corpus content.
+///
+/// Resolution is intentionally a string rather than [`Resolution`]: delivery
+/// representations include transport-level variants such as
+/// `section_excerpt`, `section_full`, and `symbol_outline` which are not vector
+/// index resolutions. Different resolutions are independent deliveries.
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub struct DeliveryIdentity {
+    /// Canonical corpus id (`primary`, linked-project label, daemon id, or
+    /// Atlas slug).
+    pub corpus_id: String,
+    /// Content id within the corpus.
+    pub content_id: String,
+    /// Delivered representation (`summary`, `section_excerpt`,
+    /// `section_full`, `symbol_stub`, `symbol_full`, ...).
+    pub resolution: String,
+}
+
+impl DeliveryIdentity {
+    /// Construct a delivery identity.
+    #[must_use]
+    pub fn new(
+        corpus_id: impl Into<String>,
+        content_id: impl Into<String>,
+        resolution: impl Into<String>,
+    ) -> Self {
+        Self {
+            corpus_id: corpus_id.into(),
+            content_id: content_id.into(),
+            resolution: resolution.into(),
+        }
+    }
+
+    /// Construct an identity in the compatibility namespace used by local
+    /// sessions created before corpus-aware identities existed.
+    #[must_use]
+    pub fn primary(content_id: impl Into<String>, resolution: impl Into<String>) -> Self {
+        Self::new(PRIMARY_CORPUS_ID, content_id, resolution)
+    }
+
+    /// Unambiguous storage/cache key. JSON serialization avoids delimiter
+    /// collisions when ids themselves contain punctuation.
+    ///
+    /// # Panics
+    ///
+    /// `DeliveryIdentity` contains only strings, so serialization cannot
+    /// fail. A panic would indicate a broken serde implementation.
+    #[must_use]
+    pub fn storage_key(&self) -> String {
+        serde_json::to_string(self).expect("DeliveryIdentity is always serializable")
+    }
+
+    /// Decode a structured key, falling back to a legacy bare content id in
+    /// the primary corpus at the supplied resolution.
+    #[must_use]
+    pub fn from_storage_key(key: &str, legacy_resolution: &str) -> Self {
+        serde_json::from_str(key)
+            .unwrap_or_else(|_| Self::primary(key.to_string(), legacy_resolution.to_string()))
+    }
+}
+
+impl From<ContentId> for DeliveryIdentity {
+    fn from(content_id: ContentId) -> Self {
+        Self::primary(content_id.0, "legacy")
+    }
+}
+
+/// Executable location of a result, including both durable identity and the
+/// routing hints needed by a follow-up tool call.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ResultLocator {
+    /// Durable corpus/content/resolution identity.
+    pub identity: DeliveryIdentity,
+    /// Linked-project label, when the corpus is routed through `.ministr.toml`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    /// Cross-corpus/Atlas source id, when different from `project`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_corpus: Option<String>,
+    /// Tenant routing context for hosted deployments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<String>,
+}
+
+impl ResultLocator {
+    /// Local-primary locator.
+    #[must_use]
+    pub fn primary(content_id: impl Into<String>, resolution: impl Into<String>) -> Self {
+        Self {
+            identity: DeliveryIdentity::primary(content_id, resolution),
+            project: None,
+            source_corpus: None,
+            tenant: None,
+        }
+    }
+
+    /// Retarget a locator to a linked or cross-corpus route.
+    #[must_use]
+    pub fn routed(
+        mut self,
+        corpus_id: impl Into<String>,
+        project: Option<String>,
+        source_corpus: Option<String>,
+        tenant: Option<String>,
+    ) -> Self {
+        self.identity.corpus_id = corpus_id.into();
+        self.project = project;
+        self.source_corpus = source_corpus;
+        self.tenant = tenant;
+        self
+    }
+}
+
+/// How the text in a discovery result represents the underlying content.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TextRepresentation {
+    /// Entire content at the advertised resolution.
+    Full,
+    /// Stored extractive/abstractive summary chosen because it matched well.
+    StoredSummary,
+    /// Query-centred excerpt from a larger body.
+    QueryExcerpt,
+    /// Signature/doc stub for a symbol.
+    SymbolStub,
+}
+
+/// Explicit size and continuation metadata for bounded result text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TextDeliveryMetadata {
+    /// True when returned text is not the full underlying body.
+    pub truncated: bool,
+    /// Original body size in UTF-8 bytes.
+    pub original_bytes: usize,
+    /// Original body size using ministr's token estimator.
+    pub original_tokens: usize,
+    /// Returned text size in UTF-8 bytes.
+    pub returned_bytes: usize,
+    /// Returned text size using ministr's token estimator.
+    pub returned_tokens: usize,
+    /// Representation selected for this response.
+    pub representation: TextRepresentation,
+    /// Locator for the full read/definition when this result is abbreviated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation: Option<ResultLocator>,
+}
+
+/// Coarse source provenance used for ranking and trust decisions.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ContentProvenance {
+    Production,
+    Test,
+    Generated,
+    Fixture,
+    Benchmark,
+    Vendor,
+    Documentation,
+    Migration,
+    Example,
+    #[default]
+    Unknown,
+}
+
+/// Compact, machine-readable evidence behind a survey result's final score.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ScoreExplanation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dense_rank: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dense_score: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sparse_rank: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sparse_score: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rrf_score: Option<f32>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exact_match: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prefix_match: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub identifier_match: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent_boost: Option<f32>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reranked: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub matryoshka: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub diversity_selected: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub quota_selected: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub graph_expanded: bool,
+    pub final_score: f32,
+}
+
+/// Standard status for a tool/backend operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseStatus {
+    Ok,
+    Partial,
+    Error,
+}
+
+/// Stable error information carried alongside any successful partial data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ResponseError {
+    pub error_code: String,
+    pub retryable: bool,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corpus_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+}
+
+/// Index completeness verdict. Absence is conclusive only for `Complete`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletenessState {
+    Complete,
+    Partial,
+    Stale,
+    Unavailable,
+}
+
+/// Machine-readable index completeness for one corpus.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Completeness {
+    pub completeness: CompletenessState,
+    pub indexed_items: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimated_total_items: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub affected_capabilities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_generation: Option<String>,
+    pub absence_is_conclusive: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_guidance: Option<String>,
+}
+
+impl Completeness {
+    /// Complete index with conclusive negative results.
+    #[must_use]
+    pub fn complete(indexed_items: usize) -> Self {
+        Self {
+            completeness: CompletenessState::Complete,
+            indexed_items,
+            estimated_total_items: Some(indexed_items),
+            affected_capabilities: Vec::new(),
+            index_generation: None,
+            absence_is_conclusive: true,
+            retry_guidance: None,
+        }
+    }
+
+    /// Actively ingesting index; negative results are not conclusive.
+    #[must_use]
+    pub fn partial(indexed_items: usize, estimated_total_items: Option<usize>) -> Self {
+        Self {
+            completeness: CompletenessState::Partial,
+            indexed_items,
+            estimated_total_items,
+            affected_capabilities: vec!["search".to_string(), "code_navigation".to_string()],
+            index_generation: None,
+            absence_is_conclusive: false,
+            retry_guidance: Some("Retry after indexing completes.".to_string()),
+        }
+    }
+}
+
+/// Completeness/status of one member in a fan-out operation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CorpusOperationStatus {
+    pub corpus_id: String,
+    pub status: ResponseStatus,
+    pub completeness: Completeness,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<ResponseError>,
+}
+
+/// Standard bounded-collection metadata.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Pagination {
+    pub limit: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    pub total: usize,
+    pub has_more: bool,
+    pub omitted_count: usize,
+}
+
 impl fmt::Display for ContentId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
@@ -740,6 +1052,48 @@ mod tests {
         let id = ContentId::from("doc-001".to_string());
         assert_eq!(id.to_string(), "doc-001");
         assert_eq!(id.as_ref(), "doc-001");
+    }
+
+    #[test]
+    fn delivery_identity_round_trips_adversarial_ids_without_collisions() {
+        let corpora = ["primary", "linked:one", "atlas/react", "組織/資料"];
+        let content = ["a:b", "a|b", "{\"x\":1}", "文書#節:c0"];
+        let resolutions = ["section_excerpt", "section_full", "symbol_outline"];
+        let mut keys = std::collections::HashSet::new();
+
+        for corpus_id in corpora {
+            for content_id in content {
+                for resolution in resolutions {
+                    let identity = DeliveryIdentity::new(corpus_id, content_id, resolution);
+                    let key = identity.storage_key();
+                    assert!(
+                        keys.insert(key.clone()),
+                        "identity collision for {identity:?}"
+                    );
+                    assert_eq!(
+                        DeliveryIdentity::from_storage_key(&key, "ignored"),
+                        identity
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_bare_delivery_keys_migrate_to_primary_corpus() {
+        let migrated = DeliveryIdentity::from_storage_key("docs/a.md#root", "section_full");
+        assert_eq!(migrated.corpus_id, PRIMARY_CORPUS_ID);
+        assert_eq!(migrated.content_id, "docs/a.md#root");
+        assert_eq!(migrated.resolution, "section_full");
+    }
+
+    #[test]
+    fn same_content_id_is_distinct_by_corpus_and_resolution() {
+        let linked = DeliveryIdentity::new("linked", "same", "section_excerpt");
+        let atlas = DeliveryIdentity::new("atlas/pkg", "same", "section_excerpt");
+        let full = DeliveryIdentity::new("linked", "same", "section_full");
+        assert_ne!(linked, atlas);
+        assert_ne!(linked, full);
     }
 
     #[test]

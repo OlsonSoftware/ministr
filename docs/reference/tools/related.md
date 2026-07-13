@@ -9,8 +9,25 @@
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `claim_id` | string | no | Claim ID to find related claims for |
-| `project` | string | no | Optional linked-project label. Omit for primary corpus. |
+| `cursor` | string | no | Cursor. |
+| `limit` | integer | no | Maximum entries. Default 100, capped at 500. |
+| `offset` | integer | no | Offset. |
+| `project` | string | no | Linked project. |
 | `relation_types` | array of string | no | Optional filter: 'references', 'contradicts', 'depends_on', 'updates' |
+
+## Output
+
+| Field | Type | Description |
+|---|---|---|
+| `coherence_alerts` | array | Pending coherence alerts (present when underlying content has changed). |
+| `completeness` | any | Whether absence is conclusive for the index generation queried. |
+| `corpora` | array | Per-corpus status for fan-out/routed operations. |
+| `error` | … | Stable error detail for partial/error responses. |
+| `indexing_in_progress` | boolean | True when background corpus ingestion is still running. |
+| `indexing_message` | string | Human-readable ingestion status message (e.g. "Checking 12/42 files"). |
+| `next_actions` | array | Concrete next-tool-call suggestions, in priority order.  Coherence-driven (re-read changed sections) plus any per-handler hints (e.g. survey's top-result follow-up). Budget pressure no longer contributes entries here — see the struct-level note. |
+| `result` | … | The tool-specific result data (varying — placed last for prefix stability). |
+| `status` | any | Machine-readable operation status; empty successful results remain `ok`. |
 
 Annotations: read-only · idempotent.
 

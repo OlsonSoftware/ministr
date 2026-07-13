@@ -27,8 +27,8 @@ use super::traits::{
 use crate::error::StorageError;
 use crate::session::{DeliveredItem, Session, SessionId};
 use crate::types::{
-    ClaimId, ClaimRelationship, ContentId, CorpusRoot, DocumentTree, RefKind, RelationType,
-    Resolution, RootKind, Section, SectionId, SymbolId,
+    ClaimId, ClaimRelationship, ContentId, CorpusRoot, DeliveryIdentity, DocumentTree, RefKind,
+    RelationType, Resolution, RootKind, Section, SectionId, SymbolId,
 };
 
 /// Default file-backed pool size. 8 connections is generous for a single
@@ -1250,7 +1250,7 @@ impl Storage for SqliteStorage {
         let budget = session.agent_context_budget;
         let turn = session.current_turn();
         let items: Vec<DeliveredItem> = session.delivered_items().cloned().collect();
-        let trajectory: Vec<ContentId> = session.trajectory().iter().cloned().collect();
+        let trajectory: Vec<DeliveryIdentity> = session.trajectory().iter().cloned().collect();
         let metrics_json = serde_json::to_string(session.metrics()).unwrap_or_else(|_| "{}".into());
         let recent_queries: Vec<&String> = session.recent_queries().iter().collect();
         let recent_queries_json =
@@ -1291,25 +1291,30 @@ impl Storage for SqliteStorage {
                 // Build a position map from trajectory for ordering
                 let mut position_map: std::collections::HashMap<String, i64> =
                     std::collections::HashMap::new();
-                for (pos, cid) in trajectory.iter().enumerate() {
+                for (pos, identity) in trajectory.iter().enumerate() {
                     position_map.insert(
-                        cid.0.clone(),
+                        identity.storage_key(),
                         i64::try_from(pos).unwrap_or(i64::MAX),
                     );
                 }
 
                 for item in &items {
+                    let identity = item.identity();
                     let position = position_map
-                        .get(&item.content_id.0)
+                        .get(&identity.storage_key())
                         .copied()
                         .unwrap_or(0);
                     conn.execute(
                         "INSERT INTO session_deliveries
-                         (session_id, content_id, resolution, token_count, turn_delivered, content_hash, position, compression_tier, compressed_summary)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                         (session_id, corpus_id, content_id, resolution, index_resolution,
+                          token_count, turn_delivered, content_hash, position,
+                          compression_tier, compressed_summary)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                         rusqlite::params![
                             id,
+                            item.corpus_id,
                             item.content_id.0,
+                            identity.resolution,
                             item.resolution.to_string(),
                             item.token_count,
                             item.turn_delivered,
@@ -1381,7 +1386,9 @@ impl Storage for SqliteStorage {
             // Load delivered items ordered by position (for trajectory reconstruction)
             let mut stmt = conn
                 .prepare(
-                    "SELECT content_id, resolution, token_count, turn_delivered, content_hash, position, compression_tier, compressed_summary
+                    "SELECT corpus_id, content_id, resolution, index_resolution,
+                            token_count, turn_delivered, content_hash, position,
+                            compression_tier, compressed_summary
                      FROM session_deliveries WHERE session_id = ?1 ORDER BY position",
                 )
                 .map_err(|e| StorageError::Database {
@@ -1393,11 +1400,13 @@ impl Storage for SqliteStorage {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
-                        row.get::<_, usize>(2)?,
-                        row.get::<_, u32>(3)?,
-                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, usize>(4)?,
+                        row.get::<_, u32>(5)?,
                         row.get::<_, String>(6)?,
-                        row.get::<_, Option<String>>(7)?,
+                        row.get::<_, String>(8)?,
+                        row.get::<_, Option<String>>(9)?,
                     ))
                 })
                 .map_err(|e| StorageError::Database {
@@ -1409,8 +1418,10 @@ impl Storage for SqliteStorage {
 
             for row in rows {
                 let (
+                    corpus_id,
                     content_id_str,
-                    resolution_str,
+                    delivery_resolution,
+                    index_resolution,
                     token_count,
                     turn_delivered,
                     content_hash,
@@ -1421,13 +1432,15 @@ impl Storage for SqliteStorage {
                 })?;
 
                 let content_id = ContentId(content_id_str.clone());
-                let resolution = parse_resolution(&resolution_str);
+                let resolution = parse_resolution(&index_resolution);
                 let compression_tier =
                     crate::session::CompressionTier::from_str_or_full(&compression_tier_str);
 
                 let item = DeliveredItem {
                     content_id: content_id.clone(),
                     resolution,
+                    corpus_id: corpus_id.clone(),
+                    delivery_resolution: delivery_resolution.clone(),
                     token_count,
                     turn_delivered,
                     content_hash,
@@ -1435,8 +1448,10 @@ impl Storage for SqliteStorage {
                     compressed_summary,
                 };
 
-                delivered.insert(content_id_str.clone(), item);
-                trajectory.push(content_id);
+                let identity =
+                    DeliveryIdentity::new(corpus_id, content_id_str, delivery_resolution);
+                delivered.insert(identity.storage_key(), item);
+                trajectory.push(identity);
             }
 
             // The eviction policy isn't yet part of the persistence schema,
@@ -1994,7 +2009,7 @@ impl Storage for SqliteStorage {
     async fn list_symbols(&self, filter: &SymbolFilter) -> Result<Vec<SymbolRecord>, StorageError> {
         let filter = filter.clone();
         self.with_conn(move |conn| {
-            let results = query_symbols(conn, &filter, TokenMode::And)?;
+            let mut results = query_symbols(conn, &filter, TokenMode::And)?;
 
             // Fallback: if AND yielded nothing and we have multiple tokens, try OR.
             if results.is_empty()
@@ -2002,8 +2017,12 @@ impl Storage for SqliteStorage {
             {
                 let tokens = tokenize_symbol_query(name);
                 if tokens.len() > 1 {
-                    return query_symbols(conn, &filter, TokenMode::Or);
+                    results = query_symbols(conn, &filter, TokenMode::Or)?;
                 }
+            }
+
+            if let Some(name) = filter.name.as_deref() {
+                rank_symbol_matches(&mut results, name);
             }
 
             Ok(results)
@@ -2042,6 +2061,57 @@ impl Storage for SqliteStorage {
             .map_err(|e| StorageError::Database {
                 reason: e.to_string(),
             })
+        })
+        .await
+    }
+
+    async fn get_symbols(&self, ids: &[SymbolId]) -> Result<Vec<SymbolRecord>, StorageError> {
+        let ids = ids.to_vec();
+        self.with_conn(move |conn| {
+            const BATCH_SIZE: usize = 500;
+            let mut symbols = Vec::with_capacity(ids.len());
+            for batch in ids.chunks(BATCH_SIZE) {
+                if batch.is_empty() {
+                    continue;
+                }
+                let placeholders = std::iter::repeat_n("?", batch.len())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let sql = format!(
+                    "SELECT id, file_path, name, kind, visibility, signature, doc_comment, \
+                     module_path, line_start, line_end, cyclomatic_complexity \
+                     FROM symbols WHERE id IN ({placeholders}) ORDER BY id"
+                );
+                let mut stmt = conn.prepare(&sql).map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+                let params = batch.iter().map(SymbolId::as_ref);
+                let rows = stmt
+                    .query_map(rusqlite::params_from_iter(params), |row| {
+                        Ok(SymbolRecord {
+                            id: SymbolId(row.get(0)?),
+                            file_path: row.get(1)?,
+                            name: row.get(2)?,
+                            kind: row.get(3)?,
+                            visibility: row.get(4)?,
+                            signature: row.get(5)?,
+                            doc_comment: row.get(6)?,
+                            module_path: row.get(7)?,
+                            line_start: row.get(8)?,
+                            line_end: row.get(9)?,
+                            cyclomatic_complexity: row.get(10)?,
+                        })
+                    })
+                    .map_err(|e| StorageError::Database {
+                        reason: e.to_string(),
+                    })?;
+                symbols.extend(rows.collect::<Result<Vec<_>, _>>().map_err(|e| {
+                    StorageError::Database {
+                        reason: e.to_string(),
+                    }
+                })?);
+            }
+            Ok(symbols)
         })
         .await
     }
@@ -2801,6 +2871,41 @@ impl Storage for SqliteStorage {
         })
         .await
     }
+}
+
+/// Rank fuzzy symbol matches by how directly the symbol name answers the
+/// query. SQL's file-order fallback is deterministic but puts exact and prefix
+/// matches behind arbitrary paths, which is particularly noisy before MCP
+/// pagination is applied.
+fn rank_symbol_matches(results: &mut [SymbolRecord], query: &str) {
+    let query = query.to_ascii_lowercase();
+    let query_tokens = tokenize_symbol_query(&query);
+    results.sort_by(|a, b| {
+        let rank = |symbol: &SymbolRecord| {
+            let name = symbol.name.to_ascii_lowercase();
+            let name_tokens = tokenize_symbol_query(&name);
+            let exact = usize::from(name == query);
+            let prefix = usize::from(name.starts_with(&query));
+            let token_prefixes = query_tokens
+                .iter()
+                .filter(|query_token| {
+                    name_tokens
+                        .iter()
+                        .any(|name_token| name_token.starts_with(query_token.as_str()))
+                })
+                .count();
+            let token_matches = query_tokens
+                .iter()
+                .filter(|query_token| name_tokens.contains(query_token))
+                .count();
+            (exact, prefix, token_matches, token_prefixes)
+        };
+        rank(b)
+            .cmp(&rank(a))
+            .then_with(|| a.name.len().cmp(&b.name.len()))
+            .then_with(|| a.file_path.cmp(&b.file_path))
+            .then_with(|| a.line_start.cmp(&b.line_start))
+    });
 }
 
 /// Tokenize a symbol query into searchable terms.

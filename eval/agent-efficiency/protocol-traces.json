@@ -1,0 +1,92 @@
+{
+  "colliding-content-ids": {
+    "status": "ok",
+    "completeness": {
+      "completeness": "complete",
+      "indexed_items": 2,
+      "absence_is_conclusive": true
+    },
+    "results": [
+      {
+        "locator": {
+          "identity": {
+            "corpus_id": "primary",
+            "content_id": "docs/routing.md#dispatch-contract",
+            "resolution": "section"
+          }
+        },
+        "text": "Primary dispatch contract"
+      },
+      {
+        "locator": {
+          "identity": {
+            "corpus_id": "secondary",
+            "content_id": "docs/routing.md#dispatch-contract",
+            "resolution": "section"
+          }
+        },
+        "text": "Secondary dispatch contract"
+      }
+    ]
+  },
+  "active-indexing-is-not-conclusive": {
+    "status": "partial",
+    "completeness": {
+      "completeness": "partial",
+      "indexed_items": 4,
+      "estimated_total_items": 9,
+      "affected_capabilities": ["survey", "symbols", "references"],
+      "absence_is_conclusive": false,
+      "retry_guidance": "Retry after ingestion completes"
+    },
+    "results": []
+  },
+  "partial-backend-failure": {
+    "status": "partial",
+    "completeness": {
+      "completeness": "partial",
+      "indexed_items": 1,
+      "estimated_total_items": 2,
+      "absence_is_conclusive": false
+    },
+    "results": [
+      {
+        "locator": {
+          "identity": {
+            "corpus_id": "primary",
+            "content_id": "primary-result",
+            "resolution": "section"
+          }
+        },
+        "text": "Successful result retained"
+      }
+    ],
+    "corpora": [
+      {
+        "corpus_id": "primary",
+        "status": "ok",
+        "completeness": {
+          "completeness": "complete",
+          "indexed_items": 1,
+          "absence_is_conclusive": true
+        }
+      },
+      {
+        "corpus_id": "secondary",
+        "status": "error",
+        "completeness": {
+          "completeness": "unavailable",
+          "indexed_items": 0,
+          "absence_is_conclusive": false
+        },
+        "error": {
+          "error_code": "backend_failure",
+          "retryable": true,
+          "message": "secondary corpus unavailable",
+          "corpus_id": "secondary",
+          "backend": "daemon"
+        }
+      }
+    ]
+  }
+}

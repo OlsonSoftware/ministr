@@ -26,6 +26,7 @@ pub mod github_app;
 pub mod index_job_sink;
 pub mod iso8601;
 pub mod mail;
+pub mod metadata;
 pub mod plan_resolver;
 pub mod query;
 pub mod session;
@@ -65,8 +66,9 @@ pub use session_bundle_store::{
     VerifyAndGetFuture,
 };
 pub use session_storage::{
-    LoadSessionFuture, SaveSessionFuture, SessionMutFuture, SessionSnapshot, SessionStorage,
-    SessionStorageError,
+    LoadSessionFuture, SESSION_STATE_VERSION, SaveSessionFuture, SessionDeliverySnapshot,
+    SessionMetricsSnapshot, SessionMutFuture, SessionSnapshot, SessionStateSnapshot,
+    SessionStorage, SessionStorageError,
 };
 pub use sla_window_store::{MaxP95Future, SlaWindowStore, SlaWindowStoreError};
 pub use tenant::TenantId;
@@ -185,8 +187,37 @@ fn home_dir() -> Option<std::path::PathBuf> {
 pub struct ApiError {
     /// Machine-readable error code.
     pub code: String,
+    /// Stable status-envelope code (mirrors `code` for legacy clients).
+    #[serde(default)]
+    pub error_code: String,
+    #[serde(default = "api_error_status")]
+    pub status: metadata::ResponseStatus,
+    #[serde(default)]
+    pub retryable: bool,
     /// Human-readable error message.
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corpus_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    #[serde(default = "api_error_completeness")]
+    pub completeness: metadata::Completeness,
+}
+
+fn api_error_status() -> metadata::ResponseStatus {
+    metadata::ResponseStatus::Error
+}
+
+fn api_error_completeness() -> metadata::Completeness {
+    metadata::Completeness {
+        completeness: metadata::CompletenessState::Unavailable,
+        indexed_items: 0,
+        estimated_total_items: None,
+        affected_capabilities: Vec::new(),
+        index_generation: None,
+        absence_is_conclusive: false,
+        retry_guidance: None,
+    }
 }
 
 impl std::fmt::Display for ApiError {
@@ -196,3 +227,23 @@ impl std::fmt::Display for ApiError {
 }
 
 impl std::error::Error for ApiError {}
+
+#[cfg(test)]
+mod api_error_compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_api_error_defaults_to_honest_error_status() {
+        let error: ApiError = serde_json::from_value(serde_json::json!({
+            "code": "query_failed",
+            "message": "backend unavailable"
+        }))
+        .unwrap();
+        assert_eq!(error.status, metadata::ResponseStatus::Error);
+        assert!(!error.completeness.absence_is_conclusive);
+        assert_eq!(
+            error.completeness.completeness,
+            metadata::CompletenessState::Unavailable
+        );
+    }
+}

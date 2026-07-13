@@ -34,11 +34,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ministr_api::{DropEntry, DropsLedger, SessionSnapshot, SessionStorage};
+use ministr_api::{
+    DropEntry, DropsLedger, SESSION_STATE_VERSION, SessionDeliverySnapshot, SessionMetricsSnapshot,
+    SessionSnapshot, SessionStateSnapshot, SessionStorage,
+};
 use tracing::warn;
 
-use super::types::{AccessMode, Session, SessionId};
+use super::types::{
+    AccessMode, CompressionTier, DeliveredItem, Session, SessionId, SessionMetrics,
+};
 use super::usage::{UsageConfig, UsageTracker};
+use crate::types::{ContentId, DeliveryIdentity, PRIMARY_CORPUS_ID, Resolution};
 
 /// A single session entry in the registry, bundling session state with its
 /// budget tracker and access mode.
@@ -214,12 +220,9 @@ impl SessionRegistry {
     }
 
     /// Consult the durable backend for a previously-snapshotted
-    /// session, and if found, materialise an in-memory `SessionEntry`
-    /// shell for it. Returns the loaded [`SessionSnapshot`] so the
-    /// caller can apply restoration logic that the registry doesn't
-    /// own (e.g. the MCP server stamps `parent_session_id` /
-    /// `client_name`; a future iteration may seed the budget tracker
-    /// once `UsageTracker` grows a `with_consumed` constructor).
+    /// session, and if found, restore its in-memory delivery shadow and
+    /// budget tracker. Returns the loaded [`SessionSnapshot`] for callers
+    /// that need the durable metadata as well.
     ///
     /// Semantics:
     /// - If `id` already exists in-memory, returns `None` (no-op —
@@ -228,23 +231,12 @@ impl SessionRegistry {
     /// - If storage misses (no snapshot for the `(tenant_id, id)` PK),
     ///   returns `None`. Caller should fall through to its own
     ///   create-fresh path.
-    /// - If storage hits, materialises a fresh `SessionEntry` via the
-    ///   same path as [`Self::create_session`] (no in-memory budget /
-    ///   coherence carry-over yet — see scope note below) and returns
-    ///   `Some(snapshot)`.
+    /// - If storage hits, restores exact delivery identities, compression
+    ///   state, trajectory, metrics, and budget from a v1 snapshot. Legacy
+    ///   rows without state retain the aggregate-budget fallback.
     /// - On storage error, logs at warn level and returns `None`
     ///   (fail-graceful — the caller falls through to fresh creation
     ///   rather than the request hard-failing).
-    ///
-    /// **Scope note:** the returned `SessionSnapshot`
-    /// carries the persisted `budget_used` and `coherence_score`, but
-    /// the freshly-created `SessionEntry` does NOT yet have those
-    /// values seeded — `UsageTracker` doesn't expose a pre-seed
-    /// constructor today. A follow-up iteration adds the constructor
-    /// and stitches the budget through; until then, this method's
-    /// value is "the session shell exists on this pod" rather than
-    /// "full state restored". The audit-feed / activity counters that
-    /// depend on session continuity already work via the shell.
     pub async fn try_restore(
         &mut self,
         id: &str,
@@ -288,36 +280,62 @@ impl SessionRegistry {
             },
             None => Vec::new(),
         };
-        // Materialise a fresh in-memory shell. Same shape as
-        // create_session — the caller-visible side effect is "the
-        // session id now resolves on this pod".
+        // Materialise the entry first so budget/access configuration still
+        // comes from this pod, then replace the empty shadow with v1 state.
         let entry = self.create_session(id, budget_config, access_mode);
-        // Stamp tenant_id from the snapshot so the
-        // restored shell carries the same multi-tenant identity it
-        // had pre-pod-recycle. `GET /api/v1/sessions` filters on this.
-        entry.tenant_id = Some(snapshot.tenant_id.clone());
-        // Seed the budget tracker with the
-        // persisted consumption so the resumed session resumes with
-        // the same pressure level it had pre-restore. The snapshot
-        // stores `budget_used` as i64 (Postgres BIGINT); the tracker
-        // takes usize. Lossy conversion is guarded by `try_from` and
-        // collapsed to 0 on failure rather than silently truncating —
-        // a negative value indicates a corrupted row.
-        //
-        // Overlarge values (`> capacity - 1`) get clamped to
-        // `capacity - 1` so the synthetic prior entry stays in the
-        // window rather than being evicted on insert (which would
-        // silently zero the budget). This trades exact fidelity for
-        // a defensible "tracker is saturated" state on a corrupted row.
-        if snapshot.budget_used > 0 {
-            let tokens = usize::try_from(snapshot.budget_used).unwrap_or(0);
-            let capacity = entry.budget.config().max_context_tokens;
-            let clamped = tokens.min(capacity.saturating_sub(1));
-            if clamped > 0 {
-                let _ = entry.budget.seed_prior_consumption(clamped);
-            }
-        }
+        hydrate_entry(entry, id, &snapshot);
         Some(RestoredSession { snapshot, drops })
+    }
+
+    /// Capture the exact in-memory state for a durable cloud checkpoint.
+    ///
+    /// The payload is deterministic: delivered rows inherit the session's
+    /// `BTreeMap` order and tombstones are sorted by their structured key.
+    #[must_use]
+    pub fn snapshot_state(&self, session_id: &str, revision: u64) -> SessionStateSnapshot {
+        let Some(entry) = self.sessions.get(session_id) else {
+            return SessionStateSnapshot::default();
+        };
+        let delivered = entry
+            .session
+            .delivered_items()
+            .map(|item| SessionDeliverySnapshot {
+                identity: api_identity(&item.identity()),
+                index_resolution: item.resolution.to_string(),
+                token_count: item.token_count,
+                turn_delivered: item.turn_delivered,
+                content_hash: item.content_hash.clone(),
+                compression_tier: item.compression_tier.as_str().to_owned(),
+                compressed_summary: item.compressed_summary.clone(),
+            })
+            .collect::<Vec<_>>();
+        let delivered_keys = delivered
+            .iter()
+            .map(|delivery| core_identity(&delivery.identity).storage_key())
+            .collect::<std::collections::HashSet<_>>();
+        let trajectory = entry
+            .session
+            .trajectory()
+            .iter()
+            .map(api_identity)
+            .collect::<Vec<_>>();
+        let mut dropped_identities = trajectory
+            .iter()
+            .filter(|identity| !delivered_keys.contains(&core_identity(identity).storage_key()))
+            .cloned()
+            .collect::<Vec<_>>();
+        dropped_identities.sort_by_key(|identity| core_identity(identity).storage_key());
+        dropped_identities.dedup();
+
+        SessionStateSnapshot {
+            version: SESSION_STATE_VERSION,
+            revision,
+            delivered,
+            trajectory,
+            dropped_identities,
+            current_turn: entry.session.current_turn(),
+            metrics: api_metrics(entry.session.metrics()),
+        }
     }
 
     /// Fire-and-forget snapshot save. The caller builds the
@@ -443,9 +461,21 @@ impl SessionRegistry {
     /// Calls [`Session::invalidate_sections`] on every session in the registry.
     /// Returns the total number of items invalidated across all sessions.
     pub fn invalidate_all(&mut self, changed_section_ids: &[String]) -> usize {
+        self.invalidate_all_in_corpus(PRIMARY_CORPUS_ID, changed_section_ids)
+    }
+
+    /// Propagate an exact corpus-scoped coherence invalidation to all
+    /// sessions, preserving colliding IDs in other corpora.
+    pub fn invalidate_all_in_corpus(
+        &mut self,
+        corpus_id: &str,
+        changed_section_ids: &[String],
+    ) -> usize {
         let mut total = 0;
         for entry in self.sessions.values_mut() {
-            total += entry.session.invalidate_sections(changed_section_ids);
+            total += entry
+                .session
+                .invalidate_corpus_sections(corpus_id, changed_section_ids);
         }
         total
     }
@@ -460,6 +490,132 @@ impl SessionRegistry {
     #[must_use]
     pub fn default_budget_config(&self) -> &UsageConfig {
         &self.default_budget_config
+    }
+}
+
+fn parse_resolution(value: &str) -> Resolution {
+    match value {
+        "summary" => Resolution::Summary,
+        "claim" => Resolution::Claim,
+        _ => Resolution::Section,
+    }
+}
+
+fn hydrate_entry(entry: &mut SessionEntry, id: &str, snapshot: &SessionSnapshot) {
+    entry.tenant_id = Some(snapshot.tenant_id.clone());
+    if snapshot.state.version > 0 {
+        let dropped = snapshot
+            .state
+            .dropped_identities
+            .iter()
+            .map(core_identity)
+            .map(|identity| identity.storage_key())
+            .collect::<std::collections::HashSet<_>>();
+        let delivered = snapshot
+            .state
+            .delivered
+            .iter()
+            .filter_map(|delivery| {
+                let identity = core_identity(&delivery.identity);
+                (!dropped.contains(&identity.storage_key())).then(|| {
+                    (
+                        identity.storage_key(),
+                        DeliveredItem {
+                            content_id: ContentId(identity.content_id),
+                            resolution: parse_resolution(&delivery.index_resolution),
+                            corpus_id: identity.corpus_id,
+                            delivery_resolution: identity.resolution,
+                            token_count: delivery.token_count,
+                            turn_delivered: delivery.turn_delivered,
+                            content_hash: delivery.content_hash.clone(),
+                            compression_tier: CompressionTier::from_str_or_full(
+                                &delivery.compression_tier,
+                            ),
+                            compressed_summary: delivery.compressed_summary.clone(),
+                        },
+                    )
+                })
+            })
+            .collect();
+        let trajectory = snapshot
+            .state
+            .trajectory
+            .iter()
+            .map(core_identity)
+            .collect::<Vec<_>>();
+        let budget = entry.session.agent_context_budget;
+        let policy = entry.session.eviction_policy();
+        entry.session = Session::restore(
+            SessionId(id.to_owned()),
+            budget,
+            policy,
+            delivered,
+            trajectory,
+            snapshot.state.current_turn,
+        );
+        entry
+            .session
+            .set_metrics(core_metrics(&snapshot.state.metrics));
+        for item in entry.session.delivered_items() {
+            let _ = entry
+                .budget
+                .record_tokens(&item.identity().storage_key(), item.token_count);
+        }
+    } else if snapshot.budget_used > 0 {
+        // Legacy rows only carried one aggregate. Clamp corrupt/oversized
+        // values so the synthetic prior-consumption entry stays resident.
+        let tokens = usize::try_from(snapshot.budget_used).unwrap_or(0);
+        let capacity = entry.budget.config().max_context_tokens;
+        let clamped = tokens.min(capacity.saturating_sub(1));
+        if clamped > 0 {
+            let _ = entry.budget.seed_prior_consumption(clamped);
+        }
+    }
+}
+
+fn api_identity(identity: &DeliveryIdentity) -> ministr_api::metadata::DeliveryIdentity {
+    ministr_api::metadata::DeliveryIdentity {
+        corpus_id: identity.corpus_id.clone(),
+        content_id: identity.content_id.clone(),
+        resolution: identity.resolution.clone(),
+    }
+}
+
+fn core_identity(identity: &ministr_api::metadata::DeliveryIdentity) -> DeliveryIdentity {
+    DeliveryIdentity::new(
+        &identity.corpus_id,
+        &identity.content_id,
+        &identity.resolution,
+    )
+}
+
+fn api_metrics(metrics: &SessionMetrics) -> SessionMetricsSnapshot {
+    SessionMetricsSnapshot {
+        total_deliveries: metrics.total_deliveries,
+        cumulative_tokens_delivered: metrics.cumulative_tokens_delivered,
+        total_evictions: metrics.total_evictions,
+        cumulative_tokens_evicted: metrics.cumulative_tokens_evicted,
+        total_compressions: metrics.total_compressions,
+        cumulative_tokens_compressed: metrics.cumulative_tokens_compressed,
+        delta_updates: metrics.delta_updates,
+        dedup_hits: metrics.dedup_hits,
+        cumulative_tokens_deduplicated: metrics.cumulative_tokens_deduplicated,
+        cumulative_bytes_deduplicated: metrics.cumulative_bytes_deduplicated,
+    }
+}
+
+fn core_metrics(metrics: &SessionMetricsSnapshot) -> SessionMetrics {
+    SessionMetrics {
+        total_deliveries: metrics.total_deliveries,
+        cumulative_tokens_delivered: metrics.cumulative_tokens_delivered,
+        total_evictions: metrics.total_evictions,
+        cumulative_tokens_evicted: metrics.cumulative_tokens_evicted,
+        total_compressions: metrics.total_compressions,
+        cumulative_tokens_compressed: metrics.cumulative_tokens_compressed,
+        delta_updates: metrics.delta_updates,
+        dedup_hits: metrics.dedup_hits,
+        cumulative_tokens_deduplicated: metrics.cumulative_tokens_deduplicated,
+        cumulative_bytes_deduplicated: metrics.cumulative_bytes_deduplicated,
     }
 }
 
@@ -480,7 +636,7 @@ fn iso8601_now() -> String {
 mod tests {
     use super::*;
     use crate::session::UsageLevel;
-    use crate::types::{ContentId, Resolution};
+    use crate::types::{ContentId, DeliveryIdentity, Resolution};
 
     fn default_registry() -> SessionRegistry {
         SessionRegistry::new(UsageConfig::default())
@@ -553,6 +709,7 @@ mod tests {
             last_seen_at: "2026-05-21T00:00:00Z".into(),
             budget_used: 42,
             coherence_score: 0.91,
+            state: SessionStateSnapshot::default(),
         }
     }
 
@@ -781,6 +938,7 @@ mod tests {
             last_seen_at: "2026-05-21T01:00:00Z".into(),
             budget_used: 1234,
             coherence_score: 0.81,
+            state: SessionStateSnapshot::default(),
         };
         registry.persist_snapshot(snap.clone());
         for _ in 0..50 {
@@ -823,6 +981,84 @@ mod tests {
         let saves = stub.saves.lock().unwrap();
         assert_eq!(saves.len(), 1, "expected exactly one save call");
         assert_eq!(saves[0], snap, "round-trip captured the snapshot fields");
+    }
+
+    #[tokio::test]
+    async fn restore_keeps_exact_dedup_compression_and_drop_reeligibility() {
+        let stub = Arc::new(StubStorage::default());
+        let mut pod1 =
+            default_registry().with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
+        let entry = pod1.create_session("agent-1", None, AccessMode::ReadWrite);
+        let kept = DeliveryIdentity::new("corpus-left", "same-id", "section_excerpt");
+        let dropped = DeliveryIdentity::new("corpus-right", "same-id", "section_excerpt");
+        entry.session.record_delivery_identity(
+            &kept,
+            Resolution::Section,
+            40,
+            1,
+            "left-hash".into(),
+        );
+        entry.session.record_delivery_identity(
+            &dropped,
+            Resolution::Section,
+            50,
+            2,
+            "right-hash".into(),
+        );
+        entry.session.set_identity_compressed_summary(
+            &kept,
+            "compact left summary".into(),
+            CompressionTier::Extractive,
+            12,
+        );
+        assert!(entry.session.remove_delivered_identity(&dropped).is_some());
+
+        let state = pod1.snapshot_state("agent-1", 7);
+        assert_eq!(state.delivered.len(), 1);
+        assert_eq!(state.delivered[0].identity.corpus_id, "corpus-left");
+        assert_eq!(state.dropped_identities.len(), 1);
+        assert_eq!(state.dropped_identities[0].corpus_id, "corpus-right");
+        let snap = SessionSnapshot {
+            session_id: "agent-1".into(),
+            tenant_id: "tenant-uuid".into(),
+            corpus_id: None,
+            opened_at: "2026-05-21T00:00:00Z".into(),
+            last_seen_at: "2026-05-21T01:00:00Z".into(),
+            budget_used: 12,
+            coherence_score: 0.81,
+            state,
+        };
+        stub.saves.lock().unwrap().push(snap);
+
+        let mut pod2 =
+            default_registry().with_storage(Arc::clone(&stub) as Arc<dyn SessionStorage>);
+        pod2.try_restore("agent-1", "tenant-uuid", None, AccessMode::ReadWrite)
+            .await
+            .expect("snapshot restores");
+        let restored = pod2.get_session_mut("agent-1").expect("restored entry");
+        let kept_item = restored
+            .session
+            .get_delivered_identity(&kept)
+            .expect("same-corpus repeated delivery remains suppressed");
+        assert_eq!(kept_item.compression_tier, CompressionTier::Extractive);
+        assert_eq!(
+            kept_item.compressed_summary.as_deref(),
+            Some("compact left summary")
+        );
+        assert!(!restored.session.is_identity_delivered(&dropped));
+        assert_eq!(restored.budget.usage_status().tokens_used, 12);
+
+        // A dropped identity is eligible for a later overlapping result, and
+        // the colliding ID in the other corpus remains independently tracked.
+        restored.session.record_delivery_identity(
+            &dropped,
+            Resolution::Section,
+            50,
+            3,
+            "right-hash".into(),
+        );
+        assert!(restored.session.is_identity_delivered(&kept));
+        assert!(restored.session.is_identity_delivered(&dropped));
     }
 
     // ── drops ledger plumbing + restore hook ─────────────────────────
@@ -1232,6 +1468,40 @@ mod tests {
                 .session
                 .is_stale(&ContentId::from("s1".to_string()))
         );
+    }
+
+    #[test]
+    fn corpus_scoped_invalidation_preserves_colliding_delivery() {
+        let mut registry = small_registry();
+        let entry = registry.create_session("agent-1", None, AccessMode::ReadWrite);
+        let primary = DeliveryIdentity::new(PRIMARY_CORPUS_ID, "shared", "section_full");
+        let linked = DeliveryIdentity::new("linked", "shared", "section_full");
+        entry.session.record_delivery_identity(
+            &primary,
+            Resolution::Section,
+            10,
+            1,
+            "primary".into(),
+        );
+        entry.session.record_delivery_identity(
+            &linked,
+            Resolution::Section,
+            10,
+            2,
+            "linked".into(),
+        );
+
+        assert_eq!(
+            registry.invalidate_all_in_corpus("linked", &["shared".to_string()]),
+            1
+        );
+        let stale = registry
+            .get_session("agent-1")
+            .unwrap()
+            .session
+            .stale_identities();
+        assert_eq!(stale, vec![linked]);
+        assert!(!stale.contains(&primary));
     }
 
     #[test]

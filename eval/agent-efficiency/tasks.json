@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "gate": {
+    "min_completed_per_1000_tokens": 1.3,
+    "max_repeated_content_rate": 0.0,
+    "max_incorrect_absence_claims": 0,
+    "max_irrelevant_results_opened": 25,
+    "max_modeled_latency_ms": 500,
+    "min_inspect_call_savings": 0.7,
+    "min_inspect_token_savings": 0.25
+  },
+  "tasks": [
+    {
+      "id": "locate-vague-implementation",
+      "mode": "live_mcp",
+      "required": ["sym-routing::dispatch_request"],
+      "max_calls": 2
+    },
+    {
+      "id": "find-exact-identifier",
+      "mode": "live_mcp",
+      "required": ["sym-routing::dispatch_request"],
+      "max_calls": 1
+    },
+    {
+      "id": "find-all-callers",
+      "mode": "live_mcp",
+      "required": ["sym-routing::route_loop", "sym-tests::dispatches_ping"],
+      "max_calls": 1
+    },
+    {
+      "id": "find-relevant-tests",
+      "mode": "live_mcp",
+      "required": ["sym-tests::dispatches_ping"],
+      "max_calls": 1
+    },
+    {
+      "id": "trace-cross-language-boundaries",
+      "mode": "live_mcp",
+      "required": [
+        "src/router.rs",
+        "web/client.ts",
+        "src/tauri.rs",
+        "web/tauri.ts",
+        "src/python.rs",
+        "python/client.py",
+        "src/napi.rs",
+        "node/client.js"
+      ],
+      "max_calls": 1
+    },
+    {
+      "id": "mixed-code-and-documentation",
+      "mode": "live_mcp",
+      "required": ["sym-routing::dispatch_request", "docs/routing.md#dispatch-contract"],
+      "max_calls": 1
+    },
+    {
+      "id": "overlapping-query-no-redelivery",
+      "mode": "live_mcp",
+      "required": ["deduplicated_count"],
+      "max_calls": 2
+    },
+    {
+      "id": "colliding-content-ids",
+      "mode": "protocol_trace",
+      "required": [
+        "primary|docs/routing.md#dispatch-contract|section",
+        "secondary|docs/routing.md#dispatch-contract|section"
+      ],
+      "max_calls": 1
+    },
+    {
+      "id": "active-indexing-is-not-conclusive",
+      "mode": "protocol_trace",
+      "required": ["partial", "absence_is_conclusive:false"],
+      "max_calls": 1
+    },
+    {
+      "id": "partial-backend-failure",
+      "mode": "protocol_trace",
+      "required": ["partial", "backend_failure", "primary-result"],
+      "max_calls": 1
+    },
+    {
+      "id": "inspect-versus-granular",
+      "mode": "live_mcp",
+      "required": [
+        "sym-routing::dispatch_request",
+        "sym-routing::route_loop",
+        "sym-tests::dispatches_ping",
+        "sym-routing::parse_envelope",
+        "sym-routing::deliver_reply",
+        "web/client.ts"
+      ],
+      "max_calls": 1
+    }
+  ]
+}

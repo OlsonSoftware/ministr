@@ -160,6 +160,8 @@ mod tests {
         DeliveredItem {
             content_id: ContentId(content_id.to_owned()),
             resolution: Resolution::Section,
+            corpus_id: "primary".into(),
+            delivery_resolution: "section".into(),
             token_count: 10,
             turn_delivered: turn,
             content_hash: "h".to_owned(),

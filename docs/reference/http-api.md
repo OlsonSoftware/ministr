@@ -19,6 +19,7 @@ for programmatic and UI access.
 | `/api/v1/corpora/{id}/symbols` | POST |
 | `/api/v1/corpora/{id}/definition/{sym}` | GET |
 | `/api/v1/corpora/{id}/references/{sym}` | GET |
+| `/api/v1/corpora/{id}/inspect` | POST |
 | `/api/v1/corpora/{id}/impact/{sym}` | GET |
 | `/api/v1/corpora/{id}/diff-impact` | GET |
 | `/api/v1/corpora/{id}/dead` | POST |
@@ -45,6 +46,24 @@ for programmatic and UI access.
 | `/api/v1/corpora/{id}/sessions/{sid}/usage` | GET |
 | `/api/v1/corpora/{id}/sessions/{sid}/read/{section}` | GET |
 | `/api/v1/sessions` | GET |
+
+Tool-shaped responses distinguish operation `status` (`ok`, `partial`, or
+`error`) from index `completeness` (`complete`, `partial`, `stale`, or
+`unavailable`). Collection responses include deterministic pagination totals
+and continuation state. Cross-corpus responses retain successful data and
+identify any failed corpus with a stable error code and retryability.
+
+`inspect` accepts either a symbol ID or file position and returns bounded
+groups for definition, callers, callees, implementations, imports/type uses,
+tests, bridges, impact, and suggested next actions. Group totals and omitted
+counts make truncation explicit.
+
+Definition requests accept line/context/body/outline bounds plus `start_byte`
+for Unicode-safe continuation of very large one-line generated sources. A
+bounded definition reports original and returned ranges, omitted lines, a
+continuation locator, and `source_error` when indexed metadata is available
+but the source file cannot be read; that case is partial data rather than an
+empty success.
 
 ## Write routes
 

@@ -872,6 +872,12 @@ pub trait Storage: Send + Sync {
         id: &SymbolId,
     ) -> impl Future<Output = Result<Option<SymbolRecord>, StorageError>> + Send;
 
+    /// Fetch a batch of symbols by ID without per-edge storage round trips.
+    fn get_symbols(
+        &self,
+        ids: &[SymbolId],
+    ) -> impl Future<Output = Result<Vec<SymbolRecord>, StorageError>> + Send;
+
     /// Delete all symbols belonging to a given file path.
     ///
     /// Used during re-indexing to clean up stale symbols.

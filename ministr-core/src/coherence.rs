@@ -544,7 +544,10 @@ pub fn spawn_coherence_task<S: Storage + 'static>(
             match engine.process_events(&events, storage.as_ref()).await {
                 Ok(affected_sections) if !affected_sections.is_empty() => {
                     let mut reg = registry.lock().await;
-                    let invalidated = reg.invalidate_all(&affected_sections);
+                    let invalidated = reg.invalidate_all_in_corpus(
+                        crate::types::PRIMARY_CORPUS_ID,
+                        &affected_sections,
+                    );
                     info!(
                         affected = affected_sections.len(),
                         invalidated,
