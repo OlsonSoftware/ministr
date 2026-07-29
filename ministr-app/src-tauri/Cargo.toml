@@ -50,7 +50,7 @@ getrandom = "0.3"
 # `<data-dir>/cloud.json` and into the OS-native credential store
 # (Keychain on macOS, secret-service on Linux, Credential Manager on
 # Windows). Default features select the right native backend per target.
-keyring = "3"
+keyring = "4"
 
 # Serialization
 serde = { workspace = true }
