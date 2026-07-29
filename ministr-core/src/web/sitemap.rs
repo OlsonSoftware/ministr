@@ -172,12 +172,12 @@ pub fn parse_urlset(xml: &str) -> Result<Vec<SitemapEntry>, WebError> {
             }
             Ok(Event::Text(e)) => {
                 if in_loc {
-                    let text = e.unescape().map_err(|err| WebError::SitemapParse {
+                    let text = e.xml10_content().map_err(|err| WebError::SitemapParse {
                         reason: format!("XML text decode error: {err}"),
                     })?;
                     current_loc.push_str(&text);
                 } else if in_lastmod {
-                    let text = e.unescape().map_err(|err| WebError::SitemapParse {
+                    let text = e.xml10_content().map_err(|err| WebError::SitemapParse {
                         reason: format!("XML text decode error: {err}"),
                     })?;
                     current_lastmod = Some(text.trim().to_owned());
@@ -253,12 +253,12 @@ pub fn parse_sitemap_index(xml: &str) -> Result<Vec<SitemapEntry>, WebError> {
             }
             Ok(Event::Text(e)) => {
                 if in_loc {
-                    let text = e.unescape().map_err(|err| WebError::SitemapParse {
+                    let text = e.xml10_content().map_err(|err| WebError::SitemapParse {
                         reason: format!("XML text decode error: {err}"),
                     })?;
                     current_loc.push_str(&text);
                 } else if in_lastmod {
-                    let text = e.unescape().map_err(|err| WebError::SitemapParse {
+                    let text = e.xml10_content().map_err(|err| WebError::SitemapParse {
                         reason: format!("XML text decode error: {err}"),
                     })?;
                     current_lastmod = Some(text.trim().to_owned());

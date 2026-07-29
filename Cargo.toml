@@ -76,7 +76,7 @@ aws-config = { version = "1", default-features = false, features = ["behavior-ve
 scraper = "0.26"
 
 # PDF text extraction
-pdf-extract = "0.10"
+pdf-extract = "0.12"
 
 # Token counting
 tiktoken-rs = "0.6"
@@ -87,9 +87,9 @@ fastembed = "5"
 ort = { version = "=2.0.0-rc.11", default-features = false, features = ["coreml"] }
 
 # Candle — native Rust ML framework with Metal GPU acceleration
-candle-core = { version = "0.10", features = ["metal", "accelerate"] }
-candle-nn = "0.10"
-candle-transformers = "0.10"
+candle-core = { version = "0.11", features = ["metal", "accelerate"] }
+candle-nn = "0.11"
+candle-transformers = "0.11"
 hf-hub = "0.5"
 tokenizers = "0.22"
 
@@ -97,7 +97,7 @@ tokenizers = "0.22"
 hnsw_rs = "0.3"
 
 # XML parsing
-quick-xml = "0.37"
+quick-xml = "0.41"
 
 # Hashing
 sha2 = "0.10"
@@ -197,7 +197,7 @@ tree-sitter-css = "0.25"
 tree-sitter-graphql = "0.1"
 tree-sitter-groovy = "0.1"
 tree-sitter-nix = "0.3"
-tree-sitter-erlang = "0.17"
+tree-sitter-erlang = "0.19"
 tree-sitter-powershell = "0.26"
 tree-sitter-solidity = "1"
 tree-sitter-objc = "3"

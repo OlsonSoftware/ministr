@@ -71,6 +71,10 @@ impl AbstractiveCompressor for SamplingCompressor {
         .with_system_prompt(COMPRESS_SYSTEM_PROMPT)
         .with_temperature(0.0);
 
+        // MCP sampling is deprecated upstream by SEP-2577 (rmcp 1.8.0) and
+        // will be removed from the protocol; ministr_compress keeps using it
+        // until the SEP-2577 replacement shape ships in rmcp.
+        #[allow(deprecated)]
         let result = self
             .peer
             .create_message(params)

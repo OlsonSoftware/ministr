@@ -220,6 +220,26 @@ fn api_error_completeness() -> metadata::Completeness {
     }
 }
 
+impl ApiError {
+    /// Build an error with the honest envelope defaults: `error_code`
+    /// mirrors `code`, `status` is `Error`, not retryable, no corpus or
+    /// backend attribution, and an `Unavailable` completeness block —
+    /// the same shape legacy `{code, message}` payloads deserialise to.
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        let code = code.into();
+        Self {
+            error_code: code.clone(),
+            code,
+            status: api_error_status(),
+            retryable: false,
+            message: message.into(),
+            corpus_id: None,
+            backend: None,
+            completeness: api_error_completeness(),
+        }
+    }
+}
+
 impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}: {}", self.code, self.message)
