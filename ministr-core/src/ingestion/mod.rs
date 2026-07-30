@@ -47,7 +47,8 @@ pub use discovery::{
     is_unreal_corpus,
 };
 pub use roots::{
-    compute_content_hash, compute_root_id, namespace_path, strip_root_prefix, symbol_key_candidates,
+    compute_content_hash, compute_root_id, namespace_path, relative_storage_key, strip_root_prefix,
+    symbol_key_candidates,
 };
 pub use sections::coalesce_small_sections;
 

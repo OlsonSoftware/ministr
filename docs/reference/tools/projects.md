@@ -2,7 +2,7 @@
 
 <!-- @generated tool-docs start — do not edit this block; regenerate: cargo run -p ministr-mcp --example gen_tool_docs -->
 
-> List the current project plus any linked projects you can query in this session. Pass a returned `label` as the `project` argument to other tools; omit `project` for the current one. Linked projects come from `.ministr.toml` `[[linked]]` entries (or `ministr_clone` results).
+> List every project route you can query in this session: the current project plus any linked ones. Pass a returned `label` as the `project` argument to other tools, or omit `project` for the current one. Linked projects come from `.ministr.toml` `[[linked]]` entries (or `ministr_clone` results).
 
 ## Parameters
 

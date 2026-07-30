@@ -520,14 +520,19 @@ async fn cross_corpus_survey(
             }
             Err(e) => {
                 warn!(corpus_id = %corpus_id, error = %e, "cross-corpus survey: per-corpus error");
+                // A bad route is not retryable: retrying the same label
+                // fails identically forever. Only transport/index failures
+                // are worth another attempt.
                 let retryable = !matches!(
                     e,
                     crate::backend::BackendError::PermissionDenied(_)
                         | crate::backend::BackendError::InvalidParameters(_)
+                        | crate::backend::BackendError::UnknownProject { .. }
                 );
                 let error_code = match &e {
                     crate::backend::BackendError::PermissionDenied(_) => "permission_denied",
-                    crate::backend::BackendError::UnknownProject(_) => "unavailable_corpus",
+                    crate::backend::BackendError::UnknownProject { .. } => "unknown_project",
+                    crate::backend::BackendError::CorpusUnavailable(_) => "unavailable_corpus",
                     crate::backend::BackendError::Client(_) => "backend_failure",
                     crate::backend::BackendError::Query(_) => "query_failure",
                     crate::backend::BackendError::InvalidParameters(_) => "invalid_parameters",
@@ -4546,12 +4551,17 @@ impl MinistrServer {
     ///
     /// Agents call this to discover what labels they can pass as the
     /// `project: "<label>"` argument to other tools. Returns at minimum
-    /// the primary corpus (label = `null`, `is_current = true`); any
-    /// `[[linked]]` entries from the parent `.ministr.toml` that were
-    /// successfully resolved at startup appear alongside it.
+    /// the primary corpus (`is_current = true`, labelled with the current
+    /// project's own name when it could be resolved); any `[[linked]]`
+    /// entries from the parent `.ministr.toml` that were successfully
+    /// resolved at startup appear alongside it.
+    ///
+    /// The current project's label is reported — and accepted as a route —
+    /// so naming the repo you are sitting in is never mistaken for an
+    /// unavailable corpus.
     #[tool(
         name = "ministr_projects",
-        description = "List the current project plus any linked projects you can query in this session. Pass a returned `label` as the `project` argument to other tools; omit `project` for the current one. Linked projects come from `.ministr.toml` `[[linked]]` entries (or `ministr_clone` results).",
+        description = "List every project route you can query in this session: the current project plus any linked ones. Pass a returned `label` as the `project` argument to other tools, or omit `project` for the current one. Linked projects come from `.ministr.toml` `[[linked]]` entries (or `ministr_clone` results).",
         output_schema = tool_output_schema::<ToolResponse<ProjectsResponse>>(),
         annotations(read_only_hint = true, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
@@ -4564,7 +4574,7 @@ impl MinistrServer {
             let labels = self.backend.linked_labels();
             let mut projects: Vec<ProjectEntry> = Vec::with_capacity(labels.len() + 1);
             projects.push(ProjectEntry {
-                label: None,
+                label: self.backend.primary_label().map(ToString::to_string),
                 is_current: true,
             });
             for label in labels {
@@ -4584,14 +4594,24 @@ impl MinistrServer {
             };
             projects = projects.into_iter().skip(offset).take(limit).collect();
             let pagination = page_metadata(limit, offset, projects.len(), total);
+            // Name the current project in the hint too: an agent that knows
+            // the route exists stops inventing labels (and stops reading the
+            // resulting miss as a corpus it needs to refresh).
+            let current = self
+                .backend
+                .primary_label()
+                .map_or_else(|| "the current project".to_string(), |l| format!("'{l}'"));
             let hint = if projects.len() == 1 {
-                "No linked projects. Use `ministr_clone` to clone a repo as a new linked \
-                 project, or add a `[[linked]]` entry to .ministr.toml."
-                    .to_string()
+                format!(
+                    "Only {current} is queryable here — omit `project` (or pass that label) to \
+                     query it. No linked projects: use `ministr_clone` to clone a repo as a new \
+                     linked project, or add a `[[linked]]` entry to .ministr.toml."
+                )
             } else {
-                "Pass `project: \"<label>\"` to any query tool to target a linked project; \
-                 omit `project` for the current one."
-                    .to_string()
+                format!(
+                    "Pass `project: \"<label>\"` to any query tool to target a linked project; \
+                     omit `project` (or pass {current}) for the current one."
+                )
             };
 
             let mut reg = self.registry.lock().await;
@@ -5104,7 +5124,7 @@ mod tests {
         assert!(corpora.iter().any(|status| {
             status["corpus_id"] == "missing"
                 && status["status"] == "error"
-                && status["error"]["error_code"] == "unavailable_corpus"
+                && status["error"]["error_code"] == "unknown_project"
         }));
         assert!(
             !structured["completeness"]["absence_is_conclusive"]
@@ -6818,6 +6838,103 @@ mod tests {
         assert_eq!(parsed["result"]["pagination"]["omitted_count"], 10);
         assert_eq!(parsed["result"]["pagination"]["has_more"], true);
         assert!(parsed["result"]["summaries"].as_array().unwrap().is_empty());
+    }
+
+    /// End-to-end guard for the misroute that looked like corpus staleness:
+    /// `ministr_read`/`ministr_definition` carrying `project: "<this repo>"`
+    /// returned `unavailable_corpus` while the same call without `project`
+    /// worked, so agents refreshed the corpus and retried forever.
+    #[tokio::test]
+    async fn reading_with_the_current_projects_own_label_is_not_an_unavailable_corpus() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("kadodi");
+        std::fs::create_dir(&root).unwrap();
+
+        // A fresh server (and therefore a fresh session) per read: reading
+        // the same section twice in one session is a *delta* delivery, which
+        // would confound "did the route resolve?" with "was it deduped?".
+        let read_with = |project: Option<String>| {
+            let root = root.clone();
+            async move {
+                let mut server = setup_server().await;
+                server.prune_tools(&[root]);
+                let result = server
+                    .read(Parameters(ReadParams {
+                        section_id: "docs/auth.md#tokens".to_string(),
+                        project,
+                        source_corpus: None,
+                    }))
+                    .await
+                    .unwrap();
+                // Soft errors put prose in `content` and the machine payload
+                // in `structured_content` — read the latter.
+                result
+                    .structured_content
+                    .expect("read returns structured content")
+            }
+        };
+
+        // Baseline: the route-less call succeeds.
+        let bare = read_with(None).await;
+        assert_eq!(bare["status"], "ok", "route-less read: {bare}");
+
+        // The repo's own name must resolve to that same corpus — same
+        // section, not an "unavailable corpus".
+        let named = read_with(Some("kadodi".to_string())).await;
+        assert_eq!(named["status"], "ok", "read routed by own label: {named}");
+        assert_eq!(
+            named["result"]["section_id"], bare["result"]["section_id"],
+            "own-label route resolves to the same corpus"
+        );
+
+        // A label naming some *other* project must still fail — and say so
+        // as a routing mistake, naming the routes that exist, with nothing
+        // suggesting a refresh would help.
+        let foreign = read_with(Some("ministr-private".to_string())).await;
+        assert_eq!(foreign["error_kind"], "unknown_project");
+        assert_eq!(
+            foreign["error"]["retryable"], false,
+            "a bad route is not worth retrying: {foreign}"
+        );
+        let guidance = foreign["completeness"]["retry_guidance"].as_str().unwrap();
+        assert!(
+            guidance.contains("Fix the `project` argument"),
+            "guidance points at the route, not a refresh: {guidance}"
+        );
+        let message = foreign["message"].as_str().unwrap();
+        assert!(
+            message.contains("Valid routes: kadodi"),
+            "message names the valid routes: {message}"
+        );
+        assert!(
+            message.contains("not a stale or missing corpus"),
+            "message rules out staleness: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn projects_reports_the_current_projects_label() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("kadodi");
+        std::fs::create_dir(&root).unwrap();
+
+        let mut server = setup_server().await;
+        server.prune_tools(&[root]);
+
+        let result = server
+            .projects(Parameters(ProjectsParams {
+                offset: None,
+                cursor: None,
+                limit: None,
+            }))
+            .await
+            .unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(extract_text(&result.content)).unwrap();
+        assert_eq!(parsed["result"]["projects"][0]["is_current"], true);
+        assert_eq!(parsed["result"]["projects"][0]["label"], "kadodi");
+        let hint = parsed["result"]["hint"].as_str().unwrap();
+        assert!(hint.contains("'kadodi'"), "hint names the project: {hint}");
     }
 
     #[tokio::test]

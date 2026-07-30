@@ -181,7 +181,7 @@ pub(super) fn find_root_for_file<'a>(
 /// `roots` are the corpus's *directory* sources paired with their
 /// [`compute_root_id`]; `source_count` is the FULL registered path count
 /// (directories AND files), matching `compute_freshness`'s `multi_root` test.
-pub(super) fn relative_storage_key(
+pub fn relative_storage_key(
     file: &Path,
     roots: &[(PathBuf, String)],
     source_count: usize,

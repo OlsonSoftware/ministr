@@ -64,8 +64,22 @@ pub enum BackendError {
     #[error(transparent)]
     Client(Box<ClientError>),
     /// The requested linked project/corpus is not configured on this backend.
-    #[error("unknown project or corpus: {0}")]
-    UnknownProject(String),
+    ///
+    /// `available` carries every route this backend would have accepted
+    /// (the current project's own label first, then linked labels) so the
+    /// agent-facing message can name them instead of sending the caller
+    /// off to guess — or to misread the miss as corpus staleness.
+    #[error("unknown project or corpus: {requested}")]
+    UnknownProject {
+        requested: String,
+        available: Vec<String>,
+    },
+    /// A corpus that *is* a valid route could not be made available (cloud
+    /// lazy-restore failure). Unlike [`Self::UnknownProject`] this is
+    /// transient — the route is right, the corpus isn't ready — so it stays
+    /// retryable.
+    #[error("corpus unavailable: {0}")]
+    CorpusUnavailable(String),
     /// Tenant policy rejected the requested corpus.
     #[error("permission denied for corpus: {0}")]
     PermissionDenied(String),
@@ -530,6 +544,45 @@ pub trait QueryBackend: Send + Sync {
 // Backend — concrete enum dispatch.
 // ---------------------------------------------------------------------------
 
+/// Set-once holder for the current project's human label — the name of its
+/// root directory (`kadodi` for `~/Code/kadodi`), which is exactly the
+/// label a *sibling* project would get by linking it.
+///
+/// Without this, the only routes a session accepts are linked labels and
+/// opaque corpus-id hashes, so `project: "kadodi"` inside kadodi — the
+/// most natural thing an agent can pass — fails as an unknown corpus even
+/// though that corpus is the one being served. Populated once at boot from
+/// the corpus paths (see `MinistrServer::prune_tools`); a session whose
+/// label cannot be resolved keeps the old strict behaviour.
+#[derive(Debug, Default)]
+pub struct PrimaryLabel(std::sync::OnceLock<String>);
+
+impl PrimaryLabel {
+    /// Record the label. Later calls are ignored — the first boot-time
+    /// value wins, so a route can never be redefined mid-session.
+    pub fn set(&self, label: impl Into<String>) {
+        let label = label.into();
+        if !label.trim().is_empty() {
+            let _ = self.0.set(label.trim().to_string());
+        }
+    }
+
+    #[must_use]
+    pub fn get(&self) -> Option<&str> {
+        self.0.get().map(String::as_str)
+    }
+
+    /// Whether `candidate` names the current project. Case-insensitive:
+    /// directory casing is not something an agent can be expected to
+    /// reproduce, and there is nothing else in a single-corpus session for
+    /// a case variant to collide with.
+    #[must_use]
+    pub fn matches(&self, candidate: &str) -> bool {
+        self.get()
+            .is_some_and(|label| label.eq_ignore_ascii_case(candidate.trim()))
+    }
+}
+
 /// Concrete dispatching wrapper holding one of the backend impls.
 ///
 /// `MinistrServer` holds this directly rather than `Arc<dyn QueryBackend>`
@@ -585,6 +638,69 @@ impl Backend {
             Self::Registry { .. } => Ok(project
                 .unwrap_or(ministr_core::types::PRIMARY_CORPUS_ID)
                 .to_string()),
+        }
+    }
+
+    /// Record the current project's label so a `project` argument naming
+    /// the session's own project resolves to it.
+    ///
+    /// Called once at boot with the corpus paths' root directory name. A
+    /// no-op for the cloud `Registry` variant, where routes are corpus ids
+    /// resolved per call against the shared registry.
+    pub fn set_primary_label(&self, label: &str) {
+        match self {
+            Self::Local(b) => b.primary_label().set(label),
+            Self::Daemon(b) => b.primary_label().set(label),
+            Self::DaemonMulti(m) => m.primary_label().set(label),
+            Self::Registry { .. } => {}
+        }
+    }
+
+    /// The current project's label, when it was resolved at boot.
+    #[must_use]
+    pub fn primary_label(&self) -> Option<&str> {
+        match self {
+            Self::Local(b) => b.primary_label().get(),
+            Self::Daemon(b) => b.primary_label().get(),
+            Self::DaemonMulti(m) => m.primary_label().get(),
+            Self::Registry { .. } => None,
+        }
+    }
+
+    /// Whether `project` names the corpus this session is primarily
+    /// serving — by label, by corpus id, or by the primary sentinel.
+    #[must_use]
+    fn route_is_primary(&self, project: &str) -> bool {
+        let project = project.trim();
+        match self {
+            Self::Local(b) => {
+                b.primary_label().matches(project)
+                    || project == ministr_core::types::PRIMARY_CORPUS_ID
+            }
+            Self::Daemon(b) => b.primary_label().matches(project) || b.corpus_id() == project,
+            Self::DaemonMulti(m) => m.route_is_primary(project),
+            Self::Registry { .. } => false,
+        }
+    }
+
+    /// Every route this backend accepts: the current project's label (when
+    /// known) followed by linked labels. Feeds the unknown-route message.
+    #[must_use]
+    pub fn available_routes(&self) -> Vec<String> {
+        let mut routes: Vec<String> = self
+            .primary_label()
+            .map(|label| vec![label.to_string()])
+            .unwrap_or_default();
+        routes.extend(self.linked_labels());
+        routes
+    }
+
+    /// Build the unknown-route error with this backend's accepted routes
+    /// attached, so the caller never has to guess what would have worked.
+    fn unknown_project(&self, requested: &str) -> BackendError {
+        BackendError::UnknownProject {
+            requested: requested.to_string(),
+            available: self.available_routes(),
         }
     }
 
@@ -1259,16 +1375,23 @@ impl Backend {
 /// across the entire surface.
 #[allow(clippy::missing_errors_doc, clippy::too_many_arguments)]
 impl Backend {
+    /// Gate a `project` route before dispatch.
+    ///
+    /// Single-corpus backends accept only a route that names the corpus
+    /// they serve — its label, its corpus id, or the primary sentinel.
+    /// Anything else is rejected rather than silently answered from the
+    /// primary, because an agent that believes it queried another repo and
+    /// gets this one back is worse off than one that gets an error naming
+    /// the routes that exist. Multi-corpus and registry variants resolve
+    /// the label per call ([`DaemonMultiBackend::for_project`] /
+    /// [`Self::resolve_registry_handle`]).
     fn validate_project_route(&self, project: Option<&str>) -> Result<(), BackendError> {
         let Some(project) = project else {
             return Ok(());
         };
         match self {
-            Self::Local(_) if project != ministr_core::types::PRIMARY_CORPUS_ID => {
-                Err(BackendError::UnknownProject(project.to_string()))
-            }
-            Self::Daemon(backend) if project != backend.corpus_id() => {
-                Err(BackendError::UnknownProject(project.to_string()))
+            Self::Local(_) | Self::Daemon(_) if !self.route_is_primary(project) => {
+                Err(self.unknown_project(project))
             }
             Self::Local(_) | Self::Daemon(_) | Self::DaemonMulti(_) | Self::Registry { .. } => {
                 Ok(())
@@ -1308,7 +1431,7 @@ impl Backend {
             .ensure_present(corpus_id)
             .await
             .map(|_| ())
-            .map_err(|_| BackendError::UnknownProject(corpus_id.to_string()))
+            .map_err(|_| BackendError::CorpusUnavailable(corpus_id.to_string()))
     }
 
     pub async fn survey(
@@ -2221,6 +2344,88 @@ mod tests {
     //!   back to `default_service` when that returns `None` or `Err`.
 
     use super::*;
+
+    fn daemon_backend(corpus_id: &str) -> Backend {
+        Backend::daemon(
+            Arc::new(ministr_api::client::DaemonClient::new()),
+            corpus_id.to_string(),
+            None,
+        )
+    }
+
+    /// The kadodi bug: a single-corpus session rejected `project: "<its own
+    /// repo>"` as an unavailable corpus, while every call that omitted
+    /// `project` worked — so the miss read as staleness, not a misroute.
+    #[test]
+    fn single_corpus_backend_accepts_its_own_project_label() {
+        let backend = daemon_backend("multi-d6edc116");
+
+        assert!(matches!(
+            backend.validate_project_route(Some("kadodi")),
+            Err(BackendError::UnknownProject { .. })
+        ));
+
+        backend.set_primary_label("kadodi");
+
+        assert!(backend.validate_project_route(Some("kadodi")).is_ok());
+        assert!(backend.validate_project_route(Some("KADODI")).is_ok());
+        // The corpus id and "no route at all" keep working.
+        assert!(
+            backend
+                .validate_project_route(Some("multi-d6edc116"))
+                .is_ok()
+        );
+        assert!(backend.validate_project_route(None).is_ok());
+    }
+
+    #[test]
+    fn single_corpus_backend_still_rejects_another_projects_label() {
+        let backend = daemon_backend("multi-d6edc116");
+        backend.set_primary_label("kadodi");
+
+        // Answering this from kadodi's corpus would silently hand the agent
+        // the wrong repo's code — worse than an error.
+        let Err(BackendError::UnknownProject {
+            requested,
+            available,
+        }) = backend.validate_project_route(Some("ministr-private"))
+        else {
+            panic!("expected an unknown-route error");
+        };
+        assert_eq!(requested, "ministr-private");
+        assert_eq!(available, ["kadodi"]);
+    }
+
+    #[test]
+    fn routed_corpus_id_resolves_the_primary_label() {
+        let backend = daemon_backend("multi-d6edc116");
+        backend.set_primary_label("kadodi");
+        assert_eq!(
+            backend.routed_corpus_id(Some("kadodi")).unwrap(),
+            "multi-d6edc116"
+        );
+    }
+
+    #[test]
+    fn primary_label_is_set_once() {
+        let backend = daemon_backend("corpus-1");
+        backend.set_primary_label("kadodi");
+        backend.set_primary_label("something-else");
+        assert_eq!(backend.primary_label(), Some("kadodi"));
+        assert!(
+            backend
+                .validate_project_route(Some("something-else"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn blank_labels_are_ignored() {
+        let backend = daemon_backend("corpus-1");
+        backend.set_primary_label("   ");
+        assert_eq!(backend.primary_label(), None);
+        assert!(backend.available_routes().is_empty());
+    }
 
     fn related(id: &str) -> RelatedClaimResult {
         RelatedClaimResult {

@@ -5480,7 +5480,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "List the current project plus any linked projects you can query in this session. Pass a returned `label` as the `project` argument to other tools; omit `project` for the current one. Linked projects come from `.ministr.toml` `[[linked]]` entries (or `ministr_clone` results).",
+    "description": "List every project route you can query in this session: the current project plus any linked ones. Pass a returned `label` as the `project` argument to other tools, or omit `project` for the current one. Linked projects come from `.ministr.toml` `[[linked]]` entries (or `ministr_clone` results).",
     "input_schema": {
       "properties": {
         "cursor": {

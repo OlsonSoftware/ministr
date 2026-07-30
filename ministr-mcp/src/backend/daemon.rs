@@ -36,6 +36,11 @@ pub struct DaemonBackend {
     client: Arc<DaemonClient>,
     corpus_id: String,
     session_id: Option<String>,
+    /// Set only when this backend *is* the session's primary corpus (the
+    /// single-corpus `Backend::Daemon` variant). Under
+    /// [`DaemonMultiBackend`](super::DaemonMultiBackend) the router owns
+    /// the primary label and this stays unset.
+    primary_label: super::PrimaryLabel,
 }
 
 #[allow(clippy::missing_errors_doc)] // every forwarding method returns the same BackendError transport contract
@@ -46,7 +51,15 @@ impl DaemonBackend {
             client,
             corpus_id,
             session_id,
+            primary_label: super::PrimaryLabel::default(),
         }
+    }
+
+    /// The current project's label, so a `project` argument naming this
+    /// project routes here instead of failing as an unknown corpus.
+    #[must_use]
+    pub fn primary_label(&self) -> &super::PrimaryLabel {
+        &self.primary_label
     }
 
     /// Borrow the underlying daemon client (for tools like `ministr_clone`

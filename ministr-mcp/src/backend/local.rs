@@ -21,17 +21,28 @@ use super::{
 /// Backend that runs every operation in-process against a [`QueryService`].
 pub struct LocalBackend {
     service: Arc<QueryService>,
+    primary_label: super::PrimaryLabel,
 }
 
 impl LocalBackend {
     #[must_use]
     pub fn new(service: Arc<QueryService>) -> Self {
-        Self { service }
+        Self {
+            service,
+            primary_label: super::PrimaryLabel::default(),
+        }
     }
 
     #[must_use]
     pub fn service(&self) -> &Arc<QueryService> {
         &self.service
+    }
+
+    /// The current project's label, so a `project` argument naming this
+    /// project routes here instead of failing as an unknown corpus.
+    #[must_use]
+    pub fn primary_label(&self) -> &super::PrimaryLabel {
+        &self.primary_label
     }
 
     /// Corpus local directory roots (path + id) for diff-impact key

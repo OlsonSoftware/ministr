@@ -201,6 +201,84 @@ pub(crate) fn format_query_error(err: &QueryError) -> String {
     }
 }
 
+/// The stable `error_kind` for a query-layer failure. Single source of truth
+/// for both in-process errors and daemon-forwarded ones, so the two transports
+/// classify an identical failure identically.
+pub(crate) fn query_error_kind(err: &QueryError) -> &'static str {
+    match err {
+        QueryError::SectionNotFound { .. } => "section_not_found",
+        QueryError::ClaimNotFound { .. } => "claim_not_found",
+        QueryError::SymbolNotFound { .. } => "symbol_not_found",
+        QueryError::Index(_) => "index_error",
+        QueryError::Storage(_) => "storage_error",
+        QueryError::FileUnavailable { source, .. }
+            if source.kind() == std::io::ErrorKind::PermissionDenied =>
+        {
+            "permission_denied"
+        }
+        QueryError::FileUnavailable { .. } => "file_unavailable",
+    }
+}
+
+/// Recover the logical query error behind a daemon-forwarded `not_found`.
+///
+/// The daemon collapses every navigation miss into HTTP 404 + `not_found`,
+/// keeping the originating [`QueryError`]'s `Display` as the message. Matching
+/// that prefix restores which *kind* of thing was missing, so the agent gets
+/// "use `ministr_symbols` to find valid symbol IDs" instead of advice to restart
+/// the daemon. An unrecognised message falls through to the transport-error
+/// path unchanged — a missed mapping degrades to today's behaviour, never to a
+/// wrong one.
+fn recover_forwarded_query_error(api: &ministr_api::ApiError) -> Option<QueryError> {
+    if api.error_code != "not_found" && api.code != "not_found" {
+        return None;
+    }
+    let message = api.message.trim();
+    // Strip the daemon's own "not_found: " envelope prefix when present.
+    let message = message.strip_prefix("not_found: ").unwrap_or(message);
+    for (prefix, build) in [
+        (
+            "section not found: ",
+            (|id| QueryError::SectionNotFound { id }) as fn(String) -> _,
+        ),
+        ("claim not found: ", |id| QueryError::ClaimNotFound { id }),
+        ("symbol not found: ", |id| QueryError::SymbolNotFound { id }),
+    ] {
+        if let Some(id) = message.strip_prefix(prefix) {
+            let id = id.trim();
+            if !id.is_empty() {
+                return Some(build(id.to_string()));
+            }
+        }
+    }
+    None
+}
+
+/// Preserve a forwarded error's completeness verdict on the soft result.
+///
+/// A miss inside a stale or still-indexing corpus is genuinely inconclusive —
+/// the id may exist and simply not be indexed yet — and the daemon is the only
+/// party that knows. Recovering the miss must not throw that away and claim
+/// conclusive absence.
+fn overlay_forwarded_completeness(
+    result: &mut rmcp::model::CallToolResult,
+    api: &ministr_api::ApiError,
+) {
+    use ministr_api::metadata::CompletenessState;
+
+    if api.completeness.completeness == CompletenessState::Complete {
+        return;
+    }
+    let Some(structured) = result.structured_content.as_mut() else {
+        return;
+    };
+    if let Ok(completeness) = serde_json::to_value(&api.completeness) {
+        structured["completeness"] = completeness;
+    }
+    structured["status"] = serde_json::json!("partial");
+    structured["error"]["retryable"] = serde_json::json!(api.retryable);
+}
+
 /// Cascade-safe rendering of a [`crate::backend::BackendError`] as a tool
 /// result. Classifies the error into a stable `error_kind` and reuses
 /// [`format_backend_error`] for the human/agent-facing message, then routes
@@ -211,20 +289,33 @@ pub(crate) fn soft_backend_error(
     err: &crate::backend::BackendError,
 ) -> rmcp::model::CallToolResult {
     use crate::backend::BackendError;
+
+    // In daemon mode — the normal mode — a plain logical miss arrives as a
+    // forwarded `ApiError` and used to be flattened into `daemon_error`:
+    // retryable, non-conclusive, "the daemon may have disconnected; retry the
+    // call, or restart the daemon". Agents obligingly retried and refreshed a
+    // corpus that was fine, on ids that simply did not exist. Recover the miss
+    // and report it as the miss it is — while keeping the daemon's own
+    // completeness verdict, which is the part that legitimately says "the
+    // corpus is stale, so this absence is not conclusive".
+    if let BackendError::Client(client) = err
+        && let ministr_api::client::ClientError::Api(api) = client.as_ref()
+        && let Some(recovered) = recover_forwarded_query_error(api)
+    {
+        let mut result = soft_error(query_error_kind(&recovered), format_query_error(&recovered));
+        overlay_forwarded_completeness(&mut result, api);
+        return result;
+    }
+
     let kind = match err {
-        BackendError::Query(QueryError::SectionNotFound { .. }) => "section_not_found",
-        BackendError::Query(QueryError::ClaimNotFound { .. }) => "claim_not_found",
-        BackendError::Query(QueryError::SymbolNotFound { .. }) => "symbol_not_found",
-        BackendError::Query(QueryError::Index(_)) => "index_error",
-        BackendError::Query(QueryError::Storage(_)) => "storage_error",
-        BackendError::Query(QueryError::FileUnavailable { source, .. })
-            if source.kind() == std::io::ErrorKind::PermissionDenied =>
-        {
-            "permission_denied"
-        }
-        BackendError::Query(QueryError::FileUnavailable { .. }) => "file_unavailable",
+        BackendError::Query(query) => query_error_kind(query),
         BackendError::Client(_) => "daemon_error",
-        BackendError::UnknownProject(_) => "unavailable_corpus",
+        // A route that does not exist is permanent and caller-fixable —
+        // deliberately NOT `unavailable_corpus`, which is classified
+        // retryable/non-conclusive below and had agents refreshing a corpus
+        // that was never the problem.
+        BackendError::UnknownProject { .. } => "unknown_project",
+        BackendError::CorpusUnavailable(_) => "unavailable_corpus",
         BackendError::PermissionDenied(_) => "permission_denied",
         BackendError::InvalidParameters(_) => "invalid_parameters",
     };
@@ -290,8 +381,33 @@ pub(crate) fn format_backend_error(err: &crate::backend::BackendError) -> String
                  error persists."
             )
         }
-        crate::backend::BackendError::UnknownProject(project) => format!(
-            "Corpus or linked project '{project}' is unavailable. Use ministr_projects or the corpus registry to discover valid routes."
+        // Name the routes that exist. The old message ("… is unavailable")
+        // read like a transient corpus problem, so a mistyped or invented
+        // label sent agents into refresh-and-retry loops against a corpus
+        // that was never the issue — while every other tool kept working.
+        crate::backend::BackendError::UnknownProject {
+            requested,
+            available,
+        } => {
+            if available.is_empty() {
+                format!(
+                    "'{requested}' is not a route in this session. Omit `project` to query the \
+                     current project — this is a routing mistake, not a stale or missing corpus, \
+                     so refreshing or re-indexing will not change it. Call ministr_projects to \
+                     list the routes that exist."
+                )
+            } else {
+                format!(
+                    "'{requested}' is not a route in this session. Valid routes: {}. Omit \
+                     `project` to query the current project. This is a routing mistake, not a \
+                     stale or missing corpus — refreshing or re-indexing will not change it.",
+                    available.join(", "),
+                )
+            }
+        }
+        crate::backend::BackendError::CorpusUnavailable(corpus_id) => format!(
+            "Corpus '{corpus_id}' is a valid route but is not available right now. Retry once it \
+             is ready."
         ),
         crate::backend::BackendError::PermissionDenied(project) => {
             format!("Permission denied for corpus or linked project '{project}'.")
@@ -356,6 +472,40 @@ pub(crate) fn has_code_files_in_dir(root: &std::path::Path) -> bool {
     false
 }
 
+/// Derive the current project's label from its corpus paths — the name of
+/// the first path's directory (`kadodi` for `~/Code/kadodi`, or for
+/// `~/Code/kadodi/DESIGN.md`).
+///
+/// This is deliberately the same rule `Config::resolve_linked_projects`
+/// uses for a linked entry with no explicit `label`, so one project has one
+/// label whether it is queried from inside or linked from a sibling.
+/// Returns `None` when no usable directory name exists, which leaves route
+/// validation in its strict label-less mode.
+pub(crate) fn primary_project_label(corpus_paths: &[PathBuf]) -> Option<String> {
+    for path in corpus_paths {
+        // Canonicalize so a trailing "." (config `paths = ["."]` resolves
+        // to `<root>/.`) collapses to the real directory name.
+        let resolved = path.canonicalize().unwrap_or_else(|_| path.clone());
+        let dir = if resolved.is_dir() {
+            resolved.as_path()
+        } else {
+            match resolved.parent() {
+                Some(parent) => parent,
+                None => continue,
+            }
+        };
+        let name = dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(str::trim)
+            .filter(|n| !n.is_empty() && *n != "." && *n != "..");
+        if let Some(name) = name {
+            return Some(name.to_string());
+        }
+    }
+    None
+}
+
 /// Build a compact routing hint based on which tools are registered.
 ///
 /// Some MCP hosts prepend server instructions to every tool description, so
@@ -406,6 +556,9 @@ pub(crate) fn soft_error(
             | "unavailable_corpus"
             | "permission_denied"
             | "file_unavailable"
+            // Nothing was searched, so absence proves nothing — but see
+            // `retryable`: the caller must change the route, not wait.
+            | "unknown_project"
     );
     let retryable = matches!(
         error_kind,
@@ -415,6 +568,18 @@ pub(crate) fn soft_error(
             | "unavailable_corpus"
             | "file_unavailable"
     );
+    // Guidance has to match the failure: telling the caller to "retry after
+    // the backend becomes available" on a bad `project` argument is what
+    // turned a one-line routing fix into a refresh-and-retry loop.
+    let retry_guidance = if error_kind == "unknown_project" {
+        Some(
+            "Fix the `project` argument or omit it — call ministr_projects for the routes that exist. Retrying the same route, refreshing, or re-indexing will not help.",
+        )
+    } else if retryable {
+        Some("Retry after the backend or index becomes available.")
+    } else {
+        None
+    };
     let structured = serde_json::json!({
         "ok": false,
         "status": "error",
@@ -430,7 +595,7 @@ pub(crate) fn soft_error(
             "indexed_items": 0,
             "affected_capabilities": if nonconclusive { vec!["query"] } else { Vec::<&str>::new() },
             "absence_is_conclusive": !nonconclusive,
-            "retry_guidance": if retryable { Some("Retry after the backend or index becomes available.") } else { None },
+            "retry_guidance": retry_guidance,
         },
         "result": serde_json::Value::Null,
     });
@@ -562,4 +727,170 @@ pub(crate) fn apply_response_size_guard(mut v: serde_json::Value) -> serde_json:
         }
     }
     v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn primary_label_comes_from_the_corpus_root_directory_name() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("kadodi");
+        std::fs::create_dir(&root).expect("create root");
+
+        assert_eq!(
+            primary_project_label(std::slice::from_ref(&root)),
+            Some("kadodi".to_string())
+        );
+    }
+
+    #[test]
+    fn primary_label_collapses_a_trailing_dot_component() {
+        // `paths = ["."]` resolves to `<root>/.` via `Config::resolve_local_paths`.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("kadodi");
+        std::fs::create_dir(&root).expect("create root");
+
+        assert_eq!(
+            primary_project_label(&[root.join(".")]),
+            Some("kadodi".to_string())
+        );
+    }
+
+    #[test]
+    fn primary_label_uses_the_parent_of_a_file_path() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("kadodi");
+        std::fs::create_dir(&root).expect("create root");
+        let file = root.join("DESIGN.md");
+        std::fs::write(&file, "# design").expect("write file");
+
+        assert_eq!(primary_project_label(&[file]), Some("kadodi".to_string()));
+    }
+
+    #[test]
+    fn primary_label_is_none_without_paths() {
+        assert_eq!(primary_project_label(&[]), None);
+    }
+
+    fn forwarded(
+        code: &str,
+        message: &str,
+        completeness: ministr_api::metadata::Completeness,
+    ) -> crate::backend::BackendError {
+        crate::backend::BackendError::Client(Box::new(ministr_api::client::ClientError::Api(
+            ministr_api::ApiError {
+                code: code.to_string(),
+                error_code: code.to_string(),
+                status: ministr_api::metadata::ResponseStatus::Error,
+                retryable: true,
+                message: message.to_string(),
+                corpus_id: Some("corpus-1".to_string()),
+                backend: Some("daemon".to_string()),
+                completeness,
+            },
+        )))
+    }
+
+    fn complete() -> ministr_api::metadata::Completeness {
+        ministr_api::metadata::Completeness {
+            completeness: ministr_api::metadata::CompletenessState::Complete,
+            indexed_items: 10,
+            estimated_total_items: None,
+            affected_capabilities: Vec::new(),
+            index_generation: None,
+            absence_is_conclusive: true,
+            retry_guidance: None,
+        }
+    }
+
+    fn stale() -> ministr_api::metadata::Completeness {
+        ministr_api::metadata::Completeness {
+            completeness: ministr_api::metadata::CompletenessState::Stale,
+            indexed_items: 10,
+            estimated_total_items: Some(12),
+            affected_capabilities: vec!["navigation".to_string()],
+            index_generation: Some("17".to_string()),
+            absence_is_conclusive: false,
+            retry_guidance: Some("Indexed sources changed; refresh the corpus.".to_string()),
+        }
+    }
+
+    /// In daemon mode a missing section used to render as a *transport*
+    /// failure — retryable, "restart the daemon" — which is what turned a
+    /// wrong id into a refresh-and-retry loop.
+    #[test]
+    fn a_forwarded_section_miss_is_classified_as_a_miss_not_a_transport_error() {
+        let err = forwarded(
+            "not_found",
+            "section not found: docs/auth.md#nope",
+            complete(),
+        );
+        let result = soft_backend_error(&err);
+        let structured = result.structured_content.expect("structured");
+
+        assert_eq!(structured["error_kind"], "section_not_found");
+        assert_eq!(structured["error"]["retryable"], false);
+        assert_eq!(structured["completeness"]["absence_is_conclusive"], true);
+        let message = structured["message"].as_str().unwrap();
+        assert!(message.contains("Section not found"), "{message}");
+        assert!(
+            message.contains("ministr_survey"),
+            "points at discovery, not the daemon: {message}"
+        );
+        assert!(
+            !message.contains("restart the daemon"),
+            "no transport advice for a logical miss: {message}"
+        );
+    }
+
+    #[test]
+    fn a_forwarded_symbol_miss_keeps_the_id_and_names_the_right_tool() {
+        let err = forwarded("not_found", "symbol not found: sym-a.rs::nope", complete());
+        let structured = soft_backend_error(&err)
+            .structured_content
+            .expect("structured");
+        assert_eq!(structured["error_kind"], "symbol_not_found");
+        let message = structured["message"].as_str().unwrap();
+        assert!(message.contains("sym-a.rs::nope"), "{message}");
+        assert!(message.contains("ministr_symbols"), "{message}");
+    }
+
+    /// The other half of honesty: a miss inside a stale corpus really is
+    /// inconclusive, and only the daemon knows that. Recovering the miss must
+    /// not overwrite its verdict with "conclusively absent".
+    #[test]
+    fn a_forwarded_miss_preserves_the_daemons_staleness_verdict() {
+        let err = forwarded("not_found", "section not found: docs/auth.md#nope", stale());
+        let structured = soft_backend_error(&err)
+            .structured_content
+            .expect("structured");
+
+        assert_eq!(structured["error_kind"], "section_not_found");
+        assert_eq!(structured["status"], "partial");
+        assert_eq!(structured["error"]["retryable"], true);
+        assert_eq!(structured["completeness"]["completeness"], "stale");
+        assert_eq!(structured["completeness"]["absence_is_conclusive"], false);
+        assert_eq!(
+            structured["completeness"]["retry_guidance"],
+            "Indexed sources changed; refresh the corpus."
+        );
+    }
+
+    /// An unrecognised forwarded error must not be guessed at.
+    #[test]
+    fn other_forwarded_errors_stay_transport_errors() {
+        let err = forwarded("not_found", "corpus 'corpus-1'", complete());
+        let structured = soft_backend_error(&err)
+            .structured_content
+            .expect("structured");
+        assert_eq!(structured["error_kind"], "daemon_error");
+
+        let err = forwarded("query_failed", "storage error: disk", complete());
+        let structured = soft_backend_error(&err)
+            .structured_content
+            .expect("structured");
+        assert_eq!(structured["error_kind"], "daemon_error");
+    }
 }

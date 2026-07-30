@@ -75,6 +75,13 @@ that routing automatically. Delivery identity includes the linked corpus,
 content ID, and resolution, so equal content IDs in two projects do not
 deduplicate each other.
 
+No `[[linked]]` entry is needed to query the project you are in: omit
+`project`, or pass the project's own name — its root directory name, the same
+label a sibling would get by linking it. `ministr_projects` reports that label
+on the `is_current` entry. Any other label is rejected as `unknown_project`
+rather than silently answered from the current corpus, so an agent can never
+believe it queried one repo and receive another.
+
 ### `[agent]`
 
 ```toml

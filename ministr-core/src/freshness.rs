@@ -15,14 +15,15 @@
 //! them (enumerating `node_modules` would be explosive); the GUI shows
 //! exclusion from the ignore RULES instead.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::IngestionError;
 use crate::ingestion::{
-    compute_content_hash, compute_root_id, discover_files_with_ignores, namespace_path,
+    compute_content_hash, compute_root_id, discover_files_with_ignores, relative_storage_key,
+    strip_root_prefix,
 };
 use crate::storage::FileHashRecord;
 
@@ -66,26 +67,37 @@ pub fn compute_freshness(
     records: &[FileHashRecord],
     ignore_patterns: &[String],
 ) -> Result<Vec<FileFreshness>, IngestionError> {
-    let multi_root = roots.len() > 1;
+    let source_count = roots.len();
+    // Key files EXACTLY as ingestion wrote them: against the *directory*
+    // roots (a file listed as its own source is attributed to the directory
+    // that contains it, by longest-prefix match), with the FULL source count
+    // deciding namespaced-vs-bare. Deriving the key from whichever root the
+    // walk happened to reach the file through instead produced a phantom for
+    // every file source: `paths = [".", "DESIGN.md"]` walked DESIGN.md a
+    // second time as its own root, where `strip_prefix` leaves an EMPTY
+    // relative path, and reported `root-<fileid>/` — a key ingestion never
+    // writes. It matched no record, so it was permanently `New`, which made
+    // `query_metadata` mark the whole corpus Stale on every query and
+    // advise "refresh the corpus" forever. No reindex could clear it,
+    // because there was nothing wrong to clear.
+    let dir_roots: Vec<(PathBuf, String)> = roots
+        .iter()
+        .filter(|path| path.is_dir())
+        .map(|path| (path.clone(), compute_root_id(path)))
+        .collect();
     let mut by_path: HashMap<&str, &FileHashRecord> =
         records.iter().map(|r| (r.path.as_str(), r)).collect();
 
     let mut out = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
     for root in roots {
-        let root_id = compute_root_id(root);
         for file in discover_files_with_ignores(root, ignore_patterns)? {
-            let Ok(rel) = file.strip_prefix(root) else {
+            let display_key = relative_storage_key(&file, &dir_roots, source_count);
+            // One file, one verdict: a file source nested under a directory
+            // source is discovered twice and must not be double-reported.
+            if !seen.insert(display_key.clone()) {
                 continue;
-            };
-            let rel = rel.to_string_lossy().replace('\\', "/");
-            let namespaced = namespace_path(&root_id, &rel);
-            // The key the GUI displays: namespaced for multi-root corpora,
-            // bare-relative for single-root.
-            let display_key = if multi_root {
-                namespaced.clone()
-            } else {
-                rel.clone()
-            };
+            }
             // Tolerant join: accept whichever key shape ingestion actually
             // wrote for this file — namespaced (`rid/rel`, rooted),
             // bare-relative (single- / NULL-root), OR the absolute path.
@@ -95,10 +107,13 @@ pub fn compute_freshness(
             // Without the absolute candidate, every such file is reported
             // New while its record is reported Missing, so the corpus shows
             // permanently "out of date" and no reindex can clear it.
+            let bare = strip_root_prefix(&display_key)
+                .unwrap_or(display_key.as_str())
+                .to_owned();
             let abs = file.to_string_lossy().replace('\\', "/");
             let record = by_path
-                .remove(namespaced.as_str())
-                .or_else(|| by_path.remove(rel.as_str()))
+                .remove(display_key.as_str())
+                .or_else(|| by_path.remove(bare.as_str()))
                 .or_else(|| by_path.remove(abs.as_str()));
             let state = match record {
                 None => FreshnessState::New,
@@ -139,6 +154,7 @@ fn hash_working_file(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ingestion::namespace_path;
 
     fn rec(path: &str, content: &str) -> FileHashRecord {
         FileHashRecord {
@@ -299,5 +315,58 @@ mod tests {
         let report = compute_freshness(&[root], &[record], &["*me.md".to_owned()]).unwrap();
         let snap = report.iter().find(|f| f.path == "skipme.md").unwrap();
         assert_eq!(snap.state, FreshnessState::Missing);
+    }
+
+    /// The `ministr init` default shape — `paths = [".", "DESIGN.md"]`, a file
+    /// source nested under a directory source. The file root's own walk leaves
+    /// an EMPTY relative path, which used to be reported as `root-<id>/`:
+    /// a key ingestion never writes, so it stayed `New` forever, pinned the
+    /// corpus to Stale on every query, and made "refresh the corpus" advice
+    /// that no refresh could ever satisfy.
+    #[test]
+    fn a_file_source_nested_under_a_directory_source_is_not_a_phantom() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        write(&root, "DESIGN.md", "# design");
+        write(&root, "src/lib.rs", "fn main() {}");
+
+        let roots = vec![root.clone(), root.join("DESIGN.md")];
+        let dir_roots = [(root.clone(), crate::ingestion::compute_root_id(&root))];
+        // Records exactly as ingestion writes them for this corpus.
+        let records: Vec<FileHashRecord> =
+            [("DESIGN.md", "# design"), ("src/lib.rs", "fn main() {}")]
+                .into_iter()
+                .map(|(rel, content)| {
+                    rec(
+                        &crate::ingestion::relative_storage_key(
+                            &root.join(rel),
+                            &dir_roots,
+                            roots.len(),
+                        ),
+                        content,
+                    )
+                })
+                .collect();
+
+        let report = compute_freshness(&roots, &records, &[]).unwrap();
+
+        assert!(
+            report.iter().all(|f| f.state == FreshnessState::Current),
+            "every file matches its record: {report:?}"
+        );
+        assert!(
+            !report.iter().any(|f| f.path.ends_with('/')),
+            "no empty-relative-path phantom entry: {report:?}"
+        );
+        // The nested file source is one file, reported once.
+        assert_eq!(
+            report
+                .iter()
+                .filter(|f| f.path.ends_with("DESIGN.md"))
+                .count(),
+            1,
+            "DESIGN.md reported exactly once: {report:?}"
+        );
+        assert_eq!(report.len(), 2, "one verdict per real file: {report:?}");
     }
 }

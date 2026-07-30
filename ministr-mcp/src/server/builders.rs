@@ -466,6 +466,15 @@ impl MinistrServer {
         // allowed exactly where the corpus is indexed.
         self.set_exec_roots(corpus_paths.to_vec());
 
+        // Same hook, same reason: this is where the corpus paths are known
+        // in every serve mode, so it is where the current project learns
+        // its own name. Without it, `project: "<this repo>"` — the label a
+        // sibling would use to link it — is rejected as an unknown corpus.
+        if let Some(label) = super::helpers::primary_project_label(corpus_paths) {
+            debug!(primary_label = %label, "primary project route registered");
+            self.backend.set_primary_label(&label);
+        }
+
         let mut pruned = Vec::new();
 
         // Web tools: hide if no web fetcher configured
