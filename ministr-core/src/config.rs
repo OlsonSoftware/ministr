@@ -42,8 +42,15 @@ pub struct MinistrConfig {
     /// default) leaves reranking OFF — the dense/hybrid path is unchanged.
     /// When set to a supported model name (e.g. `"bge-reranker-base"`), the
     /// daemon attaches a `FastReranker` to every corpus's `QueryService` so
-    /// `survey()` rescoring runs the cross-encoder. Flipping this on by
-    /// default is gated by the win/regress measurement.
+    /// `survey()` rescoring runs the cross-encoder, depth-capped at 20
+    /// candidates per query. Flipping this on by default is gated by the
+    /// win/regress measurement.
+    ///
+    /// Measured (F37, 2026-07-30, `tests/eval_rerank.rs` on the 75-query
+    /// eval corpus, `jina-reranker-v1-turbo-en`, CPU EP, debug profile):
+    /// P@5 0.347 → 0.448 (+0.101), MRR +0.031, nDCG@5 +0.016, R@5 −0.031;
+    /// added latency +103ms mean / +207ms p95 per query at depth 20. The
+    /// precision win is real but the latency cost keeps this opt-in.
     ///
     /// Supported: `bge-reranker-base`, `bge-reranker-v2-m3`,
     /// `jina-reranker-v1-turbo-en`, `jina-reranker-v2-base-multilingual`.

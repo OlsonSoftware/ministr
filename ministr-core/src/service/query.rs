@@ -750,6 +750,14 @@ const MATRYOSHKA_BLEND: f32 = 0.7;
 /// upstream retrieval stack.
 const RERANK_BLEND: f32 = 0.8;
 
+/// F37 — maximum candidates the cross-encoder scores per query. Results
+/// arrive at [`QueryService::rerank_results`] sorted by the prior composed
+/// score, so pairs past the head add linear inference cost for vanishing
+/// precision gain; anything deeper keeps its normalized prior. Bounds the
+/// stage independently of the survey over-fetch (`top_k.max(10) * 3`),
+/// which would otherwise scale pair count with `top_k`.
+const CROSS_ENCODER_RERANK_DEPTH: usize = 20;
+
 /// Min-max normalize a slice of scores in-place into `[0, 1]`. If every
 /// score is identical the range collapses and every entry is set to `0.5`
 /// so downstream blends still compose meaningfully.
@@ -1332,8 +1340,19 @@ impl QueryService {
         let mut priors: Vec<f32> = results.iter().map(|r| r.score).collect();
         min_max_normalize(&mut priors);
 
+        // F37 — bound the cross-encoder to the HEAD of the candidate list.
+        // `results` arrives sorted by the prior composed score (RRF +
+        // Matryoshka), so the head is where cross-encoder precision pays;
+        // inference cost is linear in pair count, and the survey over-fetch
+        // (`top_k.max(10) * 3`) would otherwise scale the pair count with
+        // top_k. Results past the depth keep their normalized prior.
+        let depth = results.len().min(CROSS_ENCODER_RERANK_DEPTH);
+
         // Compute reranker scores (index-aligned to `results` input order).
-        let texts: Vec<&str> = results.iter().map(|r| r.text.as_str()).collect();
+        let texts: Vec<&str> = results[..depth]
+            .iter()
+            .map(|r| r.text.as_str())
+            .collect();
         let scores = model.rerank(query, &texts)?;
 
         // Build an index-aligned rerank score vector (None for any result the
@@ -1604,7 +1623,8 @@ impl QueryService {
 #[cfg(test)]
 mod tests {
     use super::{
-        GRAPH_EXPAND_DECAY, QueryService, RERANK_BLEND, ResolvedContent, SurveyResult,
+        CROSS_ENCODER_RERANK_DEPTH, GRAPH_EXPAND_DECAY, QueryService, RERANK_BLEND,
+        ResolvedContent, SurveyResult,
         apply_total_survey_budget, bounded_query_text, build_survey_result,
         classify_content_provenance, graph_expand_results, module_family, result_document_id,
         route_result_and_check_exclusion, shape_survey_results,
@@ -2183,6 +2203,55 @@ mod tests {
         assert!(out.iter().all(|result| {
             (result.score_explanation.final_score - result.score).abs() < f32::EPSILON
         }));
+    }
+
+    /// F37 — the cross-encoder must only see the head of the candidate list
+    /// ([`CROSS_ENCODER_RERANK_DEPTH`] pairs), never the full over-fetched
+    /// set; deeper results keep their normalized prior and stay unflagged.
+    #[test]
+    fn rerank_depth_caps_cross_encoder_pairs() {
+        struct CountingReranker {
+            seen: std::sync::Mutex<usize>,
+        }
+        impl Reranker for CountingReranker {
+            fn rerank(
+                &self,
+                _query: &str,
+                documents: &[&str],
+            ) -> Result<Vec<RerankScore>, IndexError> {
+                *self.seen.lock().unwrap() = documents.len();
+                Ok(documents
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| RerankScore {
+                        index,
+                        score: 0.5,
+                    })
+                    .collect())
+            }
+        }
+
+        let n = CROSS_ENCODER_RERANK_DEPTH + 5;
+        let results: Vec<SurveyResult> = (0..n)
+            .map(|i| sr(&format!("r{i}"), 1.0 - (i as f32) / (n as f32)))
+            .collect();
+        let reranker = CountingReranker {
+            seen: std::sync::Mutex::new(0),
+        };
+
+        let out = QueryService::rerank_results("query", results, n, &reranker).unwrap();
+
+        assert_eq!(
+            *reranker.seen.lock().unwrap(),
+            CROSS_ENCODER_RERANK_DEPTH,
+            "cross-encoder must see exactly the depth-capped head"
+        );
+        assert_eq!(out.len(), n);
+        assert_eq!(
+            out.iter().filter(|r| r.score_explanation.reranked).count(),
+            CROSS_ENCODER_RERANK_DEPTH,
+            "only head results are flagged reranked"
+        );
     }
 
     #[tokio::test]

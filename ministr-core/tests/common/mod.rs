@@ -31,6 +31,7 @@ pub struct ExpectedResult {
 }
 
 /// Aggregated evaluation results for a single model run.
+#[allow(dead_code)] // shared by multiple test binaries; not all read every field
 pub struct EvalResults {
     pub query_count: u32,
     pub mean_precision: f64,
@@ -140,7 +141,7 @@ pub fn ndcg_at_k(result_ids: &[String], expected: &[ExpectedResult], k: usize) -
 /// metrics. (HNSW graph construction is not run-to-run deterministic —
 /// measured 4 distinct eval outputs in 6 runs — which made gate deltas under
 /// ±0.01 unreadable; the exact scan has timing parity at this corpus size.)
-#[allow(clippy::cast_precision_loss)]
+#[allow(clippy::cast_precision_loss, dead_code)] // shared by multiple test binaries
 pub async fn run_eval_with_embedder(
     corpus_path: &Path,
     ground_truth: &GroundTruth,
