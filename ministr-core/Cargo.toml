@@ -214,6 +214,12 @@ hf-hub.workspace = true
 # spin up a fake Azure endpoint via axum to round-trip the request +
 # response. Test-only dep; not pulled into the production binary.
 axum.workspace = true
+# F36 — store-seam benchmark candidate (benches/store_seam.rs): mmap-backed
+# ANN store measured against the in-memory HNSW through the D4 seam.
+# Bench-only dep; not pulled into the production binary.
+usearch = "2"
+# F36 — per-process peak-RSS measurement (getrusage) in the same bench.
+libc = "0.2"
 
 [[bench]]
 name = "search"
@@ -233,4 +239,8 @@ harness = false
 
 [[bench]]
 name = "token_economics"
+harness = false
+
+[[bench]]
+name = "store_seam"
 harness = false
