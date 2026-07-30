@@ -20,7 +20,8 @@ use tracing::instrument;
 use super::schema::{configure_connection, run_migrations};
 use super::traits::{
     BridgeEndpointRecord, BridgeLinkDetail, BridgeLinkRecord, ClaimRecord, CoAccessRecord,
-    CorpusMerkleRecord, CorpusStats, DocumentRecord, FileHashRecord, GitCacheRecord,
+    CorpusMerkleNode, CorpusMerkleRecord, CorpusStats, DocumentRecord, FileHashRecord,
+    GitCacheRecord,
     OccurrenceRecord, PendingRefRecord, RelatedClaimRecord, SectionAccessStat, SectionRecord,
     Storage, SymbolFilter, SymbolRecord, SymbolRefRecord, WebCacheRecord,
 };
@@ -1156,6 +1157,18 @@ impl Storage for SqliteStorage {
 
     async fn clear_file_hashes(&self) -> Result<usize, StorageError> {
         self.with_conn(|conn| {
+            // F35: clearing file hashes is a "force full re-check" repair.
+            // The stat-merkle state (root fingerprint + per-directory nodes)
+            // must fall with it, or a still-matching tree would prune the
+            // very re-processing the wipe was meant to force.
+            conn.execute("DELETE FROM corpus_merkle_nodes", [])
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            conn.execute("DELETE FROM corpus_merkle", [])
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
             let affected = conn.execute("DELETE FROM file_hashes", []).map_err(|e| {
                 StorageError::Database {
                     reason: e.to_string(),
@@ -1232,6 +1245,16 @@ impl Storage for SqliteStorage {
     async fn delete_corpus_merkle(&self, corpus_id: &str) -> Result<bool, StorageError> {
         let corpus_id = corpus_id.to_owned();
         self.with_conn(move |conn| {
+            // F35: the per-directory nodes are derived from the same walk
+            // that produced root_hash — dropping one without the other
+            // would let a stale tree prune files after a re-register.
+            conn.execute(
+                "DELETE FROM corpus_merkle_nodes WHERE corpus_id = ?1",
+                rusqlite::params![corpus_id],
+            )
+            .map_err(|e| StorageError::Database {
+                reason: e.to_string(),
+            })?;
             let n = conn
                 .execute(
                     "DELETE FROM corpus_merkle WHERE corpus_id = ?1",
@@ -1241,6 +1264,96 @@ impl Storage for SqliteStorage {
                     reason: e.to_string(),
                 })?;
             Ok(n > 0)
+        })
+        .await
+    }
+
+    async fn get_corpus_merkle_nodes(
+        &self,
+        corpus_id: &str,
+    ) -> Result<Vec<CorpusMerkleNode>, StorageError> {
+        let corpus_id = corpus_id.to_owned();
+        self.with_conn(move |conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT dir_path, node_hash, extractor_version \
+                     FROM corpus_merkle_nodes WHERE corpus_id = ?1",
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            let nodes = stmt
+                .query_map(rusqlite::params![corpus_id], |row| {
+                    Ok(CorpusMerkleNode {
+                        dir_path: row.get(0)?,
+                        node_hash: row.get(1)?,
+                        extractor_version: row.get(2)?,
+                    })
+                })
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+            Ok(nodes)
+        })
+        .await
+    }
+
+    async fn replace_corpus_merkle_nodes(
+        &self,
+        corpus_id: &str,
+        nodes: &[CorpusMerkleNode],
+    ) -> Result<(), StorageError> {
+        let corpus_id = corpus_id.to_owned();
+        let nodes = nodes.to_vec();
+        self.with_conn(move |conn| {
+            conn.execute("SAVEPOINT replace_merkle_nodes", [])
+                .map_err(|e| StorageError::Database {
+                    reason: format!("failed to begin savepoint: {e}"),
+                })?;
+            let result = (|| {
+                conn.execute(
+                    "DELETE FROM corpus_merkle_nodes WHERE corpus_id = ?1",
+                    rusqlite::params![corpus_id],
+                )
+                .map_err(|e| StorageError::Database {
+                    reason: e.to_string(),
+                })?;
+                let mut stmt = conn
+                    .prepare(
+                        "INSERT INTO corpus_merkle_nodes \
+                            (corpus_id, dir_path, node_hash, extractor_version) \
+                         VALUES (?1, ?2, ?3, ?4)",
+                    )
+                    .map_err(|e| StorageError::Database {
+                        reason: e.to_string(),
+                    })?;
+                for node in &nodes {
+                    stmt.execute(rusqlite::params![
+                        corpus_id,
+                        node.dir_path,
+                        node.node_hash,
+                        node.extractor_version,
+                    ])
+                    .map_err(|e| StorageError::Database {
+                        reason: e.to_string(),
+                    })?;
+                }
+                Ok(())
+            })();
+            if result.is_ok() {
+                conn.execute("RELEASE replace_merkle_nodes", [])
+                    .map_err(|e| StorageError::Database {
+                        reason: format!("failed to release savepoint: {e}"),
+                    })?;
+            } else {
+                let _ = conn.execute("ROLLBACK TO replace_merkle_nodes", []);
+                let _ = conn.execute("RELEASE replace_merkle_nodes", []);
+            }
+            result
         })
         .await
     }

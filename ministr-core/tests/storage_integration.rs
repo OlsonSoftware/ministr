@@ -569,9 +569,9 @@ async fn migration_rollforward() {
     assert_eq!(docs.len(), 1);
 
     // Current version should match (bump in lockstep with new migrations —
-    // last bumped to 26 when corpus-aware delivery identity rebuilt the
-    // session-delivery primary key).
-    assert_eq!(CURRENT_SCHEMA_VERSION, 26);
+    // last bumped to 27 when F35 added the corpus_merkle_nodes table for
+    // dirty-subtree pruning).
+    assert_eq!(CURRENT_SCHEMA_VERSION, 27);
 }
 
 #[tokio::test]

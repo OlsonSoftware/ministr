@@ -329,6 +329,7 @@ mod tests {
         IngestionStats {
             files_discovered: discovered,
             files_skipped: 0,
+            files_pruned: 0,
             files_indexed: 0,
             files_removed: 0,
             files_failed: 0,

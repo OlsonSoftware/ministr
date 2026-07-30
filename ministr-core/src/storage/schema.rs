@@ -9,7 +9,7 @@ use rusqlite_migration::{M, Migrations};
 use crate::error::StorageError;
 
 /// The current schema version (number of applied migrations).
-pub const CURRENT_SCHEMA_VERSION: usize = 26;
+pub const CURRENT_SCHEMA_VERSION: usize = 27;
 
 /// Returns the migration set for the content database.
 ///
@@ -494,6 +494,26 @@ fn migrations() -> Migrations<'static> {
             DROP TABLE session_deliveries_v25;
             CREATE INDEX idx_session_deliveries_session
                 ON session_deliveries(session_id);
+            ",
+        ),
+        // V27 (F35): per-directory merkle nodes for dirty-subtree pruning.
+        // One row per directory that directly contains indexed files;
+        // node_hash uses the same (rel_path, mtime_ns, size) encoding as
+        // corpus_merkle.root_hash. On a root-hash mismatch, directories
+        // whose stored node still matches are provably unchanged at the
+        // stat level and their files skip the per-file hash-lookup path.
+        // extractor_version travels per row so the nodes table is
+        // self-sufficient on the multi-path ingest surface (which never
+        // writes corpus_merkle rows).
+        M::up(
+            "
+            CREATE TABLE corpus_merkle_nodes (
+                corpus_id         TEXT NOT NULL,
+                dir_path          TEXT NOT NULL,
+                node_hash         TEXT NOT NULL,
+                extractor_version INTEGER NOT NULL,
+                PRIMARY KEY (corpus_id, dir_path)
+            );
             ",
         ),
     ])

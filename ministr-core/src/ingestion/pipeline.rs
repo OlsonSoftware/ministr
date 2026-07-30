@@ -53,6 +53,7 @@ use super::symbols::{
 /// let stats = IngestionStats {
 ///     files_discovered: 10,
 ///     files_skipped: 5,
+///     files_pruned: 3,
 ///     files_indexed: 4,
 ///     files_removed: 0,
 ///     files_failed: 1,
@@ -68,6 +69,11 @@ use super::symbols::{
 pub struct IngestionStats {
     pub files_discovered: usize,
     pub files_skipped: usize,
+    /// F35 — of `files_skipped`, how many were skipped by dirty-subtree
+    /// merkle pruning BEFORE the per-file hash-lookup path (as opposed to
+    /// the per-file content-hash check inside the pipeline). Always
+    /// `<= files_skipped`.
+    pub files_pruned: usize,
     pub files_indexed: usize,
     pub files_removed: usize,
     pub files_failed: usize,
@@ -87,6 +93,7 @@ impl IngestionStats {
         Self {
             files_discovered,
             files_skipped: 0,
+            files_pruned: 0,
             files_indexed: 0,
             files_removed: 0,
             files_failed: 0,
@@ -1271,16 +1278,14 @@ impl IngestionPipeline {
 
         mem_profile::checkpoint("ingestion loop start (rooted)");
 
-        let file_items = Self::build_file_items(&files, dir, root_id);
-
-        // Snapshot (abs_path, relative_path) pairs for the bridge rebuild
-        // pass. run_producer_consumer consumes file_items, but
-        // finalize_ingestion needs the full set even when files were
-        // fast-skipped by content hash.
-        let all_files_for_bridges: Vec<(PathBuf, String)> = file_items
-            .iter()
-            .map(|f| (f.path.clone(), f.relative.clone()))
-            .collect();
+        // F35 — dirty-subtree pruning: the root hash mismatched (or this is
+        // a first index), but directories whose merkle node is unchanged are
+        // provably untouched at the stat level, so their files skip the
+        // per-file hash-lookup path entirely. Queued files still go through
+        // the per-file mtime+content-hash backstop.
+        let (file_items, all_files_for_bridges, fresh_nodes) = self
+            .build_pruned_file_items(storage, dir, root_id, &files, &mut stats)
+            .await;
 
         let (was_cancelled, embed_count, pending_refs) = self
             .run_producer_consumer(
@@ -1331,6 +1336,15 @@ impl IngestionPipeline {
         );
 
         Self::persist_corpus_merkle(storage, root_id, root_hash, stats.files_discovered).await;
+
+        // F35 — persist the fresh merkle tree so the NEXT mismatched reindex
+        // can prune. Non-fatal on failure (pruning just stays off).
+        if let Some(rid) = root_id
+            && !fresh_nodes.is_empty()
+            && let Err(e) = storage.replace_corpus_merkle_nodes(rid, &fresh_nodes).await
+        {
+            tracing::warn!(error = ?e, "failed to persist corpus merkle nodes (non-fatal)");
+        }
 
         if let Some(ref progress) = self.progress {
             progress.complete();
@@ -1431,6 +1445,145 @@ impl IngestionPipeline {
             "corpus stat-merkle matches but extractor version differs — re-extracting"
         );
         None
+    }
+
+    /// F35 — dirty-subtree merkle pruning for one corpus root.
+    ///
+    /// Computes fresh per-directory stat-fingerprint nodes for
+    /// `files_in_root` and diffs them against the stored tree. Returns
+    /// `(prunable, fresh_nodes)` where `prunable` is the set of files whose
+    /// directory node is unchanged (skip the per-file hash-lookup path) and
+    /// `fresh_nodes` is the tree the caller must persist AFTER a successful
+    /// ingest via `Storage::replace_corpus_merkle_nodes`.
+    ///
+    /// Pruning silently disables itself (empty `prunable`) when: the stored
+    /// tree is absent (auto-heal — first run, wiped state, or a backend
+    /// that doesn't persist trees), any stored node's extractor version is
+    /// stale, or file metadata can't be read. The per-file mtime+hash check
+    /// remains the correctness backstop for every file that IS queued.
+    async fn merkle_prune_set<S>(
+        storage: &S,
+        root_id: &str,
+        root_path: &Path,
+        files_in_root: &[PathBuf],
+    ) -> (
+        std::collections::HashSet<PathBuf>,
+        Vec<crate::storage::traits::CorpusMerkleNode>,
+    )
+    where
+        S: Storage + ?Sized,
+    {
+        let empty = (std::collections::HashSet::new(), Vec::new());
+        let fresh = match super::discovery::compute_dir_merkle_nodes(root_path, files_in_root) {
+            Ok(nodes) => nodes,
+            Err(e) => {
+                debug!(root_id, error = %e, "merkle node computation failed — pruning disabled this run");
+                return empty;
+            }
+        };
+        let fresh_records: Vec<crate::storage::traits::CorpusMerkleNode> = fresh
+            .iter()
+            .map(|(dir, hash)| crate::storage::traits::CorpusMerkleNode {
+                dir_path: dir.clone(),
+                node_hash: hash.clone(),
+                extractor_version: super::EXTRACTOR_VERSION,
+            })
+            .collect();
+
+        let stored = match storage.get_corpus_merkle_nodes(root_id).await {
+            Ok(nodes) => nodes,
+            Err(e) => {
+                debug!(root_id, error = %e, "merkle node load failed — pruning disabled this run");
+                return (std::collections::HashSet::new(), fresh_records);
+            }
+        };
+        // Auto-heal: no stored tree → process everything, persist fresh.
+        // Version gate: a stale tree must not prune files an extractor
+        // bump needs to re-process.
+        if stored.is_empty()
+            || stored
+                .iter()
+                .any(|n| n.extractor_version != super::EXTRACTOR_VERSION)
+        {
+            return (std::collections::HashSet::new(), fresh_records);
+        }
+        let stored_map: std::collections::HashMap<&str, &str> = stored
+            .iter()
+            .map(|n| (n.dir_path.as_str(), n.node_hash.as_str()))
+            .collect();
+        let clean_dirs: std::collections::HashSet<&str> = fresh
+            .iter()
+            .filter(|(dir, hash)| stored_map.get(dir.as_str()) == Some(&hash.as_str()))
+            .map(|(dir, _)| dir.as_str())
+            .collect();
+        let prunable: std::collections::HashSet<PathBuf> = files_in_root
+            .iter()
+            .filter(|path| {
+                let rel = path
+                    .strip_prefix(root_path)
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let dir = rel.rfind('/').map_or("", |i| &rel[..i]).to_string();
+                clean_dirs.contains(dir.as_str())
+            })
+            .cloned()
+            .collect();
+        (prunable, fresh_records)
+    }
+
+    /// F35 — build the rooted entry's work items with dirty-subtree merkle
+    /// pruning applied. Returns `(file_items, all_files_for_bridges,
+    /// fresh_nodes)`: the queued items, the FULL `(path, relative)` snapshot
+    /// for the bridge rebuild pass (finalize_ingestion needs every file even
+    /// when pruned or hash-skipped), and the fresh tree to persist after a
+    /// successful ingest. Updates `stats` and progress for pruned files.
+    async fn build_pruned_file_items<S>(
+        &self,
+        storage: &S,
+        dir: &Path,
+        root_id: Option<&str>,
+        files: &[PathBuf],
+        stats: &mut IngestionStats,
+    ) -> (
+        Vec<FileItem>,
+        Vec<(PathBuf, String)>,
+        Vec<crate::storage::traits::CorpusMerkleNode>,
+    )
+    where
+        S: Storage + ?Sized,
+    {
+        let (prunable, fresh_nodes) = match root_id {
+            Some(rid) => Self::merkle_prune_set(storage, rid, dir, files).await,
+            None => (std::collections::HashSet::new(), Vec::new()),
+        };
+
+        let all_items = Self::build_file_items(files, dir, root_id);
+        let all_files_for_bridges: Vec<(PathBuf, String)> = all_items
+            .iter()
+            .map(|f| (f.path.clone(), f.relative.clone()))
+            .collect();
+
+        let file_items: Vec<FileItem> = all_items
+            .into_iter()
+            .filter(|f| !prunable.contains(&f.path))
+            .collect();
+        let pruned = files.len() - file_items.len();
+        if pruned > 0 {
+            stats.files_pruned = pruned;
+            stats.files_skipped += pruned;
+            info!(
+                pruned,
+                queued = file_items.len(),
+                "merkle dirty-subtree pruning skipped unchanged directories"
+            );
+            if let Some(ref progress) = self.progress {
+                for _ in 0..pruned {
+                    progress.increment_done();
+                }
+            }
+        }
+        (file_items, all_files_for_bridges, fresh_nodes)
     }
 
     /// Register this corpus root *before* the producer/consumer loop:
@@ -1833,6 +1986,49 @@ impl IngestionPipeline {
 
         accumulate_language_stats(&files, &roots, &mut root_lang_stats, &mut root_file_counts);
 
+        // F35 — dirty-subtree merkle pruning, per owning root. Files not
+        // owned by any registered root are never pruned. This runs even for
+        // bridge corpora (unlike the manifest-level fast-skip above) because
+        // pruning composes with finalize_ingestion's bridge rebuild: the
+        // full file set still flows into `all_files_for_bridges` below.
+        let mut prunable: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+        let mut fresh_nodes_by_root: Vec<(String, Vec<crate::storage::traits::CorpusMerkleNode>)> =
+            Vec::new();
+        {
+            let mut files_by_root: std::collections::HashMap<String, Vec<PathBuf>> =
+                std::collections::HashMap::new();
+            for file in &files {
+                if let Some((_, rid)) = find_root_entry_for_file(file, &roots) {
+                    files_by_root.entry(rid.clone()).or_default().push(file.clone());
+                }
+            }
+            for (root_path, root_id) in &roots {
+                let Some(files_in_root) = files_by_root.get(root_id.as_str()) else {
+                    continue;
+                };
+                let (set, nodes) =
+                    Self::merkle_prune_set(storage, root_id, root_path, files_in_root).await;
+                prunable.extend(set);
+                if !nodes.is_empty() {
+                    fresh_nodes_by_root.push((root_id.clone(), nodes));
+                }
+            }
+        }
+        if !prunable.is_empty() {
+            stats.files_pruned = prunable.len();
+            stats.files_skipped += prunable.len();
+            info!(
+                pruned = prunable.len(),
+                queued = files.len() - prunable.len(),
+                "merkle dirty-subtree pruning skipped unchanged directories"
+            );
+            if let Some(ref progress) = self.progress {
+                for _ in 0..prunable.len() {
+                    progress.increment_done();
+                }
+            }
+        }
+
         let source_count = paths.len();
         let file_items: Vec<FileItem> = files
             .iter()
@@ -1860,10 +2056,17 @@ impl IngestionPipeline {
         // Snapshot (abs_path, relative_path) pairs for the bridge rebuild
         // pass. run_producer_consumer consumes file_items, but
         // finalize_ingestion needs the full set even when files were
-        // fast-skipped by content hash.
+        // fast-skipped by content hash — or merkle-pruned above.
         let all_files_for_bridges: Vec<(PathBuf, String)> = file_items
             .iter()
             .map(|f| (f.path.clone(), f.relative.clone()))
+            .collect();
+
+        // F35 — pruned files never reach the producer/consumer; the
+        // per-file mtime+hash check stays the backstop for the rest.
+        let file_items: Vec<FileItem> = file_items
+            .into_iter()
+            .filter(|f| !prunable.contains(&f.path))
             .collect();
 
         let (_was_cancelled, embed_count, pending_refs) = self
@@ -1955,9 +2158,18 @@ impl IngestionPipeline {
 
         update_root_stats(storage, &roots, &root_lang_stats, &root_file_counts).await;
 
+        // F35 — persist each root's fresh merkle tree so the NEXT reindex
+        // can prune. Non-fatal on failure (pruning just stays off).
+        for (rid, nodes) in &fresh_nodes_by_root {
+            if let Err(e) = storage.replace_corpus_merkle_nodes(rid, nodes).await {
+                tracing::warn!(root_id = %rid, error = ?e, "failed to persist corpus merkle nodes (non-fatal)");
+            }
+        }
+
         info!(
             indexed = stats.files_indexed,
             skipped = stats.files_skipped,
+            pruned = stats.files_pruned,
             removed = stats.files_removed,
             failed = stats.files_failed,
             "multi-path ingestion with embeddings complete"

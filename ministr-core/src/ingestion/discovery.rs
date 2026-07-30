@@ -641,6 +641,69 @@ pub fn compute_corpus_stat_merkle_with_ignores(
     Ok((root_hash, files))
 }
 
+/// F35 — per-directory stat-fingerprint nodes for dirty-subtree pruning.
+///
+/// Groups `files` (already discovered) by the directory that directly
+/// contains them, relative to `root` (`""` for the root itself), and hashes
+/// each group's sorted `(rel_path, mtime_ns, size)` tuples with the same
+/// `v1\0` encoding as [`compute_corpus_stat_merkle`]. A directory whose
+/// node hash matches a previously-stored one is provably unchanged at the
+/// stat level, so its files can skip the per-file hash-lookup path.
+///
+/// This re-stats each file (one extra `stat` per file per ingest) instead
+/// of threading metadata out of the discovery walk — the syscall cost is
+/// noise next to the per-file DB lookups + content hashing the nodes
+/// prune, and it keeps the walk functions untouched.
+///
+/// # Errors
+///
+/// Returns [`IngestionError::Io`] when any file's metadata cannot be read
+/// — callers should treat that as "pruning unavailable this run" rather
+/// than failing the ingest.
+pub fn compute_dir_merkle_nodes(
+    root: &Path,
+    files: &[PathBuf],
+) -> Result<Vec<(String, String)>, IngestionError> {
+    let mut per_dir: std::collections::BTreeMap<String, Vec<(String, i64, u64)>> =
+        std::collections::BTreeMap::new();
+    for path in files {
+        let meta = std::fs::metadata(path).map_err(|e| IngestionError::Io {
+            path: path.clone(),
+            source: e,
+        })?;
+        let mtime_ns = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .and_then(|d| i64::try_from(d.as_nanos()).ok())
+            .unwrap_or(0);
+        let size = meta.len();
+        let rel = path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let dir = rel.rfind('/').map_or(String::new(), |i| rel[..i].to_string());
+        per_dir.entry(dir).or_default().push((rel, mtime_ns, size));
+    }
+    Ok(per_dir
+        .into_iter()
+        .map(|(dir, mut group)| {
+            group.sort();
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(b"v1\0");
+            for (rel, mtime_ns, size) in &group {
+                hasher.update(rel.as_bytes());
+                hasher.update(b"\0");
+                hasher.update(&mtime_ns.to_le_bytes());
+                hasher.update(&size.to_le_bytes());
+                hasher.update(b"\n");
+            }
+            (dir, hasher.finalize().to_hex().to_string())
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

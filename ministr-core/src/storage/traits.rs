@@ -186,6 +186,33 @@ pub struct CorpusMerkleRecord {
     pub extractor_version: i64,
 }
 
+/// F35 — per-directory stat-fingerprint node of a corpus root's merkle tree.
+///
+/// One row per directory that directly contains indexed files. `node_hash`
+/// is a sorted BLAKE3 over the `(rel_path, mtime_ns, size)` tuples of the
+/// files DIRECTLY in that directory (not recursive), same encoding as
+/// [`CorpusMerkleRecord::root_hash`]. On a root-hash mismatch, directories
+/// whose stored node still matches the freshly-computed one are provably
+/// unchanged at the stat level, so their files skip the per-file
+/// hash-lookup/parse path entirely (dirty-subtree pruning). The per-file
+/// [`FileHashRecord`] check remains the inner correctness backstop for
+/// every file that IS queued.
+///
+/// An absent or empty node set disables pruning for the run (auto-heal):
+/// the full per-file path runs and a fresh tree is persisted after success.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CorpusMerkleNode {
+    /// Directory path relative to the corpus root (`""` for the root
+    /// itself), `/`-separated on all platforms.
+    pub dir_path: String,
+    /// BLAKE3 hex digest of the sorted direct-child file fingerprints.
+    pub node_hash: String,
+    /// Extractor version that produced the tree — a mismatch disables
+    /// pruning so extractor bumps re-process every file (mirrors
+    /// [`CorpusMerkleRecord::extractor_version`]).
+    pub extractor_version: i64,
+}
+
 /// A web cache record tracking fetch metadata for staleness detection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebCacheRecord {
@@ -1033,4 +1060,28 @@ pub trait Storage: Send + Sync {
         &self,
         corpus_id: &str,
     ) -> impl Future<Output = Result<bool, StorageError>> + Send;
+
+    /// F35 — load the per-directory merkle nodes for a corpus.
+    ///
+    /// Defaults to an empty set, which callers treat as "pruning
+    /// unavailable, process every file" — so backends that don't persist
+    /// the tree stay correct (auto-heal by construction).
+    fn get_corpus_merkle_nodes(
+        &self,
+        _corpus_id: &str,
+    ) -> impl Future<Output = Result<Vec<CorpusMerkleNode>, StorageError>> + Send {
+        async { Ok(Vec::new()) }
+    }
+
+    /// F35 — atomically replace the per-directory merkle nodes for a
+    /// corpus with a freshly-computed tree. Called at the end of a
+    /// successful ingestion. Defaults to a no-op for backends that don't
+    /// persist the tree.
+    fn replace_corpus_merkle_nodes(
+        &self,
+        _corpus_id: &str,
+        _nodes: &[CorpusMerkleNode],
+    ) -> impl Future<Output = Result<(), StorageError>> + Send {
+        async { Ok(()) }
+    }
 }
