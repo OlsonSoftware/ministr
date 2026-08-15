@@ -13,26 +13,113 @@ What each release promises about compatibility is spelled out in
 > Their entries are kept here as an accurate record of how the code got here.
 > `1.0.0-beta.1` is the first release you can actually install.
 
-## [Unreleased]
+## 1.0.0-beta.1 - 2026-08-15
+
+The first installable release, and the first to carry a compatibility promise.
+
+**What 1.0 means here.** The MCP tool surface, the CLI, the documented
+configuration keys and the daemon HTTP routes are now stable surfaces: they
+will not break within the 1.x line. The full contract, including what is
+deliberately *excluded*, is in
+[docs/reference/stability.md](docs/reference/stability.md).
+
+**What "beta" means here.** The shape is settled; the polish is not. Known
+limitations are listed at the end of this section — read them before deploying
+this anywhere that matters.
+
+### Breaking
+- **The Tauri desktop application is gone.** The `ministr-app` crate and its
+  entire GUI were removed. Its replacement is `ministr ui`, a terminal console
+  that talks to the same daemon. Desktop installer artifacts (`.pkg`, NSIS,
+  `.deb`, `.rpm`, AppImage) are no longer produced; releases ship CLI archives.
+- **MCP elicitation was removed entirely.** Tools never block waiting on a
+  human form. Any client relying on an elicitation prompt gets a direct result
+  or a direct error instead.
 
 ### Added
+- **`ministr ui` — a terminal console for the index engine** (preview). One
+  channel strip per project beside a master section, with live progress meters,
+  per-project detail, file "lawn" views, size-on-disk accounting, and verbs for
+  adding, rebuilding and removing projects. Excluded from the stability promise
+  while it is finished.
+- **`ministr-backend`, a shared query seam.** One `QueryBackend` trait with
+  local (in-process) and daemon-forwarding implementations, so the MCP server
+  and the CLI ask questions the same way regardless of where the engine lives.
+  `ministr search` and `ministr index` now ride it, daemon-forward by default.
+- **One writer per index.** An ownership lease on each corpus directory makes
+  concurrent writers structurally impossible; the daemon holds the lease and
+  in-process engines defer to it. The corpus manifest gained the same guard,
+  with merge-don't-truncate semantics.
+- **Orphaned index directories are visible and recoverable.** Index dirs with
+  no registered corpus can be listed, adopted back, or reclaimed, instead of
+  silently consuming disk.
+- **Near-instant restarts after a re-index.** Persisting an index now re-stamps
+  its cache-validity token, so the first restart following an ingest loads the
+  vector index from cache rather than rebuilding it.
+- **Progress telemetry for every previously silent wait** — index warming with
+  a real completion fraction, model download and repository clone phases, and
+  epoch-millisecond timestamps on phase transitions.
+- **OpenSSF Scorecard** runs in CI and publishes to the repository's code
+  scanning dashboard, alongside CodeQL, `cargo deny` and `cargo audit`.
+- **A tested minimum supported Rust version.** CI type-checks the workspace on
+  exactly the declared `rust-version`, so the floor is verified rather than
+  claimed.
 - Added `ministr_inspect`, a bounded compound symbol workflow for definitions, callers, callees, implementations, imports/type uses, tests, cross-language bridges, impact, and executable follow-up actions.
 - Added corpus-aware result locators, compact score explanations, content provenance, machine-readable response status/index completeness, and deterministic pagination metadata across navigation tools.
 - Added a deterministic task-level agent-efficiency gate that measures correct completion per delivered token, calls, literal MCP bytes, recall, repeated content, absence/status correctness, and inspect-versus-granular savings.
 
 ### Changed
+- **Documentation became a first-class, gated surface.** Getting-started guides,
+  concepts, a full CLI and HTTP API reference, per-tool pages generated from the
+  live MCP schemas, architecture decision records, and an `llms.txt` index — with
+  a CI gate that fails on a broken link, an undocumented tool, or a drifted
+  version literal.
+- **Redundant embedding work removed at the source.** Section-summary vectors
+  that were byte-identical to (or a prefix truncation of) their section text are
+  no longer embedded, shrinking indexes without changing what is retrievable.
+- Incremental change detection prunes unchanged subtrees via a directory merkle,
+  rather than re-walking the corpus.
 - `ministr_survey` now returns bounded query-centered excerpts or representative stored summaries; full section retrieval remains in `ministr_read` and all truncation is explicit.
 - Large definitions return bounded source or an outline with child locators and continuation instructions instead of unbounded bodies.
 - MCP structured content is canonical and the text channel carries only a compact human summary, avoiding duplicate full JSON payloads.
 - Search selection diversifies logical symbol, parent section, file, module, resolution family, and provenance while preserving the best exact match.
 
 ### Fixed
+- Test-spawned daemons could overwrite the live corpus manifest, silently
+  unregistering real projects. Manifest writes are now guarded and merge rather
+  than truncate, and tests are hermetic via an explicit data-directory override.
+- Freshness records keyed by absolute path are matched correctly, so a
+  up-to-date project no longer reports itself as stale.
+- A routing miss or an index miss no longer reads as corpus staleness.
 - Delivery, deduplication, drop/re-request, compression, coherence, prefetch, persistence, daemon, linked-project, and cross-corpus accounting now distinguish the same content ID in different corpora and resolutions.
 - Generated next actions preserve project and corpus routing, so linked and cross-corpus follow-ups execute against the result's source.
 - Partial indexing and backend failures no longer masquerade as conclusive empty success.
 
 ### Compatibility
 - Persisted legacy session deliveries with bare content IDs migrate into the primary corpus at their stored/legacy resolution. Existing granular MCP tools remain available alongside `ministr_inspect`.
+
+### Known limitations
+Read these before relying on this release.
+
+- **Windows is unproven.** A Windows x86_64 archive is published, but no CI job
+  builds or runs the test suite on Windows. Treat it as untested and please
+  report what breaks.
+- **Intel Macs have no binary.** The ONNX Runtime dependency dropped Intel-mac
+  prebuilts. Build from source with `cargo install`.
+- **Release archives are not code-signed or notarized.** Installing via
+  `install.sh` works (no quarantine attribute), but a browser download on macOS
+  will be held by Gatekeeper until you clear it.
+- **The first run downloads an embedding model with no progress shown.** It
+  happens before the server starts accepting connections, so a first launch can
+  look like a hang. It is downloading; give it a minute.
+- **`ministr ui` is a preview.** Notably, a project that fails to index does not
+  yet explain why anywhere in the console.
+- **Retrieval quality is measured, but end-to-end agent benefit is not proven.**
+  Internal retrieval gates track ranking quality release over release. A
+  separate audited side-by-side against plain text search did *not* show a
+  end-to-end win for an agent, and that result stands until a better-designed
+  measurement replaces it. No performance claims are made in this project's
+  documentation for exactly that reason.
 
 ## 0.7.0 - 2026-06-12
 

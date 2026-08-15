@@ -271,21 +271,21 @@ insta = "1"
 # from Conventional Commits and rewrites both the crate `version` and
 # these requirements in lockstep on every bump, so this never needs to
 # be hand-edited.
-ministr-api = { path = "ministr-api", version = "0.7.0" }
-ministr-core = { path = "ministr-core", version = "0.7.0" }
-ministr-daemon = { path = "ministr-daemon", version = "0.7.0" }
+ministr-api = { path = "ministr-api", version = "1.0.0-beta.1" }
+ministr-core = { path = "ministr-core", version = "1.0.0-beta.1" }
+ministr-daemon = { path = "ministr-daemon", version = "1.0.0-beta.1" }
 # arch-backend-seam-promotion (2026-08-15): the QueryBackend seam
 # (trait + Local/Daemon/DaemonMulti/Registry impls) promoted out of
 # ministr-mcp so non-MCP surfaces (CLI today, others later) consume
 # one seam instead of hand-rolling their own in-process path.
-ministr-backend = { path = "ministr-backend", version = "0.7.0" }
-ministr-mcp = { path = "ministr-mcp", version = "0.7.0" }
+ministr-backend = { path = "ministr-backend", version = "1.0.0-beta.1" }
+ministr-mcp = { path = "ministr-mcp", version = "1.0.0-beta.1" }
 # F31.2b-ii-B — `ministr-cloud-tools serve` (which lives in the
 # private sibling repo post-F31.4) depends on ministr-cli's lib
 # target to share `cmd_serve_http` + `resolve_config`. MIT crate;
 # proprietary consumers reach it from the sibling workspace.
-ministr-cli = { path = "ministr-cli", version = "0.7.0" }
-ministr-tui = { path = "ministr-tui", version = "0.7.0" }
+ministr-cli = { path = "ministr-cli", version = "1.0.0-beta.1" }
+ministr-tui = { path = "ministr-tui", version = "1.0.0-beta.1" }
 # F31.4 (2026-05-27): ministr-cloud, ministr-atlas, and
 # ministr-cloud-tools workspace.dependencies entries were removed
 # along with the crates themselves; their full history (123 commits)

@@ -3880,7 +3880,7 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "ministr-api"
-version = "0.7.0"
+version = "1.0.0-beta.1"
 dependencies = [
  "axum",
  "schemars",
@@ -3892,7 +3892,7 @@ dependencies = [
 
 [[package]]
 name = "ministr-backend"
-version = "0.7.0"
+version = "1.0.0-beta.1"
 dependencies = [
  "ministr-api",
  "ministr-core",
@@ -3905,7 +3905,7 @@ dependencies = [
 
 [[package]]
 name = "ministr-cli"
-version = "0.7.0"
+version = "1.0.0-beta.1"
 dependencies = [
  "axum",
  "clap",
@@ -3938,7 +3938,7 @@ dependencies = [
 
 [[package]]
 name = "ministr-core"
-version = "0.7.0"
+version = "1.0.0-beta.1"
 dependencies = [
  "axum",
  "blake3",
@@ -4032,7 +4032,7 @@ dependencies = [
 
 [[package]]
 name = "ministr-daemon"
-version = "0.7.0"
+version = "1.0.0-beta.1"
 dependencies = [
  "async-stream",
  "axum",
@@ -4060,7 +4060,7 @@ dependencies = [
 
 [[package]]
 name = "ministr-mcp"
-version = "0.7.0"
+version = "1.0.0-beta.1"
 dependencies = [
  "axum",
  "blake3",
@@ -4094,7 +4094,7 @@ dependencies = [
 
 [[package]]
 name = "ministr-tui"
-version = "0.7.0"
+version = "1.0.0-beta.1"
 dependencies = [
  "insta",
  "ministr-api",
