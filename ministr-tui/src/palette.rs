@@ -91,6 +91,86 @@ pub fn accent_ramp(depth: ColorDepth, t: f32) -> Color {
     }
 }
 
+/// The lawn's green hue, in degrees. Like the accent, only luminance
+/// moves across the heat depths — never the hue.
+const LAWN_HUE: f32 = 135.0;
+
+/// Saturation of the lawn green at 24-bit.
+const LAWN_SATURATION: f32 = 0.55;
+
+/// Luminance of the four heat depths, oldest to most recently active.
+const LAWN_LUMA: [f32; 4] = [0.20, 0.32, 0.44, 0.56];
+
+/// The xterm-256 green family for the indexed rung, oldest to hottest.
+const LAWN_256: [u8; 4] = [22, 28, 34, 40];
+
+/// A lawn cell's green at heat `0..=3` — deeper (brighter on a dark
+/// terminal) the more recently the file was active.
+#[must_use]
+pub fn lawn_green(depth: ColorDepth, heat: u8) -> Color {
+    let heat = usize::from(heat.min(3));
+    match depth {
+        ColorDepth::TrueColor => {
+            let (r, g, b) = hsl_to_rgb(LAWN_HUE, LAWN_SATURATION, LAWN_LUMA[heat]);
+            Color::Rgb(r, g, b)
+        }
+        ColorDepth::Ansi256 => Color::Indexed(LAWN_256[heat]),
+        ColorDepth::Ansi16 => {
+            if heat >= 2 {
+                Color::LightGreen
+            } else {
+                Color::Green
+            }
+        }
+        ColorDepth::Mono => Color::Reset,
+    }
+}
+
+/// The lawn's stale-file orange — a file the index no longer matches.
+#[must_use]
+pub fn lawn_orange(depth: ColorDepth) -> Color {
+    match depth {
+        ColorDepth::TrueColor => {
+            let (r, g, b) = hsl_to_rgb(30.0, 0.80, 0.55);
+            Color::Rgb(r, g, b)
+        }
+        ColorDepth::Ansi256 => Color::Indexed(208),
+        ColorDepth::Ansi16 => Color::Yellow,
+        ColorDepth::Mono => Color::Reset,
+    }
+}
+
+/// The processing pulse's color at intensity `t` (1 = the instant the
+/// indexer reported the file, 0 = decayed) — the lawn green flashing
+/// toward white and settling back.
+#[must_use]
+pub fn lawn_pulse(depth: ColorDepth, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    match depth {
+        ColorDepth::TrueColor => {
+            let luma = 0.56 + (0.95 - 0.56) * t;
+            let saturation = LAWN_SATURATION * (1.0 - t * 0.8);
+            let (r, g, b) = hsl_to_rgb(LAWN_HUE, saturation, luma);
+            Color::Rgb(r, g, b)
+        }
+        ColorDepth::Ansi256 => Color::Indexed(if t > 0.66 {
+            231
+        } else if t > 0.33 {
+            157
+        } else {
+            40
+        }),
+        ColorDepth::Ansi16 => {
+            if t > 0.5 {
+                Color::White
+            } else {
+                Color::LightGreen
+            }
+        }
+        ColorDepth::Mono => Color::Reset,
+    }
+}
+
 /// HSL to RGB, all inputs in `0.0..=1.0` except hue in degrees.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn hsl_to_rgb(hue: f32, saturation: f32, luma: f32) -> (u8, u8, u8) {

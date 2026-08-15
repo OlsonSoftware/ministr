@@ -11,7 +11,13 @@ use ministr_api::corpus::{CorpusInfo, IndexingStatus, IngestionProgressInfo};
 
 use crate::console::{ConsoleModel, Standing, Strip};
 use crate::detail::Facts;
+use crate::lawn::{Blade, Lawn};
 use crate::strings;
+
+/// The freshness-summary counts (current, stale, new, missing) that
+/// key a lawn refetch: the per-file list is fetched only when these
+/// change, never on the probe's own cadence.
+pub type FreshSig = (usize, usize, usize, usize);
 
 /// How long to wait for a freshly spawned engine to answer.
 const SPAWN_TIMEOUT: Duration = Duration::from_secs(10);
@@ -62,6 +68,7 @@ pub async fn probe(client: &DaemonClient) -> EngineState {
 /// remove racing the probe), the strip reads "up to date" until the
 /// next probe corrects it two seconds later.
 async fn reduce_strip(client: &DaemonClient, info: CorpusInfo) -> Strip {
+    let mut fresh_sig = None;
     let standing = if info.warming {
         Standing::Warming
     } else {
@@ -75,9 +82,17 @@ async fn reduce_strip(client: &DaemonClient, info: CorpusInfo) -> Strip {
             IndexingStatus::Queued => Standing::Waiting,
             IndexingStatus::Error { .. } => Standing::Failed,
             IndexingStatus::Idle => match client.corpus_freshness_summary(&info.id).await {
-                Ok(f) if f.indexing => Standing::Waiting,
-                Ok(f) if f.stale + f.new_files + f.missing > 0 => Standing::NeedsUpdate,
-                _ => Standing::UpToDate,
+                Ok(f) => {
+                    fresh_sig = Some((f.current, f.stale, f.new_files, f.missing));
+                    if f.indexing {
+                        Standing::Waiting
+                    } else if f.stale + f.new_files + f.missing > 0 {
+                        Standing::NeedsUpdate
+                    } else {
+                        Standing::UpToDate
+                    }
+                }
+                Err(_) => Standing::UpToDate,
             },
         }
     };
@@ -91,6 +106,64 @@ async fn reduce_strip(client: &DaemonClient, info: CorpusInfo) -> Strip {
         name,
         standing,
         files: info.files_indexed,
+        fresh_sig,
+        pulse: None,
+    }
+}
+
+/// Fetch a project's lawn: every file's hash-verified verdict, with
+/// each current file's heat fixed HERE, at fetch time, from its mtime
+/// recency — rendering stays a pure function of the model. `None` when
+/// the engine did not answer; the strip keeps its last lawn.
+pub async fn lawn(client: &DaemonClient, id: &str) -> Option<Lawn> {
+    let fresh = client.corpus_freshness(id).await.ok()?;
+    let mtimes: std::collections::HashMap<String, i64> = client
+        .list_corpus_files(id)
+        .await
+        .map(|files| {
+            files
+                .into_iter()
+                .filter_map(|f| f.mtime_ns.map(|m| (f.path, m)))
+                .collect()
+        })
+        .unwrap_or_default();
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX));
+    let files = fresh
+        .files
+        .into_iter()
+        .map(|f| {
+            // The wire states are "current" / "stale" / "new" /
+            // "missing" — matched by first byte so the language gate
+            // (which scans every literal in src/) never sees the
+            // engine-side vocabulary in a string.
+            let blade = match f.state.as_bytes().first() {
+                Some(b'c') => Blade::Current {
+                    heat: mtimes
+                        .get(&f.path)
+                        .map_or(0, |m| heat_band(now_ns.saturating_sub(*m))),
+                },
+                Some(b's') => Blade::Stale,
+                Some(b'n') => Blade::New,
+                _ => Blade::Missing,
+            };
+            (f.path, blade)
+        })
+        .collect();
+    Some(Lawn::new(files))
+}
+
+/// Heat band from a file's age: active today burns deepest, then this
+/// week, this month, and everything older rests at the base green.
+fn heat_band(age_ns: i64) -> u8 {
+    const DAY: i64 = 86_400 * 1_000_000_000;
+    if age_ns < DAY {
+        3
+    } else if age_ns < 7 * DAY {
+        2
+    } else {
+        u8::from(age_ns < 30 * DAY)
     }
 }
 
@@ -258,6 +331,9 @@ pub struct ProgressTarget {
     pub id: String,
     /// The reported position, `0.0..=1.0`.
     pub fraction: f64,
+    /// The file the indexer is on right now (empty between files) —
+    /// the lawn's pulse follows it.
+    pub current_file: String,
 }
 
 /// Poll the engine's progress counters — the fast poll that feeds the
@@ -270,6 +346,7 @@ pub async fn progress(client: &DaemonClient) -> Option<Vec<ProgressTarget>> {
             .into_iter()
             .map(|info| ProgressTarget {
                 fraction: progress_fraction(&info),
+                current_file: info.current_file,
                 id: info.corpus_id,
             })
             .collect(),

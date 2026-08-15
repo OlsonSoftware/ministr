@@ -22,7 +22,8 @@ use ratatui::text::Line;
 use crate::console::{self, Standing, Strip};
 use crate::detail::{self, Detail, Facts, PathsEditor};
 use crate::ease::Glide;
-use crate::engine::{Action, EngineState, Outcome, ProgressTarget};
+use crate::engine::{Action, EngineState, FreshSig, Outcome, ProgressTarget};
+use crate::lawn::{self, Lawn};
 use crate::motion::{Motion, Transition};
 use crate::palette::ColorDepth;
 use crate::patchin::{self, PatchIn};
@@ -72,6 +73,16 @@ pub struct App {
     /// stops building. A building strip without one renders the
     /// probe's own position unchanged.
     meters: HashMap<String, Glide>,
+    /// Each project's lawn, keyed by [`Strip::id`] — filled by
+    /// background fetches the event loop runs when a strip's
+    /// freshness signature changes.
+    lawns: HashMap<String, Lawn>,
+    /// The freshness signature each cached lawn was fetched at.
+    lawn_sigs: HashMap<String, FreshSig>,
+    /// The lawn's processing pulse per building project: the file the
+    /// indexer last reported and when the report landed. Pruned with
+    /// the meters when a strip stops building.
+    pulses: HashMap<String, (String, Instant)>,
     /// Which strip is selected (index into [`App::strips`]).
     pub selected: usize,
     /// The color ladder rung every widget renders at.
@@ -110,6 +121,9 @@ impl App {
             motion_strip: None,
             leaving: None,
             meters: HashMap::new(),
+            lawns: HashMap::new(),
+            lawn_sigs: HashMap::new(),
+            pulses: HashMap::new(),
             selected: 0,
             depth: ColorDepth::TrueColor,
             should_quit: false,
@@ -153,13 +167,23 @@ impl App {
         self.engine = state;
         if let EngineState::Running(model) = &self.engine {
             // A needle outlives its build by nothing: the moment a
-            // strip stops building, its glide goes with it.
+            // strip stops building, its glide goes with it — and so
+            // does the lawn's marching pulse.
             self.meters.retain(|id, _| {
                 model
                     .strips
                     .iter()
                     .any(|s| s.id == *id && matches!(s.standing, Standing::Building { .. }))
             });
+            // A pulse outlives its project by nothing; its 250ms decay
+            // handles the end of a build on its own.
+            self.pulses
+                .retain(|id, _| model.strips.iter().any(|s| s.id == *id));
+            // Lawns are deliberately NOT pruned when a strip vanishes:
+            // a rebuild unregisters the project for a moment, and a
+            // probe landing in that window would drop the cached lawn
+            // exactly when the returning build's march needs it. The
+            // cache is bounded by the projects seen this session.
             // An opened project tracks its strip; if the strip left
             // (removed elsewhere), the console takes the dissolve.
             if let View::Detail(open) = &mut self.view {
@@ -173,6 +197,9 @@ impl App {
             }
         } else {
             self.meters.clear();
+            self.pulses.clear();
+            self.lawns.clear();
+            self.lawn_sigs.clear();
             // The engine went away: every deeper view loses its
             // subject, and the console carries the machine state.
             self.view = View::Console;
@@ -234,10 +261,25 @@ impl App {
         };
         let mut moved = false;
         for target in targets {
-            // Only a building strip has a meter to drive.
             let Some(strip) = model.strips.iter().find(|s| s.id == target.id) else {
                 continue;
             };
+            // The lawn's pulse follows the file the indexer is on: a
+            // new file births a new flash; the old one keeps decaying.
+            // A report naming a file is processing evidence in its own
+            // right — the 500ms poll outruns the 2s probe, so the
+            // strip's standing may not say Building yet.
+            if !target.current_file.is_empty()
+                && self
+                    .pulses
+                    .get(&target.id)
+                    .is_none_or(|(path, _)| *path != target.current_file)
+            {
+                self.pulses
+                    .insert(target.id.clone(), (target.current_file.clone(), now));
+                moved = true;
+            }
+            // Only a building strip has a meter to drive.
             let Standing::Building { fraction } = strip.standing else {
                 continue;
             };
@@ -248,6 +290,39 @@ impl App {
             moved |= glide.retarget(target.fraction, now);
         }
         moved
+    }
+
+    /// Absorb a background lawn fetch. The signature is recorded even
+    /// when the fetch failed upstream, so a transient miss never spins
+    /// the fetcher; the lawn itself only replaces a differing one.
+    /// Returns whether the frame changed.
+    pub fn absorb_lawn(&mut self, id: &str, sig: FreshSig, fetched: Option<Lawn>) -> bool {
+        self.lawn_sigs.insert(id.to_owned(), sig);
+        if let Some(fresh) = fetched
+            && self.lawns.get(id) != Some(&fresh)
+        {
+            self.lawns.insert(id.to_owned(), fresh);
+            return true;
+        }
+        false
+    }
+
+    /// The lawns the event loop should fetch now: every strip whose
+    /// probe-reported freshness signature differs from the one its
+    /// cached lawn was fetched at.
+    #[must_use]
+    pub fn lawn_wants(&self) -> Vec<(String, FreshSig)> {
+        let EngineState::Running(model) = &self.engine else {
+            return Vec::new();
+        };
+        model
+            .strips
+            .iter()
+            .filter_map(|s| {
+                let sig = s.fresh_sig?;
+                (self.lawn_sigs.get(&s.id) != Some(&sig)).then(|| (s.id.clone(), sig))
+            })
+            .collect()
     }
 
     /// Is anything building? While yes, the event loop runs the fast
@@ -487,7 +562,12 @@ impl App {
     /// console rests again at zero redraws.
     #[must_use]
     pub fn animating(&self, now: Instant) -> bool {
-        self.motion.running() || self.meters.values().any(|glide| !glide.settled(now))
+        self.motion.running()
+            || self.meters.values().any(|glide| !glide.settled(now))
+            || self
+                .pulses
+                .values()
+                .any(|(_, born)| lawn::pulse_intensity(*born, now) > 0.0)
     }
 
     /// The strips the frame draws: [`App::strips`] with each building
@@ -504,6 +584,15 @@ impl App {
                 strip.standing = Standing::Building {
                     fraction: glide.at(now),
                 };
+            }
+            // The lawn's pulse at this instant, while it still has any
+            // light left — not gated on the standing, which can lag
+            // the fresher progress reports by a whole probe interval.
+            if let Some((path, born)) = self.pulses.get(&strip.id) {
+                let intensity = lawn::pulse_intensity(*born, now);
+                if intensity > 0.0 {
+                    strip.pulse = Some((path.clone(), intensity));
+                }
             }
         }
         strips
@@ -629,11 +718,14 @@ impl App {
             console::draw(
                 frame,
                 area,
-                strips,
-                self.selected,
-                self.depth,
-                &model.version,
-                self.confirming_remove && matches!(self.view, View::Console),
+                &console::Body {
+                    strips,
+                    selected: self.selected,
+                    depth: self.depth,
+                    version: &model.version,
+                    confirming: self.confirming_remove && matches!(self.view, View::Console),
+                    lawns: &self.lawns,
+                },
             )
         } else {
             console::ConsoleLayout::default()

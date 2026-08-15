@@ -13,12 +13,15 @@
 //! project, same anatomy rotated. Overflow travels horizontally behind
 //! plain `‹ 3 more ›` edge markers.
 
+use std::collections::HashMap;
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Stylize;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType};
 
+use crate::lawn::{Lawn, LawnView};
 use crate::meter::Meter;
 use crate::palette::{self, ColorDepth};
 use crate::strings;
@@ -46,6 +49,13 @@ pub struct Strip {
     pub standing: Standing,
     /// How many files the project's index holds (the size foot).
     pub files: usize,
+    /// The freshness-summary counts the probe saw, keying the lawn
+    /// refetch. `None` while the counts are unknowable (building,
+    /// warming, failed) — the lawn holds still then.
+    pub fresh_sig: Option<crate::engine::FreshSig>,
+    /// The lawn's processing pulse — `(path, intensity)`, attached by
+    /// the app at draw time while the project builds.
+    pub pulse: Option<(String, f32)>,
 }
 
 /// A project's standing — the word at the foot of its strip.
@@ -95,36 +105,40 @@ pub struct ConsoleLayout {
     pub strip_rects: Vec<Rect>,
 }
 
+/// Everything the console body draws from, bundled so the strip and
+/// bar painters share one view of the world.
+#[derive(Debug)]
+pub struct Body<'a> {
+    /// One strip per project, in the engine's order.
+    pub strips: &'a [Strip],
+    /// Which strip is selected.
+    pub selected: usize,
+    /// The color ladder rung every widget renders at.
+    pub depth: ColorDepth,
+    /// Engine version, shown in the master section.
+    pub version: &'a str,
+    /// Is the inline remove question up on the selected strip? The
+    /// confirm lives on the strip itself, never in a dialog.
+    pub confirming: bool,
+    /// Each project's lawn, keyed by [`Strip::id`] — looked up here
+    /// rather than carried on the strip so frames never clone a big
+    /// file list.
+    pub lawns: &'a HashMap<String, Lawn>,
+}
+
 /// Draw the console body: strips left, master section right. The
-/// caller has already decided the engine is running. `confirming`
-/// puts the inline remove question on the selected strip — the confirm
-/// lives on the strip itself, never in a dialog.
-pub fn draw(
-    frame: &mut Frame,
-    area: Rect,
-    strips: &[Strip],
-    selected: usize,
-    depth: ColorDepth,
-    version: &str,
-    confirming: bool,
-) -> ConsoleLayout {
+/// caller has already decided the engine is running.
+pub fn draw(frame: &mut Frame, area: Rect, body: &Body) -> ConsoleLayout {
     if area.width < STACK_BELOW {
-        draw_stacked(frame, area, strips, selected, depth, confirming)
+        draw_stacked(frame, area, body)
     } else {
-        draw_wide(frame, area, strips, selected, depth, version, confirming)
+        draw_wide(frame, area, body)
     }
 }
 
 /// The full console: tall strips beside the master block.
-fn draw_wide(
-    frame: &mut Frame,
-    area: Rect,
-    strips: &[Strip],
-    selected: usize,
-    depth: ColorDepth,
-    version: &str,
-    confirming: bool,
-) -> ConsoleLayout {
+fn draw_wide(frame: &mut Frame, area: Rect, body: &Body) -> ConsoleLayout {
+    let (strips, selected) = (body.strips, body.selected);
     let tight = area.width < COMPRESS_BELOW;
     let (strip_w, gutter, master_w) = if tight {
         (STRIP_TIGHT, GUTTER_TIGHT, MASTER_TIGHT)
@@ -137,7 +151,7 @@ fn draw_wide(
             .spacing(gutter)
             .areas(area);
 
-    draw_master(frame, master_area, version, strips.len());
+    draw_master(frame, master_area, body.version, strips.len());
 
     if strips.is_empty() {
         draw_no_projects(frame, strips_area);
@@ -179,27 +193,31 @@ fn draw_wide(
         let rect = Rect::new(x, strips_area.y, strip_w, strips_area.height);
         layout.strip_rects[index] = rect;
         let selected_here = index == selected;
+        let strip = &strips[index];
         draw_strip(
             frame,
             rect,
-            &strips[index],
+            strip,
+            body.lawns.get(&strip.id),
             selected_here,
-            depth,
-            confirming && selected_here,
+            body.depth,
+            body.confirming && selected_here,
         );
     }
     layout
 }
 
-/// One tall channel strip: framed, name at the head, meter and standing
-/// and size at the foot. Selection brightens the frame and the name —
-/// intensity, so it survives every ladder rung including monochrome.
-/// While an inline remove waits for its answer, the question takes the
-/// standing row — the words carry the state on every ladder rung.
+/// One tall channel strip: framed, name at the head, the project's
+/// lawn filling the middle, meter and standing and size at the foot.
+/// Selection brightens the frame and the name — intensity, so it
+/// survives every ladder rung including monochrome. While an inline
+/// remove waits for its answer, the question takes the standing row —
+/// the words carry the state on every ladder rung.
 fn draw_strip(
     frame: &mut Frame,
     rect: Rect,
     strip: &Strip,
+    lawn: Option<&Lawn>,
     selected: bool,
     depth: ColorDepth,
     confirming: bool,
@@ -209,9 +227,11 @@ fn draw_strip(
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
 
-    let [head, _, meter_row, standing_row, size_row] = Layout::vertical([
+    let [head, _, lawn_area, _, meter_row, standing_row, size_row] = Layout::vertical([
+        Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Fill(1),
+        Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
@@ -222,6 +242,14 @@ fn draw_strip(
     let name = Line::from(strip.name.as_str()).bold();
     let name = if selected { name } else { name.dim() };
     frame.render_widget(name, head);
+
+    if let Some(lawn) = lawn.filter(|l| !l.is_empty()) {
+        let mut view = LawnView::new(lawn, depth);
+        if let Some((path, intensity)) = &strip.pulse {
+            view = view.pulsing(path, *intensity, lawn_area);
+        }
+        frame.render_widget(view, lawn_area);
+    }
 
     if let Standing::Building { fraction } = strip.standing {
         frame.render_widget(Meter::new(fraction, depth), meter_row);
@@ -301,14 +329,8 @@ fn draw_master(frame: &mut Frame, area: Rect, version: &str, projects: usize) {
 /// Below 60 columns: one row per project, the same anatomy rotated —
 /// name at the left, inline meter while building, standing and size at
 /// the right edge. No master block; the title row carries machine state.
-fn draw_stacked(
-    frame: &mut Frame,
-    area: Rect,
-    strips: &[Strip],
-    selected: usize,
-    depth: ColorDepth,
-    confirming: bool,
-) -> ConsoleLayout {
+fn draw_stacked(frame: &mut Frame, area: Rect, body: &Body) -> ConsoleLayout {
+    let (strips, selected) = (body.strips, body.selected);
     if strips.is_empty() {
         draw_no_projects(frame, area);
         return ConsoleLayout::default();
@@ -358,8 +380,8 @@ fn draw_stacked(
             row,
             &strips[index],
             selected_here,
-            depth,
-            confirming && selected_here,
+            body.depth,
+            body.confirming && selected_here,
         );
     }
     layout

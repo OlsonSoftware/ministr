@@ -13,6 +13,7 @@ use ministr_tui::console::{ConsoleModel, Standing, Strip};
 use ministr_tui::detail::{Detail, Facts, PathsEditor};
 use ministr_tui::ease::GLIDE;
 use ministr_tui::engine::{Action, EngineState, Outcome, ProgressTarget};
+use ministr_tui::lawn::{Blade, Lawn, PULSE};
 use ministr_tui::motion::MAX_TRANSITION;
 use ministr_tui::palette::ColorDepth;
 use ministr_tui::patchin::PatchIn;
@@ -56,6 +57,8 @@ fn strip(name: &str, standing: Standing, files: usize) -> Strip {
         name: name.to_owned(),
         standing,
         files,
+        fresh_sig: None,
+        pulse: None,
     }
 }
 
@@ -262,6 +265,120 @@ fn a_removed_project_dissolves_in_place() {
     assert_eq!(app.strips().len(), 2, "the ghost leaves with the dissolve");
 }
 
+// --- the lawn: a grid of the project's files ---------------------------
+
+/// A deterministic lawn of `n` files: attention states sown at the
+/// given strides, the rest current at a cycling heat. Worst-state
+/// bucketing means a dense stride reads as a mostly-orange lawn and a
+/// sparse one as mostly green — pick strides that match the project's
+/// story.
+fn test_lawn(n: usize, stale_every: usize, new_every: usize, missing_every: usize) -> Lawn {
+    Lawn::new(
+        (0..n)
+            .map(|i| {
+                let blade = if i % missing_every == missing_every - 1 {
+                    Blade::Missing
+                } else if i % new_every == new_every - 1 {
+                    Blade::New
+                } else if i % stale_every == stale_every - 1 {
+                    Blade::Stale
+                } else {
+                    #[allow(clippy::cast_possible_truncation)]
+                    Blade::Current {
+                        heat: (i % 4) as u8,
+                    }
+                };
+                (format!("src/file_{i:04}.rs"), blade)
+            })
+            .collect(),
+    )
+}
+
+/// The populated console with every strip's lawn in place: ministr up
+/// to date (green with a few flecks), cohaero mid-build, tock behind
+/// (orange spreading through the grid).
+fn populated_with_lawns() -> App {
+    let mut app = App::with_engine(populated());
+    app.absorb_lawn(
+        "ministr",
+        (804, 5, 2, 1),
+        Some(test_lawn(812, 199, 293, 401)),
+    );
+    app.absorb_lawn(
+        "cohaero",
+        (1200, 0, 4, 0),
+        Some(test_lawn(260, 47, 83, 997)),
+    );
+    app.absorb_lawn("tock", (580, 46, 12, 2), Some(test_lawn(640, 11, 29, 251)));
+    app
+}
+
+#[test]
+fn console_lawns_spacious() {
+    let mut app = populated_with_lawns();
+    insta::assert_snapshot!(render(&mut app, 120, 36));
+}
+
+#[test]
+fn console_lawns_compressed() {
+    let mut app = populated_with_lawns();
+    insta::assert_snapshot!(render(&mut app, 80, 24));
+}
+
+#[test]
+fn console_lawn_colors_styled() {
+    let mut app = populated_with_lawns();
+    insta::assert_debug_snapshot!(render_styled(&mut app, 80, 24));
+}
+
+#[test]
+fn an_identical_lawn_refetch_draws_nothing() {
+    let mut app = populated_with_lawns();
+    assert!(!app.absorb_lawn("tock", (580, 46, 12, 2), Some(test_lawn(640, 11, 29, 251))));
+    assert!(
+        !app.absorb_lawn("tock", (581, 45, 12, 2), None),
+        "a failed fetch records its signature quietly"
+    );
+}
+
+#[test]
+fn the_indexers_march_pulses_start_and_end_frames() {
+    let t0 = Instant::now();
+    let mut app = populated_with_lawns();
+    let targets = vec![ProgressTarget {
+        id: "cohaero".to_owned(),
+        fraction: 0.43,
+        current_file: "src/file_0100.rs".to_owned(),
+    }];
+    assert!(app.absorb_progress(&targets, t0), "a new file pulses");
+    assert!(app.animating(t0), "the flash runs the frame clock");
+    insta::assert_snapshot!("lawn_pulse_start", render_at(&mut app, 120, 36, t0));
+    assert!(
+        !app.animating(t0 + PULSE),
+        "a decayed pulse returns the console to rest"
+    );
+    insta::assert_snapshot!("lawn_pulse_end", render_at(&mut app, 120, 36, t0 + PULSE));
+}
+
+#[test]
+fn a_report_on_the_same_file_does_not_repulse() {
+    let t0 = Instant::now();
+    let mut app = populated_with_lawns();
+    let target = |fraction| {
+        vec![ProgressTarget {
+            id: "cohaero".to_owned(),
+            fraction,
+            current_file: "src/file_0100.rs".to_owned(),
+        }]
+    };
+    assert!(app.absorb_progress(&target(0.43), t0));
+    assert!(
+        !app.absorb_progress(&target(0.43), t0 + PULSE),
+        "same file, same position: nothing moved"
+    );
+    assert!(!app.animating(t0 + PULSE));
+}
+
 // --- live meters: the needle glides, never steps -----------------------
 
 /// One project mid-build at 20%, as the probe reported it.
@@ -278,6 +395,7 @@ fn report(fraction: f64) -> Vec<ProgressTarget> {
     vec![ProgressTarget {
         id: "cohaero".to_owned(),
         fraction,
+        current_file: String::new(),
     }]
 }
 

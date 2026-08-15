@@ -22,6 +22,7 @@ pub mod ease;
 pub mod engine;
 pub mod event;
 pub mod field;
+pub mod lawn;
 pub mod meter;
 pub mod motion;
 pub mod pacing;
@@ -108,6 +109,12 @@ async fn event_loop(
     // purging) must never hold up a frame or a key press.
     let (verb_tx, mut verb_rx) = tokio::sync::mpsc::channel::<engine::Outcome>(1);
     let mut verb_running = false;
+    // Lawn fetches (per-file freshness + mtimes) ride their own tasks
+    // for the same reason — a big project's file list must never hold
+    // up a frame. One in flight per project.
+    let (lawn_tx, mut lawn_rx) =
+        tokio::sync::mpsc::channel::<(String, engine::FreshSig, Option<lawn::Lawn>)>(8);
+    let mut lawn_fetching: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     loop {
         pacer.set_animating(app.animating(Instant::now()));
@@ -182,10 +189,23 @@ async fn event_loop(
                 }
                 pacer.mark_dirty();
             }
+            // A lawn fetch landed: absorb it (the signature is
+            // recorded even for a failed fetch, so a miss never spins
+            // the fetcher).
+            Some((id, sig, fetched)) = lawn_rx.recv() => {
+                lawn_fetching.remove(&id);
+                if app.absorb_lawn(&id, sig, fetched) {
+                    pacer.mark_dirty();
+                }
+            }
             // The frame clock: armed only while a transition plays or
             // a needle glides, so the rest state stays event-driven.
             () = tokio::time::sleep(pacing::FRAME_INTERVAL), if pacer.is_animating() => {}
         }
+
+        // A strip's freshness signature moved past its cached lawn:
+        // fetch the fresh per-file picture in the background.
+        spawn_lawn_fetches(&app, &mut lawn_fetching, &lawn_tx);
 
         // A key press queued a verb: hand it to a background task (one
         // at a time — a second queued verb waits its turn) and say
@@ -203,6 +223,27 @@ async fn event_loop(
 
         if app.should_quit {
             return Ok(());
+        }
+    }
+}
+
+/// Spawn a background lawn fetch for every strip whose freshness
+/// signature moved past its cached lawn — at most one in flight per
+/// project. The task answers on `tx` whatever happens, so the
+/// in-flight set always drains.
+fn spawn_lawn_fetches(
+    app: &App,
+    fetching: &mut std::collections::HashSet<String>,
+    tx: &tokio::sync::mpsc::Sender<(String, engine::FreshSig, Option<lawn::Lawn>)>,
+) {
+    for (id, sig) in app.lawn_wants() {
+        if fetching.insert(id.clone()) {
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let client = DaemonClient::new();
+                let fetched = engine::lawn(&client, &id).await;
+                let _ = tx.send((id, sig, fetched)).await;
+            });
         }
     }
 }
