@@ -100,6 +100,11 @@ pub enum RegistryError {
     NotOrphan { id: String },
     #[error("orphaned index dir cannot be adopted: {reason}")]
     Unadoptable { reason: String },
+    /// The index directory's ownership lease is held by another live
+    /// process (arch-index-ownership-lease) — registering would make
+    /// this daemon a second writer on the same index.
+    #[error(transparent)]
+    Lease(#[from] ministr_core::storage::LeaseError),
 }
 
 /// Central registry managing all indexed corpora.
@@ -254,6 +259,12 @@ pub struct CorpusHandle {
     /// file-system change the watcher observed, carrying path, kind, and
     /// the list of affected section IDs.
     pub coherence_tx: tokio::sync::broadcast::Sender<CoherenceEvent>,
+    /// Exclusive writer lease on `data_dir` (arch-index-ownership-lease).
+    /// Held for the handle's whole life so no in-process engine (CLI
+    /// direct mode, a second daemon) can open this index while we own it;
+    /// the OS releases it if the daemon dies. Drops with the handle, so
+    /// `unregister` → purge deletes an unowned dir.
+    pub lease: ministr_core::storage::IndexLease,
 }
 
 impl CorpusHandle {
@@ -1768,6 +1779,12 @@ impl CorpusRegistry {
         std::fs::create_dir_all(&corpus_dir)
             .map_err(|e| RegistryError::Storage(format!("create dir: {e}")))?;
 
+        // One writer per index dir (arch-index-ownership-lease): own the
+        // directory before touching content.db or the vector index. If a
+        // CLI one-shot or another daemon holds it, refuse now — a second
+        // writer is exactly the orphan/corruption class this kills.
+        let lease = ministr_core::storage::IndexLease::acquire(&corpus_dir, "ministr daemon")?;
+
         write_identity_sidecar(corpus_id, paths, &corpus_dir);
 
         let storage = Arc::new(
@@ -1901,6 +1918,7 @@ impl CorpusRegistry {
             data_dir: corpus_dir,
             tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             coherence_tx: tokio::sync::broadcast::channel(16).0,
+            lease,
         })
     }
 }

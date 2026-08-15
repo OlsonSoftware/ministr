@@ -1325,14 +1325,29 @@ pub async fn cmd_index(
         return Ok(());
     }
 
-    let ctx = infra::init_infrastructure(
+    let ctx = match infra::init_infrastructure(
         corpus_paths,
         config,
         Some(resolved_model),
         resolved_dimension,
         rerank_depth,
     )
-    .await?;
+    .await
+    {
+        Ok(ctx) => ctx,
+        // arch-index-ownership-lease: another live process owns this index
+        // dir. When it's the shared daemon, don't double-write — hand the
+        // job to it and report; otherwise surface the plain refusal.
+        Err(err) => {
+            return match err.downcast_ref::<infra::IndexOwnedElsewhere>() {
+                Some(owned) => {
+                    let holder = owned.holder.clone();
+                    forward_index_to_daemon(corpus_paths, &holder).await
+                }
+                None => Err(err),
+            };
+        }
+    };
 
     let progress = Arc::new(ministr_core::ingestion::IngestionProgress::new());
     // Local `ministr index` keeps the bundle-at-end shape;
@@ -1341,6 +1356,62 @@ pub async fn cmd_index(
 
     tracing::info!("indexing complete");
     Ok(())
+}
+
+/// `ministr index` fallback when the index dir's ownership lease is held
+/// (arch-index-ownership-lease): if the holder is the shared daemon, forward
+/// the job to it — registration is idempotent, and the daemon's watcher +
+/// indexer keep the corpus fresh — instead of double-writing. Waits for any
+/// indexing the forward kicked off, so the one-shot contract (returns when
+/// the index is ready) holds in both modes.
+async fn forward_index_to_daemon(corpus_paths: &[String], holder: &str) -> Result<()> {
+    let client = ministr_api::client::DaemonClient::new();
+    if !client.is_healthy().await {
+        // Whoever owns the lease, it isn't a daemon we can hand work to.
+        return Err(miette::miette!(
+            help = "let that process finish (or stop it), then run `ministr index` again",
+            "this project's index is in use by {holder}, and no daemon is answering"
+        ));
+    }
+
+    let resp = client
+        .register_corpus(corpus_paths)
+        .await
+        .into_diagnostic()
+        .wrap_err("the daemon owns this index, but forwarding the job to it failed")?;
+    eprintln!(
+        "The shared ministr daemon already looks after this project's index — \
+         handed the job to it instead of writing alongside it."
+    );
+
+    wait_for_daemon_indexing(&client, &resp.corpus_id).await;
+    Ok(())
+}
+
+/// Poll the daemon until the forwarded corpus stops reporting an in-flight
+/// index run. Best-effort: polling errors end the wait rather than failing
+/// the command — the daemon owns the work either way.
+async fn wait_for_daemon_indexing(client: &ministr_api::client::DaemonClient, corpus_id: &str) {
+    loop {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        match client.corpus_status(corpus_id).await {
+            Ok(info) => match info.status {
+                ministr_api::corpus::IndexingStatus::Queued
+                | ministr_api::corpus::IndexingStatus::Indexing { .. } => {}
+                _ => {
+                    eprintln!(
+                        "Index ready in the daemon: {} files, {} sections.",
+                        info.files_indexed, info.sections_count
+                    );
+                    return;
+                }
+            },
+            Err(e) => {
+                tracing::warn!(error = %e, "daemon status poll failed; not waiting further");
+                return;
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

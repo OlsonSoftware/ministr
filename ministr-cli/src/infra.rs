@@ -14,9 +14,46 @@ use ministr_core::index::VectorIndexLoad as _;
 use ministr_core::session::UsageConfig;
 use ministr_core::storage::Storage as _;
 
+/// The index directory is owned by another live process
+/// (arch-index-ownership-lease). One-shot commands catch this and forward
+/// to the daemon; server modes surface it as a plain refusal.
+#[derive(Debug)]
+pub(crate) struct IndexOwnedElsewhere {
+    /// Who holds the lease, from the lock-file diagnostics.
+    pub(crate) holder: String,
+}
+
+impl std::fmt::Display for IndexOwnedElsewhere {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "this project's index is in use by {} — \
+             one writer per index keeps it from being corrupted",
+            self.holder
+        )
+    }
+}
+
+impl std::error::Error for IndexOwnedElsewhere {}
+
+impl miette::Diagnostic for IndexOwnedElsewhere {
+    fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        Some(Box::new(
+            "let that process finish (or stop it), or go through the daemon \
+             with `ministr serve` instead of opening the index directly",
+        ))
+    }
+}
+
 /// Shared infrastructure components initialized at startup.
 #[derive(Clone)]
 pub(crate) struct InfrastructureContext {
+    /// Exclusive writer lease on `corpus_dir` (arch-index-ownership-lease).
+    /// Held for the life of the context so the daemon (or a second CLI)
+    /// can't open the same index while this process writes it. `Arc`
+    /// because the context is cloned; the lease releases when the last
+    /// clone drops or the process exits.
+    pub(crate) _lease: Arc<ministr_core::storage::IndexLease>,
     pub(crate) corpus_dir: PathBuf,
     pub(crate) index_dir: PathBuf,
     pub(crate) storage: Arc<ministr_core::storage::SqliteStorage>,
@@ -87,6 +124,22 @@ pub(crate) async fn init_infrastructure(
                 corpus_dir.display()
             )
         })?;
+
+    // One writer per index dir (arch-index-ownership-lease): own the
+    // directory before opening content.db or the vector index. When the
+    // daemon (or another CLI) holds it, the typed error lets one-shot
+    // callers forward to the daemon instead of double-writing.
+    let lease = match ministr_core::storage::IndexLease::acquire(&corpus_dir, "ministr command") {
+        Ok(lease) => Arc::new(lease),
+        Err(ministr_core::storage::LeaseError::Held { holder, .. }) => {
+            return Err(IndexOwnedElsewhere { holder }.into());
+        }
+        Err(e) => {
+            return Err(e)
+                .into_diagnostic()
+                .wrap_err("failed to take the index ownership lease");
+        }
+    };
 
     // Initialize storage.
     let storage = ministr_core::storage::SqliteStorage::open(&db_path)
@@ -275,6 +328,7 @@ pub(crate) async fn init_infrastructure(
     };
 
     Ok(InfrastructureContext {
+        _lease: lease,
         corpus_dir,
         index_dir,
         storage: Arc::new(storage),

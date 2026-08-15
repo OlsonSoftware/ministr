@@ -103,6 +103,7 @@ fn build_handle(
         )),
         progress: Arc::new(IngestionProgress::new()),
         cancel: CancellationToken::new(),
+        lease: ministr_core::storage::IndexLease::acquire(&data_dir, "daemon test").unwrap(),
         data_dir,
         tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
         coherence_tx: tokio::sync::broadcast::channel(16).0,

@@ -55,6 +55,12 @@ async fn get_or_lazy_load_warms_a_cold_corpus_from_the_manifest() {
         .await
         .unwrap();
 
+    // Simulate the previous daemon dying: remove A's handle (manifest and
+    // on-disk state stay). Dropping the handle releases its ownership
+    // lease (arch-index-ownership-lease) exactly as process death would —
+    // without this, B's lazy load is correctly REFUSED as a second writer.
+    drop(reg_a.corpora().write().await.remove(&corpus_id));
+
     // Registry B points at the SAME data_dir but has a fresh, empty
     // in-memory map and never calls restore() — exactly the state a query
     // hits when it arrives before the corpus has been warmed.
