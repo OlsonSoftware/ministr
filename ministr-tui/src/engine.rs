@@ -127,6 +127,97 @@ pub enum Action {
     },
 }
 
+impl Action {
+    /// The word the foot row shows while this verb runs — verbs run on
+    /// a background task so the console never freezes, and the word
+    /// says so honestly. The quiet facts fetch shows nothing.
+    #[must_use]
+    pub fn working_word(&self) -> Option<&'static str> {
+        match self {
+            Self::OpenDetail { .. } => None,
+            Self::Rebuild { .. } => Some(strings::WORKING_REBUILD),
+            Self::Remove { .. } => Some(strings::WORKING_REMOVE),
+            Self::PatchIn { .. } => Some(strings::WORKING_ADD),
+            Self::SavePaths { .. } => Some(strings::WORKING_SAVE),
+        }
+    }
+}
+
+/// What a finished verb left behind, applied to the app by
+/// [`crate::app::App::absorb_outcome`] when the background task
+/// delivers it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Outcome {
+    /// The machine may have changed shape — the caller re-probes at
+    /// once when so.
+    pub refreshed: bool,
+    /// The plain-worded failure to show, when the verb failed.
+    pub notice: Option<&'static str>,
+    /// The panel that queued the verb is finished (a patch-in landed).
+    pub to_console: bool,
+    /// Fresh facts for the opened project, when the verb fetched them.
+    pub facts: Option<Facts>,
+}
+
+impl Outcome {
+    /// An outcome that changed nothing and says nothing.
+    fn quiet() -> Self {
+        Self {
+            refreshed: false,
+            notice: None,
+            to_console: false,
+            facts: None,
+        }
+    }
+
+    /// A plain verb's outcome: refreshed on success, the failure word
+    /// otherwise.
+    fn finished(ok: bool, failure: &'static str) -> Self {
+        Self {
+            refreshed: ok,
+            notice: (!ok).then_some(failure),
+            ..Self::quiet()
+        }
+    }
+}
+
+/// Run one queued verb against the engine. Runs on its own task — a
+/// slow answer (a big project registering, a rebuild purging) must
+/// never hold up a frame.
+pub async fn run(client: &DaemonClient, action: Action) -> Outcome {
+    match action {
+        Action::OpenDetail { id } => Outcome {
+            facts: detail(client, &id).await,
+            ..Outcome::quiet()
+        },
+        Action::Rebuild { id } => Outcome::finished(
+            client.reindex_corpus(&id).await.is_ok(),
+            strings::NOTICE_REBUILD_FAILED,
+        ),
+        Action::Remove { id } => Outcome::finished(
+            client.unregister_corpus(&id).await.is_ok(),
+            strings::NOTICE_REMOVE_FAILED,
+        ),
+        Action::PatchIn { path } => {
+            let ok = client.register_corpus(&[path]).await.is_ok();
+            Outcome {
+                // Back to the console: the new strip materializes
+                // there the moment the next probe reports it.
+                to_console: ok,
+                ..Outcome::finished(ok, strings::NOTICE_ADD_FAILED)
+            }
+        }
+        Action::SavePaths { id, paths } => {
+            let ok = client.update_corpus_paths(&id, &paths).await.is_ok();
+            Outcome {
+                // The path set changed: bring the opened panel current.
+                facts: if ok { detail(client, &id).await } else { None },
+                ..Outcome::finished(ok, strings::NOTICE_PATHS_FAILED)
+            }
+        }
+    }
+}
+
 /// Fetch the opened project's slower facts: the full path set, section
 /// and symbol counts, when the last build finished, and what needs
 /// updating. Every wall-clock phrase is rendered here, at fetch time,

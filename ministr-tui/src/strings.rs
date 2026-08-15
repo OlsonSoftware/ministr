@@ -97,6 +97,18 @@ pub const PATCH_IN_TITLE: &str = "add a project";
 pub const PATCH_IN_CONSEQUENCE: &str =
     "the engine reads every file under this path and keeps the project up to date";
 
+/// Foot word while an add runs on the engine.
+pub const WORKING_ADD: &str = "adding…";
+
+/// Foot word while a rebuild starts on the engine.
+pub const WORKING_REBUILD: &str = "starting the rebuild…";
+
+/// Foot word while a remove runs on the engine.
+pub const WORKING_REMOVE: &str = "removing…";
+
+/// Foot word while a path-set save runs on the engine.
+pub const WORKING_SAVE: &str = "saving…";
+
 /// Notice: the rebuild verb got no answer, or a refusal.
 pub const NOTICE_REBUILD_FAILED: &str = "the rebuild didn't start";
 

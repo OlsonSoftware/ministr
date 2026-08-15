@@ -12,7 +12,7 @@ use ministr_tui::app::{App, View};
 use ministr_tui::console::{ConsoleModel, Standing, Strip};
 use ministr_tui::detail::{Detail, Facts, PathsEditor};
 use ministr_tui::ease::GLIDE;
-use ministr_tui::engine::{Action, EngineState, ProgressTarget};
+use ministr_tui::engine::{Action, EngineState, Outcome, ProgressTarget};
 use ministr_tui::motion::MAX_TRANSITION;
 use ministr_tui::palette::ColorDepth;
 use ministr_tui::patchin::PatchIn;
@@ -709,6 +709,107 @@ fn the_panel_closes_when_the_engine_goes_away() {
     let mut app = opened(Some(cohaero_facts()));
     assert!(app.absorb(EngineState::Unreachable));
     assert!(matches!(app.view, View::Console));
+}
+
+// --- verbs run in the background: the console keeps breathing --------
+
+/// A finished verb that changed nothing and says nothing.
+fn quiet_outcome() -> Outcome {
+    Outcome {
+        refreshed: false,
+        notice: None,
+        to_console: false,
+        facts: None,
+    }
+}
+
+#[test]
+fn patch_in_shows_its_working_word_while_the_engine_answers() {
+    let mut app = patching_in();
+    assert!(app.on_key(KeyEvent::from(KeyCode::Enter)));
+    // The event loop hands the queued verb to a background task and
+    // marks what is running; the frame must keep drawing meanwhile.
+    app.working = app
+        .pending
+        .take()
+        .expect("enter queued the add")
+        .working_word();
+    assert_eq!(app.working, Some(strings::WORKING_ADD));
+    insta::assert_snapshot!(render(&mut app, 120, 36));
+}
+
+#[test]
+fn a_landed_patch_in_returns_to_the_console_and_reprobes() {
+    let mut app = patching_in();
+    app.working = Some(strings::WORKING_ADD);
+    let refreshed = app.absorb_outcome(Outcome {
+        refreshed: true,
+        to_console: true,
+        ..quiet_outcome()
+    });
+    assert!(refreshed, "a landed add re-probes at once");
+    assert!(matches!(app.view, View::Console));
+    assert_eq!(app.working, None, "the working word leaves with the verb");
+}
+
+#[test]
+fn a_failed_verb_leaves_its_notice_and_changes_nothing() {
+    let mut app = patching_in();
+    app.working = Some(strings::WORKING_ADD);
+    let refreshed = app.absorb_outcome(Outcome {
+        notice: Some(strings::NOTICE_ADD_FAILED),
+        ..quiet_outcome()
+    });
+    assert!(!refreshed);
+    assert!(
+        matches!(app.view, View::PatchIn(_)),
+        "the panel holds for a retry"
+    );
+    assert_eq!(app.notice.as_deref(), Some(strings::NOTICE_ADD_FAILED));
+    assert_eq!(app.working, None);
+}
+
+#[test]
+fn an_outcome_carrying_facts_fills_the_open_panel() {
+    let mut app = opened(None);
+    let refreshed = app.absorb_outcome(Outcome {
+        facts: Some(cohaero_facts()),
+        ..quiet_outcome()
+    });
+    assert!(!refreshed, "a facts fetch never re-probes");
+    let View::Detail(open) = &app.view else {
+        panic!("still on the panel");
+    };
+    assert!(open.facts.is_some());
+}
+
+#[test]
+fn every_engine_touching_verb_carries_a_working_word() {
+    let id = "cohaero".to_owned();
+    assert_eq!(
+        Action::OpenDetail { id: id.clone() }.working_word(),
+        None,
+        "the quiet facts fetch says nothing"
+    );
+    for (action, word) in [
+        (Action::Rebuild { id: id.clone() }, strings::WORKING_REBUILD),
+        (Action::Remove { id: id.clone() }, strings::WORKING_REMOVE),
+        (
+            Action::PatchIn {
+                path: "/x".to_owned(),
+            },
+            strings::WORKING_ADD,
+        ),
+        (
+            Action::SavePaths {
+                id,
+                paths: vec!["/x".to_owned()],
+            },
+            strings::WORKING_SAVE,
+        ),
+    ] {
+        assert_eq!(action.working_word(), Some(word));
+    }
 }
 
 #[test]

@@ -35,8 +35,7 @@ use std::time::{Duration, Instant};
 use ministr_api::client::DaemonClient;
 use ratatui::DefaultTerminal;
 
-use crate::app::{App, View};
-use crate::engine::Action;
+use crate::app::App;
 use crate::pacing::Pacer;
 
 /// How often the frame re-probes the engine for machine state.
@@ -104,6 +103,11 @@ async fn event_loop(
     let mut spawn_done = false;
     let mut pacer = Pacer::new();
     let mut last_frame = Instant::now();
+    // Verbs run on their own task and answer through this channel — a
+    // slow engine answer (a big project registering, a rebuild
+    // purging) must never hold up a frame or a key press.
+    let (verb_tx, mut verb_rx) = tokio::sync::mpsc::channel::<engine::Outcome>(1);
+    let mut verb_running = false;
 
     loop {
         pacer.set_animating(app.animating(Instant::now()));
@@ -167,81 +171,38 @@ async fn event_loop(
                     pacer.mark_dirty();
                 }
             }
+            // A verb finished on its background task: apply what it
+            // left behind, and probe at once when the machine changed
+            // shape so the transition plays without waiting out the
+            // probe interval.
+            Some(outcome) = verb_rx.recv() => {
+                verb_running = false;
+                if app.absorb_outcome(outcome) {
+                    probe_timer.reset_immediately();
+                }
+                pacer.mark_dirty();
+            }
             // The frame clock: armed only while a transition plays or
             // a needle glides, so the rest state stays event-driven.
             () = tokio::time::sleep(pacing::FRAME_INTERVAL), if pacer.is_animating() => {}
         }
 
-        // A key press queued a verb: run it against the engine, then
-        // probe at once so the console reflects the change (and its
-        // transition plays) without waiting out the probe interval.
-        if let Some(action) = app.pending.take() {
-            if run_action(client, &mut app, action).await {
-                probe_timer.reset_immediately();
-            }
+        // A key press queued a verb: hand it to a background task (one
+        // at a time — a second queued verb waits its turn) and say
+        // what is running on the foot row while it works.
+        if !verb_running && let Some(action) = app.pending.take() {
+            verb_running = true;
+            app.working = action.working_word();
             pacer.mark_dirty();
+            let tx = verb_tx.clone();
+            tokio::spawn(async move {
+                let client = DaemonClient::new();
+                let _ = tx.send(engine::run(&client, action).await).await;
+            });
         }
 
         if app.should_quit {
             return Ok(());
         }
     }
-}
-
-/// Run one queued verb against the engine. Returns whether the machine
-/// may have changed shape — the caller re-probes at once when so. A
-/// failed verb leaves a plain-worded notice and changes nothing.
-async fn run_action(client: &DaemonClient, app: &mut App, action: Action) -> bool {
-    match action {
-        Action::OpenDetail { id } => {
-            if let Some(facts) = engine::detail(client, &id).await {
-                app.absorb_detail(facts);
-            }
-            false
-        }
-        Action::Rebuild { id } => settle(
-            app,
-            client.reindex_corpus(&id).await.is_ok(),
-            strings::NOTICE_REBUILD_FAILED,
-        ),
-        Action::Remove { id } => settle(
-            app,
-            client.unregister_corpus(&id).await.is_ok(),
-            strings::NOTICE_REMOVE_FAILED,
-        ),
-        Action::PatchIn { path } => {
-            let ok = settle(
-                app,
-                client.register_corpus(&[path]).await.is_ok(),
-                strings::NOTICE_ADD_FAILED,
-            );
-            if ok {
-                // Back to the console: the new strip materializes
-                // there the moment the next probe reports it.
-                app.view = View::Console;
-            }
-            ok
-        }
-        Action::SavePaths { id, paths } => {
-            let ok = settle(
-                app,
-                client.update_corpus_paths(&id, &paths).await.is_ok(),
-                strings::NOTICE_PATHS_FAILED,
-            );
-            // The path set changed: refresh the opened panel now.
-            if ok && let Some(facts) = engine::detail(client, &id).await {
-                app.absorb_detail(facts);
-            }
-            ok
-        }
-    }
-}
-
-/// A verb's outcome: a success changes the machine, a failure leaves a
-/// plain-worded notice and changes nothing.
-fn settle(app: &mut App, ok: bool, failure: &str) -> bool {
-    if !ok {
-        app.notice = Some(failure.to_owned());
-    }
-    ok
 }

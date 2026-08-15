@@ -22,7 +22,7 @@ use ratatui::text::Line;
 use crate::console::{self, Standing, Strip};
 use crate::detail::{self, Detail, Facts, PathsEditor};
 use crate::ease::Glide;
-use crate::engine::{Action, EngineState, ProgressTarget};
+use crate::engine::{Action, EngineState, Outcome, ProgressTarget};
 use crate::motion::{Motion, Transition};
 use crate::palette::ColorDepth;
 use crate::patchin::{self, PatchIn};
@@ -55,6 +55,10 @@ pub struct App {
     /// A verb's plain-worded failure, shown on the foot row until the
     /// next key press.
     pub notice: Option<String>,
+    /// The verb running on the engine right now, as the plain word the
+    /// foot row shows — verbs run on a background task so a slow
+    /// answer never freezes a frame. Cleared when the outcome lands.
+    pub working: Option<&'static str>,
     /// The transition playing over the frame, if any (motion law:
     /// one starts only on a real state change and never loops).
     pub motion: Motion,
@@ -101,6 +105,7 @@ impl App {
             pending: None,
             confirming_remove: false,
             notice: None,
+            working: None,
             motion: Motion::none(),
             motion_strip: None,
             leaving: None,
@@ -188,6 +193,23 @@ impl App {
             return true;
         }
         false
+    }
+
+    /// Absorb a finished verb's outcome, delivered by the background
+    /// task that ran it. Returns whether the machine may have changed
+    /// shape — the caller re-probes at once when so.
+    pub fn absorb_outcome(&mut self, outcome: Outcome) -> bool {
+        self.working = None;
+        if let Some(notice) = outcome.notice {
+            self.notice = Some(notice.to_owned());
+        }
+        if outcome.to_console {
+            self.view = View::Console;
+        }
+        if let Some(facts) = outcome.facts {
+            self.absorb_detail(facts);
+        }
+        outcome.refreshed
     }
 
     /// The opened project's identifier, while S2 is up — the event loop
@@ -536,9 +558,10 @@ impl App {
         }
     }
 
-    /// The foot row: the view's key-line, and — right-aligned — any
-    /// notice a verb left behind. The words carry the failure; yellow
-    /// only where the rung has it.
+    /// The foot row: the view's key-line, and — right-aligned — either
+    /// the notice a verb left behind or the word for the verb still
+    /// running. The words carry the state; yellow only where the rung
+    /// has it, and only for a failure.
     fn draw_foot(&self, frame: &mut Frame, area: Rect) {
         frame.render_widget(Line::from(self.foot_text()).dim(), area);
         if let Some(notice) = &self.notice {
@@ -549,6 +572,8 @@ impl App {
                 line.yellow()
             };
             frame.render_widget(line.right_aligned(), area);
+        } else if let Some(working) = self.working {
+            frame.render_widget(Line::from(working).dim().right_aligned(), area);
         }
     }
 
