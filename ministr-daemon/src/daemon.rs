@@ -1493,12 +1493,19 @@ fn synthesize_pending_corpus_info(
         warming: false,
         // Remote pod placeholder — no local paths to detect against.
         stack: Vec::new(),
+        size_on_disk_bytes: None,
     }
 }
 
 async fn corpus_status(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     match state.registry.list().await.into_iter().find(|c| c.id == id) {
-        Some(info) => Json(info).into_response(),
+        Some(mut info) => {
+            // Sized here — and only here — so the list route never pays
+            // a per-corpus directory walk on every poll (SSOT for the
+            // TUI's size-on-disk readout; gui-v8-disk-footprint).
+            info.size_on_disk_bytes = state.registry.index_size_bytes(&id).await;
+            Json(info).into_response()
+        }
         None => err(StatusCode::NOT_FOUND, "not_found", format!("corpus '{id}'")).into_response(),
     }
 }

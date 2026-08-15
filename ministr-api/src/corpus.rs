@@ -109,6 +109,13 @@ pub struct CorpusInfo {
     /// placeholder/pending corpora or when nothing is recognized.
     #[serde(default)]
     pub stack: Vec<String>,
+    /// Bytes this corpus's index directory occupies on disk. Populated
+    /// only by the single-corpus status route (`GET /api/v1/corpora/{id}`)
+    /// — the sizing walk stats every file in the index dir, so the list
+    /// route deliberately leaves it `None` rather than paying that walk
+    /// per corpus per poll. (gui-v8-disk-footprint)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_on_disk_bytes: Option<u64>,
 }
 
 /// Current indexing status of a corpus.

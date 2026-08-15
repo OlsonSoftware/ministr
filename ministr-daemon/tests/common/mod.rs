@@ -368,6 +368,7 @@ fn build_corpus_handle(
             model: "all-MiniLM-L6-v2".into(),
             warming: false,
             stack: Vec::new(),
+            size_on_disk_bytes: None,
         })),
         storage,
         index,

@@ -966,6 +966,21 @@ impl CorpusRegistry {
             .unwrap_or_default()
     }
 
+    /// Bytes a registered corpus's on-disk index directory occupies,
+    /// sized on the blocking pool (the walk stats every file under it).
+    /// `None` when the directory does not exist — a pending or remote
+    /// corpus that has no local index data yet. (gui-v8-disk-footprint)
+    pub async fn index_size_bytes(&self, corpus_id: &str) -> Option<u64> {
+        let dir = self.config.data_dir.join("corpora").join(corpus_id);
+        tokio::task::spawn_blocking(move || {
+            dir.is_dir()
+                .then(|| ministr_core::fs_util::dir_size_bytes(&dir))
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
     /// Resolve + validate an orphan directory name: a plain name (no path
     /// separators), an existing directory, and unaccounted-for by every
     /// known corpus.
@@ -1561,6 +1576,7 @@ impl CorpusRegistry {
                 model: String::new(),
                 warming: true,
                 stack: ministr_core::init::detect_stack(paths),
+                size_on_disk_bytes: None,
             })
             .collect()
     }
@@ -1854,24 +1870,15 @@ impl CorpusRegistry {
         let files_indexed = storage.document_count().await.unwrap_or(0);
         let sections_count = storage.section_count().await.unwrap_or(0);
 
+        let info = seed_corpus_info(
+            corpus_id,
+            paths,
+            display_name,
+            (files_indexed, sections_count, index.len()),
+            model.clone(),
+        );
         Ok(CorpusHandle {
-            info: Arc::new(RwLock::new(CorpusInfo {
-                id: corpus_id.to_string(),
-                display_name,
-                paths: paths.to_vec(),
-                status: IndexingStatus::Idle,
-                files_indexed,
-                sections_count,
-                embeddings_count: index.len(),
-                active_sessions: 0,
-                last_indexed: None,
-                symbols_count: 0,
-                model: model.clone(),
-                // A handle that exists is, by definition, warmed.
-                warming: false,
-                // Detected once from the path set (gui-card-tech-stack).
-                stack: ministr_core::init::detect_stack(paths),
-            })),
+            info: Arc::new(RwLock::new(info)),
             storage,
             index,
             service,
@@ -1895,6 +1902,36 @@ impl CorpusRegistry {
             tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             coherence_tx: tokio::sync::broadcast::channel(16).0,
         })
+    }
+}
+
+/// The `CorpusInfo` a freshly created handle starts with: identity from
+/// registration, counts seeded from the on-disk store
+/// (`files/sections/embeddings` packed in registration order), stack
+/// detected from the path set. A handle that exists is by definition
+/// warmed, and sizing stays on-demand (the single-corpus status route).
+fn seed_corpus_info(
+    corpus_id: &str,
+    paths: &[String],
+    display_name: String,
+    (files_indexed, sections_count, embeddings_count): (usize, usize, usize),
+    model: String,
+) -> CorpusInfo {
+    CorpusInfo {
+        id: corpus_id.to_string(),
+        display_name,
+        paths: paths.to_vec(),
+        status: IndexingStatus::Idle,
+        files_indexed,
+        sections_count,
+        embeddings_count,
+        active_sessions: 0,
+        last_indexed: None,
+        symbols_count: 0,
+        model,
+        warming: false,
+        stack: ministr_core::init::detect_stack(paths),
+        size_on_disk_bytes: None,
     }
 }
 
@@ -2292,6 +2329,7 @@ mod tests {
             model: "all-MiniLM-L6-v2".into(),
             warming: false,
             stack: Vec::new(),
+            size_on_disk_bytes: None,
         }
     }
 

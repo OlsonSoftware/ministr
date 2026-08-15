@@ -43,6 +43,28 @@ async fn test_corpus_status() {
     assert_eq!(info.sections_count, 3);
 }
 
+/// The single-corpus route sizes the index dir; the list route never
+/// pays that walk (gui-v8-disk-footprint).
+#[tokio::test]
+async fn corpus_status_reports_size_on_disk_and_list_does_not() {
+    let daemon = TestDaemon::start().await;
+    let client = daemon.client();
+
+    let index_dir = daemon.data_dir().join("corpora").join(&daemon.corpus_id);
+    std::fs::create_dir_all(&index_dir).unwrap();
+    std::fs::write(index_dir.join("content.db"), vec![0u8; 2048]).unwrap();
+
+    let info = client.corpus_status(&daemon.corpus_id).await.unwrap();
+    assert!(
+        info.size_on_disk_bytes.is_some_and(|b| b >= 2048),
+        "expected a sized index dir, got {:?}",
+        info.size_on_disk_bytes
+    );
+
+    let corpora = client.list_corpora().await.unwrap();
+    assert_eq!(corpora[0].size_on_disk_bytes, None);
+}
+
 #[tokio::test]
 async fn api_error_envelopes_classify_invalid_parameters_and_unavailable_corpus() {
     let daemon = TestDaemon::start().await;
