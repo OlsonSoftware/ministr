@@ -144,6 +144,52 @@ pub struct ListCorporaResponse {
     pub corpora: Vec<CorpusInfo>,
 }
 
+/// One orphaned index directory: on-disk index data under the daemon's
+/// `corpora/` store that no registered corpus accounts for. Left behind by
+/// older daemon builds that didn't persist registrations, or by pruned
+/// dead-path entries whose delete failed.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct OrphanIndexInfo {
+    /// Directory name under the daemon's corpora store (historically the
+    /// corpus id it was created for).
+    pub dir_name: String,
+    /// Total bytes the directory occupies on disk.
+    pub size_bytes: u64,
+    /// Source paths recovered from the directory's stored config; empty
+    /// when no identity survived.
+    #[serde(default)]
+    pub paths: Vec<String>,
+    /// Whether at least one recovered source path still exists — the
+    /// precondition for adoption.
+    pub adoptable: bool,
+}
+
+/// Response listing orphaned index directories.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ListOrphansResponse {
+    /// Orphaned directories, largest first.
+    pub orphans: Vec<OrphanIndexInfo>,
+    /// Sum of every orphan's `size_bytes` — the honest reclaimable figure.
+    pub total_bytes: u64,
+}
+
+/// Response after adopting an orphaned index directory.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct AdoptOrphanResponse {
+    /// The canonical corpus id the orphan was registered under.
+    pub corpus_id: String,
+    /// Whether a fresh indexing run was started (false when the corpus
+    /// was already registered and its data picked up as-is).
+    pub indexing_started: bool,
+}
+
+/// Response after deleting an orphaned index directory.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RemoveOrphanResponse {
+    /// Bytes the delete reclaimed.
+    pub bytes_reclaimed: u64,
+}
+
 /// One indexed source file with its content hash and indexed-section count.
 /// Backs the desktop code browser's file tree / treemap.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

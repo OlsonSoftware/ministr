@@ -489,6 +489,48 @@ impl DaemonClient {
         Ok(())
     }
 
+    /// List orphaned index directories: on-disk index data in the daemon's
+    /// store that no registered corpus accounts for, with the honest
+    /// reclaimable total.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] on connection, request, or deserialization failure.
+    pub async fn list_orphan_indexes(
+        &self,
+    ) -> Result<crate::corpus::ListOrphansResponse, ClientError> {
+        self.get("/api/v1/orphans").await
+    }
+
+    /// Adopt an orphaned index directory: the daemon re-registers it under
+    /// its canonical corpus id, reusing the existing index data.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] if the directory is not an adoptable orphan.
+    pub async fn adopt_orphan_index(
+        &self,
+        dir_name: &str,
+    ) -> Result<crate::corpus::AdoptOrphanResponse, ClientError> {
+        self.post(&format!("/api/v1/orphans/{dir_name}/adopt"), &())
+            .await
+    }
+
+    /// Delete an orphaned index directory, reclaiming its disk space.
+    /// The daemon refuses anything a registered corpus accounts for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] if the directory is not an orphan or the
+    /// delete fails.
+    pub async fn remove_orphan_index(
+        &self,
+        dir_name: &str,
+    ) -> Result<crate::corpus::RemoveOrphanResponse, ClientError> {
+        let body = self.delete(&format!("/api/v1/orphans/{dir_name}")).await?;
+        serde_json::from_slice(&body).map_err(|e| ClientError::Deserialize(e.to_string()))
+    }
+
     /// Reindex a corpus: purge its on-disk index and re-register it, so the
     /// daemon re-resolves the corpus's `.ministr.toml` config and re-embeds
     /// from scratch. The rebuild is daemon-side (it owns the data directory).

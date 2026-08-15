@@ -9,7 +9,7 @@ mod schema;
 mod sqlite;
 pub mod traits;
 
-pub use corpus::ensure_corpus_layout;
+pub use corpus::{ensure_corpus_layout, ensure_corpus_sidecar};
 pub use schema::CURRENT_SCHEMA_VERSION;
 pub use sqlite::SqliteStorage;
 pub use traits::{

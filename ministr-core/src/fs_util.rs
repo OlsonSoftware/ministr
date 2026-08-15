@@ -162,6 +162,37 @@ pub async fn remove_dir_all_robust(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Total size in bytes of every regular file under `root`, recursively.
+///
+/// Symlinks are not followed (a link's own metadata is counted, never its
+/// target), so a link escaping the tree can't inflate the figure or loop.
+/// Entries that vanish mid-walk are skipped — the walk races live writers
+/// by design, and an approximate figure beats an error.
+///
+/// Blocking (a full metadata walk) — call from a blocking context or via
+/// `spawn_blocking`.
+#[must_use]
+pub fn dir_size_bytes(root: &Path) -> u64 {
+    let mut total = 0u64;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            if meta.is_dir() {
+                stack.push(entry.path());
+            } else {
+                total = total.saturating_add(meta.len());
+            }
+        }
+    }
+    total
+}
+
 /// Heuristic for "this will probably succeed if we wait a moment".
 ///
 /// Covers the Windows handle-close / mark-for-delete races. `PermissionDenied`
@@ -187,6 +218,22 @@ mod tests {
         std::fs::write(tmp.join("a/b/c/f.txt"), b"x").unwrap();
         remove_dir_all_robust(&tmp).await.unwrap();
         assert!(!tmp.exists());
+    }
+
+    #[test]
+    fn dir_size_counts_nested_files() {
+        let tmp = std::env::temp_dir().join(format!("ministr-dirsize-{}", std::process::id()));
+        std::fs::create_dir_all(tmp.join("a/b")).unwrap();
+        std::fs::write(tmp.join("top.bin"), vec![0u8; 10]).unwrap();
+        std::fs::write(tmp.join("a/b/deep.bin"), vec![0u8; 32]).unwrap();
+        assert_eq!(dir_size_bytes(&tmp), 42);
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn dir_size_of_missing_dir_is_zero() {
+        let missing = std::env::temp_dir().join("ministr-dirsize-does-not-exist-zzz");
+        assert_eq!(dir_size_bytes(&missing), 0);
     }
 
     #[tokio::test]

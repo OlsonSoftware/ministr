@@ -92,6 +92,7 @@ pub fn corpora_read_router(state: AppState) -> Router {
             get(session_read_section),
         )
         .route("/api/v1/status", get(daemon_status))
+        .route("/api/v1/orphans", get(list_orphans))
         .with_state(state)
 }
 
@@ -125,6 +126,11 @@ pub fn corpora_write_router(state: AppState) -> Router {
             axum::routing::delete(unregister_corpus),
         )
         .route("/api/v1/corpora/{id}/paths", put(update_corpus_paths))
+        .route("/api/v1/orphans/{dir}/adopt", post(adopt_orphan))
+        .route(
+            "/api/v1/orphans/{dir}",
+            axum::routing::delete(remove_orphan),
+        )
         .route(
             "/api/v1/corpora/{id}/sessions",
             post(create_session).delete(clear_sessions),
@@ -1546,6 +1552,77 @@ async fn unregister_corpus(
             StatusCode::NO_CONTENT.into_response()
         }
         Err(e) => err(StatusCode::NOT_FOUND, "not_found", e).into_response(),
+    }
+}
+
+/// `GET /api/v1/orphans` — on-disk index directories no registered corpus
+/// accounts for, largest first, with the honest reclaimable total. The
+/// console's window onto index data an older daemon left unreachable.
+async fn list_orphans(State(state): State<AppState>) -> impl IntoResponse {
+    let orphans = state.registry.list_orphans().await;
+    let total_bytes = orphans.iter().map(|o| o.size_bytes).sum();
+    let orphans: Vec<ministr_api::corpus::OrphanIndexInfo> = orphans
+        .into_iter()
+        .map(|o| ministr_api::corpus::OrphanIndexInfo {
+            dir_name: o.dir_name,
+            size_bytes: o.size_bytes,
+            adoptable: o.paths_exist,
+            paths: o.paths,
+        })
+        .collect();
+    Json(ministr_api::corpus::ListOrphansResponse {
+        orphans,
+        total_bytes,
+    })
+}
+
+/// `POST /api/v1/orphans/{dir}/adopt` — re-register an orphaned index dir
+/// under its canonical corpus id, reusing the existing index data.
+async fn adopt_orphan(
+    State(state): State<AppState>,
+    Path(dir): Path<String>,
+    tenant: Option<Extension<TenantId>>,
+) -> impl IntoResponse {
+    match state.registry.adopt_orphan(&dir).await {
+        Ok((corpus_id, indexing_started)) => {
+            audit_corpus_action(&state, tenant.as_ref(), "corpus.adopted", &corpus_id);
+            Json(ministr_api::corpus::AdoptOrphanResponse {
+                corpus_id,
+                indexing_started,
+            })
+            .into_response()
+        }
+        Err(e) => orphan_err(&e).into_response(),
+    }
+}
+
+/// `DELETE /api/v1/orphans/{dir}` — delete an orphaned index dir,
+/// reporting the bytes reclaimed. Refuses anything a registered corpus
+/// accounts for, so live index data is never deletable through this route.
+async fn remove_orphan(
+    State(state): State<AppState>,
+    Path(dir): Path<String>,
+    tenant: Option<Extension<TenantId>>,
+) -> impl IntoResponse {
+    match state.registry.remove_orphan(&dir).await {
+        Ok(bytes_reclaimed) => {
+            audit_corpus_action(&state, tenant.as_ref(), "orphan.deleted", &dir);
+            Json(ministr_api::corpus::RemoveOrphanResponse { bytes_reclaimed }).into_response()
+        }
+        Err(e) => orphan_err(&e).into_response(),
+    }
+}
+
+/// Map orphan-verb registry errors onto HTTP statuses.
+fn orphan_err(e: &crate::registry::RegistryError) -> impl IntoResponse {
+    use crate::registry::RegistryError;
+    match e {
+        RegistryError::NotFound { .. } => err(StatusCode::NOT_FOUND, "not_found", e),
+        RegistryError::NotOrphan { .. } => err(StatusCode::CONFLICT, "not_an_orphan", e),
+        RegistryError::Unadoptable { .. } => {
+            err(StatusCode::UNPROCESSABLE_ENTITY, "unadoptable", e)
+        }
+        _ => err(StatusCode::INTERNAL_SERVER_ERROR, "orphan_op_failed", e),
     }
 }
 

@@ -44,6 +44,43 @@ struct ManifestEntry {
     paths: Vec<String>,
 }
 
+/// A record of a manifest entry the daemon pruned, kept in
+/// `{data_dir}/corpora.tombstones.json` so a corpus never vanishes from
+/// the manifest without a trace. Written by [`CorpusRegistry::restore`]'s
+/// dead-entry self-heal; read by nothing in-process — it exists for the
+/// console and for humans diagnosing "where did my project go?".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Tombstone {
+    id: String,
+    paths: Vec<String>,
+    /// Unix seconds when the entry was pruned.
+    pruned_at: i64,
+    reason: String,
+}
+
+/// Cap on retained tombstones — the newest win. Keeps the file bounded
+/// on machines where test runs churn hundreds of throwaway corpora.
+const MAX_TOMBSTONES: usize = 200;
+
+/// An on-disk index directory with no manifest entry — invisible to
+/// `list()` and never restored. Surfaced via `GET /api/v1/orphans` so the
+/// console can offer adopt-or-remove instead of leaving gigabytes of
+/// unreachable index data behind.
+#[derive(Debug, Clone)]
+pub struct OrphanIndex {
+    /// Directory name under `{data_dir}/corpora/` (historically the
+    /// corpus id it was created for).
+    pub dir_name: String,
+    /// Total bytes of everything inside the directory.
+    pub size_bytes: u64,
+    /// Source paths recovered from the directory's `meta.toml`; empty
+    /// when the sidecar is missing or unreadable.
+    pub paths: Vec<String>,
+    /// Whether at least one recovered source path still exists — the
+    /// precondition for adoption.
+    pub paths_exist: bool,
+}
+
 /// Errors from corpus registry operations.
 #[derive(Debug, thiserror::Error)]
 pub enum RegistryError {
@@ -59,6 +96,10 @@ pub enum RegistryError {
     IdentityChanged { expected: String, actual: String },
     #[error("invalid corpus paths: {0}")]
     InvalidPath(#[from] CorpusIdError),
+    #[error("not an orphaned index dir: {id}")]
+    NotOrphan { id: String },
+    #[error("orphaned index dir cannot be adopted: {reason}")]
+    Unadoptable { reason: String },
 }
 
 /// Central registry managing all indexed corpora.
@@ -817,6 +858,8 @@ impl CorpusRegistry {
         // Self-heal: drop dead entries from the manifest and best-effort
         // remove their orphaned corpus dirs, so a stale test/deleted
         // project stops reappearing after every restart / `just reinstall`.
+        // Each pruned entry leaves a tombstone first — the manifest never
+        // loses an entry without a durable record of what was dropped.
         if !dead.is_empty() {
             for entry in &dead {
                 info!(
@@ -825,6 +868,7 @@ impl CorpusRegistry {
                     "pruning dead corpus entry (source paths gone)"
                 );
             }
+            self.record_prune_tombstones(&dead);
             // Mirror the prune into the durable repo when wired, so a
             // dead row doesn't keep reappearing on every pod restart in
             // cloud mode.
@@ -849,6 +893,183 @@ impl CorpusRegistry {
                 warn!(error = %e, "failed to persist pruned corpus manifest");
             }
         }
+    }
+
+    // -- Orphaned index dirs --
+
+    /// Path of the tombstone record file
+    /// (`{data_dir}/corpora.tombstones.json`).
+    fn tombstones_path(&self) -> PathBuf {
+        self.config.data_dir.join("corpora.tombstones.json")
+    }
+
+    /// Append a tombstone for every pruned manifest entry, keeping the
+    /// newest [`MAX_TOMBSTONES`]. Best-effort: a failure warns and the
+    /// prune proceeds — the tombstone is a diagnostic record, not a gate.
+    fn record_prune_tombstones(&self, dead: &[&ManifestEntry]) {
+        let path = self.tombstones_path();
+        let mut stones: Vec<Tombstone> = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default();
+        #[allow(clippy::cast_possible_wrap)]
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        for entry in dead {
+            stones.push(Tombstone {
+                id: entry.id.clone(),
+                paths: entry.paths.clone(),
+                pruned_at: now,
+                reason: "source paths no longer exist".to_string(),
+            });
+        }
+        if stones.len() > MAX_TOMBSTONES {
+            stones.drain(..stones.len() - MAX_TOMBSTONES);
+        }
+        match serde_json::to_string_pretty(&stones) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(&path, json) {
+                    warn!(error = %e, "failed to write corpus tombstones");
+                }
+            }
+            Err(e) => warn!(error = %e, "failed to serialize corpus tombstones"),
+        }
+    }
+
+    /// Every directory name under `corpora/` that IS accounted for: the
+    /// loaded map, in-flight (warming) loads, the persisted manifest, and
+    /// the durable repo in cloud mode. Anything else is an orphan.
+    async fn known_index_ids(&self) -> std::collections::HashSet<String> {
+        let mut known: std::collections::HashSet<String> =
+            self.corpora.read().await.keys().cloned().collect();
+        known.extend(self.warming.read().await.keys().cloned());
+        known.extend(self.read_manifest_entries().into_iter().map(|e| e.id));
+        if let Some(repo) = self.corpora_repo.get().cloned()
+            && let Ok(rows) = repo.list().await
+        {
+            known.extend(rows.into_iter().map(|r| r.corpus_id));
+        }
+        known
+    }
+
+    /// Enumerate on-disk index directories no known corpus accounts for.
+    ///
+    /// The scan (and the per-directory sizing) runs on the blocking pool —
+    /// sizing a large store stats thousands of files. Results are sorted
+    /// largest-first so the biggest reclaimable dirs surface on top.
+    pub async fn list_orphans(&self) -> Vec<OrphanIndex> {
+        let known = self.known_index_ids().await;
+        let corpora_dir = self.config.data_dir.join("corpora");
+        tokio::task::spawn_blocking(move || scan_orphan_dirs(&corpora_dir, &known))
+            .await
+            .unwrap_or_default()
+    }
+
+    /// Resolve + validate an orphan directory name: a plain name (no path
+    /// separators), an existing directory, and unaccounted-for by every
+    /// known corpus.
+    async fn orphan_dir(&self, dir_name: &str) -> Result<PathBuf, RegistryError> {
+        let plain = !dir_name.is_empty()
+            && dir_name != "."
+            && dir_name != ".."
+            && !dir_name.contains(['/', '\\']);
+        if !plain || self.known_index_ids().await.contains(dir_name) {
+            return Err(RegistryError::NotOrphan {
+                id: dir_name.to_string(),
+            });
+        }
+        let dir = self.config.data_dir.join("corpora").join(dir_name);
+        if !dir.is_dir() {
+            return Err(RegistryError::NotFound {
+                id: dir_name.to_string(),
+            });
+        }
+        Ok(dir)
+    }
+
+    /// Adopt an orphaned index directory: recover its source paths from
+    /// `meta.toml`, move the data under the canonical id when they differ,
+    /// and register it like any other corpus (idempotent with `register`).
+    ///
+    /// # Errors
+    ///
+    /// - [`RegistryError::NotOrphan`] — the name is accounted for (or not
+    ///   a plain directory name).
+    /// - [`RegistryError::NotFound`] — no such directory on disk.
+    /// - [`RegistryError::Unadoptable`] — no readable `meta.toml`, or all
+    ///   recovered source paths are gone (remove it instead).
+    /// - Any [`register`](Self::register) error.
+    pub async fn adopt_orphan(
+        self: &Arc<Self>,
+        dir_name: &str,
+    ) -> Result<(String, bool), RegistryError> {
+        let dir = self.orphan_dir(dir_name).await?;
+        let meta =
+            ministr_core::config::CorpusConfig::load(&dir.join("meta.toml")).map_err(|e| {
+                RegistryError::Unadoptable {
+                    reason: format!("meta.toml unreadable: {e}"),
+                }
+            })?;
+        let paths: Vec<String> = meta
+            .source_dirs
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect();
+        if !entry_is_live(&paths) {
+            return Err(RegistryError::Unadoptable {
+                reason: "its source paths no longer exist — remove it instead".to_string(),
+            });
+        }
+        let canonical = canonical_corpus_paths(&paths)?;
+        let corpus_id = corpus_id_from_paths(&canonical)?;
+        if corpus_id != dir_name {
+            // Move the data under the canonical id so `register` finds it.
+            // Same rule as restore()'s migration: never overwrite an
+            // existing target — on collision, register proceeds against
+            // the existing canonical dir and this one stays an orphan.
+            let target = dir.with_file_name(&corpus_id);
+            if !target.exists() {
+                let (from, to) = (dir.clone(), target);
+                let renamed = tokio::task::spawn_blocking(move || {
+                    ministr_core::fs_util::rename_robust(&from, &to)
+                })
+                .await
+                .unwrap_or_else(|e| Err(std::io::Error::other(e)));
+                if let Err(e) = renamed {
+                    warn!(
+                        error = %e,
+                        from = %dir.display(),
+                        "failed to move orphan dir to canonical id — registering fresh"
+                    );
+                }
+            }
+        }
+        self.register(&paths).await
+    }
+
+    /// Delete an orphaned index directory, returning the bytes reclaimed.
+    ///
+    /// Refuses anything a known corpus accounts for — the daemon stays
+    /// the only writer of live index data.
+    ///
+    /// # Errors
+    ///
+    /// - [`RegistryError::NotOrphan`] — the name is accounted for (or not
+    ///   a plain directory name).
+    /// - [`RegistryError::NotFound`] — no such directory on disk.
+    /// - [`RegistryError::Storage`] — the delete failed.
+    pub async fn remove_orphan(&self, dir_name: &str) -> Result<u64, RegistryError> {
+        let dir = self.orphan_dir(dir_name).await?;
+        let sized = dir.clone();
+        let size =
+            tokio::task::spawn_blocking(move || ministr_core::fs_util::dir_size_bytes(&sized))
+                .await
+                .unwrap_or(0);
+        ministr_core::fs_util::remove_dir_all_robust(&dir)
+            .await
+            .map_err(|e| RegistryError::Storage(format!("remove orphan dir: {e}")))?;
+        Ok(size)
     }
 
     /// Register a corpus, initialize its resources, and spawn background indexing.
@@ -1531,6 +1752,8 @@ impl CorpusRegistry {
         std::fs::create_dir_all(&corpus_dir)
             .map_err(|e| RegistryError::Storage(format!("create dir: {e}")))?;
 
+        write_identity_sidecar(corpus_id, paths, &corpus_dir);
+
         let storage = Arc::new(
             SqliteStorage::open(&db_path)
                 .map_err(|e| RegistryError::Storage(format!("open db: {e}")))?,
@@ -1801,6 +2024,62 @@ fn entry_is_live(paths: &[String]) -> bool {
             CorpusSource::Local(pb) => pb.exists(),
             CorpusSource::Web(_) | CorpusSource::Git(_) => true,
         })
+}
+
+/// Identity sidecar: record which source paths a corpus dir indexes, so
+/// if the registration is ever lost the orphan surface can offer adoption
+/// instead of only deletion. Best-effort and never overwriting — a richer
+/// CLI-written `meta.toml` wins.
+fn write_identity_sidecar(corpus_id: &str, paths: &[String], corpus_dir: &std::path::Path) {
+    let sidecar = ministr_core::config::CorpusConfig {
+        name: corpus_id.to_string(),
+        source_dirs: paths.iter().map(PathBuf::from).collect(),
+        ..Default::default()
+    };
+    if let Err(e) = ministr_core::storage::ensure_corpus_sidecar(corpus_dir, &sidecar) {
+        warn!(corpus_id, error = %e, "failed to write identity sidecar meta.toml");
+    }
+}
+
+/// Walk `corpora/`, returning every subdirectory whose name no known
+/// corpus accounts for, with identity recovered from its `meta.toml`.
+/// Blocking (reads metadata for every file in every orphan) — call via
+/// `spawn_blocking`.
+fn scan_orphan_dirs(
+    corpora_dir: &std::path::Path,
+    known: &std::collections::HashSet<String>,
+) -> Vec<OrphanIndex> {
+    let Ok(entries) = std::fs::read_dir(corpora_dir) else {
+        return Vec::new();
+    };
+    let mut orphans: Vec<OrphanIndex> = entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|e| {
+            let dir_name = e.file_name().to_string_lossy().into_owned();
+            if known.contains(&dir_name) {
+                return None;
+            }
+            let dir = e.path();
+            let paths = ministr_core::config::CorpusConfig::load(&dir.join("meta.toml"))
+                .map(|c| {
+                    c.source_dirs
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let paths_exist = entry_is_live(&paths);
+            Some(OrphanIndex {
+                dir_name,
+                size_bytes: ministr_core::fs_util::dir_size_bytes(&dir),
+                paths,
+                paths_exist,
+            })
+        })
+        .collect();
+    orphans.sort_by_key(|o| std::cmp::Reverse(o.size_bytes));
+    orphans
 }
 
 #[must_use]

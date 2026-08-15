@@ -43,6 +43,30 @@ pub fn ensure_corpus_layout(
     Ok(corpus_dir)
 }
 
+/// Write a corpus's `meta.toml` identity sidecar only when none exists.
+///
+/// The daemon calls this for every registered corpus dir so the directory
+/// itself records which source paths it indexes — if the registration is
+/// ever lost (an old bug class that orphaned 26 GB of index data), the
+/// orphan surface can offer adoption instead of only deletion. Never
+/// overwrites: a richer CLI-written `meta.toml` wins.
+///
+/// # Errors
+///
+/// Returns [`StorageError::Io`] on write failure or
+/// [`StorageError::Serialization`] if the config can't be serialized.
+pub fn ensure_corpus_sidecar(corpus_dir: &Path, config: &CorpusConfig) -> Result<(), StorageError> {
+    let meta_path = corpus_dir.join("meta.toml");
+    if meta_path.exists() {
+        return Ok(());
+    }
+    let toml_str = toml::to_string_pretty(config).map_err(|e| StorageError::Serialization {
+        reason: e.to_string(),
+    })?;
+    std::fs::write(&meta_path, toml_str)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
