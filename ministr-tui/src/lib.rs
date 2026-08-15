@@ -31,6 +31,7 @@ pub mod patchin;
 pub mod strings;
 pub mod sync;
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ministr_api::client::DaemonClient;
@@ -64,14 +65,18 @@ pub enum UiError {
 ///
 /// Returns [`UiError::Io`] when terminal control or drawing fails.
 pub async fn run() -> Result<(), UiError> {
-    let client = DaemonClient::new();
+    // One client, shared by the loop and every background task — the
+    // console speaks to exactly one engine.
+    let client = Arc::new(DaemonClient::new());
     // The engine handshake (spawn if missing, wait until it answers)
     // runs in the background: the console opens at once and the title
     // reads "starting…" honestly until the engine is up — a cold
     // machine never stares at a blank shell.
-    let spawning = tokio::spawn(async {
-        let client = DaemonClient::new();
-        engine::ensure_engine(&client).await;
+    let spawning = tokio::spawn({
+        let client = Arc::clone(&client);
+        async move {
+            engine::ensure_engine(&client).await;
+        }
     });
 
     let mut terminal = ratatui::init();
@@ -86,21 +91,19 @@ pub async fn run() -> Result<(), UiError> {
 /// wakes on input and probe answers but draws nothing; while a
 /// transition plays it draws at the frame clock, feeding effects real
 /// elapsed time. Every draw goes through [`sync::draw_synced`].
+///
+/// Topology rule: the loop itself never awaits the engine. Every fetch
+/// — probe, detail, progress, lawn — and every verb runs on its own
+/// task and answers through a channel, so a slow or hung engine can
+/// never hold up a frame or a key press.
 async fn event_loop(
     terminal: &mut DefaultTerminal,
-    client: &DaemonClient,
+    client: &Arc<DaemonClient>,
     mut spawning: tokio::task::JoinHandle<()>,
 ) -> Result<(), UiError> {
     let mut app = App::new();
     let mut events = event::spawn_reader();
-    // `interval` fires immediately, so the first frame after this one
-    // already carries a real probe result instead of a stuck "starting".
-    let mut probe_timer = tokio::time::interval(PROBE_INTERVAL);
-    // While nothing builds this timer is not polled and its ticks go
-    // missing; skipping them keeps a build's first poll from replaying
-    // the whole quiet spell as a burst.
-    let mut progress_timer = tokio::time::interval(PROGRESS_INTERVAL);
-    progress_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let (mut probe_timer, mut progress_timer) = timers();
     let mut spawn_done = false;
     let mut pacer = Pacer::new();
     let mut last_frame = Instant::now();
@@ -115,6 +118,18 @@ async fn event_loop(
     let (lawn_tx, mut lawn_rx) =
         tokio::sync::mpsc::channel::<(String, engine::FreshSig, Option<lawn::Lawn>)>(8);
     let mut lawn_fetching: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Probes ride a background task for the same reason: the timer only
+    // spawns the fetch, the answer comes back here. One in flight; a
+    // tick landing mid-flight queues exactly one follow-up, so a verb's
+    // immediate re-probe is never lost to the guard.
+    let (probe_tx, mut probe_rx) =
+        tokio::sync::mpsc::channel::<(engine::EngineState, Option<detail::Facts>)>(1);
+    let mut probe_inflight = false;
+    let mut probe_queued = false;
+    // The fast progress poll rides its own task too.
+    let (progress_tx, mut progress_rx) =
+        tokio::sync::mpsc::channel::<Vec<engine::ProgressTarget>>(1);
+    let mut progress_inflight = false;
 
     loop {
         pacer.set_animating(app.animating(Instant::now()));
@@ -143,23 +158,21 @@ async fn event_loop(
                 None => app.should_quit = true,
             },
             _ = probe_timer.tick() => {
-                let state = engine::probe(client).await;
-                // While the background handshake is still bringing the
-                // engine up, an unanswered probe is expected — the
-                // title keeps "starting…" instead of raising an alarm
-                // the machine is about to answer.
-                let starting_grace = !spawn_done
-                    && matches!(state, engine::EngineState::Unreachable)
-                    && matches!(app.engine, engine::EngineState::Starting);
-                if !starting_grace && app.absorb(state) {
-                    pacer.mark_dirty();
+                if probe_inflight {
+                    probe_queued = true;
+                } else {
+                    probe_inflight = true;
+                    spawn_probe(client, &probe_tx, app.detail_id());
                 }
-                // An opened project's slower facts ride the same
-                // cadence, so its counts and path set stay current.
-                if let Some(id) = app.detail_id()
-                    && let Some(facts) = engine::detail(client, &id).await
-                    && app.absorb_detail(facts)
-                {
+            }
+            // A probe answered on its background task.
+            Some((state, facts)) = probe_rx.recv() => {
+                probe_inflight = false;
+                if probe_queued {
+                    probe_queued = false;
+                    probe_timer.reset_immediately();
+                }
+                if absorb_probe_answer(&mut app, state, facts, spawn_done) {
                     pacer.mark_dirty();
                 }
             }
@@ -171,10 +184,14 @@ async fn event_loop(
             }
             // The fast progress poll: armed only while something is
             // building, so the rest state never polls it.
-            _ = progress_timer.tick(), if app.building() => {
-                if let Some(targets) = engine::progress(client).await
-                    && app.absorb_progress(&targets, Instant::now())
-                {
+            _ = progress_timer.tick(), if app.building() && !progress_inflight => {
+                progress_inflight = true;
+                spawn_progress_poll(client, &progress_tx);
+            }
+            // A progress poll answered on its background task.
+            Some(targets) = progress_rx.recv() => {
+                progress_inflight = false;
+                if app.absorb_progress(&targets, Instant::now()) {
                     pacer.mark_dirty();
                 }
             }
@@ -205,7 +222,7 @@ async fn event_loop(
 
         // A strip's freshness signature moved past its cached lawn:
         // fetch the fresh per-file picture in the background.
-        spawn_lawn_fetches(&app, &mut lawn_fetching, &lawn_tx);
+        spawn_lawn_fetches(&app, &mut lawn_fetching, &lawn_tx, client);
 
         // A key press queued a verb: hand it to a background task (one
         // at a time — a second queued verb waits its turn) and say
@@ -214,17 +231,96 @@ async fn event_loop(
             verb_running = true;
             app.working = action.working_word();
             pacer.mark_dirty();
-            let tx = verb_tx.clone();
-            tokio::spawn(async move {
-                let client = DaemonClient::new();
-                let _ = tx.send(engine::run(&client, action).await).await;
-            });
+            spawn_verb(client, &verb_tx, action);
         }
 
         if app.should_quit {
             return Ok(());
         }
     }
+}
+
+/// The probe and progress clocks. `interval` fires immediately, so the
+/// first frame after the loop opens already carries a real probe result
+/// instead of a stuck "starting". While nothing builds the progress
+/// timer is not polled and its ticks go missing; skipping them keeps a
+/// build's first poll from replaying the whole quiet spell as a burst.
+fn timers() -> (tokio::time::Interval, tokio::time::Interval) {
+    let probe_timer = tokio::time::interval(PROBE_INTERVAL);
+    let mut progress_timer = tokio::time::interval(PROGRESS_INTERVAL);
+    progress_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    (probe_timer, progress_timer)
+}
+
+/// Spawn one queued verb on its background task — a slow engine answer
+/// (a big project registering, a rebuild purging) must never hold up a
+/// frame or a key press.
+fn spawn_verb(
+    client: &Arc<DaemonClient>,
+    tx: &tokio::sync::mpsc::Sender<engine::Outcome>,
+    action: engine::Action,
+) {
+    let tx = tx.clone();
+    let client = Arc::clone(client);
+    tokio::spawn(async move {
+        let _ = tx.send(engine::run(&client, action).await).await;
+    });
+}
+
+/// Spawn one background probe: machine state, plus the opened
+/// project's slower facts when S2 is up (they ride the same cadence,
+/// so the panel's counts and path set stay current). The task answers
+/// on `tx` whatever happens, so the in-flight guard always clears.
+fn spawn_probe(
+    client: &Arc<DaemonClient>,
+    tx: &tokio::sync::mpsc::Sender<(engine::EngineState, Option<detail::Facts>)>,
+    open: Option<String>,
+) {
+    let tx = tx.clone();
+    let client = Arc::clone(client);
+    tokio::spawn(async move {
+        let state = engine::probe(&client).await;
+        let facts = match open {
+            Some(id) => engine::detail(&client, &id).await,
+            None => None,
+        };
+        let _ = tx.send((state, facts)).await;
+    });
+}
+
+/// Apply one probe answer to the app. Returns whether the frame
+/// changed. While the background handshake is still bringing the
+/// engine up, an unanswered probe is expected — the title keeps
+/// "starting…" instead of raising an alarm the machine is about to
+/// answer.
+fn absorb_probe_answer(
+    app: &mut App,
+    state: engine::EngineState,
+    facts: Option<detail::Facts>,
+    spawn_done: bool,
+) -> bool {
+    let starting_grace = !spawn_done
+        && matches!(state, engine::EngineState::Unreachable)
+        && matches!(app.engine, engine::EngineState::Starting);
+    let mut changed = !starting_grace && app.absorb(state);
+    if let Some(facts) = facts {
+        changed |= app.absorb_detail(facts);
+    }
+    changed
+}
+
+/// Spawn one background progress poll. An unanswered poll sends no
+/// targets: the meters simply hold until the next answer.
+fn spawn_progress_poll(
+    client: &Arc<DaemonClient>,
+    tx: &tokio::sync::mpsc::Sender<Vec<engine::ProgressTarget>>,
+) {
+    let tx = tx.clone();
+    let client = Arc::clone(client);
+    tokio::spawn(async move {
+        let targets = engine::progress(&client).await.unwrap_or_default();
+        let _ = tx.send(targets).await;
+    });
 }
 
 /// Spawn a background lawn fetch for every strip whose freshness
@@ -235,12 +331,13 @@ fn spawn_lawn_fetches(
     app: &App,
     fetching: &mut std::collections::HashSet<String>,
     tx: &tokio::sync::mpsc::Sender<(String, engine::FreshSig, Option<lawn::Lawn>)>,
+    client: &Arc<DaemonClient>,
 ) {
     for (id, sig) in app.lawn_wants() {
         if fetching.insert(id.clone()) {
             let tx = tx.clone();
+            let client = Arc::clone(client);
             tokio::spawn(async move {
-                let client = DaemonClient::new();
                 let fetched = engine::lawn(&client, &id).await;
                 let _ = tx.send((id, sig, fetched)).await;
             });
