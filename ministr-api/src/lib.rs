@@ -10,6 +10,8 @@
 //!
 //! No heavy dependencies here: only serde, schemars, tokio, and std.
 
+#![deny(unsafe_code)]
+
 pub mod activity;
 pub mod api_key;
 pub mod audit;

@@ -5,6 +5,8 @@
 //! indexer, and type conversions. Hosted by the `ministr __daemon` CLI
 //! subcommand; testable without any GUI dependencies.
 
+#![deny(unsafe_code)]
+
 pub mod activity;
 pub mod ask;
 pub mod bootstrap;

@@ -1,4 +1,10 @@
 # Formula for the OlsonSoftware/tap homebrew tap.
+#
+# TEMPLATE — not yet publishable. The `version` and every `sha256` below are
+# placeholders, and the release assets they point at do not exist until a
+# GitHub Release is published for the tag. Fill both in from the release's
+# .sha256 files before pushing this to the tap.
+#
 # To set up the tap:
 #   1. Create a new GitHub repo: OlsonSoftware/homebrew-tap
 #   2. Copy this file to Formula/ministr.rb in that repo
@@ -13,8 +19,8 @@
 class Ministr < Formula
   desc "Code intelligence MCP server for AI coding agents — semantic code search, symbol navigation, and cross-language bridge detection"
   homepage "https://ministr.ai"
-  version "0.1.0"
-  license any_of: ["MIT", "Apache-2.0"]
+  version "PLACEHOLDER_VERSION"
+  license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?

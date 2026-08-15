@@ -13,6 +13,8 @@
 //! the `ministr-cloud-tools` crate in — run `cargo run -p
 //! ministr-cloud-tools -- <subcommand>` for the proprietary operator CLI.
 
+#![deny(unsafe_code)]
+
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};

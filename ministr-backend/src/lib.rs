@@ -27,6 +27,7 @@
 //! converters are lossless for the agent-facing fields and daemon mode is at
 //! parity with local mode.
 
+#![deny(unsafe_code)]
 // `manual_async_fn` is intentionally allowed: returning `impl Future`
 // matches the project's existing `Storage` trait convention and avoids
 // the async-fn-in-trait dyn-compatibility friction in current stable Rust.

@@ -15,6 +15,8 @@
 //! the internal vocabulary. `tests/language.rs` enforces this mechanically
 //! over all string literals in this crate.
 
+#![deny(unsafe_code)]
+
 pub mod app;
 pub mod console;
 pub mod detail;

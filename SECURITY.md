@@ -17,7 +17,7 @@ You should receive an acknowledgment within 72 hours. Confirmed vulnerabilities 
 
 | Version | Supported |
 |---------|-----------|
-| 0.6.x   | Yes       |
+| 0.7.x   | Yes       |
 
 Older pre-release versions are not supported. If you're running a development snapshot, update to the latest tagged release before reporting.
 
@@ -35,7 +35,9 @@ ministr runs locally by default and does not expose network services without exp
 
 ## Hardening
 
-- `#![deny(unsafe_code)]` is enforced across every crate — no `unsafe` blocks.
+- `#![deny(unsafe_code)]` is enforced at every crate root — the shipped binary
+  contains no `unsafe` blocks. (One benchmark, outside the shipped binary, calls
+  `libc::getrusage` to measure peak RSS.)
 - All external input is validated at the transport boundary.
 - `cargo audit` and `cargo deny` run in CI as blocking gates.
 - Dependencies are reviewed via Dependabot pull requests.

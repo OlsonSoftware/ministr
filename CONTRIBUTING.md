@@ -50,8 +50,10 @@ whose code lives in a private repository; you don't need it to develop here.
 ministr-core/          — domain logic, no transport dependencies
 ministr-api/           — shared request/response types for daemon ↔ MCP/CLI
 ministr-daemon/        — HTTP API over Unix domain socket
+ministr-backend/       — the QueryBackend seam (in-process engine or daemon)
 ministr-mcp/           — MCP server adapter (rmcp)
 ministr-cli/           — binary entry point (the `ministr` CLI you build here)
+ministr-tui/           — the terminal console behind `ministr ui`
 web/                   — Next.js landing site (static export to GitHub Pages)
 deploy/                — self-host reverse-proxy configs
 examples/              — sample .ministr.toml configs for different project types
@@ -76,7 +78,7 @@ No layer may skip a level. Transport calls service; service calls storage.
 | Subsystem | Location | Purpose |
 |-----------|----------|---------|
 | Session Shadow | `ministr-core/src/session/` | Tracks delivered content, skips re-sends, detects drops |
-| Prefetch Engine | `ministr-core/src/session/prefetch/` | Six prefetch strategies for proactive content delivery |
+| Prefetch Engine | `ministr-core/src/session/prefetch/` | Eight prefetch strategies for proactive content delivery |
 | Budget Manager | `ministr-core/src/session/budget.rs` | Advisory token-usage estimate (internal accounting; name pending rename) |
 | Coherence | `ministr-core/src/coherence.rs` | Watches filesystem, invalidates stale content |
 | Bridge Linker | `ministr-core/src/code/bridge/` | Detects cross-language bindings — 13 kinds: Tauri commands + events, napi-rs, PyO3, wasm-bindgen, HTTP routes, FFI, cgo, JNI, UniFFI, gRPC, Flutter channels, Electron IPC |
@@ -84,18 +86,21 @@ No layer may skip a level. Transport calls service; service calls storage.
 ### Dependency rule
 
 ```
-ministr-cli ─── ministr-mcp ─── ministr-core
-                    │                 │
-                    │            ministr-api
-                    │           (shared types)
-                  rmcp              │
-                (MCP SDK)     ministr-daemon
-                              (HTTP/UDS API)
+ministr-cli ─┬─ ministr-mcp ─── ministr-backend ─── ministr-core
+             │       │                  │                │
+             └─ ministr-tui             │           ministr-api
+                                        │          (shared types)
+                                      rmcp               │
+                                   (MCP SDK)      ministr-daemon
+                                                  (HTTP/UDS API)
 ```
 
 Arrows point from consumer to dependency (left to right, top to
 bottom). `ministr-core` never imports MCP or transport types.
-`ministr-api` never depends on `ministr-core`.
+`ministr-api` never depends on `ministr-core`. `ministr-backend` holds the
+`QueryBackend` seam both query surfaces (MCP tools, CLI commands) code
+against, so neither has to know whether it is talking to an in-process
+engine or a running daemon.
 
 ## Making changes
 
@@ -200,8 +205,9 @@ messages. See [RELEASE.md](RELEASE.md) for details.
 
 ## License
 
-The six MIT-licensed workspace crates are described in
-[LICENSE-MIT](LICENSE-MIT). Contributions are accepted under the same MIT
+The seven MIT-licensed workspace crates are listed in
+[STEWARDSHIP.md](STEWARDSHIP.md); the license text is in
+[LICENSE](LICENSE). Contributions are accepted under the same MIT
 license as outbound (the standard inbound=outbound model) — you retain
 copyright in your contribution and grant ministr's users the MIT permissions.
 No copyright assignment is required.

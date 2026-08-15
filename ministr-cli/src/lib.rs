@@ -8,6 +8,7 @@
 //! same serve flow with a [`ministr_api::CloudRouterMounter`] wired in
 //! (where the public `ministr` binary calls it with `mounter = None`).
 
+#![deny(unsafe_code)]
 // The cmd_* helpers are dispatcher entry points that just surface
 // `miette::Result` from the underlying calls. Adding `# Errors` /
 // `# Panics` doc sections to each one would just paraphrase the

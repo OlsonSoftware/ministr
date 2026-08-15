@@ -7,10 +7,12 @@
 | `ministr-core` | indexing pipeline, parsers, embedders, search, storage |
 | `ministr-api` | shared types + the daemon HTTP client + the cloud seam trait |
 | `ministr-daemon` | the shared background engine (one per machine) |
+| `ministr-backend` | the `QueryBackend` seam: one query surface over the in-process engine or a running daemon |
 | `ministr-mcp` | the MCP server: the tool surface, sessions, agent instructions |
 | `ministr-cli` | the `ministr` binary: serve, init, index, setup, … |
+| `ministr-tui` | the terminal console behind `ministr ui` |
 
-All five are MIT-licensed and build a complete local product with no cloud
+All seven are MIT-licensed and build a complete local product with no cloud
 dependencies. Layering and contribution conventions live in
 [CONTRIBUTING](../../CONTRIBUTING.md).
 
