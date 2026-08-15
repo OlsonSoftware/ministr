@@ -63,6 +63,37 @@ pub const STANDING_FAILED: &str = "failed";
 /// The inline remove question, asked on the strip itself.
 pub const CONFIRM_REMOVE: &str = "remove this project?";
 
+/// Head of the leftovers module: index data no project claims.
+pub const LEFTOVERS_HEAD: &str = "leftover data";
+
+/// The inline clean question, asked on the leftovers module itself —
+/// short enough to sit whole inside the module's frame.
+pub const CONFIRM_CLEAN: &str = "delete all of it?";
+
+/// Foot line while an inline clean waits for its answer.
+pub const FOOT_CONFIRM_CLEAN: &str = "y delete   n keep";
+
+/// Foot line while the leftovers module is selected and nothing in it
+/// can be reconnected — clean is the only verb that works.
+pub const FOOT_LEFTOVERS: &str = "← → select   x clean up   q quit";
+
+/// Foot line while the leftovers module is selected and some of it can
+/// be reconnected as projects.
+pub const FOOT_LEFTOVERS_RECONNECT: &str = "← → select   c reconnect   x clean up   q quit";
+
+/// Foot word while a clean runs on the engine.
+pub const WORKING_CLEAN: &str = "cleaning up…";
+
+/// Foot word while a reconnect runs on the engine.
+pub const WORKING_RECONNECT: &str = "reconnecting…";
+
+/// Notice: the clean verb got no answer, or a refusal, for some of the
+/// leftover data.
+pub const NOTICE_CLEAN_FAILED: &str = "some leftover data wasn't removed";
+
+/// Notice: the reconnect verb got no answer, or a refusal.
+pub const NOTICE_RECONNECT_FAILED: &str = "the leftover data wasn't reconnected";
+
 /// Detail label: the project's path set.
 pub const DETAIL_PATHS: &str = "paths";
 
@@ -80,6 +111,9 @@ pub const DETAIL_SYMBOLS: &str = "symbols";
 
 /// Detail label: when the project was last built.
 pub const DETAIL_UPDATED: &str = "last built";
+
+/// Detail label: how much disk the project's index occupies.
+pub const DETAIL_SIZE: &str = "on disk";
 
 /// Detail value while the slower answers are still on their way.
 pub const LOADING: &str = "…";
@@ -200,6 +234,38 @@ pub fn attention_line(changed: usize, new_files: usize, missing: usize) -> Optio
         None
     } else {
         Some(format!("{} since the last build", parts.join(" · ")))
+    }
+}
+
+/// A byte count in plain decimal units — the convention consumer disk
+/// UIs use (Finder, docker): one decimal under ten, whole numbers
+/// above. Computed at fetch time, never in a draw.
+#[must_use]
+#[allow(clippy::cast_precision_loss)]
+pub fn size_line(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["kB", "MB", "GB", "TB"];
+    if bytes < 1000 {
+        return format!("{bytes} B");
+    }
+    let mut value = bytes as f64 / 1000.0;
+    let mut unit = 0;
+    while value >= 1000.0 && unit + 1 < UNITS.len() {
+        value /= 1000.0;
+        unit += 1;
+    }
+    if value < 10.0 {
+        format!("{value:.1} {}", UNITS[unit])
+    } else {
+        format!("{} {}", value.round(), UNITS[unit])
+    }
+}
+
+/// Leftovers module: how many old projects the unclaimed data is from.
+#[must_use]
+pub fn leftovers_line(count: usize) -> String {
+    match count {
+        1 => "from 1 old project".to_owned(),
+        n => format!("from {n} old projects"),
     }
 }
 

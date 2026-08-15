@@ -47,6 +47,12 @@ const PROBE_INTERVAL: Duration = Duration::from_secs(2);
 /// only while something is building; at rest this poll never runs.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(500);
 
+/// How often the console refetches the unclaimed-data report. The
+/// report sizes every unclaimed directory with a full stat walk, so it
+/// deliberately rides its own slow clock instead of the 2s probe — and
+/// is refetched at once when a clean or reconnect touches the pile.
+const LEFTOVERS_INTERVAL: Duration = Duration::from_secs(60);
+
 /// Errors the console can exit with.
 #[derive(Debug, thiserror::Error)]
 pub enum UiError {
@@ -103,45 +109,32 @@ async fn event_loop(
 ) -> Result<(), UiError> {
     let mut app = App::new();
     let mut events = event::spawn_reader();
-    let (mut probe_timer, mut progress_timer) = timers();
+    let (mut probe_timer, mut progress_timer, mut leftovers_timer) = timers();
     let mut spawn_done = false;
     let mut pacer = Pacer::new();
     let mut last_frame = Instant::now();
-    // Verbs run on their own task and answer through this channel — a
-    // slow engine answer (a big project registering, a rebuild
-    // purging) must never hold up a frame or a key press.
-    let (verb_tx, mut verb_rx) = tokio::sync::mpsc::channel::<engine::Outcome>(1);
+    // Every fetch and every verb answers through a channel — a slow
+    // engine answer must never hold up a frame or a key press.
+    let (
+        (verb_tx, mut verb_rx),
+        (lawn_tx, mut lawn_rx),
+        (probe_tx, mut probe_rx),
+        (progress_tx, mut progress_rx),
+        (leftovers_tx, mut leftovers_rx),
+    ) = answer_channels();
     let mut verb_running = false;
-    // Lawn fetches (per-file freshness + mtimes) ride their own tasks
-    // for the same reason — a big project's file list must never hold
-    // up a frame. One in flight per project.
-    let (lawn_tx, mut lawn_rx) =
-        tokio::sync::mpsc::channel::<(String, engine::FreshSig, Option<lawn::Lawn>)>(8);
-    let mut lawn_fetching: std::collections::HashSet<String> = std::collections::HashSet::new();
-    // Probes ride a background task for the same reason: the timer only
-    // spawns the fetch, the answer comes back here. One in flight; a
-    // tick landing mid-flight queues exactly one follow-up, so a verb's
-    // immediate re-probe is never lost to the guard.
-    let (probe_tx, mut probe_rx) =
-        tokio::sync::mpsc::channel::<(engine::EngineState, Option<detail::Facts>)>(1);
+    let mut lawn_fetching = std::collections::HashSet::new();
+    // One probe in flight; a tick landing mid-flight queues exactly one
+    // follow-up, so a verb's immediate re-probe is never lost.
     let mut probe_inflight = false;
     let mut probe_queued = false;
-    // The fast progress poll rides its own task too.
-    let (progress_tx, mut progress_rx) =
-        tokio::sync::mpsc::channel::<Vec<engine::ProgressTarget>>(1);
     let mut progress_inflight = false;
+    let mut leftovers_inflight = false;
 
     loop {
         pacer.set_animating(app.animating(Instant::now()));
         if pacer.take_redraw() {
-            let now = Instant::now();
-            let delta = now.duration_since(last_frame).min(pacing::MAX_FRAME_DELTA);
-            last_frame = now;
-            // Stdout is the same stream the default backend writes to,
-            // so the sync sequences bracket the frame bytes in order.
-            sync::draw_synced(&mut std::io::stdout(), terminal, |frame| {
-                app.draw(frame, delta, now);
-            })?;
+            draw_frame(terminal, &mut app, &mut last_frame)?;
         }
 
         tokio::select! {
@@ -195,15 +188,26 @@ async fn event_loop(
                     pacer.mark_dirty();
                 }
             }
+            // The slow leftovers clock: spawn the report fetch on its
+            // own task, one in flight.
+            _ = leftovers_timer.tick(), if !leftovers_inflight => {
+                leftovers_inflight = true;
+                spawn_leftovers_poll(client, &leftovers_tx);
+            }
+            // A leftovers report answered on its background task.
+            Some(fetched) = leftovers_rx.recv() => {
+                leftovers_inflight = false;
+                if app.absorb_leftovers(fetched) {
+                    pacer.mark_dirty();
+                }
+            }
             // A verb finished on its background task: apply what it
             // left behind, and probe at once when the machine changed
             // shape so the transition plays without waiting out the
             // probe interval.
             Some(outcome) = verb_rx.recv() => {
                 verb_running = false;
-                if app.absorb_outcome(outcome) {
-                    probe_timer.reset_immediately();
-                }
+                absorb_verb_outcome(&mut app, outcome, &mut probe_timer, &mut leftovers_timer);
                 pacer.mark_dirty();
             }
             // A lawn fetch landed: absorb it (the signature is
@@ -227,11 +231,8 @@ async fn event_loop(
         // A key press queued a verb: hand it to a background task (one
         // at a time — a second queued verb waits its turn) and say
         // what is running on the foot row while it works.
-        if !verb_running && let Some(action) = app.pending.take() {
+        if !verb_running && drain_pending_verb(&mut app, &mut pacer, client, &verb_tx) {
             verb_running = true;
-            app.working = action.working_word();
-            pacer.mark_dirty();
-            spawn_verb(client, &verb_tx, action);
         }
 
         if app.should_quit {
@@ -245,11 +246,95 @@ async fn event_loop(
 /// instead of a stuck "starting". While nothing builds the progress
 /// timer is not polled and its ticks go missing; skipping them keeps a
 /// build's first poll from replaying the whole quiet spell as a burst.
-fn timers() -> (tokio::time::Interval, tokio::time::Interval) {
+fn timers() -> (
+    tokio::time::Interval,
+    tokio::time::Interval,
+    tokio::time::Interval,
+) {
     let probe_timer = tokio::time::interval(PROBE_INTERVAL);
     let mut progress_timer = tokio::time::interval(PROGRESS_INTERVAL);
     progress_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    (probe_timer, progress_timer)
+    // The leftovers report sizes every unclaimed directory with a full
+    // stat walk, so it rides its own slow clock, never the 2s probe.
+    let mut leftovers_timer = tokio::time::interval(LEFTOVERS_INTERVAL);
+    leftovers_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    (probe_timer, progress_timer, leftovers_timer)
+}
+
+/// One bounded `(tx, rx)` pair per background answer kind: verbs, lawn
+/// fetches (per-file freshness + mtimes), probes, progress polls, and
+/// the leftovers report — in that order.
+#[allow(clippy::type_complexity)]
+fn answer_channels() -> (
+    Chan<engine::Outcome>,
+    Chan<(String, engine::FreshSig, Option<lawn::Lawn>)>,
+    Chan<(engine::EngineState, Option<detail::Facts>)>,
+    Chan<Vec<engine::ProgressTarget>>,
+    Chan<Option<console::Leftovers>>,
+) {
+    (
+        tokio::sync::mpsc::channel(1),
+        tokio::sync::mpsc::channel(8),
+        tokio::sync::mpsc::channel(1),
+        tokio::sync::mpsc::channel(1),
+        tokio::sync::mpsc::channel(1),
+    )
+}
+
+/// A bounded channel's two ends.
+type Chan<T> = (tokio::sync::mpsc::Sender<T>, tokio::sync::mpsc::Receiver<T>);
+
+/// Draw one frame at this instant, feeding any playing transition the
+/// real time since the previous frame. Stdout is the same stream the
+/// default backend writes to, so the sync sequences bracket the frame
+/// bytes in order.
+fn draw_frame(
+    terminal: &mut DefaultTerminal,
+    app: &mut App,
+    last_frame: &mut Instant,
+) -> Result<(), UiError> {
+    let now = Instant::now();
+    let delta = now.duration_since(*last_frame).min(pacing::MAX_FRAME_DELTA);
+    *last_frame = now;
+    sync::draw_synced(&mut std::io::stdout(), terminal, |frame| {
+        app.draw(frame, delta, now);
+    })?;
+    Ok(())
+}
+
+/// Apply a finished verb's outcome and reset the clocks it invalidated:
+/// the probe fires at once when the machine changed shape, and the slow
+/// leftovers report refetches at once when a clean or reconnect touched
+/// the pile.
+fn absorb_verb_outcome(
+    app: &mut App,
+    outcome: engine::Outcome,
+    probe_timer: &mut tokio::time::Interval,
+    leftovers_timer: &mut tokio::time::Interval,
+) {
+    if outcome.rescan_leftovers {
+        leftovers_timer.reset_immediately();
+    }
+    if app.absorb_outcome(outcome) {
+        probe_timer.reset_immediately();
+    }
+}
+
+/// Hand the queued verb (if any) to a background task and put its
+/// working word on the foot row. Returns whether one was spawned.
+fn drain_pending_verb(
+    app: &mut App,
+    pacer: &mut Pacer,
+    client: &Arc<DaemonClient>,
+    verb_tx: &tokio::sync::mpsc::Sender<engine::Outcome>,
+) -> bool {
+    let Some(action) = app.pending.take() else {
+        return false;
+    };
+    app.working = action.working_word();
+    pacer.mark_dirty();
+    spawn_verb(client, verb_tx, action);
+    true
 }
 
 /// Spawn one queued verb on its background task — a slow engine answer
@@ -307,6 +392,21 @@ fn absorb_probe_answer(
         changed |= app.absorb_detail(facts);
     }
     changed
+}
+
+/// Spawn one background leftovers poll. The task answers on `tx`
+/// whatever happens (`None` for an unanswered fetch — the module
+/// holds), so the in-flight guard always clears.
+fn spawn_leftovers_poll(
+    client: &Arc<DaemonClient>,
+    tx: &tokio::sync::mpsc::Sender<Option<console::Leftovers>>,
+) {
+    let tx = tx.clone();
+    let client = Arc::clone(client);
+    tokio::spawn(async move {
+        let fetched = engine::leftovers(&client).await;
+        let _ = tx.send(fetched).await;
+    });
 }
 
 /// Spawn one background progress poll. An unanswered poll sends no

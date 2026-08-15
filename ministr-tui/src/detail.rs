@@ -62,6 +62,9 @@ pub struct Facts {
     /// When the project was last built, as a plain phrase — `None`
     /// when it has never finished a build.
     pub updated: Option<String>,
+    /// How much disk the project's index occupies, phrased at fetch
+    /// time ("1.2 GB") — `None` when the engine reported no figure.
+    pub size: Option<String>,
     /// What needs updating, as one plain line — `None` when nothing.
     pub attention: Option<String>,
 }
@@ -209,6 +212,15 @@ pub fn draw(frame: &mut Frame, area: Rect, detail: &Detail, confirming: bool, de
             strings::DETAIL_UPDATED,
             Line::from(updated),
         );
+        if let Some(size) = &facts.size {
+            fact_row(
+                frame,
+                inner,
+                &mut y,
+                strings::DETAIL_SIZE,
+                Line::from(size.as_str()),
+            );
+        }
         if let Some(attention) = &facts.attention {
             y += 1;
             row(frame, inner, &mut y, Line::from(attention.as_str()));

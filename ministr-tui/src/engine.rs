@@ -9,7 +9,7 @@ use std::time::Duration;
 use ministr_api::client::DaemonClient;
 use ministr_api::corpus::{CorpusInfo, IndexingStatus, IngestionProgressInfo};
 
-use crate::console::{ConsoleModel, Standing, Strip};
+use crate::console::{ConsoleModel, Leftovers, Standing, Strip};
 use crate::detail::Facts;
 use crate::lawn::{Blade, Lawn};
 use crate::strings;
@@ -198,6 +198,18 @@ pub enum Action {
         /// The new path set, blanks already dropped.
         paths: Vec<String>,
     },
+    /// Delete every unclaimed index directory (the leftovers module's
+    /// clean verb).
+    CleanLeftovers {
+        /// The directory names, from the last leftovers answer.
+        dirs: Vec<String>,
+    },
+    /// Bring reconnectable leftovers back as projects (the leftovers
+    /// module's reconnect verb).
+    ReconnectLeftovers {
+        /// The reconnectable directory names, from the last answer.
+        dirs: Vec<String>,
+    },
 }
 
 impl Action {
@@ -212,6 +224,8 @@ impl Action {
             Self::Remove { .. } => Some(strings::WORKING_REMOVE),
             Self::PatchIn { .. } => Some(strings::WORKING_ADD),
             Self::SavePaths { .. } => Some(strings::WORKING_SAVE),
+            Self::CleanLeftovers { .. } => Some(strings::WORKING_CLEAN),
+            Self::ReconnectLeftovers { .. } => Some(strings::WORKING_RECONNECT),
         }
     }
 }
@@ -230,6 +244,9 @@ pub struct Outcome {
     pub to_console: bool,
     /// Fresh facts for the opened project, when the verb fetched them.
     pub facts: Option<Facts>,
+    /// The verb touched the unclaimed pile — the caller refetches the
+    /// leftovers report at once instead of waiting out its slow timer.
+    pub rescan_leftovers: bool,
 }
 
 impl Outcome {
@@ -240,6 +257,7 @@ impl Outcome {
             notice: None,
             to_console: false,
             facts: None,
+            rescan_leftovers: false,
         }
     }
 
@@ -288,7 +306,51 @@ pub async fn run(client: &DaemonClient, action: Action) -> Outcome {
                 ..Outcome::finished(ok, strings::NOTICE_PATHS_FAILED)
             }
         }
+        Action::CleanLeftovers { dirs } => {
+            let mut all_ok = true;
+            for dir in &dirs {
+                all_ok &= client.remove_orphan_index(dir).await.is_ok();
+            }
+            Outcome {
+                rescan_leftovers: true,
+                ..Outcome::finished(all_ok, strings::NOTICE_CLEAN_FAILED)
+            }
+        }
+        Action::ReconnectLeftovers { dirs } => {
+            let mut all_ok = true;
+            for dir in &dirs {
+                all_ok &= client.adopt_orphan_index(dir).await.is_ok();
+            }
+            Outcome {
+                // Reconnected projects materialize on the next probe.
+                refreshed: true,
+                rescan_leftovers: true,
+                ..Outcome::finished(all_ok, strings::NOTICE_RECONNECT_FAILED)
+            }
+        }
     }
+}
+
+/// Fetch the machine's unclaimed-data report, reduced to the console's
+/// summary module: every unclaimed directory, the reconnectable subset,
+/// and the pile's size phrased at fetch time. `None` when the engine
+/// did not answer — the module holds its last answer; an answered empty
+/// pile comes back as empty `dirs`, and the module dissolves.
+pub async fn leftovers(client: &DaemonClient) -> Option<Leftovers> {
+    let report = client.list_orphan_indexes().await.ok()?;
+    let mut dirs = Vec::with_capacity(report.orphans.len());
+    let mut reconnectable = Vec::new();
+    for orphan in &report.orphans {
+        dirs.push(orphan.dir_name.clone());
+        if orphan.adoptable {
+            reconnectable.push(orphan.dir_name.clone());
+        }
+    }
+    Some(Leftovers {
+        dirs,
+        reconnectable,
+        size_line: strings::size_line(report.total_bytes),
+    })
 }
 
 /// Fetch the opened project's slower facts: the full path set, section
@@ -311,6 +373,7 @@ pub async fn detail(client: &DaemonClient, id: &str) -> Option<Facts> {
         updated: info
             .last_indexed
             .map(|ts| strings::ago_line(age_seconds(ts))),
+        size: info.size_on_disk_bytes.map(strings::size_line),
         attention,
     })
 }

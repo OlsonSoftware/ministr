@@ -9,7 +9,7 @@
 use std::time::{Duration, Instant};
 
 use ministr_tui::app::{App, View};
-use ministr_tui::console::{ConsoleModel, Standing, Strip};
+use ministr_tui::console::{ConsoleModel, Leftovers, Standing, Strip};
 use ministr_tui::detail::{Detail, Facts, PathsEditor};
 use ministr_tui::ease::GLIDE;
 use ministr_tui::engine::{Action, EngineState, Outcome, ProgressTarget};
@@ -488,6 +488,7 @@ fn cohaero_facts() -> Facts {
         sections: 5210,
         symbols: 903,
         updated: Some("4 minutes ago".to_owned()),
+        size: Some("1.2 GB".to_owned()),
         attention: Some("3 files changed · 1 new since the last build".to_owned()),
     }
 }
@@ -558,6 +559,143 @@ fn detail_verb_failure_notice() {
     let mut app = opened(Some(cohaero_facts()));
     app.notice = Some(strings::NOTICE_REBUILD_FAILED.to_owned());
     insta::assert_snapshot!(render(&mut app, 120, 36));
+}
+
+// --- leftovers: the unclaimed-data module -------------------------------
+
+/// The historical pile: nothing reconnectable, clean is the only verb.
+fn pile() -> Leftovers {
+    Leftovers {
+        dirs: (0..82).map(|i| format!("old-{i}")).collect(),
+        reconnectable: Vec::new(),
+        size_line: "24 GB".to_owned(),
+    }
+}
+
+#[test]
+fn console_with_leftovers_spacious() {
+    let mut app = App::with_engine(populated()).with_leftovers(pile());
+    insta::assert_snapshot!(render(&mut app, 120, 36));
+}
+
+#[test]
+fn console_with_leftovers_stacked() {
+    let mut app = App::with_engine(populated()).with_leftovers(pile());
+    insta::assert_snapshot!(render(&mut app, 60, 20));
+}
+
+#[test]
+fn leftovers_selected_asks_before_cleaning() {
+    let mut app = App::with_engine(populated()).with_leftovers(pile());
+    app.selected = 3;
+    assert!(app.on_key(KeyEvent::from(KeyCode::Char('x'))));
+    insta::assert_snapshot!(render(&mut app, 120, 36));
+}
+
+#[test]
+fn right_walks_onto_the_leftovers_module_and_stops() {
+    let mut app = App::with_engine(populated()).with_leftovers(pile());
+    for _ in 0..3 {
+        assert!(app.on_key(KeyEvent::from(KeyCode::Right)));
+    }
+    assert_eq!(app.selected, 3, "the module sits one past the last strip");
+    assert!(!app.on_key(KeyEvent::from(KeyCode::Right)));
+}
+
+#[test]
+fn y_queues_the_clean_for_every_leftover_dir() {
+    let mut app = App::with_engine(populated()).with_leftovers(pile());
+    app.selected = 3;
+    assert!(app.on_key(KeyEvent::from(KeyCode::Char('x'))));
+    assert!(app.confirming_clean);
+    assert!(app.on_key(KeyEvent::from(KeyCode::Char('y'))));
+    assert!(!app.confirming_clean);
+    assert_eq!(
+        app.pending,
+        Some(Action::CleanLeftovers { dirs: pile().dirs })
+    );
+}
+
+#[test]
+fn x_then_any_other_key_keeps_the_pile() {
+    let mut app = App::with_engine(populated()).with_leftovers(pile());
+    app.selected = 3;
+    assert!(app.on_key(KeyEvent::from(KeyCode::Char('x'))));
+    assert!(app.on_key(KeyEvent::from(KeyCode::Char('n'))));
+    assert!(!app.confirming_clean);
+    assert_eq!(app.pending, None);
+}
+
+#[test]
+fn reconnect_is_absent_when_nothing_can_come_back() {
+    let mut app = App::with_engine(populated()).with_leftovers(pile());
+    app.selected = 3;
+    // The honest console: the historical pile offers clean only.
+    assert!(!app.on_key(KeyEvent::from(KeyCode::Char('c'))));
+    assert_eq!(app.pending, None);
+    let frame = render(&mut app, 120, 36);
+    assert!(frame.contains(strings::FOOT_LEFTOVERS));
+    assert!(!frame.contains(strings::FOOT_LEFTOVERS_RECONNECT));
+}
+
+#[test]
+fn c_queues_the_reconnect_when_something_can_come_back() {
+    let mut app = App::with_engine(populated()).with_leftovers(Leftovers {
+        reconnectable: vec!["old-3".to_owned(), "old-7".to_owned()],
+        ..pile()
+    });
+    app.selected = 3;
+    let frame = render(&mut app, 120, 36);
+    assert!(frame.contains(strings::FOOT_LEFTOVERS_RECONNECT));
+    assert!(app.on_key(KeyEvent::from(KeyCode::Char('c'))));
+    assert_eq!(
+        app.pending,
+        Some(Action::ReconnectLeftovers {
+            dirs: vec!["old-3".to_owned(), "old-7".to_owned()],
+        })
+    );
+}
+
+#[test]
+fn a_cleaned_pile_dissolves_instead_of_blinking_out() {
+    let mut app = App::with_engine(populated()).with_leftovers(pile());
+    app.selected = 3;
+    let emptied = Leftovers {
+        dirs: Vec::new(),
+        reconnectable: Vec::new(),
+        size_line: "0 B".to_owned(),
+    };
+    assert!(app.absorb_leftovers(Some(emptied)));
+    assert!(app.leftovers.is_none());
+    assert!(
+        app.animating(Instant::now()),
+        "the dissolve plays over the module's rect"
+    );
+    assert_eq!(app.selected, 2, "the selection falls back to the strips");
+}
+
+#[test]
+fn an_unanswered_leftovers_poll_holds_the_module() {
+    let mut app = App::with_engine(populated()).with_leftovers(pile());
+    assert!(!app.absorb_leftovers(None));
+    assert!(app.leftovers.is_some());
+}
+
+#[test]
+fn an_identical_leftovers_answer_draws_nothing() {
+    let mut app = App::with_engine(populated()).with_leftovers(pile());
+    assert!(!app.absorb_leftovers(Some(pile())));
+}
+
+#[test]
+fn size_lines_read_in_plain_decimal_units() {
+    assert_eq!(strings::size_line(0), "0 B");
+    assert_eq!(strings::size_line(743), "743 B");
+    assert_eq!(strings::size_line(1_200), "1.2 kB");
+    assert_eq!(strings::size_line(743_000_000), "743 MB");
+    assert_eq!(strings::size_line(1_230_000_000), "1.2 GB");
+    assert_eq!(strings::size_line(23_970_000_000), "24 GB");
+    assert_eq!(strings::size_line(2_400_000_000_000), "2.4 TB");
 }
 
 // --- S3 patch in: designed states ---------------------------------------
@@ -838,6 +976,7 @@ fn quiet_outcome() -> Outcome {
         notice: None,
         to_console: false,
         facts: None,
+        rescan_leftovers: false,
     }
 }
 

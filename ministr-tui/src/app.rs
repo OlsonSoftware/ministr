@@ -30,6 +30,10 @@ use crate::patchin::{self, PatchIn};
 use crate::strings;
 
 /// Which screen the body shows.
+// Exactly one `View` is alive per console, so the size spread between
+// the unit `Console` and the opened panel is irrelevant — boxing would
+// buy nothing but indirection.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum View {
     /// S1 — the console.
@@ -53,6 +57,15 @@ pub struct App {
     /// Is the inline remove question up, on the selected strip or the
     /// opened project?
     pub confirming_remove: bool,
+    /// Is the inline clean question up, on the leftovers module?
+    pub confirming_clean: bool,
+    /// The machine's unclaimed-data summary — filled by the slow
+    /// leftovers poll the event loop runs, `None` while the machine
+    /// holds none (the module is simply absent).
+    pub leftovers: Option<console::Leftovers>,
+    /// A cleaned pile's module, kept in place while its dissolve plays
+    /// — dropped the moment the transition completes.
+    leaving_leftovers: Option<console::Leftovers>,
     /// A verb's plain-worded failure, shown on the foot row until the
     /// next key press.
     pub notice: Option<String>,
@@ -115,6 +128,9 @@ impl App {
             view: View::Console,
             pending: None,
             confirming_remove: false,
+            confirming_clean: false,
+            leftovers: None,
+            leaving_leftovers: None,
             notice: None,
             working: None,
             motion: Motion::none(),
@@ -134,6 +150,14 @@ impl App {
     #[must_use]
     pub fn with_depth(mut self, depth: ColorDepth) -> Self {
         self.depth = depth;
+        self
+    }
+
+    /// The same console with an unclaimed-data summary — the snapshot
+    /// harness constructs the leftovers states with this.
+    #[must_use]
+    pub fn with_leftovers(mut self, leftovers: console::Leftovers) -> Self {
+        self.leftovers = Some(leftovers);
         self
     }
 
@@ -204,8 +228,53 @@ impl App {
             // subject, and the console carries the machine state.
             self.view = View::Console;
             self.confirming_remove = false;
+            self.confirming_clean = false;
         }
-        self.selected = self.selected.min(self.strips().len().saturating_sub(1));
+        self.clamp_selection();
+        true
+    }
+
+    /// Keep the selection inside the selectable modules: the strips,
+    /// plus the leftovers module when there is one.
+    fn clamp_selection(&mut self) {
+        self.selected = self.selected.min(self.selectable().saturating_sub(1));
+    }
+
+    /// How many modules the selection can land on.
+    fn selectable(&self) -> usize {
+        self.strips().len() + usize::from(self.leftovers.is_some())
+    }
+
+    /// Is the leftovers module the selection? It sits one index past
+    /// the last strip.
+    fn leftovers_selected(&self) -> bool {
+        self.leftovers.is_some() && self.selected == self.strips().len()
+    }
+
+    /// Absorb a slow leftovers poll's answer. `None` means the engine
+    /// did not answer — the module holds. An answered empty pile clears
+    /// the module, and when a clean emptied it the module dissolves in
+    /// place instead of blinking out. Returns whether the frame changed.
+    pub fn absorb_leftovers(&mut self, fetched: Option<console::Leftovers>) -> bool {
+        let Some(fresh) = fetched else {
+            return false;
+        };
+        let fresh = (!fresh.dirs.is_empty()).then_some(fresh);
+        if fresh == self.leftovers {
+            return false;
+        }
+        if fresh.is_none() {
+            self.confirming_clean = false;
+            if let Some(old) = self.leftovers.take() {
+                // The dissolve targets the module's rect — recorded one
+                // index past the last strip.
+                self.motion_strip = Some(self.strips().len());
+                self.leaving_leftovers = Some(old);
+                self.motion = Motion::start(Transition::Dissolve);
+            }
+        }
+        self.leftovers = fresh;
+        self.clamp_selection();
         true
     }
 
@@ -375,7 +444,7 @@ impl App {
     }
 
     /// S1 keys: select, open, rebuild, add, remove (inline confirm),
-    /// quit.
+    /// clean/reconnect on the leftovers module, quit.
     fn on_key_console(&mut self, key: KeyEvent) -> bool {
         if self.confirming_remove {
             self.confirming_remove = false;
@@ -384,6 +453,17 @@ impl App {
             {
                 self.pending = Some(Action::Remove {
                     id: strip.id.clone(),
+                });
+            }
+            return true;
+        }
+        if self.confirming_clean {
+            self.confirming_clean = false;
+            if key.code == KeyCode::Char('y')
+                && let Some(leftovers) = &self.leftovers
+            {
+                self.pending = Some(Action::CleanLeftovers {
+                    dirs: leftovers.dirs.clone(),
                 });
             }
             return true;
@@ -397,7 +477,7 @@ impl App {
                 self.selected -= 1;
                 true
             }
-            KeyCode::Right if self.selected + 1 < self.strips().len() => {
+            KeyCode::Right if self.selected + 1 < self.selectable() => {
                 self.selected += 1;
                 true
             }
@@ -410,9 +490,29 @@ impl App {
                 self.view = View::PatchIn(PatchIn::new(&here));
                 true
             }
+            KeyCode::Char('x') if self.leftovers_selected() => {
+                self.confirming_clean = true;
+                true
+            }
             KeyCode::Char('x') if !self.strips().is_empty() => {
                 self.confirming_remove = true;
                 true
+            }
+            KeyCode::Char('c') if self.leftovers_selected() => {
+                // Reconnect is offered only when something can actually
+                // come back — the historical pile can't, and gets no
+                // pretend verb.
+                let dirs = self
+                    .leftovers
+                    .as_ref()
+                    .map(|l| l.reconnectable.clone())
+                    .unwrap_or_default();
+                if dirs.is_empty() {
+                    false
+                } else {
+                    self.pending = Some(Action::ReconnectLeftovers { dirs });
+                    true
+                }
             }
             _ => false,
         }
@@ -644,6 +744,7 @@ impl App {
         if !self.motion.running() {
             self.motion_strip = None;
             self.leaving = None;
+            self.leaving_leftovers = None;
         }
     }
 
@@ -672,8 +773,22 @@ impl App {
         if self.confirming_remove {
             return strings::FOOT_CONFIRM_REMOVE;
         }
+        if self.confirming_clean {
+            return strings::FOOT_CONFIRM_CLEAN;
+        }
         match &self.view {
             View::Console => match &self.engine {
+                EngineState::Running(_) if self.leftovers_selected() => {
+                    let reconnectable = self
+                        .leftovers
+                        .as_ref()
+                        .is_some_and(|l| !l.reconnectable.is_empty());
+                    if reconnectable {
+                        strings::FOOT_LEFTOVERS_RECONNECT
+                    } else {
+                        strings::FOOT_LEFTOVERS
+                    }
+                }
                 EngineState::Running(model) if model.strips.is_empty() => {
                     strings::FOOT_CONSOLE_EMPTY
                 }
@@ -725,6 +840,10 @@ impl App {
                     version: &model.version,
                     confirming: self.confirming_remove && matches!(self.view, View::Console),
                     lawns: &self.lawns,
+                    // A cleaned pile's ghost keeps the module in place
+                    // while its dissolve plays.
+                    leftovers: self.leftovers.as_ref().or(self.leaving_leftovers.as_ref()),
+                    confirming_clean: self.confirming_clean && matches!(self.view, View::Console),
                 },
             )
         } else {

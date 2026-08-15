@@ -58,6 +58,22 @@ pub struct Strip {
     pub pulse: Option<(String, f32)>,
 }
 
+/// Index data on the machine that no project claims — the engine's
+/// orphan report reduced to what the console's summary module needs.
+/// One module for the whole pile: dozens of leftovers as strips would
+/// drown the projects the console is for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Leftovers {
+    /// Every unclaimed directory, by engine name — what a clean removes.
+    pub dirs: Vec<String>,
+    /// The directories whose identity survived and whose source folders
+    /// still exist — what a reconnect brings back as projects. Empty
+    /// for the historical pile, and the module then offers clean only.
+    pub reconnectable: Vec<String>,
+    /// The pile's total size, phrased at fetch time ("24 GB").
+    pub size_line: String,
+}
+
 /// A project's standing — the word at the foot of its strip.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Standing {
@@ -93,6 +109,9 @@ const MASTER_WIDE: u16 = 24;
 const MASTER_TIGHT: u16 = 20;
 /// The master block's height: four facts plus the frame.
 const MASTER_HEIGHT: u16 = 6;
+/// The leftovers module's height: three facts, the question row, and
+/// the frame.
+const LEFTOVERS_HEIGHT: u16 = 6;
 /// Inline meter width in a stacked bar.
 const BAR_METER_WIDTH: u16 = 12;
 
@@ -124,6 +143,19 @@ pub struct Body<'a> {
     /// rather than carried on the strip so frames never clone a big
     /// file list.
     pub lawns: &'a HashMap<String, Lawn>,
+    /// The unclaimed-data summary, when the machine holds any — or the
+    /// ghost of one whose dissolve is still playing.
+    pub leftovers: Option<&'a Leftovers>,
+    /// Is the inline clean question up on the leftovers module?
+    pub confirming_clean: bool,
+}
+
+impl Body<'_> {
+    /// Is the leftovers module the selection? It sits one index past
+    /// the last strip.
+    fn leftovers_selected(&self) -> bool {
+        self.leftovers.is_some() && self.selected == self.strips.len()
+    }
 }
 
 /// Draw the console body: strips left, master section right. The
@@ -152,10 +184,13 @@ fn draw_wide(frame: &mut Frame, area: Rect, body: &Body) -> ConsoleLayout {
             .areas(area);
 
     draw_master(frame, master_area, body.version, strips.len());
+    let leftover_rect = draw_leftovers_module(frame, master_area, body);
 
     if strips.is_empty() {
         draw_no_projects(frame, strips_area);
-        return ConsoleLayout::default();
+        let mut layout = ConsoleLayout::default();
+        layout.strip_rects.extend(leftover_rect);
+        return layout;
     }
 
     // How many strips fit, and which window keeps the selection visible.
@@ -204,7 +239,64 @@ fn draw_wide(frame: &mut Frame, area: Rect, body: &Body) -> ConsoleLayout {
             body.confirming && selected_here,
         );
     }
+    // The leftovers module's rect rides one index past the last strip,
+    // so a dissolve can target it the way it targets a removed strip.
+    layout.strip_rects.extend(leftover_rect);
     layout
+}
+
+/// The unclaimed-data module, under the master block: head, how many
+/// old projects the pile is from, its size — and the inline clean
+/// question while one waits for its answer. Selection brightens the
+/// frame exactly as it does a strip's.
+fn draw_leftovers_module(frame: &mut Frame, master_area: Rect, body: &Body) -> Option<Rect> {
+    let leftovers = body.leftovers?;
+    let y = master_area.y + MASTER_HEIGHT + 1;
+    let bottom = master_area.y + master_area.height;
+    if y >= bottom {
+        return None;
+    }
+    let rect = Rect::new(
+        master_area.x,
+        y,
+        master_area.width,
+        LEFTOVERS_HEIGHT.min(bottom - y),
+    );
+    let selected = body.leftovers_selected();
+    let block = Block::bordered().border_type(BorderType::Rounded);
+    let block = if selected { block } else { block.dim() };
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+
+    let [head, count_row, size_row, question_row] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .horizontal_margin(1)
+    .areas(inner);
+    let name = Line::from(strings::LEFTOVERS_HEAD).bold();
+    frame.render_widget(if selected { name } else { name.dim() }, head);
+    frame.render_widget(
+        Line::from(strings::leftovers_line(leftovers.dirs.len())).dim(),
+        count_row,
+    );
+    frame.render_widget(Line::from(leftovers.size_line.as_str()).dim(), size_row);
+    if body.confirming_clean && selected {
+        frame.render_widget(clean_question(body.depth), question_row);
+    }
+    Some(rect)
+}
+
+/// The inline clean question — bold, and yellow where the rung has it.
+fn clean_question(depth: ColorDepth) -> Line<'static> {
+    let line = Line::from(strings::CONFIRM_CLEAN).bold();
+    if depth == ColorDepth::Mono {
+        line
+    } else {
+        line.yellow()
+    }
 }
 
 /// One tall channel strip: framed, name at the head, the project's
@@ -331,6 +423,50 @@ fn draw_master(frame: &mut Frame, area: Rect, version: &str, projects: usize) {
 /// the right edge. No master block; the title row carries machine state.
 fn draw_stacked(frame: &mut Frame, area: Rect, body: &Body) -> ConsoleLayout {
     let (strips, selected) = (body.strips, body.selected);
+    // The leftovers bar keeps the bottom row for itself, so it can
+    // never be scrolled away from the selection window.
+    let (area, leftover_row) = if body.leftovers.is_some() && area.height > 1 {
+        let [rest, row] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(area);
+        (rest, Some(row))
+    } else {
+        (area, None)
+    };
+    let mut layout = draw_stacked_strips(frame, area, body, strips, selected);
+    if let (Some(row), Some(leftovers)) = (leftover_row, body.leftovers) {
+        draw_leftovers_bar(frame, row, leftovers, body);
+        layout.strip_rects.push(row);
+    }
+    layout
+}
+
+/// One bar row for the unclaimed data: head at the left, the pile's
+/// origin and size (or the inline clean question) at the right edge.
+fn draw_leftovers_bar(frame: &mut Frame, row: Rect, leftovers: &Leftovers, body: &Body) {
+    let selected = body.leftovers_selected();
+    let name = Line::from(strings::LEFTOVERS_HEAD).bold();
+    frame.render_widget(if selected { name } else { name.dim() }, row);
+    let foot = if body.confirming_clean && selected {
+        clean_question(body.depth)
+    } else {
+        Line::from(format!(
+            "{}  {}",
+            strings::leftovers_line(leftovers.dirs.len()),
+            leftovers.size_line
+        ))
+        .dim()
+    };
+    frame.render_widget(foot.right_aligned(), row);
+}
+
+/// The stacked project rows themselves (the pre-leftovers body).
+fn draw_stacked_strips(
+    frame: &mut Frame,
+    area: Rect,
+    body: &Body,
+    strips: &[Strip],
+    selected: usize,
+) -> ConsoleLayout {
     if strips.is_empty() {
         draw_no_projects(frame, area);
         return ConsoleLayout::default();
