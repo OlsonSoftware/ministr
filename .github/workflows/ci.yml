@@ -312,7 +312,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Install rustfmt
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master @ 2026-05-17
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master @ 2026-05-17
         with:
           # Pinned by SHA → channel can't be read from the ref; set it.
           # Matches rust-toolchain.toml so the fmt runner pre-installs the
@@ -668,7 +668,7 @@ jobs:
       # RUSTUP_TOOLCHAIN overrides rust-toolchain.toml's 1.95.0 pin for
       # this job only — without it cargo silently uses the pinned
       # toolchain and the check proves nothing.
-      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master @ 2026-05-17
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master @ 2026-05-17
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
 
