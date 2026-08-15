@@ -1,7 +1,7 @@
 # Freshness
 
-"Is my AI up to date with my code?" is the question the desktop app exists
-to answer, so the answer is held to a strict standard:
+"Is my AI up to date with my code?" is a question ministr answers
+constantly, so the answer is held to a strict standard:
 
 > Every freshness verdict shown to a user was produced by hashing the
 > working tree. File timestamps are never trusted for reporting.
@@ -23,21 +23,19 @@ reporting never takes the shortcut at all.
 | `missing` | the file was indexed but no longer exists — your AI still remembers it |
 
 While a reindex runs, stale and new files are exactly what it's consuming,
-so the app shows them as updating rather than alarming you about work
-already in progress.
+so clients should report them as updating rather than alarming you about
+work already in progress.
 
 ## Cost control without weakening the contract
 
-Hash-sweeping a tree isn't free, and the app polls every few seconds. The
-daemon dedupes: a short-lived cache holds each corpus's last verified sweep,
-below the fastest poll cadence, so overlapping polls collapse onto one
-sweep. A cached answer is a full hash-verified sweep, just seconds old; the
-cache is invalidated on reindex.
+Hash-sweeping a tree isn't free, and clients may poll every few seconds.
+The daemon dedupes: a short-lived cache holds each corpus's last verified
+sweep, below the fastest poll cadence, so overlapping polls collapse onto
+one sweep. A cached answer is a full hash-verified sweep, just seconds old;
+the cache is invalidated on reindex.
 
 ## Where you see it
 
-- The desktop app translates these states into its per-project status
-  display.
 - The [HTTP API](../reference/http-api.md) exposes both the counts-only
   summary (`/freshness-summary`) and the full per-file sweep (`/freshness`).
 - Agents feel it as `coherence_alerts` in tool responses: when a file

@@ -3,7 +3,7 @@
 //! The bundle layer adapts a live in-memory [`SessionEntry`] into a
 //! deterministic, portable archive an agent dev can download for
 //! replay / inspection. The current scope is the export side; import,
-//! signed-URL delivery, and a Tauri inspector are deferred.
+//! signed-URL delivery, and a GUI inspector are deferred.
 //!
 //! Lives in `ministr-mcp` because the `SessionRegistry` (the source
 //! of truth for live session state) is held by `MinistrServer` here.

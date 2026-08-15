@@ -4,7 +4,7 @@
 # github.com/OlsonSoftware/ministr-private via `git filter-repo`. Their
 # history is preserved there with original authorship + dates; this
 # workspace now ships ONLY the MIT open-core crates. See STEWARDSHIP.md.
-members = ["ministr-api", "ministr-core", "ministr-daemon", "ministr-mcp", "ministr-cli", "ministr-app/src-tauri"]
+members = ["ministr-api", "ministr-core", "ministr-daemon", "ministr-mcp", "ministr-cli"]
 resolver = "3"
 
 [workspace.package]

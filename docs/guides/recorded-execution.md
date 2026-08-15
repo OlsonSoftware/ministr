@@ -14,11 +14,10 @@ every run is captured, bounded, attributed, and auditable.
   through `ministr_run_logs`, which pages only what the agent hasn't seen
   yet.
 - **An audit trail** — every run lands in `~/.ministr/exec_runs.db` with
-  command, working directory, status, timing, and session attribution. The
-  desktop app reads the same store.
+  command, working directory, status, timing, and session attribution.
 - **Cross-process control** — runs execute in the daemon-hosted engine (one
-  per machine), so a run started by an agent can be watched and killed from
-  the desktop app, and survives the agent's own process.
+  per machine), so a run started by an agent can be watched and killed by
+  another daemon client, and survives the agent's own process.
 - **Searchable history** — a finished run is rendered as a bounded report
   and indexed into your corpus, so a later `ministr_survey` can find what
   failed previously.

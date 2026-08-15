@@ -24,7 +24,7 @@
 //!   back inline as `application/x-tar`. A later pass moves the
 //!   artefact under `sessions/{tenant}/{id}/{ts}.tar` in blob storage
 //!   and returns a 24h-TTL signed URL per the roadmap spec.
-//! - **No Tauri "Session inspector" tab** — debugging today is via
+//! - **No GUI "Session inspector"** — debugging today is via
 //!   `curl POST /api/v1/sessions/{id}/export -o session.tar && tar tf
 //!   session.tar`.
 //!

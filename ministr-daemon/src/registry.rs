@@ -236,8 +236,7 @@ impl CorpusHandle {
     /// from being masked by the merge.
     ///
     /// Used by [`CorpusRegistry::list`], which feeds the daemon's HTTP
-    /// `GET /api/v1/corpora`, the Tauri `list_corpora` / `daemon_status`
-    /// commands, the tray refresh loop, and `ministr status`. The MCP
+    /// `GET /api/v1/corpora` and `ministr status`. The MCP
     /// `ministr://status` resource lives in `ministr-mcp` and builds its
     /// own server-centric shape — it does not currently consume this.
     pub async fn current_info(&self) -> CorpusInfo {
@@ -1598,7 +1597,7 @@ impl CorpusRegistry {
         // reranker is an optional relevance enhancement, so a bad model name
         // or a failed load must NOT break the corpus: warn and serve the
         // dense/hybrid path unchanged. Every corpus's `QueryService` (the one
-        // the daemon REST API, the Tauri GUI, and the MCP server all answer
+        // the daemon REST API and the MCP server both answer
         // through) gets the same reranker, so the flag can't be half-applied.
         if let Some(model) = self.config.reranker_model.as_deref() {
             match FastReranker::new(model, self.config.data_dir.to_str()) {

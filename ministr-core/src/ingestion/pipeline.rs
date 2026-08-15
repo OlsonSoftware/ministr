@@ -1999,7 +1999,10 @@ impl IngestionPipeline {
                 std::collections::HashMap::new();
             for file in &files {
                 if let Some((_, rid)) = find_root_entry_for_file(file, &roots) {
-                    files_by_root.entry(rid.clone()).or_default().push(file.clone());
+                    files_by_root
+                        .entry(rid.clone())
+                        .or_default()
+                        .push(file.clone());
                 }
             }
             for (root_path, root_id) in &roots {

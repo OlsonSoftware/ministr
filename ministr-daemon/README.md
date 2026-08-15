@@ -5,7 +5,7 @@ platform-native IPC (Unix domain sockets on macOS/Linux, named pipes on
 Windows) providing the corpus registry, background indexing, freshness
 sweeps, session state, and the recorded-execution engine.
 
-Clients: the stdio MCP proxy in `ministr-cli` and the Tauri desktop app —
+Clients: the stdio MCP proxy in `ministr-cli` —
 both speak the same surface, documented in the
 [daemon HTTP API reference](../docs/reference/http-api.md).
 

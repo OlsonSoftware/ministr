@@ -413,7 +413,7 @@ impl crate::server::MinistrServer {
 // ── Daemon-forward bodies (exec-mcp-daemon-forward) ─────────────────────────
 //
 // In daemon-backend mode the tool handlers route here so every run lands
-// in the ONE daemon-hosted engine — the shared engine the Tauri app's
+// in the ONE daemon-hosted engine — the shared engine other clients'
 // Run Console reads and can kill. The digest is still shaped client-side
 // (run_digest over the forwarded record's log), so the agent-facing
 // response is identical to the local path. Run-log intelligence ingest

@@ -21,9 +21,8 @@ use super::schema::{configure_connection, run_migrations};
 use super::traits::{
     BridgeEndpointRecord, BridgeLinkDetail, BridgeLinkRecord, ClaimRecord, CoAccessRecord,
     CorpusMerkleNode, CorpusMerkleRecord, CorpusStats, DocumentRecord, FileHashRecord,
-    GitCacheRecord,
-    OccurrenceRecord, PendingRefRecord, RelatedClaimRecord, SectionAccessStat, SectionRecord,
-    Storage, SymbolFilter, SymbolRecord, SymbolRefRecord, WebCacheRecord,
+    GitCacheRecord, OccurrenceRecord, PendingRefRecord, RelatedClaimRecord, SectionAccessStat,
+    SectionRecord, Storage, SymbolFilter, SymbolRecord, SymbolRefRecord, WebCacheRecord,
 };
 use crate::error::StorageError;
 use crate::session::{DeliveredItem, Session, SessionId};

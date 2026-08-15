@@ -1,7 +1,7 @@
 //! Coherence event stream — file-watcher change records for the ministr daemon.
 //!
 //! Every filesystem event the daemon's per-corpus watcher observes is
-//! recorded as a [`CoherenceEvent`] in an in-memory ring buffer. Tauri,
+//! recorded as a [`CoherenceEvent`] in an in-memory ring buffer. CLI,
 //! CLI, and MCP consumers read back via `GET /coherence-events` or the
 //! matching [`crate::client::DaemonClient`] wrapper.
 //!

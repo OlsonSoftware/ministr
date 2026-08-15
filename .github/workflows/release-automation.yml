@@ -291,7 +291,7 @@ jobs:
 
           **You are running on a small ephemeral runner with limited
           disk space.** This repository's Rust workspace pulls hundreds
-          of dependencies (ONNX Runtime, tree-sitter grammars, Tauri,
+          of dependencies (ONNX Runtime, tree-sitter grammars,
           etc.). A single `cargo build` / `cargo check` / `cargo update`
           / `just *` invocation downloads + compiles gigabytes and will
           exhaust the runner's disk, failing the release.
@@ -328,7 +328,6 @@ jobs:
              - `ministr-daemon/Cargo.toml`
              - `ministr-mcp/Cargo.toml`
              - `ministr-cli/Cargo.toml`
-             - `ministr-app/src-tauri/Cargo.toml`
              Keep `tree-sitter-unreal-cpp` (vendored, separate version)
              untouched — it is not part of the product version.
 
@@ -344,8 +343,8 @@ jobs:
           3. **`Cargo.lock` (text edit, NOT `cargo update`).** Open
              `Cargo.lock` as plain text. Find each `[[package]]` block
              whose `name = "ministr-XXX"` matches a workspace crate
-             (api / core / daemon / mcp / cli, plus `ministr-app` for
-             the Tauri shell) and update its `version = "OLD"` line to
+             (api / core / daemon / mcp / cli) and update its
+             `version = "OLD"` line to
              the new X.Y.Z. **Do not run `cargo update` — it will
              explode the runner's disk.** No other `[[package]]` blocks
              need editing; transitive deps don't change.

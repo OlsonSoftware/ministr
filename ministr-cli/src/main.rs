@@ -93,7 +93,7 @@ enum Command {
     Index,
 
     /// Internal: run the headless ministr daemon. Auto-spawned by the
-    /// MCP proxy (and desktop app); not intended for direct use.
+    /// MCP proxy; not intended for direct use.
     #[command(hide = true, name = "__daemon")]
     Daemon,
 
@@ -167,8 +167,7 @@ enum Command {
     /// xonsh) and writes the appropriate rc file edits via the `onpath` crate.
     /// On Windows, writes the per-user `HKCU\Environment\PATH` registry entry.
     ///
-    /// Idempotent — re-running won't duplicate entries. Used by `install.sh`
-    /// and the Tauri desktop app's first-run setup.
+    /// Idempotent — re-running won't duplicate entries. Used by `install.sh`.
     Setup {
         /// Directory to add to (or remove from) PATH.
         ///
@@ -266,7 +265,7 @@ async fn main() -> Result<()> {
     }
 
     // `ministr __daemon` is the headless daemon host (auto-spawned by the
-    // MCP proxy / desktop app). It runs *before* resolve_config() too:
+    // MCP proxy). It runs *before* resolve_config() too:
     // it serves every corpus over the IPC endpoint and must not depend on
     // the spawning process's cwd or a `.ministr.toml` there.
     if let Command::Daemon = command {

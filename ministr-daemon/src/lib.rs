@@ -2,8 +2,8 @@
 //! (Unix domain sockets on macOS/Linux, named pipes on Windows).
 //!
 //! Provides the axum-based daemon server, corpus registry, background
-//! indexer, and type conversions. Used by `ministr-app` (Tauri GUI) and
-//! testable without any GUI dependencies.
+//! indexer, and type conversions. Hosted by the `ministr __daemon` CLI
+//! subcommand; testable without any GUI dependencies.
 
 pub mod activity;
 pub mod ask;

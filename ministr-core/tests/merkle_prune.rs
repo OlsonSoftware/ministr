@@ -103,7 +103,10 @@ async fn one_changed_file_prunes_unchanged_directories() {
     let stats = h.ingest().await;
     assert_eq!(stats.files_discovered, 5);
     assert_eq!(stats.files_indexed, 5);
-    assert_eq!(stats.files_pruned, 0, "first index has no tree to prune with");
+    assert_eq!(
+        stats.files_pruned, 0,
+        "first index has no tree to prune with"
+    );
 
     // The tree must have been persisted for the next run.
     let rid = h.root_id().await;
@@ -160,7 +163,11 @@ async fn absent_tree_auto_heals_and_rebuilds() {
 
     // ...and the tree rebuilt itself without any manual wipe/rebuild step.
     let nodes = h.storage.get_corpus_merkle_nodes(&rid).await.unwrap();
-    assert_eq!(nodes.len(), 3, "tree must auto-heal after a successful ingest");
+    assert_eq!(
+        nodes.len(),
+        3,
+        "tree must auto-heal after a successful ingest"
+    );
 }
 
 #[tokio::test]

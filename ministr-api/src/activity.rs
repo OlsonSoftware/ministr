@@ -1,7 +1,7 @@
 //! Activity event stream — per-tool-call records for the ministr daemon.
 //!
 //! Every `ministr_*` MCP tool call that reaches the daemon gets recorded as an
-//! `ActivityEvent` in an in-memory ring buffer. Tauri / CLI / MCP consumers
+//! `ActivityEvent` in an in-memory ring buffer. CLI / MCP consumers
 //! read back via `GET /activity` or the matching `DaemonClient` wrapper.
 //!
 //! Events are strictly informational — dropping an event never fails a tool

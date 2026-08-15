@@ -67,7 +67,7 @@ env:
 #
 #   1. ministr-ci image (.github/docker/Dockerfile.ci) — rust toolchain,
 #      clippy/cargo-nextest/cargo-deny/cargo-audit/just/sccache + the
-#      Tauri/MCP system deps baked in. Built per-Dockerfile-revision by
+#      MCP system deps baked in. Built per-Dockerfile-revision by
 #      `ci-image`; the compiling jobs pull it via `container:`.
 #
 #   2. sccache → Cloudflare R2 (SCCACHE_* secrets): a shared, ~unbounded,
@@ -124,12 +124,7 @@ jobs:
           # each changed-file path. Editing ci.yml itself or the
           # composite rust-setup action force-runs the relevant gates,
           # so we can't skip CI by accident when changing CI.
-          # `ministr-app/src/` is the Vite/TS/CSS frontend — it does NOT
-          # affect the Rust workspace, so a frontend-only change must not
-          # trigger the heavy clippy/nextest jobs. Match the Rust crates
-          # explicitly (incl. ministr-app/src-tauri + its Cargo.toml)
-          # instead of a blanket `ministr-[^/]+/`.
-          CRATES_RE='(ministr-(api|core|daemon|mcp|cli)/|ministr-app/src-tauri/|ministr-app/Cargo\.toml)'
+          CRATES_RE='(ministr-(api|core|daemon|mcp|cli)/)'
           RUST_RE="^(Cargo\.(toml|lock)|rust-toolchain\.toml|deny\.toml|${CRATES_RE}|\.config/nextest\.toml|justfile|eval/|\.github/workflows/ci\.yml\$|\.github/actions/|\.github/docker/Dockerfile\.ci\$)"
           SECURITY_RE="^(Cargo\.(toml|lock)|deny\.toml|${CRATES_RE}|\.github/workflows/ci\.yml\$|\.github/actions/|\.github/docker/Dockerfile\.ci\$)"
           # docker-build is a full release cook ≈ duplicate of rust-release.
@@ -380,19 +375,6 @@ jobs:
             /usr/local/cargo/registry
             /usr/local/cargo/git
 
-      - name: Stub Tauri bundle artifacts
-        # tauri-build / `tauri::generate_context!()` probe for the
-        # frontendDist index.html and the externalBin sidecar at
-        # crate-build time. In prod they're produced by `just pkg` /
-        # `pnpm build`; CI only needs the paths to resolve, so empty
-        # placeholders are enough.
-        run: |
-          triple="$(rustc -vV | awk '/^host:/ {print $2}')"
-          mkdir -p ministr-app/src-tauri/binaries ministr-app/dist
-          : > "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
-          chmod +x "ministr-app/src-tauri/binaries/ministr-cli-${triple}"
-          : > ministr-app/dist/index.html
-
       - name: cargo clippy (pedantic, --all-targets)
         run: |
           cargo clippy --workspace --all-targets --locked \
@@ -406,9 +388,6 @@ jobs:
         #   soak_large_corpus_indexing_and_query) + e2e harnesses that
         #   spin up daemons with fastembed/ORT init — these reliably
         #   hang during nextest's --list enumeration on headless Linux.
-        # --workspace --exclude ministr-app: ministr-app is a binary-
-        #   only Tauri desktop crate; its test binary hangs on static
-        #   init against a headless Linux runner (no display, no DBus).
         # Config lives in .config/nextest.toml:
         #   - profile 'ci': streams every test as it completes + final
         #     flaky status; slow-timeout kills hung tests by name.
@@ -416,7 +395,7 @@ jobs:
         run: |
           cargo nextest run \
             --profile ci \
-            --workspace --exclude ministr-app \
+            --workspace \
             --lib --bins --locked \
             --hide-progress-bar \
             --no-tests=warn
@@ -675,8 +654,8 @@ jobs:
           context: .
           push: false
           tags: ministr:ci
-          cache-from: type=gha,scope=ministr-app
-          cache-to: type=gha,mode=max,scope=ministr-app
+          cache-from: type=gha,scope=ministr-image
+          cache-to: type=gha,mode=max,scope=ministr-image
 
   # ────────────────────────────────────────────────────────────────
   # Gate job — single required status check for branch protection.

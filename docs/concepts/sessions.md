@@ -44,8 +44,8 @@ produces extractive summaries associated with the same locator.
 When an indexed file changes after its content was delivered to a session,
 subsequent tool responses carry `coherence_alerts` naming the affected
 corpus-aware locators — the signal to re-read and pick up the delta. The
-desktop app's [freshness](freshness.md) display and this mechanism are two
-views of the same change tracking.
+[freshness](freshness.md) sweep and this mechanism are two views of the
+same change tracking.
 
 ## Honest accounting
 

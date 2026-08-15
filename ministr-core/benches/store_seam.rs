@@ -392,7 +392,9 @@ fn orchestrate() {
     println!();
     println!("notes:");
     println!("  - each column is measured in its own process; serve children hold identical");
-    println!("    dataset + ground-truth arrays, so the serve-RSS DIFFERENCE isolates index memory");
+    println!(
+        "    dataset + ground-truth arrays, so the serve-RSS DIFFERENCE isolates index memory"
+    );
     println!("  - hnsw path = real seam (load_cached_or_rebuild_hnsw: rebuild+persist, then");
     println!("    token-validated cache-hit load); usearch path = add/save then mmap view()");
     println!("  - both stores run their as-shipped default graph parameters");

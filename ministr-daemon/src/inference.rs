@@ -246,10 +246,9 @@ impl Inference for ClaudeCliInference {
                 .stderr(std::process::Stdio::piped())
                 .kill_on_drop(true);
 
-            // On Windows, the parent Tauri app is a GUI binary
-            // (`windows_subsystem = "windows"`), which means any child
-            // process inherits no console — so spawning `claude` would
-            // pop a fresh cmd window for the lifetime of the call. The
+            // On Windows, the daemon may run without a console, which
+            // means any child process inherits none — so spawning
+            // `claude` could pop a fresh cmd window for the call. The
             // CREATE_NO_WINDOW flag (0x0800_0000) tells the kernel to
             // launch the child without allocating a console at all.
             // tokio::process::Command exposes `creation_flags` natively

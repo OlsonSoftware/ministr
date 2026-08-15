@@ -52,9 +52,8 @@ ministr-api/           — shared request/response types for daemon ↔ MCP/CLI
 ministr-daemon/        — HTTP API over Unix domain socket
 ministr-mcp/           — MCP server adapter (rmcp)
 ministr-cli/           — binary entry point (the `ministr` CLI you build here)
-ministr-app/src-tauri/ — Tauri v2 desktop app with system tray
 web/                   — Next.js landing site (static export to GitHub Pages)
-deploy/                — self-host reverse-proxy configs + macOS installer
+deploy/                — self-host reverse-proxy configs
 examples/              — sample .ministr.toml configs for different project types
 ```
 
@@ -191,8 +190,7 @@ CI runs these automatically on every PR.
 ## Releases
 
 Releases are cut from this repository's tags using Conventional Commit
-messages. See [RELEASE.md](RELEASE.md) for details, and
-[ministr-app/SIGNING.md](ministr-app/SIGNING.md) for macOS signing.
+messages. See [RELEASE.md](RELEASE.md) for details.
 
 ## Reporting issues
 

@@ -19,11 +19,9 @@
 #
 # Why a pre-built image
 # ---------------------
-# The native-runner path paid ~30-45 s per job on:
-#   - `apt-get install libwebkit2gtk-4.1-dev …` (Tauri system deps)
-#   - `taiki-e/install-action` for cargo-nextest / just / cargo-deny /
-#     cargo-audit
-# Baked into this image, those become 0 s per run. Blacksmith's Docker
+# The native-runner path paid ~30-45 s per job on `taiki-e/install-
+# action` for cargo-nextest / just / cargo-deny / cargo-audit. Baked
+# into this image, those become 0 s per run. Blacksmith's Docker
 # container caching pre-hydrates the image onto runners, so the
 # `docker pull` inside `container:` is ~1 s on warm hits.
 #
@@ -31,7 +29,6 @@
 # -------------
 #   - Rust stable toolchain via rustup (CARGO_HOME=/usr/local/cargo,
 #     RUSTUP_HOME=/usr/local/rustup), with clippy + rustfmt components
-#   - Tauri / ministr-app system libraries (webkit, appindicator, rsvg)
 #   - jq (MCP smoke test parses JSON-RPC responses)
 #   - cargo-nextest, cargo-deny, cargo-audit, sccache, just (prebuilt
 #     via cargo-binstall — no from-source compile). sccache is the
@@ -59,8 +56,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # - libssl-dev: openssl-sys (pulled in transitively via reqwest /
 #   rustls-native-certs chains) refuses to build without OpenSSL
 #   development headers.
-# - libwebkit2gtk-4.1-dev + libappindicator3-dev + librsvg2-dev +
-#   patchelf: Tauri (ministr-app) pulls these through wry/tao.
 # - jq: the MCP smoke step parses the tools/list JSON-RPC response.
 # - sudo: required by blacksmith's stickydisk action when run inside
 #   a privileged container — it shells out to `sudo mount` / `sudo
@@ -72,10 +67,6 @@ RUN apt-get update \
       cmake \
       g++ \
       libssl-dev \
-      libwebkit2gtk-4.1-dev \
-      libappindicator3-dev \
-      librsvg2-dev \
-      patchelf \
       jq \
       python3 \
       ca-certificates \

@@ -1349,10 +1349,7 @@ impl QueryService {
         let depth = results.len().min(CROSS_ENCODER_RERANK_DEPTH);
 
         // Compute reranker scores (index-aligned to `results` input order).
-        let texts: Vec<&str> = results[..depth]
-            .iter()
-            .map(|r| r.text.as_str())
-            .collect();
+        let texts: Vec<&str> = results[..depth].iter().map(|r| r.text.as_str()).collect();
         let scores = model.rerank(query, &texts)?;
 
         // Build an index-aligned rerank score vector (None for any result the
@@ -1624,10 +1621,9 @@ impl QueryService {
 mod tests {
     use super::{
         CROSS_ENCODER_RERANK_DEPTH, GRAPH_EXPAND_DECAY, QueryService, RERANK_BLEND,
-        ResolvedContent, SurveyResult,
-        apply_total_survey_budget, bounded_query_text, build_survey_result,
-        classify_content_provenance, graph_expand_results, module_family, result_document_id,
-        route_result_and_check_exclusion, shape_survey_results,
+        ResolvedContent, SurveyResult, apply_total_survey_budget, bounded_query_text,
+        build_survey_result, classify_content_provenance, graph_expand_results, module_family,
+        result_document_id, route_result_and_check_exclusion, shape_survey_results,
     };
     use crate::embedding::{DualEmbedder, DualEmbeddings, Embedder, RerankScore, Reranker};
     use crate::error::IndexError;
@@ -2223,10 +2219,7 @@ mod tests {
                 Ok(documents
                     .iter()
                     .enumerate()
-                    .map(|(index, _)| RerankScore {
-                        index,
-                        score: 0.5,
-                    })
+                    .map(|(index, _)| RerankScore { index, score: 0.5 })
                     .collect())
             }
         }

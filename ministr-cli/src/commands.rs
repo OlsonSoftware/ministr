@@ -1015,8 +1015,7 @@ fn gen_proxy_session_id(seed: usize) -> String {
 /// with multi-corpus dispatch. For now, linked projects in
 /// `.ministr.toml` are accepted but silently ignored; only the primary
 /// corpus is queryable through this path. Users who need multi-corpus
-/// queries can use the desktop app (which connects to the daemon
-/// directly) until this gap closes.
+/// queries can talk to the daemon directly until this gap closes.
 #[allow(
     clippy::too_many_lines,
     reason = "orchestration entry point — sequential setup (register \
@@ -2030,18 +2029,16 @@ pub fn cmd_hooks_test(root: &Path) {
 
 /// `ministr setup` — add the `ministr` binary's directory to the user's PATH.
 ///
-/// Wraps the `onpath` crate so installer scripts (`install.sh`, the Tauri
-/// first-run flow) don't have to hand-roll cross-shell rc-file edits. On
+/// Wraps the `onpath` crate so installer scripts (`install.sh`,
+/// `install.ps1`) don't have to hand-roll cross-shell rc-file edits. On
 /// Unix, writes to bash / zsh / fish / nushell / `PowerShell` / tcsh / xonsh
 /// rc files for shells the user actually has installed. On Windows, writes
-/// the per-user `HKCU\Environment\PATH` registry entry — same surface
-/// `install.ps1` and the Tauri NSIS installer hook target, so re-running is
+/// the per-user `HKCU\Environment\PATH` registry entry, so re-running is
 /// idempotent regardless of how the user got here.
 ///
 /// This is the **single source of truth** for where the ministr CLI
 /// lives and what is on `PATH`. Every channel funnels through it: the
-/// dev `just reinstall` scripts, the Tauri app's first-launch
-/// `setup.rs`, and the NSIS installer hooks. They used to each PATH-add
+/// dev `just reinstall` scripts and the installer scripts. They used to each PATH-add
 /// a *different* directory (dev → `~/.ministr/bin`, packaged →
 /// `%LOCALAPPDATA%\ministr`), and nothing ever removed the stale one —
 /// so an old build permanently shadowed the new one on `PATH` and no
@@ -2163,7 +2160,7 @@ fn neutralize_legacy_ministr(canonical_bin: &Path, canonical_exe: &Path) {
 }
 
 /// Overwrite any CLI `ministr` executable in `dir` with the canonical
-/// binary (never touches `ministr-app.exe` — a different program).
+/// binary.
 ///
 /// Windows blocks overwriting a *running* `.exe` (the stale copy is
 /// exactly the one being executed via PATH, so it is loaded), but it

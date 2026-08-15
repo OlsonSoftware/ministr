@@ -2,12 +2,12 @@
 //!
 //! The freshness sweep re-hashes the whole working tree (deliberately —
 //! the tree-never-lies invariant forbids stat/mtime shortcuts), so it's
-//! CPU-heavy. The desktop app polls it from two screens (Home every 5s
-//! per corpus, Mirror every 4s), which would multiply full sweeps. This
-//! cache DEDUPES those overlapping polls: within the TTL window every
-//! caller gets the same hash-verified result, computed once. It never
-//! weakens the invariant — a cached entry IS a full hash sweep, merely
-//! a couple of seconds old, which a 4-5s polling UI already tolerates.
+//! CPU-heavy. Clients may poll it every few seconds per corpus, which
+//! would multiply full sweeps. This cache DEDUPES those overlapping
+//! polls: within the TTL window every caller gets the same hash-verified
+//! result, computed once. It never weakens the invariant — a cached
+//! entry IS a full hash sweep, merely a couple of seconds old, which a
+//! 4-5s polling client already tolerates.
 
 use std::collections::HashMap;
 use std::sync::Mutex;

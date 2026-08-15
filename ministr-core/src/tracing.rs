@@ -1,7 +1,7 @@
 //! Tracing infrastructure for ministr.
 //!
 //! Provides `init_tracing()` for CLI/MCP use (stderr only) and
-//! `init_tracing_with_file()` for the desktop app (stderr + rolling log file).
+//! `init_tracing_with_file()` for long-lived hosts (stderr + rolling log file).
 
 use std::path::Path;
 

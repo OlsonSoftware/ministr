@@ -2,7 +2,7 @@
 //!
 //! This crate defines the request and response types exchanged over the
 //! daemon's HTTP API. It is the single source of truth for the wire format —
-//! used by `ministr-app` (daemon), `ministr-mcp` (MCP proxy), and
+//! used by `ministr-daemon`, `ministr-mcp` (MCP proxy), and
 //! `ministr-cli` (CLI client).
 //!
 //! Transport is platform-native IPC: Unix domain sockets on macOS/Linux,

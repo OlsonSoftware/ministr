@@ -294,7 +294,7 @@ pub struct IngestionProgressEvent {
 /// Per-corpus ingestion-progress snapshot — the point-in-time form of the
 /// live counters the daemon's per-corpus progress SSE streams. Unlike
 /// [`IngestionProgressEvent`] (string `status`/`phase` for the SSE wire), this
-/// mirrors the in-process `IngestionProgress` shape the desktop app consumes:
+/// mirrors the in-process `IngestionProgress` shape daemon clients consume:
 /// numeric `status` (0 = pending, 1 = running, 2 = complete). Returned in bulk
 /// by `GET /api/v1/progress` so a GUI that no longer hosts its own indexer can
 /// poll every corpus's progress over UDS (gd2b).

@@ -26,7 +26,6 @@ docs/research/*.pdf
 
 # Node / frontend
 node_modules/
-ministr-app/dist/
 
 # Cloudflare Workers build state (wrangler build cache + deploy metadata)
 .wrangler/

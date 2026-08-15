@@ -212,7 +212,7 @@ impl DaemonClient {
     /// Ensure a daemon is running and reachable, spawning a **detached**
     /// `<daemon_bin> __daemon` sidecar if none is currently healthy.
     ///
-    /// This is the spawn-if-not-alive handshake the desktop app and the MCP
+    /// This is the spawn-if-not-alive handshake the MCP
     /// proxy share: probe [`is_healthy`](Self::is_healthy); if a daemon
     /// already owns the socket, attach to it (returns `Ok(false)` — "was
     /// already running"). Otherwise spawn the sidecar so it **outlives the
@@ -436,7 +436,7 @@ impl DaemonClient {
     ///
     /// The point-in-time form of the per-corpus progress SSE — lets a GUI that
     /// no longer hosts its own in-process indexer poll the daemon's live
-    /// progress counters over UDS (gd2b). The desktop app's progress commands
+    /// progress counters over UDS (gd2b). Client progress displays
     /// poll this at their existing cadence and compute ETA / change-detection
     /// client-side, exactly as they did against in-process atomics.
     ///

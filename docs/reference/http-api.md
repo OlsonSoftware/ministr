@@ -3,8 +3,8 @@
 <!-- hand-maintained; source of truth: the sub-router definitions in
      ministr-daemon/src/daemon.rs. Update when routes change. -->
 
-The ministr daemon serves this API to local clients (the desktop app and the
-CLI's `status`/`search` commands). Most tool-shaped routes mirror the
+The ministr daemon serves this API to local clients (e.g. the CLI's
+`status`/`search` commands). Most tool-shaped routes mirror the
 [MCP tools](tools/README.md) — agents should use the tools; this surface is
 for programmatic and UI access.
 

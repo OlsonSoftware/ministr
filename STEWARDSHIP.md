@@ -15,7 +15,6 @@ The six workspace crates that make up the local stack are MIT-licensed:
 | [`ministr-daemon`](ministr-daemon/) | HTTP API over a Unix domain socket |
 | [`ministr-mcp`](ministr-mcp/) | MCP server adapter |
 | [`ministr-cli`](ministr-cli/) | The `ministr` binary |
-| [`ministr-app/src-tauri`](ministr-app/src-tauri/) | Desktop app (Tauri v2; macOS, Windows, Linux) |
 
 Together they build a complete, self-hosted `ministr` with the full MCP tool
 surface (`cargo build --workspace`). Running it on your own machine gives you

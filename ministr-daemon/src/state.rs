@@ -18,7 +18,7 @@ const DEFAULT_QUERY_CONCURRENCY: usize = 4;
 
 /// Capacity of the in-memory activity ring buffer.
 ///
-/// Old events age out as new tool calls arrive; callers (Tauri, CLI, MCP)
+/// Old events age out as new tool calls arrive; callers (CLI, MCP)
 /// should poll often enough to catch events before they fall off the end.
 /// At a sustained 10 calls/sec that's ~50s of history.
 pub const ACTIVITY_BUFFER_CAPACITY: usize = 500;
@@ -31,9 +31,9 @@ pub const COHERENCE_BUFFER_CAPACITY: usize = 500;
 
 /// Application-wide shared state.
 ///
-/// Passed to both Tauri commands (GUI) and axum handlers (daemon API)
-/// via `Arc`. Holds the single [`CorpusRegistry`] that manages all
-/// indexed corpora and the shared embedding model.
+/// Passed to the axum handlers (daemon API) via `Arc`. Holds the single
+/// [`CorpusRegistry`] that manages all indexed corpora and the shared
+/// embedding model.
 #[derive(Clone)]
 pub struct AppState {
     pub registry: Arc<CorpusRegistry>,
@@ -44,13 +44,13 @@ pub struct AppState {
     pub inference: Arc<dyn Inference>,
     /// Recent tool-call activity (newest at back, popped from front when
     /// capacity is exceeded). Written fire-and-forget from each tool route;
-    /// read by the Tauri app, `/activity` HTTP endpoint, and any other
+    /// read by the `/activity` HTTP endpoint and any other
     /// `DaemonClient` consumer.
     pub activity: Arc<RwLock<VecDeque<ActivityEvent>>>,
     /// Recent file-change events — one entry per distinct file observed
     /// during a watcher debounce window. Populated by a subscriber task
-    /// per registered corpus; read by the Tauri app, `/coherence-events`
-    /// HTTP endpoint, and `DaemonClient::recent_coherence_events`.
+    /// per registered corpus; read by the `/coherence-events`
+    /// HTTP endpoint and `DaemonClient::recent_coherence_events`.
     pub coherence: Arc<RwLock<VecDeque<CoherenceEvent>>>,
     /// Billable-usage emission sink. `Some` when cloud mode has wired
     /// the closed `ministr_cloud::billing::PostgresUsageSink` (
@@ -95,7 +95,7 @@ pub struct AppState {
     pub audit_sink: Option<Arc<dyn AuditSink>>,
     /// The daemon-hosted exec run engine (exec-epic). ONE engine per
     /// daemon so cross-process kill and live log tails work: the exec
-    /// routes spawn through it, and any client (MCP forward, Tauri app)
+    /// routes spawn through it, and any client (e.g. MCP forward)
     /// reaches the same cancel tokens + live capture buffers. Lazy —
     /// the engine opens its run store on first use.
     pub exec: Arc<crate::exec::EngineCell>,

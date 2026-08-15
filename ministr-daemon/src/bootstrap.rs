@@ -1,10 +1,9 @@
 //! Single source of truth for constructing the daemon's [`AppState`] and
 //! running it headless.
 //!
-//! Both `ministr-app` (the GUI host) and the `ministr __daemon` CLI
-//! subcommand build the daemon the same way — so the embedder → registry
-//! → state wiring lives here exactly once, with no duplication between
-//! the two callers.
+//! The `ministr __daemon` CLI subcommand (and any future host) builds the
+//! daemon through here — so the embedder → registry → state wiring lives
+//! here exactly once.
 
 use ministr_core::config::MinistrConfig;
 use ministr_core::embedding;
@@ -15,8 +14,8 @@ use crate::registry::CorpusRegistry;
 use crate::state::AppState;
 
 /// Build the daemon's [`AppState`]: load the embedding model once and
-/// wrap a fresh [`CorpusRegistry`]. GUI-free; callers add restore /
-/// tray / Tauri wiring on top as needed.
+/// wrap a fresh [`CorpusRegistry`]. GUI-free; callers add restore
+/// wiring on top as needed.
 ///
 /// # Errors
 ///

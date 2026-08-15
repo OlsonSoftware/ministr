@@ -683,7 +683,9 @@ pub fn compute_dir_merkle_nodes(
             .unwrap_or(path)
             .to_string_lossy()
             .replace('\\', "/");
-        let dir = rel.rfind('/').map_or(String::new(), |i| rel[..i].to_string());
+        let dir = rel
+            .rfind('/')
+            .map_or(String::new(), |i| rel[..i].to_string());
         per_dir.entry(dir).or_default().push((rel, mtime_ns, size));
     }
     Ok(per_dir

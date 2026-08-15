@@ -19,7 +19,7 @@ The full 26-tool surface is documented in the
 | `ministr_references(symbol_id)` | Callers, implementors, importers — check before modifying. |
 | `ministr_read(section_id)` | Full content of a section. |
 | `ministr_toc` | Structural overview of the corpus. |
-| `ministr_bridge(query)` | Cross-language links — check before touching the Tauri boundary. |
+| `ministr_bridge(query)` | Cross-language links — check before touching any FFI/IPC boundary. |
 | `ministr_diagnostics` | Structured toolchain diagnostics (cargo, tsc, …). |
 
 ## Policy (preferences, not prohibitions)
@@ -36,15 +36,14 @@ The full 26-tool surface is documented in the
 2. `ministr_symbols` → locate specific symbols
 3. `ministr_definition` / `ministr_read` → get full source
 4. `ministr_references` → check impact before modifying
-5. `ministr_bridge` → check cross-language boundaries (the desktop app is
-   Tauri: Rust ↔ TypeScript)
+5. `ministr_bridge` → check cross-language boundaries
 6. Only then: `Read` → `Edit`
 
 ## Verifying changes
 
 The canonical gate is `just validate` (fmt-check, clippy with pedantic
-warnings denied, the full test suite, app typecheck + build, black-box
-guard). A change is not done until it passes. Two docs gates live inside
+warnings denied, the full test suite, black-box guard). A change is not
+done until it passes. Two docs gates live inside
 `cargo test`: the committed tool manifest and the generated blocks in
 `docs/reference/tools/` must match the code — regenerate with
 `cargo run -p ministr-mcp --example tool_manifest > docs/reference/tools-manifest.json`

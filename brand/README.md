@@ -1,7 +1,7 @@
 # ministr brand assets
 
 Single source of truth for the ministr brand identity. Consumed by
-both `web/` (marketing site) and `ministr-app/` (Tauri desktop app).
+`web/` (marketing site).
 
 ## Files
 
