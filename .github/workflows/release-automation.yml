@@ -326,8 +326,10 @@ jobs:
              - `ministr-api/Cargo.toml`
              - `ministr-core/Cargo.toml`
              - `ministr-daemon/Cargo.toml`
+             - `ministr-backend/Cargo.toml`
              - `ministr-mcp/Cargo.toml`
              - `ministr-cli/Cargo.toml`
+             - `ministr-tui/Cargo.toml`
              Keep `tree-sitter-unreal-cpp` (vendored, separate version)
              untouched — it is not part of the product version.
 
@@ -335,15 +337,16 @@ jobs:
              `Cargo.toml` under `[workspace.dependencies]`, each of the
              internal crates appears as e.g.
              `ministr-api = { path = "ministr-api", version = "OLD" }`.
-             Replace `OLD` with the new X.Y.Z on all four lines
-             (ministr-api, ministr-core, ministr-daemon, ministr-mcp) —
+             Replace `OLD` with the new X.Y.Z on all seven lines
+             (ministr-api, ministr-core, ministr-daemon, ministr-backend,
+             ministr-mcp, ministr-cli, ministr-tui) —
              required for `cargo package/publish` to accept the
              workspace.
 
           3. **`Cargo.lock` (text edit, NOT `cargo update`).** Open
              `Cargo.lock` as plain text. Find each `[[package]]` block
              whose `name = "ministr-XXX"` matches a workspace crate
-             (api / core / daemon / mcp / cli) and update its
+             (api / core / daemon / backend / mcp / cli / tui) and update its
              `version = "OLD"` line to
              the new X.Y.Z. **Do not run `cargo update` — it will
              explode the runner's disk.** No other `[[package]]` blocks
@@ -370,8 +373,8 @@ jobs:
           - Request review when done. Make no other changes.
 
           ## Self-check before opening the PR
-          - The diff touches **only** the 8 files listed in steps 1-4
-            (6 crate Cargo.toml, root Cargo.toml, Cargo.lock,
+          - The diff touches **only** the 10 files listed in steps 1-4
+            (7 crate Cargo.toml, root Cargo.toml, Cargo.lock,
             CHANGELOG.md). If you find yourself touching anything else
             you have drifted off-task; stop and re-read the constraints.
           - No `target/` directory, no `cargo-*` binaries, no fetched
