@@ -24,7 +24,7 @@ use ministr_core::ingestion::IngestionProgress;
 use ministr_core::service::QueryService;
 use ministr_core::session::prefetch::PrefetchEngine;
 use ministr_core::session::{SessionRegistry, UsageConfig};
-use ministr_core::storage::{SqliteStorage, Storage};
+use ministr_core::storage::{IndexLease, LeaseError, SqliteStorage, Storage};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -182,6 +182,23 @@ pub struct CorpusRegistry {
     /// progress counters `create_handle` feeds (daemon-progress-telemetry:
     /// the warming meter), so `/api/v1/progress` can report the load itself.
     warming: RwLock<HashMap<String, WarmingEntry>>,
+    /// daemon-manifest-write-guard: exclusive writer lease on the **data
+    /// dir itself** — the same [`IndexLease`] shape the per-corpus dirs
+    /// use, one level up, protecting `corpora.json`. Acquired at
+    /// construction; `None` means another live ministr process owns the
+    /// data dir and THIS instance is read-only on the manifest
+    /// ([`save_manifest`](Self::save_manifest) refuses). The kernel
+    /// releases the lock when the holder dies, so staleness is structural.
+    manifest_lease: Option<IndexLease>,
+    /// daemon-manifest-write-guard: the corpus ids whose manifest
+    /// presence/absence THIS instance is authoritative for — ids it
+    /// registered, unregistered, or intentionally pruned/migrated.
+    /// [`save_manifest`](Self::save_manifest) preserves every on-disk
+    /// entry NOT in this set (merge-don't-truncate), so a writer can
+    /// never drop registrations it never loaded (the 2026-08-15 live
+    /// incident: a non-isolated test daemon truncated the real manifest
+    /// to its own single corpus, orphaning 4 registrations).
+    manifest_owned: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 /// One in-flight corpus load: the paths it was registered with plus the live
@@ -353,6 +370,29 @@ impl CorpusRegistry {
             Arc::clone(&embedder),
             default_model_cache_key,
         );
+        // daemon-manifest-write-guard: own the data dir (and with it
+        // `corpora.json`) for the life of this registry. A second instance
+        // on the same data dir — a stray `ministr serve`, a test that
+        // escaped isolation — gets `None` and is refused at
+        // `save_manifest`, so it can never truncate the shared manifest.
+        let manifest_lease = match IndexLease::acquire(&config.data_dir, "ministr daemon") {
+            Ok(lease) => Some(lease),
+            Err(LeaseError::Held { holder, .. }) => {
+                warn!(
+                    data_dir = %config.data_dir.display(),
+                    %holder,
+                    "data dir owned by another ministr process — corpora.json is read-only here"
+                );
+                None
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "data-dir lease unavailable — corpora.json is read-only here"
+                );
+                None
+            }
+        };
         Self {
             pool,
             scheduler: IngestionScheduler::with_default_concurrency(),
@@ -366,6 +406,19 @@ impl CorpusRegistry {
             corpus_restorer: std::sync::OnceLock::new(),
             restore_locks: tokio::sync::Mutex::new(HashMap::new()),
             warming: RwLock::new(HashMap::new()),
+            manifest_lease,
+            manifest_owned: std::sync::Mutex::new(std::collections::HashSet::new()),
+        }
+    }
+
+    /// Mark `corpus_id` as manifest-owned by this instance: its presence or
+    /// absence in `corpora.json` is now this registry's decision, and
+    /// [`save_manifest`](Self::save_manifest) stops preserving any on-disk
+    /// entry under that id. Poisoning is swallowed — a missed mark can only
+    /// make a save MORE conservative (the entry is preserved).
+    fn own_manifest_id(&self, corpus_id: &str) {
+        if let Ok(mut owned) = self.manifest_owned.lock() {
+            owned.insert(corpus_id.to_string());
         }
     }
 
@@ -647,6 +700,7 @@ impl CorpusRegistry {
             map.insert(corpus_id.to_string(), Arc::clone(&handle));
         }
         info!(corpus_id, "corpus restored from blob");
+        self.own_manifest_id(corpus_id);
         Ok(handle)
     }
 
@@ -745,6 +799,13 @@ impl CorpusRegistry {
             })
             .collect();
         if !migration_entries.is_empty() {
+            // The old (non-canonical) ids are ours to drop: their entries
+            // re-register under the canonical id, and without owning the old
+            // id the merge in `save_manifest` would preserve the stale entry
+            // forever (the dupe would reappear on every restart).
+            for (old_id, _) in &migration_entries {
+                self.own_manifest_id(old_id);
+            }
             let migration_dir = corpora_dir.clone();
             let _ = tokio::task::spawn_blocking(move || {
                 for (old_id, new_id) in migration_entries {
@@ -785,6 +846,14 @@ impl CorpusRegistry {
         // any remote path keeps the entry alive.
         let (live, dead): (Vec<&ManifestEntry>, Vec<&ManifestEntry>) =
             entries.iter().partition(|e| entry_is_live(&e.paths));
+
+        // Own the dead ids up front: the concurrent `register` calls below
+        // each save the manifest, and the merge must already know these ids
+        // are OURS to drop — otherwise every mid-restore save would
+        // resurrect the entries the prune below is about to tombstone.
+        for entry in &dead {
+            self.own_manifest_id(&entry.id);
+        }
 
         // Detect duplicate-by-canonical-id entries among the live set
         // (e.g. left over from before `canonical_corpus_path` normalised
@@ -1237,6 +1306,11 @@ impl CorpusRegistry {
             return Ok((corpus_id, false));
         }
         info!(corpus_id = %corpus_id, "corpus registered");
+        // This instance now decides this id's manifest fate. Marked only on
+        // SUCCESS: a failed load never claims the id, so a manifest entry
+        // written by a previous daemon survives the failure (merge keeps
+        // every unowned id).
+        self.own_manifest_id(&corpus_id);
 
         check_index_integrity(&corpus_id, &integrity_storage, integrity_index.len()).await;
 
@@ -1430,6 +1504,10 @@ impl CorpusRegistry {
         }
 
         info!(corpus_id, "corpus unregistered");
+        // Own the id even if it entered the map without `register` (test
+        // surgery, adoption): the save below must DROP it, and merge only
+        // drops owned ids.
+        self.own_manifest_id(corpus_id);
         self.save_manifest().await?;
         self.notify_repo_remove(corpus_id).await;
         Ok(())
@@ -1718,13 +1796,28 @@ impl CorpusRegistry {
     /// Returns [`RegistryError::Storage`] if the manifest could not be
     /// serialized or written — callers decide whether that is fatal
     /// (`unregister`/`update_corpus_paths` propagate; `register` logs and
-    /// continues since the in-memory corpus is still usable).
+    /// continues since the in-memory corpus is still usable). Also refused
+    /// with the same error when this instance holds no data-dir lease
+    /// (another live ministr process owns `corpora.json` — this instance
+    /// is read-only on the manifest).
     async fn save_manifest(&self) -> Result<(), RegistryError> {
         use std::sync::atomic::{AtomicU64, Ordering};
         // Per-process counter for unique manifest tmp-file names.
         static SEQ: AtomicU64 = AtomicU64::new(0);
 
-        let entries: Vec<ManifestEntry> = {
+        // daemon-manifest-write-guard: without the data-dir lease this
+        // instance is read-only on the manifest — another live ministr
+        // process owns it, and writing here is how a test-spawned daemon
+        // truncated the real corpora.json (2026-08-15 incident).
+        if self.manifest_lease.is_none() {
+            return Err(RegistryError::Storage(format!(
+                "refusing to write {}: another ministr process owns this data dir \
+                 (this instance is read-only on the corpus manifest)",
+                self.manifest_path().display()
+            )));
+        }
+
+        let mut entries: Vec<ManifestEntry> = {
             let corpora = self.corpora.read().await;
             let warming = self.warming.read().await;
             let mut entries = Vec::with_capacity(corpora.len() + warming.len());
@@ -1751,6 +1844,24 @@ impl CorpusRegistry {
             }
             entries
         };
+
+        // Merge-don't-truncate (daemon-manifest-write-guard): preserve every
+        // on-disk entry this instance was never authoritative for. Entries
+        // in this instance's maps win by id; foreign ids survive untouched
+        // unless explicitly owned (registered/unregistered/pruned here).
+        let owned: std::collections::HashSet<String> = match self.manifest_owned.lock() {
+            Ok(guard) => guard.clone(),
+            // Poisoned ⇒ unknown ownership; preserving more is the safe
+            // direction (an extra stale entry beats a dropped live one).
+            Err(_) => std::collections::HashSet::new(),
+        };
+        let own_ids: std::collections::HashSet<String> =
+            entries.iter().map(|e| e.id.clone()).collect();
+        for disk_entry in self.read_manifest_entries() {
+            if !own_ids.contains(&disk_entry.id) && !owned.contains(&disk_entry.id) {
+                entries.push(disk_entry);
+            }
+        }
 
         let path = self.manifest_path();
         let json = serde_json::to_string_pretty(&entries)

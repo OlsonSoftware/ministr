@@ -341,7 +341,18 @@ pub fn classify_corpus_path(raw: &str) -> CorpusSource {
 }
 
 /// Returns the default ministr data directory (`~/.ministr`).
+///
+/// Honors the `MINISTR_DATA_DIR` environment variable when set and
+/// non-empty — the isolation seam test harnesses (`just test`) use so a
+/// spawned daemon can never touch the real `~/.ministr`
+/// (daemon-manifest-write-guard). `ministr_api::daemon_data_dir` honors
+/// the same variable so the socket/PID and the corpus data move together.
 fn default_data_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("MINISTR_DATA_DIR")
+        && !dir.is_empty()
+    {
+        return PathBuf::from(dir);
+    }
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".ministr")
@@ -1244,7 +1255,12 @@ mod tests {
     fn default_path_ends_with_config_toml() {
         let path = MinistrConfig::default_path();
         assert!(path.ends_with("config.toml"));
-        assert!(path.to_string_lossy().contains(".ministr"));
+        // Under MINISTR_DATA_DIR (the hermetic `just test` isolation seam,
+        // daemon-manifest-write-guard) the data dir is an arbitrary temp
+        // path; only the unoverridden default lands in `~/.ministr`.
+        if std::env::var_os("MINISTR_DATA_DIR").is_none_or(|v| v.is_empty()) {
+            assert!(path.to_string_lossy().contains(".ministr"));
+        }
     }
 
     #[test]

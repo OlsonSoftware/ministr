@@ -174,12 +174,17 @@ impl TestDaemon {
         let query_storage = SqliteStorage::open(&db_path).unwrap();
         let service = QueryService::new(query_storage, Arc::clone(&embedder), Arc::clone(&index));
 
+        // The handle's dir (its ownership lease + purge target) is the
+        // canonical per-corpus location — NOT the data-dir root, which the
+        // registry itself now leases for the manifest
+        // (daemon-manifest-write-guard). Leasing the root here would make
+        // the registry read-only on corpora.json.
         let handle = build_corpus_handle(
             corpus_id.clone(),
             storage,
             index,
             service,
-            tmp_dir.path().to_path_buf(),
+            tmp_dir.path().join("corpora").join(&corpus_id),
         );
 
         let config = ministr_core::config::MinistrConfig {

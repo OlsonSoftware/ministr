@@ -88,8 +88,19 @@ pub use usage::UsageSink;
 /// Falls back to the system temp dir when no home can be resolved — this
 /// should only happen on minimal/headless environments with no `HOME` or
 /// `USERPROFILE` set.
+///
+/// Honors the `MINISTR_DATA_DIR` environment variable when set and
+/// non-empty, mirroring `ministr_core`'s config default — so a test
+/// harness (`just test`) can point an entire daemon (socket, PID file,
+/// manifest, corpus data) at an isolated directory and never touch the
+/// real `~/.ministr` (daemon-manifest-write-guard).
 #[must_use]
 pub fn daemon_data_dir() -> std::path::PathBuf {
+    if let Some(dir) = std::env::var_os("MINISTR_DATA_DIR")
+        && !dir.is_empty()
+    {
+        return std::path::PathBuf::from(dir);
+    }
     if let Some(home) = home_dir() {
         home.join(".ministr")
     } else {

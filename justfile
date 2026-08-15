@@ -7,6 +7,16 @@ set windows-shell := ["cmd.exe", "/c"]
 build:
     cargo build --workspace
 
+# Hermetic: MINISTR_DATA_DIR points every test-spawned daemon/registry at a
+# throwaway dir so the suite can never touch the real ~/.ministr
+# (daemon-manifest-write-guard — a non-isolated e2e once truncated the live
+# corpora.json). Individual tests still isolate their own data dirs; this is
+# the belt-and-suspenders for future offenders.
+[unix]
+test:
+    MINISTR_DATA_DIR="$(mktemp -d)" cargo test --workspace
+
+[windows]
 test:
     cargo test --workspace
 

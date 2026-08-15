@@ -37,14 +37,24 @@ async fn send(
     (status, json)
 }
 
-fn test_app() -> axum::Router {
+/// Build the daemon router over an ISOLATED data dir. Returns the
+/// `TempDir` alongside so it outlives the test — this router must never
+/// see the real `~/.ministr`: an earlier version used
+/// `MinistrConfig::default()` and its `save_manifest` truncated the live
+/// `corpora.json` to this test's single corpus (the 2026-08-15 incident
+/// behind daemon-manifest-write-guard).
+fn test_app() -> (axum::Router, tempfile::TempDir) {
     use ministr_core::config::MinistrConfig;
     use std::sync::Arc;
 
     // Create a minimal embedder (needed by CorpusRegistry).
     // The NullVectorIndex means we won't actually embed, but the registry
     // needs a real embedder Arc to construct QueryService instances.
-    let config = MinistrConfig::default();
+    let data_dir = tempfile::TempDir::new().expect("temp data dir");
+    let config = MinistrConfig {
+        data_dir: data_dir.path().to_path_buf(),
+        ..MinistrConfig::default()
+    };
 
     // Build a mock embedder that returns fixed-dim vectors.
     struct FixedEmbedder;
@@ -64,19 +74,24 @@ fn test_app() -> axum::Router {
         config,
     );
     let state = ministr_daemon::state::AppState::new(registry);
-    ministr_daemon::daemon::router(state)
+    (ministr_daemon::daemon::router(state), data_dir)
 }
 
 #[tokio::test]
 async fn session_read_updates_budget() {
-    let app = test_app();
+    let (app, _data_dir) = test_app();
 
-    // 1. Register a corpus (uses a temp path — creates in-memory storage).
+    // 1. Register a corpus over an isolated temp source dir (never a
+    //    shared literal path like /tmp/ministr-e2e-test — that string
+    //    is what showed up in the clobbered live manifest).
+    let source = tempfile::TempDir::new().expect("temp source dir");
+    std::fs::write(source.path().join("readme.md"), "# corpus\n\ntext").expect("seed source file");
+    let register_body = serde_json::json!({ "paths": [source.path().display().to_string()] });
     let (status, resp) = send(
         &app,
         "POST",
         "/api/v1/corpora",
-        Some(r#"{"paths":["/tmp/ministr-e2e-test"]}"#),
+        Some(&register_body.to_string()),
     )
     .await;
     eprintln!("Register: {status} {resp}");
