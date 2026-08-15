@@ -10,6 +10,8 @@ use ministr_api::client::DaemonClient;
 use ministr_api::corpus::{CorpusInfo, IndexingStatus, IngestionProgressInfo};
 
 use crate::console::{ConsoleModel, Standing, Strip};
+use crate::detail::Facts;
+use crate::strings;
 
 /// How long to wait for a freshly spawned engine to answer.
 const SPAWN_TIMEOUT: Duration = Duration::from_secs(10);
@@ -90,6 +92,71 @@ async fn reduce_strip(client: &DaemonClient, info: CorpusInfo) -> Strip {
         standing,
         files: info.files_indexed,
     }
+}
+
+/// A verb the frame asked the engine to run. [`crate::app::App`] queues
+/// exactly one; the event loop drains and runs it against the client.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Action {
+    /// Fetch the opened project's slower facts (S2).
+    OpenDetail {
+        /// The engine's identifier for the project.
+        id: String,
+    },
+    /// Rebuild the project's index from scratch.
+    Rebuild {
+        /// The engine's identifier for the project.
+        id: String,
+    },
+    /// Remove the project from the engine (the index directory stays).
+    Remove {
+        /// The engine's identifier for the project.
+        id: String,
+    },
+    /// Add a project by path (S3).
+    PatchIn {
+        /// The path to add.
+        path: String,
+    },
+    /// Replace the opened project's path set.
+    SavePaths {
+        /// The engine's identifier for the project.
+        id: String,
+        /// The new path set, blanks already dropped.
+        paths: Vec<String>,
+    },
+}
+
+/// Fetch the opened project's slower facts: the full path set, section
+/// and symbol counts, when the last build finished, and what needs
+/// updating. Every wall-clock phrase is rendered here, at fetch time,
+/// so drawing stays a pure function of the model. `None` when the
+/// engine did not answer — the panel keeps its quiet ellipsis and the
+/// next probe retries.
+pub async fn detail(client: &DaemonClient, id: &str) -> Option<Facts> {
+    let info = client.corpus_status(id).await.ok()?;
+    let attention = match client.corpus_freshness_summary(id).await {
+        Ok(f) => strings::attention_line(f.stale, f.new_files, f.missing),
+        Err(_) => None,
+    };
+    Some(Facts {
+        id: info.id,
+        paths: info.paths,
+        sections: info.sections_count,
+        symbols: info.symbols_count,
+        updated: info
+            .last_indexed
+            .map(|ts| strings::ago_line(age_seconds(ts))),
+        attention,
+    })
+}
+
+/// Seconds elapsed since unix timestamp `ts`, clamped at zero.
+fn age_seconds(ts: i64) -> u64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    now.saturating_sub(u64::try_from(ts).unwrap_or(0))
 }
 
 /// One project's live build position, from the engine's progress

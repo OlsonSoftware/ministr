@@ -1,8 +1,14 @@
 //! Application state and the frame it draws.
 //!
-//! The frame is S1 — The Console (GUI-BLUEPRINT-v8 §5): title row with
-//! machine state top-right, one channel strip per project, the master
-//! section, and a foot key-line carrying only the verbs that work.
+//! The frame is GUI-BLUEPRINT-v8 §5: title row with machine state
+//! top-right, the current view's body — S1 The Console, S2 an opened
+//! project, or S3 the patch-in panel — and a foot key-line carrying
+//! only the verbs that work in that view.
+//!
+//! Verbs never touch the engine from here: a key press queues one
+//! [`Action`] in [`App::pending`] and the event loop drains it against
+//! the client, the same seam [`App::should_quit`] uses. That keeps the
+//! whole state machine synchronous and snapshot-constructible.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -14,17 +20,41 @@ use ratatui::style::Stylize;
 use ratatui::text::Line;
 
 use crate::console::{self, Standing, Strip};
+use crate::detail::{self, Detail, Facts, PathsEditor};
 use crate::ease::Glide;
-use crate::engine::{EngineState, ProgressTarget};
+use crate::engine::{Action, EngineState, ProgressTarget};
 use crate::motion::{Motion, Transition};
 use crate::palette::ColorDepth;
+use crate::patchin::{self, PatchIn};
 use crate::strings;
+
+/// Which screen the body shows.
+#[derive(Debug, Clone, PartialEq)]
+pub enum View {
+    /// S1 — the console.
+    Console,
+    /// S2 — one project, opened.
+    Detail(Detail),
+    /// S3 — the patch-in panel over the console.
+    PatchIn(PatchIn),
+}
 
 /// The console's whole state.
 #[derive(Debug)]
 pub struct App {
     /// What the last engine probe said.
     pub engine: EngineState,
+    /// Which screen the body shows.
+    pub view: View,
+    /// The verb the event loop should run against the engine, queued
+    /// by [`App::on_key`] and drained once per pass.
+    pub pending: Option<Action>,
+    /// Is the inline remove question up, on the selected strip or the
+    /// opened project?
+    pub confirming_remove: bool,
+    /// A verb's plain-worded failure, shown on the foot row until the
+    /// next key press.
+    pub notice: Option<String>,
     /// The transition playing over the frame, if any (motion law:
     /// one starts only on a real state change and never loops).
     pub motion: Motion,
@@ -67,6 +97,10 @@ impl App {
     pub fn with_engine(engine: EngineState) -> Self {
         Self {
             engine,
+            view: View::Console,
+            pending: None,
+            confirming_remove: false,
+            notice: None,
             motion: Motion::none(),
             motion_strip: None,
             leaving: None,
@@ -121,11 +155,50 @@ impl App {
                     .iter()
                     .any(|s| s.id == *id && matches!(s.standing, Standing::Building { .. }))
             });
+            // An opened project tracks its strip; if the strip left
+            // (removed elsewhere), the console takes the dissolve.
+            if let View::Detail(open) = &mut self.view {
+                if let Some(strip) = model.strips.iter().find(|s| s.id == open.id) {
+                    open.name.clone_from(&strip.name);
+                    open.standing = strip.standing;
+                    open.files = strip.files;
+                } else {
+                    self.view = View::Console;
+                }
+            }
         } else {
             self.meters.clear();
+            // The engine went away: every deeper view loses its
+            // subject, and the console carries the machine state.
+            self.view = View::Console;
+            self.confirming_remove = false;
         }
         self.selected = self.selected.min(self.strips().len().saturating_sub(1));
         true
+    }
+
+    /// Absorb the opened project's slower facts. Returns whether the
+    /// panel changed (an identical refetch draws nothing).
+    pub fn absorb_detail(&mut self, facts: Facts) -> bool {
+        if let View::Detail(open) = &mut self.view
+            && open.id == facts.id
+            && open.facts.as_ref() != Some(&facts)
+        {
+            open.facts = Some(facts);
+            return true;
+        }
+        false
+    }
+
+    /// The opened project's identifier, while S2 is up — the event loop
+    /// refreshes its facts on every probe.
+    #[must_use]
+    pub fn detail_id(&self) -> Option<String> {
+        if let View::Detail(open) = &self.view {
+            Some(open.id.clone())
+        } else {
+            None
+        }
     }
 
     /// Absorb one round of live progress reports — the fast poll that
@@ -182,27 +255,203 @@ impl App {
         strips
     }
 
-    /// Handle one key press. Left/Right move the selection; `q`, Esc,
-    /// and Ctrl-C quit (Esc returns — and the console is the root).
-    /// Returns whether state changed (the pacer draws only then).
-    /// Enter (open the selected strip) joins with the verbs chunk.
+    /// Handle one key press, routed to the view it lands in. Esc pops
+    /// toward the console; at the console it quits (the console is the
+    /// root). Ctrl-C quits from anywhere, even mid-edit. Returns
+    /// whether state changed (the pacer draws only then).
     pub fn on_key(&mut self, key: KeyEvent) -> bool {
         if key.kind != KeyEventKind::Press {
             return false;
         }
-        let ctrl_c =
-            key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
-        if ctrl_c || matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.should_quit = true;
             return true;
         }
+        // A notice lives until the next key press.
+        let cleared = self.notice.take().is_some();
+        let changed = match &self.view {
+            View::Console => self.on_key_console(key),
+            View::Detail(_) => self.on_key_detail(key),
+            View::PatchIn(_) => self.on_key_patchin(key),
+        };
+        changed || cleared
+    }
+
+    /// S1 keys: select, open, rebuild, add, remove (inline confirm),
+    /// quit.
+    fn on_key_console(&mut self, key: KeyEvent) -> bool {
+        if self.confirming_remove {
+            self.confirming_remove = false;
+            if key.code == KeyCode::Char('y')
+                && let Some(strip) = self.strips().get(self.selected)
+            {
+                self.pending = Some(Action::Remove {
+                    id: strip.id.clone(),
+                });
+            }
+            return true;
+        }
         match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => {
+                self.should_quit = true;
+                true
+            }
             KeyCode::Left if self.selected > 0 => {
                 self.selected -= 1;
                 true
             }
             KeyCode::Right if self.selected + 1 < self.strips().len() => {
                 self.selected += 1;
+                true
+            }
+            KeyCode::Enter => self.open_selected(),
+            KeyCode::Char('r') => self.rebuild_selected(),
+            KeyCode::Char('a') if matches!(self.engine, EngineState::Running(_)) => {
+                let here = std::env::current_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                self.view = View::PatchIn(PatchIn::new(&here));
+                true
+            }
+            KeyCode::Char('x') if !self.strips().is_empty() => {
+                self.confirming_remove = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Open the selected strip as S2: seed the panel from what the
+    /// strip already knows, queue the facts fetch, sweep the surface
+    /// open.
+    fn open_selected(&mut self) -> bool {
+        let strips = self.strips();
+        let Some(strip) = strips.get(self.selected) else {
+            return false;
+        };
+        self.pending = Some(Action::OpenDetail {
+            id: strip.id.clone(),
+        });
+        self.view = View::Detail(Detail::seeded(strip));
+        self.motion = Motion::start(Transition::SweepOpen);
+        self.motion_strip = None;
+        true
+    }
+
+    /// Queue a rebuild of the selected (or opened) project.
+    fn rebuild_selected(&mut self) -> bool {
+        let strips = self.strips();
+        let Some(strip) = strips.get(self.selected) else {
+            return false;
+        };
+        self.pending = Some(Action::Rebuild {
+            id: strip.id.clone(),
+        });
+        true
+    }
+
+    /// S2 keys: edit paths, rebuild, remove (inline confirm), back,
+    /// quit — and the editor's own keys while the path set is open.
+    fn on_key_detail(&mut self, key: KeyEvent) -> bool {
+        if self.confirming_remove {
+            self.confirming_remove = false;
+            if key.code == KeyCode::Char('y')
+                && let View::Detail(open) = &self.view
+            {
+                self.pending = Some(Action::Remove {
+                    id: open.id.clone(),
+                });
+                // The console takes the dissolve as the strip leaves.
+                self.view = View::Console;
+            }
+            return true;
+        }
+        let View::Detail(open) = &mut self.view else {
+            return false;
+        };
+        if let Some(editor) = &mut open.editing {
+            return match key.code {
+                KeyCode::Esc => {
+                    open.editing = None;
+                    true
+                }
+                KeyCode::Enter => {
+                    self.pending = Some(Action::SavePaths {
+                        id: open.id.clone(),
+                        paths: editor.paths(),
+                    });
+                    open.editing = None;
+                    true
+                }
+                KeyCode::Up => editor.up(),
+                KeyCode::Down => editor.down(),
+                KeyCode::Left => editor.field_mut().left(),
+                KeyCode::Right => editor.field_mut().right(),
+                KeyCode::Backspace => editor.field_mut().backspace(),
+                KeyCode::Char(c) => {
+                    editor.field_mut().insert(c);
+                    editor.ensure_trailing_blank();
+                    true
+                }
+                _ => false,
+            };
+        }
+        match key.code {
+            KeyCode::Char('q') => {
+                self.should_quit = true;
+                true
+            }
+            KeyCode::Esc => {
+                self.view = View::Console;
+                true
+            }
+            KeyCode::Char('e') => {
+                if let Some(facts) = &open.facts {
+                    open.editing = Some(PathsEditor::new(&facts.paths));
+                    true
+                } else {
+                    false
+                }
+            }
+            KeyCode::Char('r') => {
+                self.pending = Some(Action::Rebuild {
+                    id: open.id.clone(),
+                });
+                true
+            }
+            KeyCode::Char('x') => {
+                self.confirming_remove = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// S3 keys: the path field's editing keys, confirm, cancel. Plain
+    /// letters type — `q` here is a character, not a verb.
+    fn on_key_patchin(&mut self, key: KeyEvent) -> bool {
+        let View::PatchIn(form) = &mut self.view else {
+            return false;
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.view = View::Console;
+                true
+            }
+            KeyCode::Enter => {
+                let path = form.path.text().trim().to_owned();
+                if path.is_empty() {
+                    false
+                } else {
+                    self.pending = Some(Action::PatchIn { path });
+                    true
+                }
+            }
+            KeyCode::Left => form.path.left(),
+            KeyCode::Right => form.path.right(),
+            KeyCode::Backspace => form.path.backspace(),
+            KeyCode::Char(c) => {
+                form.path.insert(c);
                 true
             }
             _ => false,
@@ -238,8 +487,8 @@ impl App {
         strips
     }
 
-    /// Draw one frame at instant `now`: title row, the console body
-    /// with its meters eased to `now`, foot key-line, and whatever
+    /// Draw one frame at instant `now`: title row, the current view's
+    /// body with its meters eased to `now`, foot key-line, and whatever
     /// transition is playing, advanced by `delta`.
     pub fn draw(&mut self, frame: &mut Frame, delta: Duration, now: Instant) {
         let [title, body, foot] = Layout::vertical([
@@ -251,23 +500,80 @@ impl App {
         .areas(frame.area());
 
         self.draw_title(frame, title);
-        let strips = self.eased_strips(now);
-        let layout = self.draw_body(frame, body, &strips);
-        let foot_line = if strips.is_empty() {
-            strings::FOOT_QUIT
-        } else {
-            strings::FOOT_CONSOLE
+        let target = match &self.view {
+            View::Console => {
+                let strips = self.eased_strips(now);
+                let layout = self.draw_body(frame, body, &strips);
+                self.motion_strip
+                    .and_then(|i| layout.strip_rects.get(i).copied())
+                    .unwrap_or(body)
+            }
+            View::Detail(open) => {
+                let mut open = open.clone();
+                if let Standing::Building { .. } = open.standing
+                    && let Some(glide) = self.meters.get(&open.id)
+                {
+                    open.standing = Standing::Building {
+                        fraction: glide.at(now),
+                    };
+                }
+                detail::draw(frame, body, &open, self.confirming_remove, self.depth);
+                body
+            }
+            View::PatchIn(form) => {
+                let strips = self.eased_strips(now);
+                self.draw_body(frame, body, &strips);
+                patchin::draw(frame, body, form);
+                body
+            }
         };
-        frame.render_widget(Line::from(foot_line).dim(), foot);
+        self.draw_foot(frame, foot);
 
-        let target = self
-            .motion_strip
-            .and_then(|i| layout.strip_rects.get(i).copied())
-            .unwrap_or(body);
         self.motion.render(frame, target, delta);
         if !self.motion.running() {
             self.motion_strip = None;
             self.leaving = None;
+        }
+    }
+
+    /// The foot row: the view's key-line, and — right-aligned — any
+    /// notice a verb left behind. The words carry the failure; yellow
+    /// only where the rung has it.
+    fn draw_foot(&self, frame: &mut Frame, area: Rect) {
+        frame.render_widget(Line::from(self.foot_text()).dim(), area);
+        if let Some(notice) = &self.notice {
+            let line = Line::from(notice.as_str());
+            let line = if self.depth == ColorDepth::Mono {
+                line
+            } else {
+                line.yellow()
+            };
+            frame.render_widget(line.right_aligned(), area);
+        }
+    }
+
+    /// The key-line for the current view and state — only verbs that
+    /// work right now.
+    fn foot_text(&self) -> &'static str {
+        if self.confirming_remove {
+            return strings::FOOT_CONFIRM_REMOVE;
+        }
+        match &self.view {
+            View::Console => match &self.engine {
+                EngineState::Running(model) if model.strips.is_empty() => {
+                    strings::FOOT_CONSOLE_EMPTY
+                }
+                EngineState::Running(_) => strings::FOOT_CONSOLE,
+                _ => strings::FOOT_QUIT,
+            },
+            View::Detail(open) => {
+                if open.editing.is_some() {
+                    strings::FOOT_EDIT_PATHS
+                } else {
+                    strings::FOOT_DETAIL
+                }
+            }
+            View::PatchIn(_) => strings::FOOT_PATCH_IN,
         }
     }
 
@@ -302,6 +608,7 @@ impl App {
                 self.selected,
                 self.depth,
                 &model.version,
+                self.confirming_remove && matches!(self.view, View::Console),
             )
         } else {
             console::ConsoleLayout::default()

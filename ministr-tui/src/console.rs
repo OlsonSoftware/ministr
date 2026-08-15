@@ -96,7 +96,9 @@ pub struct ConsoleLayout {
 }
 
 /// Draw the console body: strips left, master section right. The
-/// caller has already decided the engine is running.
+/// caller has already decided the engine is running. `confirming`
+/// puts the inline remove question on the selected strip — the confirm
+/// lives on the strip itself, never in a dialog.
 pub fn draw(
     frame: &mut Frame,
     area: Rect,
@@ -104,11 +106,12 @@ pub fn draw(
     selected: usize,
     depth: ColorDepth,
     version: &str,
+    confirming: bool,
 ) -> ConsoleLayout {
     if area.width < STACK_BELOW {
-        draw_stacked(frame, area, strips, selected, depth)
+        draw_stacked(frame, area, strips, selected, depth, confirming)
     } else {
-        draw_wide(frame, area, strips, selected, depth, version)
+        draw_wide(frame, area, strips, selected, depth, version, confirming)
     }
 }
 
@@ -120,6 +123,7 @@ fn draw_wide(
     selected: usize,
     depth: ColorDepth,
     version: &str,
+    confirming: bool,
 ) -> ConsoleLayout {
     let tight = area.width < COMPRESS_BELOW;
     let (strip_w, gutter, master_w) = if tight {
@@ -174,7 +178,15 @@ fn draw_wide(
         let x = strips_area.x + (slot as u16) * (strip_w + gutter);
         let rect = Rect::new(x, strips_area.y, strip_w, strips_area.height);
         layout.strip_rects[index] = rect;
-        draw_strip(frame, rect, &strips[index], index == selected, depth);
+        let selected_here = index == selected;
+        draw_strip(
+            frame,
+            rect,
+            &strips[index],
+            selected_here,
+            depth,
+            confirming && selected_here,
+        );
     }
     layout
 }
@@ -182,7 +194,16 @@ fn draw_wide(
 /// One tall channel strip: framed, name at the head, meter and standing
 /// and size at the foot. Selection brightens the frame and the name —
 /// intensity, so it survives every ladder rung including monochrome.
-fn draw_strip(frame: &mut Frame, rect: Rect, strip: &Strip, selected: bool, depth: ColorDepth) {
+/// While an inline remove waits for its answer, the question takes the
+/// standing row — the words carry the state on every ladder rung.
+fn draw_strip(
+    frame: &mut Frame,
+    rect: Rect,
+    strip: &Strip,
+    selected: bool,
+    depth: ColorDepth,
+    confirming: bool,
+) {
     let block = Block::bordered().border_type(BorderType::Rounded);
     let block = if selected { block } else { block.dim() };
     let inner = block.inner(rect);
@@ -205,13 +226,27 @@ fn draw_strip(frame: &mut Frame, rect: Rect, strip: &Strip, selected: bool, dept
     if let Standing::Building { fraction } = strip.standing {
         frame.render_widget(Meter::new(fraction, depth), meter_row);
     }
-    frame.render_widget(standing_line(strip.standing, depth), standing_row);
+    if confirming {
+        frame.render_widget(confirm_line(depth), standing_row);
+    } else {
+        frame.render_widget(standing_line(strip.standing, depth), standing_row);
+    }
     frame.render_widget(Line::from(strings::files_line(strip.files)).dim(), size_row);
+}
+
+/// The inline remove question — bold, and yellow where the rung has it.
+fn confirm_line(depth: ColorDepth) -> Line<'static> {
+    let line = Line::from(strings::CONFIRM_REMOVE).bold();
+    if depth == ColorDepth::Mono {
+        line
+    } else {
+        line.yellow()
+    }
 }
 
 /// The standing word, colored only where the blueprint allows it and
 /// never color alone — the word itself always carries the state.
-fn standing_line(standing: Standing, depth: ColorDepth) -> Line<'static> {
+pub(crate) fn standing_line(standing: Standing, depth: ColorDepth) -> Line<'static> {
     match standing {
         Standing::UpToDate => Line::from(strings::STANDING_UP_TO_DATE).dim(),
         // Routine, not an emergency: the word reads plainly, no color.
@@ -272,6 +307,7 @@ fn draw_stacked(
     strips: &[Strip],
     selected: usize,
     depth: ColorDepth,
+    confirming: bool,
 ) -> ConsoleLayout {
     if strips.is_empty() {
         draw_no_projects(frame, area);
@@ -316,19 +352,34 @@ fn draw_stacked(
         #[allow(clippy::cast_possible_truncation)]
         let row = Rect::new(rows_area.x, rows_area.y + slot as u16, rows_area.width, 1);
         layout.strip_rects[index] = row;
-        draw_bar(frame, row, &strips[index], index == selected, depth);
+        let selected_here = index == selected;
+        draw_bar(
+            frame,
+            row,
+            &strips[index],
+            selected_here,
+            depth,
+            confirming && selected_here,
+        );
     }
     layout
 }
 
 /// One stacked bar row.
-fn draw_bar(frame: &mut Frame, row: Rect, strip: &Strip, selected: bool, depth: ColorDepth) {
+fn draw_bar(
+    frame: &mut Frame,
+    row: Rect,
+    strip: &Strip,
+    selected: bool,
+    depth: ColorDepth,
+    confirming: bool,
+) {
     let building = matches!(strip.standing, Standing::Building { .. });
     let meter_w = if building { BAR_METER_WIDTH } else { 0 };
     let [name_area, meter_area, foot_area] = Layout::horizontal([
         Constraint::Fill(1),
         Constraint::Length(meter_w),
-        Constraint::Length(foot_width(strip)),
+        Constraint::Length(foot_width(strip, confirming)),
     ])
     .spacing(1)
     .areas(row);
@@ -341,21 +392,29 @@ fn draw_bar(frame: &mut Frame, row: Rect, strip: &Strip, selected: bool, depth: 
         frame.render_widget(Meter::new(fraction, depth), meter_area);
     }
 
-    let mut foot = standing_line(strip.standing, depth);
+    let mut foot = if confirming {
+        confirm_line(depth)
+    } else {
+        standing_line(strip.standing, depth)
+    };
     foot.push_span(Span::from(format!("  {}", strings::files_line(strip.files))).dim());
     frame.render_widget(foot.right_aligned(), foot_area);
 }
 
 /// Display width of a bar's foot (standing word + two spaces + size).
 #[allow(clippy::cast_possible_truncation)]
-fn foot_width(strip: &Strip) -> u16 {
-    let standing = match strip.standing {
-        Standing::UpToDate => strings::STANDING_UP_TO_DATE.len(),
-        Standing::NeedsUpdate => strings::STANDING_NEEDS_UPDATE.len(),
-        Standing::Building { fraction } => strings::updating_line(fraction).len(),
-        Standing::Waiting => strings::STANDING_WAITING.len(),
-        Standing::Warming => strings::STANDING_WARMING.len(),
-        Standing::Failed => strings::STANDING_FAILED.len(),
+fn foot_width(strip: &Strip, confirming: bool) -> u16 {
+    let standing = if confirming {
+        strings::CONFIRM_REMOVE.chars().count()
+    } else {
+        match strip.standing {
+            Standing::UpToDate => strings::STANDING_UP_TO_DATE.len(),
+            Standing::NeedsUpdate => strings::STANDING_NEEDS_UPDATE.len(),
+            Standing::Building { fraction } => strings::updating_line(fraction).len(),
+            Standing::Waiting => strings::STANDING_WAITING.len(),
+            Standing::Warming => strings::STANDING_WARMING.len(),
+            Standing::Failed => strings::STANDING_FAILED.len(),
+        }
     };
     (standing + 2 + strings::files_line(strip.files).len()) as u16
 }

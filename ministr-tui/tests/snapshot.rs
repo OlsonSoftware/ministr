@@ -8,12 +8,15 @@
 
 use std::time::{Duration, Instant};
 
-use ministr_tui::app::App;
+use ministr_tui::app::{App, View};
 use ministr_tui::console::{ConsoleModel, Standing, Strip};
+use ministr_tui::detail::{Detail, Facts, PathsEditor};
 use ministr_tui::ease::GLIDE;
-use ministr_tui::engine::{EngineState, ProgressTarget};
+use ministr_tui::engine::{Action, EngineState, ProgressTarget};
 use ministr_tui::motion::MAX_TRANSITION;
 use ministr_tui::palette::ColorDepth;
+use ministr_tui::patchin::PatchIn;
+use ministr_tui::strings;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
@@ -351,6 +354,379 @@ fn building_reports_only_while_a_strip_builds() {
     assert!(!app.building());
     let _ = app.absorb(EngineState::Unreachable);
     assert!(!app.building());
+}
+
+// --- S2 strip detail: designed states -----------------------------------
+
+/// The opened project's slower facts, every phrase fixed so the render
+/// is deterministic.
+fn cohaero_facts() -> Facts {
+    Facts {
+        id: "cohaero".to_owned(),
+        paths: vec![
+            "/Users/alrik/Code/cohaero".to_owned(),
+            "/Users/alrik/Code/cohaero-content".to_owned(),
+        ],
+        sections: 5210,
+        symbols: 903,
+        updated: Some("4 minutes ago".to_owned()),
+        attention: Some("3 files changed · 1 new since the last build".to_owned()),
+    }
+}
+
+/// The console with cohaero opened as S2.
+fn opened(facts: Option<Facts>) -> App {
+    let mut app = App::with_engine(populated());
+    app.selected = 1;
+    app.view = View::Detail(Detail {
+        id: "cohaero".to_owned(),
+        name: "cohaero".to_owned(),
+        standing: Standing::NeedsUpdate,
+        files: 1204,
+        facts,
+        editing: None,
+    });
+    app
+}
+
+#[test]
+fn detail_still_loading_spacious() {
+    let mut app = opened(None);
+    insta::assert_snapshot!(render(&mut app, 120, 36));
+}
+
+#[test]
+fn detail_filled_spacious() {
+    let mut app = opened(Some(cohaero_facts()));
+    insta::assert_snapshot!(render(&mut app, 120, 36));
+}
+
+#[test]
+fn detail_filled_compressed() {
+    let mut app = opened(Some(cohaero_facts()));
+    insta::assert_snapshot!(render(&mut app, 80, 24));
+}
+
+#[test]
+fn detail_building_shows_the_live_meter() {
+    let mut app = opened(Some(Facts {
+        attention: None,
+        ..cohaero_facts()
+    }));
+    if let View::Detail(open) = &mut app.view {
+        open.standing = Standing::Building { fraction: 0.43 };
+    }
+    insta::assert_snapshot!(render(&mut app, 120, 36));
+}
+
+#[test]
+fn detail_editing_paths() {
+    let mut app = opened(Some(cohaero_facts()));
+    if let View::Detail(open) = &mut app.view {
+        open.editing = Some(PathsEditor::new(&cohaero_facts().paths));
+    }
+    insta::assert_snapshot!(render(&mut app, 120, 36));
+}
+
+#[test]
+fn detail_remove_confirms_inline() {
+    let mut app = opened(Some(cohaero_facts()));
+    app.confirming_remove = true;
+    insta::assert_snapshot!(render(&mut app, 120, 36));
+}
+
+#[test]
+fn detail_verb_failure_notice() {
+    let mut app = opened(Some(cohaero_facts()));
+    app.notice = Some(strings::NOTICE_REBUILD_FAILED.to_owned());
+    insta::assert_snapshot!(render(&mut app, 120, 36));
+}
+
+// --- S3 patch in: designed states ---------------------------------------
+
+/// The console with the patch-in panel up over it, at a fixed path.
+fn patching_in() -> App {
+    let mut app = App::with_engine(populated());
+    app.view = View::PatchIn(PatchIn::new("/Users/alrik/Code/newproject"));
+    app
+}
+
+#[test]
+fn patch_in_panel_spacious() {
+    let mut app = patching_in();
+    insta::assert_snapshot!(render(&mut app, 120, 36));
+}
+
+#[test]
+fn patch_in_panel_narrow() {
+    let mut app = patching_in();
+    insta::assert_snapshot!(render(&mut app, 60, 20));
+}
+
+#[test]
+fn patch_in_failure_notice() {
+    let mut app = patching_in();
+    app.notice = Some(strings::NOTICE_ADD_FAILED.to_owned());
+    insta::assert_snapshot!(render(&mut app, 120, 36));
+}
+
+// --- inline remove confirm on the console strip -------------------------
+
+#[test]
+fn console_remove_confirms_on_the_strip_spacious() {
+    let mut app = App::with_engine(populated());
+    app.selected = 1;
+    app.confirming_remove = true;
+    insta::assert_snapshot!(render(&mut app, 120, 36));
+}
+
+#[test]
+fn console_remove_confirms_on_the_bar_stacked() {
+    let mut app = App::with_engine(populated());
+    app.selected = 1;
+    app.confirming_remove = true;
+    insta::assert_snapshot!(render(&mut app, 60, 20));
+}
+
+// --- transitions: start and end frames at fixed instants ----------------
+
+/// Play the current transition out: one frame at the motion-law
+/// ceiling, one settling frame.
+fn play_out(app: &mut App, now: Instant) {
+    let mut terminal = Terminal::new(TestBackend::new(120, 36)).expect("test terminal");
+    terminal
+        .draw(|frame| app.draw(frame, MAX_TRANSITION, now))
+        .expect("draw frame");
+    terminal
+        .draw(|frame| app.draw(frame, Duration::ZERO, now))
+        .expect("draw frame");
+}
+
+#[test]
+fn opening_a_strip_sweeps_start_and_end_frames() {
+    let mut app = App::with_engine(populated());
+    assert!(app.on_key(KeyEvent::from(KeyCode::Enter)));
+    assert!(matches!(app.pending, Some(Action::OpenDetail { .. })));
+    let t0 = Instant::now();
+    assert!(app.animating(t0), "opening plays the sweep");
+    insta::assert_snapshot!("sweep_open_start", render_at(&mut app, 120, 36, t0));
+    play_out(&mut app, t0);
+    assert!(!app.animating(t0), "the sweep never loops");
+    insta::assert_snapshot!("sweep_open_end", render_at(&mut app, 120, 36, t0));
+}
+
+/// Two projects — the console before cohaero patches in.
+fn without_cohaero() -> EngineState {
+    running(vec![
+        strip("ministr", Standing::UpToDate, 812),
+        strip("tock", Standing::NeedsUpdate, 640),
+    ])
+}
+
+#[test]
+fn patch_in_materializes_start_and_end_frames() {
+    let mut app = App::with_engine(without_cohaero());
+    assert!(app.absorb(populated()));
+    let t0 = Instant::now();
+    assert!(app.animating(t0), "patch-in plays the materialize");
+    insta::assert_snapshot!("materialize_start", render_at(&mut app, 120, 36, t0));
+    play_out(&mut app, t0);
+    assert!(!app.animating(t0), "the materialize never loops");
+    insta::assert_snapshot!("materialize_end", render_at(&mut app, 120, 36, t0));
+}
+
+#[test]
+fn remove_dissolves_start_and_end_frames() {
+    let mut app = App::with_engine(populated());
+    assert!(app.absorb(without_cohaero()));
+    let t0 = Instant::now();
+    assert!(app.animating(t0), "removal plays the dissolve");
+    insta::assert_snapshot!("dissolve_start", render_at(&mut app, 120, 36, t0));
+    play_out(&mut app, t0);
+    assert!(!app.animating(t0), "the dissolve never loops");
+    insta::assert_snapshot!("dissolve_end", render_at(&mut app, 120, 36, t0));
+}
+
+// --- verbs: keys queue actions, views route keys ------------------------
+
+#[test]
+fn enter_opens_the_selected_strip_and_esc_returns() {
+    let mut app = App::with_engine(populated());
+    assert!(app.on_key(KeyEvent::from(KeyCode::Enter)));
+    assert!(matches!(app.view, View::Detail(_)));
+    assert_eq!(
+        app.pending,
+        Some(Action::OpenDetail {
+            id: "ministr".to_owned()
+        })
+    );
+    assert!(app.on_key(KeyEvent::from(KeyCode::Esc)));
+    assert!(matches!(app.view, View::Console));
+    assert!(!app.should_quit, "esc pops the view, it does not quit");
+}
+
+#[test]
+fn x_then_y_queues_the_remove() {
+    let mut app = App::with_engine(populated());
+    assert!(app.on_key(KeyEvent::from(KeyCode::Char('x'))));
+    assert!(app.confirming_remove);
+    assert!(app.on_key(KeyEvent::from(KeyCode::Char('y'))));
+    assert!(!app.confirming_remove);
+    assert_eq!(
+        app.pending,
+        Some(Action::Remove {
+            id: "ministr".to_owned()
+        })
+    );
+}
+
+#[test]
+fn x_then_any_other_key_keeps_the_project() {
+    let mut app = App::with_engine(populated());
+    assert!(app.on_key(KeyEvent::from(KeyCode::Char('x'))));
+    assert!(app.on_key(KeyEvent::from(KeyCode::Left)));
+    assert!(!app.confirming_remove);
+    assert_eq!(app.pending, None);
+    assert_eq!(app.selected, 0, "the keep key is consumed, not acted on");
+}
+
+#[test]
+fn r_queues_the_rebuild() {
+    let mut app = App::with_engine(populated());
+    assert!(app.on_key(KeyEvent::from(KeyCode::Char('r'))));
+    assert_eq!(
+        app.pending,
+        Some(Action::Rebuild {
+            id: "ministr".to_owned()
+        })
+    );
+}
+
+#[test]
+fn a_opens_patch_in_prefilled_with_the_current_directory() {
+    let mut app = App::with_engine(populated());
+    assert!(app.on_key(KeyEvent::from(KeyCode::Char('a'))));
+    let here = std::env::current_dir().expect("cwd").display().to_string();
+    let View::PatchIn(form) = &app.view else {
+        panic!("a opens the patch-in panel");
+    };
+    assert_eq!(form.path.text(), here);
+}
+
+#[test]
+fn patch_in_letters_type_instead_of_acting() {
+    let mut app = patching_in();
+    assert!(app.on_key(KeyEvent::from(KeyCode::Char('q'))));
+    assert!(!app.should_quit, "q is a character here, not a verb");
+    let View::PatchIn(form) = &app.view else {
+        panic!("still on the panel");
+    };
+    assert!(form.path.text().ends_with('q'));
+    assert!(app.on_key(KeyEvent::from(KeyCode::Esc)));
+    assert!(matches!(app.view, View::Console));
+}
+
+#[test]
+fn patch_in_enter_queues_the_add() {
+    let mut app = patching_in();
+    assert!(app.on_key(KeyEvent::from(KeyCode::Enter)));
+    assert_eq!(
+        app.pending,
+        Some(Action::PatchIn {
+            path: "/Users/alrik/Code/newproject".to_owned()
+        })
+    );
+}
+
+#[test]
+fn editing_paths_saves_the_grown_set_and_drops_blanks() {
+    let mut app = opened(Some(cohaero_facts()));
+    assert!(app.on_key(KeyEvent::from(KeyCode::Char('e'))));
+    // Down twice: past the second path onto the trailing blank row.
+    assert!(app.on_key(KeyEvent::from(KeyCode::Down)));
+    assert!(app.on_key(KeyEvent::from(KeyCode::Down)));
+    for c in "/x".chars() {
+        assert!(app.on_key(KeyEvent::from(KeyCode::Char(c))));
+    }
+    assert!(app.on_key(KeyEvent::from(KeyCode::Enter)));
+    assert_eq!(
+        app.pending,
+        Some(Action::SavePaths {
+            id: "cohaero".to_owned(),
+            paths: vec![
+                "/Users/alrik/Code/cohaero".to_owned(),
+                "/Users/alrik/Code/cohaero-content".to_owned(),
+                "/x".to_owned(),
+            ],
+        })
+    );
+    let View::Detail(open) = &app.view else {
+        panic!("still on the panel");
+    };
+    assert!(open.editing.is_none(), "save closes the editor");
+}
+
+#[test]
+fn esc_cancels_the_path_editor_without_saving() {
+    let mut app = opened(Some(cohaero_facts()));
+    assert!(app.on_key(KeyEvent::from(KeyCode::Char('e'))));
+    assert!(app.on_key(KeyEvent::from(KeyCode::Backspace)));
+    assert!(app.on_key(KeyEvent::from(KeyCode::Esc)));
+    assert_eq!(app.pending, None);
+    assert!(
+        matches!(app.view, View::Detail(_)),
+        "esc leaves the editor, not the panel"
+    );
+}
+
+#[test]
+fn a_probe_updates_the_open_panel() {
+    let mut app = opened(Some(cohaero_facts()));
+    let mut next = populated();
+    if let EngineState::Running(model) = &mut next {
+        model.strips[1].standing = Standing::Building { fraction: 0.66 };
+    }
+    assert!(app.absorb(next));
+    let View::Detail(open) = &app.view else {
+        panic!("the panel holds while its strip lives");
+    };
+    assert_eq!(
+        open.standing,
+        Standing::Building { fraction: 0.66 },
+        "the probe's standing flows into the open panel"
+    );
+}
+
+#[test]
+fn the_panel_closes_when_its_project_leaves() {
+    let mut app = opened(Some(cohaero_facts()));
+    assert!(app.absorb(without_cohaero()));
+    assert!(matches!(app.view, View::Console));
+}
+
+#[test]
+fn the_panel_closes_when_the_engine_goes_away() {
+    let mut app = opened(Some(cohaero_facts()));
+    assert!(app.absorb(EngineState::Unreachable));
+    assert!(matches!(app.view, View::Console));
+}
+
+#[test]
+fn a_notice_clears_on_the_next_key() {
+    let mut app = App::with_engine(populated());
+    app.notice = Some(strings::NOTICE_REBUILD_FAILED.to_owned());
+    assert!(app.on_key(KeyEvent::from(KeyCode::Right)));
+    assert_eq!(app.notice, None);
+}
+
+#[test]
+fn fresh_facts_land_once_and_identical_refetches_are_quiet() {
+    let mut app = opened(None);
+    assert!(app.absorb_detail(cohaero_facts()));
+    assert!(
+        !app.absorb_detail(cohaero_facts()),
+        "an identical refetch draws nothing"
+    );
 }
 
 #[test]

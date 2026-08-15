@@ -28,7 +28,7 @@ Buffer {
         "  │ up to date     │ │ updating 43%   │                                         ",
         "  │ 812 files      │ │ 1204 files     │                                         ",
         "  ╰────────────────╯ ╰────────────────╯                                         ",
-        "  ← → select   q quit                                                           ",
+        "  ← → select   enter open   r rebuild   a add   x remove   q quit               ",
     ],
     styles: [
         x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,

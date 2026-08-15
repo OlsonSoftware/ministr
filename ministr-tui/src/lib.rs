@@ -17,13 +17,16 @@
 
 pub mod app;
 pub mod console;
+pub mod detail;
 pub mod ease;
 pub mod engine;
 pub mod event;
+pub mod field;
 pub mod meter;
 pub mod motion;
 pub mod pacing;
 pub mod palette;
+pub mod patchin;
 pub mod strings;
 pub mod sync;
 
@@ -32,7 +35,8 @@ use std::time::{Duration, Instant};
 use ministr_api::client::DaemonClient;
 use ratatui::DefaultTerminal;
 
-use crate::app::App;
+use crate::app::{App, View};
+use crate::engine::Action;
 use crate::pacing::Pacer;
 
 /// How often the frame re-probes the engine for machine state.
@@ -139,6 +143,14 @@ async fn event_loop(
                 if !starting_grace && app.absorb(state) {
                     pacer.mark_dirty();
                 }
+                // An opened project's slower facts ride the same
+                // cadence, so its counts and path set stay current.
+                if let Some(id) = app.detail_id()
+                    && let Some(facts) = engine::detail(client, &id).await
+                    && app.absorb_detail(facts)
+                {
+                    pacer.mark_dirty();
+                }
             }
             // The engine handshake finished: probe at once so the
             // title flips the moment the engine is really up.
@@ -160,8 +172,76 @@ async fn event_loop(
             () = tokio::time::sleep(pacing::FRAME_INTERVAL), if pacer.is_animating() => {}
         }
 
+        // A key press queued a verb: run it against the engine, then
+        // probe at once so the console reflects the change (and its
+        // transition plays) without waiting out the probe interval.
+        if let Some(action) = app.pending.take() {
+            if run_action(client, &mut app, action).await {
+                probe_timer.reset_immediately();
+            }
+            pacer.mark_dirty();
+        }
+
         if app.should_quit {
             return Ok(());
         }
     }
+}
+
+/// Run one queued verb against the engine. Returns whether the machine
+/// may have changed shape — the caller re-probes at once when so. A
+/// failed verb leaves a plain-worded notice and changes nothing.
+async fn run_action(client: &DaemonClient, app: &mut App, action: Action) -> bool {
+    match action {
+        Action::OpenDetail { id } => {
+            if let Some(facts) = engine::detail(client, &id).await {
+                app.absorb_detail(facts);
+            }
+            false
+        }
+        Action::Rebuild { id } => settle(
+            app,
+            client.reindex_corpus(&id).await.is_ok(),
+            strings::NOTICE_REBUILD_FAILED,
+        ),
+        Action::Remove { id } => settle(
+            app,
+            client.unregister_corpus(&id).await.is_ok(),
+            strings::NOTICE_REMOVE_FAILED,
+        ),
+        Action::PatchIn { path } => {
+            let ok = settle(
+                app,
+                client.register_corpus(&[path]).await.is_ok(),
+                strings::NOTICE_ADD_FAILED,
+            );
+            if ok {
+                // Back to the console: the new strip materializes
+                // there the moment the next probe reports it.
+                app.view = View::Console;
+            }
+            ok
+        }
+        Action::SavePaths { id, paths } => {
+            let ok = settle(
+                app,
+                client.update_corpus_paths(&id, &paths).await.is_ok(),
+                strings::NOTICE_PATHS_FAILED,
+            );
+            // The path set changed: refresh the opened panel now.
+            if ok && let Some(facts) = engine::detail(client, &id).await {
+                app.absorb_detail(facts);
+            }
+            ok
+        }
+    }
+}
+
+/// A verb's outcome: a success changes the machine, a failure leaves a
+/// plain-worded notice and changes nothing.
+fn settle(app: &mut App, ok: bool, failure: &str) -> bool {
+    if !ok {
+        app.notice = Some(failure.to_owned());
+    }
+    ok
 }

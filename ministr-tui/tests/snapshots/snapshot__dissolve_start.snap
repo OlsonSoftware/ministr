@@ -1,6 +1,6 @@
 ---
 source: ministr-tui/tests/snapshot.rs
-expression: "render(&mut app, 120, 36)"
+expression: "render_at(&mut app, 120, 36, t0)"
 ---
 "  ministr                                                                                             engine ● running  "
 "  ╭──────────────────────╮  ╭──────────────────────╮  ╭──────────────────────╮                ╭──────────────────────╮  "
@@ -33,8 +33,8 @@ expression: "render(&mut app, 120, 36)"
 "  │                      │  │                      │  │                      │                                          "
 "  │                      │  │                      │  │                      │                                          "
 "  │                      │  │                      │  │                      │                                          "
-"  │                      │  │                      │  │                      │                                          "
-"  │ waiting              │  │ warming up           │  │ failed               │                                          "
-"  │ 812 files            │  │ 0 files              │  │ 97 files             │                                          "
+"  │                      │  │ ████████▋            │  │                      │                                          "
+"  │ up to date           │  │ updating 43%         │  │ needs update         │                                          "
+"  │ 812 files            │  │ 1204 files           │  │ 640 files            │                                          "
 "  ╰──────────────────────╯  ╰──────────────────────╯  ╰──────────────────────╯                                          "
 "  ← → select   enter open   r rebuild   a add   x remove   q quit                                                       "
