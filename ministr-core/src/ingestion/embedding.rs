@@ -286,6 +286,10 @@ pub(super) async fn batch_embed_and_insert_dual<I: VectorIndex + ?Sized>(
 
 /// Recursively collect embeddable items (section summaries, section texts, claims).
 ///
+/// A section summary that is byte-identical to the section text or a pure
+/// prefix truncation of it is NOT collected (vector diet) — the section
+/// vector covers it under the per-content max-pool collapse in `search()`.
+///
 /// When `contextualize` is true, section summaries and section texts are
 /// prefixed with their structural breadcrumb (see [`contextualize_text`]);
 /// claims (already atomic facts) and the verbatim path are left unchanged.
@@ -298,6 +302,16 @@ fn collect_embeddable_items(
     for section in sections {
         if let Some(ref summary) = section.summary
             && !summary.trim().is_empty()
+            // Vector diet: most stored summaries are the section text itself
+            // (byte-identical) or a pure prefix truncation of it. Embedding
+            // them buys nothing — the identical case yields the exact same
+            // vector, and search() already max-pools per content_id, so the
+            // section vector represents the content either way. Only a summary
+            // that says something the text doesn't start with earns a vector.
+            // (When the section text is blank the section vector is skipped
+            // below, and `starts_with` can't fire, so the summary still gets
+            // its vector — no section is left unembedded.)
+            && !section.text.starts_with(summary.as_str())
         {
             ids.push(VectorId::sec_summary(section.id.as_ref()));
             texts.push(if contextualize {
@@ -598,6 +612,53 @@ mod tests {
         let once = contextualize_text(&hp, "BODY");
         let twice = contextualize_text(&hp, &once);
         assert_eq!(once, twice, "re-contextualizing must be a no-op");
+    }
+
+    // ingest-vector-diet-summaries — redundant sec-summary vectors are skipped.
+
+    fn section_with_summary(id: &str, text: &str, summary: &str) -> Section {
+        let mut s = section(id, vec!["doc.md", "Heading"], text);
+        s.summary = Some(summary.to_string());
+        s
+    }
+
+    fn collect(secs: &[Section]) -> Vec<String> {
+        let mut ids = Vec::new();
+        let mut texts = Vec::new();
+        collect_embeddable_items(secs, &mut ids, &mut texts, false);
+        ids.into_iter().map(|v| v.as_str().to_owned()).collect()
+    }
+
+    #[test]
+    fn identical_summary_vector_is_skipped() {
+        let secs = vec![section_with_summary("s1", "Same text.", "Same text.")];
+        assert_eq!(collect(&secs), vec!["section::s1"]);
+    }
+
+    #[test]
+    fn prefix_truncation_summary_vector_is_skipped() {
+        let secs = vec![section_with_summary(
+            "s1",
+            "First sentence. Second sentence.",
+            "First sentence.",
+        )];
+        assert_eq!(collect(&secs), vec!["section::s1"]);
+    }
+
+    #[test]
+    fn real_summary_keeps_its_vector() {
+        let secs = vec![section_with_summary(
+            "s1",
+            "The cache evicts entries after ten minutes of inactivity.",
+            "Describes cache eviction policy.",
+        )];
+        assert_eq!(collect(&secs), vec!["sec-summary::s1", "section::s1"]);
+    }
+
+    #[test]
+    fn blank_section_text_keeps_the_summary_vector() {
+        let secs = vec![section_with_summary("s1", "   ", "A summary of children.")];
+        assert_eq!(collect(&secs), vec!["sec-summary::s1"]);
     }
 
     #[test]
