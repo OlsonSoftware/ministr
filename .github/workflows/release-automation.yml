@@ -1,69 +1,62 @@
 name: Release automation
 
 # ===================== THE RELEASE CONTRACT =========================
-# Releases are AGENT-MANAGED. The ONLY supported way to cut a release:
+# Releases are cut from THIS repository and ship the MIT `ministr-cli`
+# binary. The only supported way to cut a release:
 #
 #   1. land work on `main` (Conventional Commits)
-#   2. `request-release` detects releasable commits since the last tag
-#      and hands the job to the GitHub Copilot cloud agent via a single
-#      tracking issue: the agent decides the semver bump, bumps every
-#      crate version + the workspace path-dep requirements in lockstep,
-#      authors a high-quality CHANGELOG section (with explicit
-#      Breaking/Migration notes), and opens ONE
-#      `chore: release vX.Y.Z` PR — then requests review.
-#   3. you review + MERGE that PR
-#   4. F31.5 (2026-05-27): on the merge commit, this workflow only
-#      pushes the v<X.Y.Z> tag here and dispatches the build to
-#      ministr-private's release.yml. The PUBLIC repo no longer
-#      builds release artifacts — that work moved to the proprietary
-#      sibling workspace, which clones BOTH repos as siblings, builds
-#      the cloud-capable `ministr-cli-cloud` binary (linked against the
-#      MIT crates that live here), signs + bundles, and uploads to
-#      THIS repo's release at the same v<X.Y.Z> tag via a cross-repo
-#      PAT. install.sh + homebrew see no change — they keep fetching
-#      from github.com/OlsonSoftware/ministr/releases.
+#   2. bump the version by hand — see RELEASE.md for the exact file list
+#      (7 crate Cargo.toml + 7 [workspace.dependencies] pins + Cargo.lock
+#      + a CHANGELOG section) — and commit it as `chore: release vX.Y.Z`
+#   3. run this workflow (Actions → Release automation → Run workflow)
+#   4. it BUILDS every artifact first, then tags, then publishes the
+#      GitHub Release with the artifacts + SHA256SUMS attached
 #
-# Failure mode (acceptable trade-off): if private's build fails after
-# the tag lands here, the tag exists in public but the release at that
-# tag has no attached artifacts. Re-dispatch private's release.yml
-# (workflow_dispatch with the same `version` input) — the upload is
-# idempotent (softprops/action-gh-release appends to an existing
-# release rather than replacing).
+# BUILD-THEN-TAG. `tag` needs `build`, so a tag can only exist for a
+# commit whose full 4-target release matrix went green. A failed build
+# leaves nothing to clean up — no tag, no release, no orphaned assets.
 #
-# Prerequisites:
-#   * GitHub Copilot coding agent enabled for THIS repo
-#   * secrets.RELEASE_PLZ_TOKEN — user PAT, read/write on issues, PRs,
-#     contents, actions (required to start a Copilot agent session)
-#   * secrets.MINISTR_PRIVATE_DISPATCH_TOKEN — fine-grained PAT with
-#     `actions: write` on OlsonSoftware/ministr-private (fires the
-#     repository_dispatch that triggers the private build)
-#   * ministr-private side has its own secrets (Apple signing, R2
-#     sccache, PUBLIC_RELEASE_TOKEN) — see
-#     ministr-private/.github/README.md
+# 2026-08-15 — this replaced two things that did not work:
+#
+#   * the Copilot-cloud-agent release-PR lane (`request-release`), which
+#     had 122 unanswered handoff prompts and last succeeded before
+#     v0.6.0. Version bumping is a documented manual step now.
+#   * the F31.5 cross-repo split, which pushed the tag here and then
+#     dispatched ministr-private to build `ministr-cli-cloud` — a
+#     PROPRIETARY crate whose [[bin]] is also named `ministr` — and
+#     upload it to this repo's releases. That made the artifact people
+#     downloaded as "the MIT ministr" the closed cloud build, and it
+#     could never run anyway: ministr-private has zero Actions secrets.
+#     The public download is now built from the public MIT source, here.
+#
+# ministr-private keeps its own release.yml for a future cloud-only
+# artifact; it is no longer on the public download path.
+#
+# Prerequisites: none beyond the built-in GITHUB_TOKEN and the SCCACHE_*
+# secrets release.yml already consumes. That is the point.
 # ====================================================================
 
 on:
-  # PAUSED (2026-06-24): the release lane is shelved while the project
-  # focuses on the open-source cutover. This workflow no longer fires on
-  # every push to `main` — that was producing failed runs + tracking-issue
-  # noise because the Copilot release-PR agent path is currently inactive
-  # (see the roadmap: release-copilot-lane-stalled / release-dispatch-secret
-  # -missing). It is MANUAL-ONLY for now: trigger it from the Actions tab
-  # when you're ready to cut a release. To restore automatic releases,
-  # re-add the `push:` trigger below.
+  # Manual for now. Re-add `push: branches: [main]` once this has cut a
+  # release end-to-end at least once.
   workflow_dispatch:
+    inputs:
+      force:
+        description: >-
+          Release even when HEAD is not a `chore: release vX.Y.Z` commit.
+          Recovery escape hatch — the version must still be untagged.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────
-  # SINGLE SOURCE OF TRUTH for release state. `request-release` ("should
-  # we ask the agent to PREPARE a release?") and `gate` ("should we
-  # BUILD+TAG now?") used to each recompute the manifest version + the
-  # "is v<version> tagged?" check via their own git archaeology — two
-  # paths that could disagree (root cause of the #123 silent miss).
-  # Compute it ONCE here; the consumers only layer their own decision.
+  # SINGLE SOURCE OF TRUTH for release state. Computed ONCE here so the
+  # consumers cannot disagree about "what version is this and is it
+  # already tagged?" (two divergent paths were the root cause of the
+  # #123 silent miss).
   # ─────────────────────────────────────────────────────────────────────
   state:
     name: Resolve release state
@@ -80,8 +73,6 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
       - id: s
-        env:
-          BEFORE: ${{ github.event.before }}
         shell: bash
         run: |
           set -euo pipefail
@@ -98,7 +89,8 @@ jobs:
           echo "tagged=$tagged" >> "$GITHUB_OUTPUT"
 
           # No blanket `|| true` swallow: "no v* tag yet" is a distinct,
-          # logged state vs a git failure.
+          # logged state vs a git failure. After the 2026-08 tag purge
+          # this is the normal state until the first release lands.
           if last_tag="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null)"; then
             :
           else
@@ -107,412 +99,73 @@ jobs:
           fi
           echo "last_tag=$last_tag" >> "$GITHUB_OUTPUT"
 
-          # Is HEAD the release-bump commit? subject `chore: release vX`
-          # OR this push changed the cli version line. (`BEFORE` is unset
-          # on workflow_dispatch — the subject test still covers it.)
+          # Is HEAD the release-bump commit? Subject `chore: release vX`.
           subject="$(git log -1 --format=%s)"
           release_commit=false
           case "$subject" in
             "chore: release v$ver"*) release_commit=true ;;
           esac
-          if [ "$release_commit" != true ] && [ -n "${BEFORE:-}" ] \
-             && git cat-file -e "$BEFORE" 2>/dev/null \
-             && git diff "$BEFORE" HEAD -- ministr-cli/Cargo.toml \
-                  | grep -qE '^\+version = '; then
-            release_commit=true
-          fi
           echo "release_commit=$release_commit" >> "$GITHUB_OUTPUT"
           echo "::notice::state: version=$ver tagged=$tagged release_commit=$release_commit last_tag=${last_tag:-<none>}"
 
-  # Detect releasable work since the last tag and delegate the release
-  # PR to the Copilot cloud agent. No version math, no changelog
-  # generation here — the agent owns that judgment.
-  request-release:
-    name: Request release (Copilot agent)
-    needs: state
-    runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'OlsonSoftware' }}
-    permissions:
-      contents: read
-      issues: write
-      pull-requests: read
-    concurrency:
-      group: request-release
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-          # `git describe` below needs tags. fetch-depth:0 alone runs
-          # `git fetch --no-tags …`; without this, tag availability for
-          # describe is incidental, not guaranteed.
-          fetch-tags: true
-          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
-
-      - name: Detect releasable commits
-        id: detect
-        env:
-          # Shared release state — computed once in the `state` job, not
-          # recomputed here (was a divergent second path → #123 miss).
-          STATE_VERSION: ${{ needs.state.outputs.version }}
-          STATE_TAGGED: ${{ needs.state.outputs.tagged }}
-          STATE_LAST_TAG: ${{ needs.state.outputs.last_tag }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          head_sha="$(git rev-parse HEAD)"
-          range="${STATE_LAST_TAG:+$STATE_LAST_TAG..}HEAD"
-          # Re-exported for the "Hand the release" step's evidence block.
-          echo "last_tag=${STATE_LAST_TAG:-}" >> "$GITHUB_OUTPUT"
-          echo "range=$range" >> "$GITHUB_OUTPUT"
-          echo "::notice::detect: head=$head_sha last_tag=${STATE_LAST_TAG:-<none>} range=$range"
-
-          # CORE INVARIANT: in steady state the manifest version == the
-          # last `vX.Y.Z` tag. If the manifest is UNTAGGED, a release is
-          # already prepared and in flight (its release PR merged; the
-          # deterministic gate→build→tag path owns it until the tag
-          # lands). Starting another agent session now would prepare a
-          # "next" release on top of an untagged one — the phantom-
-          # pending-release failure mode. Skip until tagged.
-          if [ "$STATE_TAGGED" != true ]; then
-            echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::v$STATE_VERSION is prepared but not yet tagged — a release is in flight; the deterministic gate/build/tag path owns it. Not starting a new agent session."
-            exit 0
-          fi
-
-          # Compute the commit log explicitly. A `git log` failure
-          # (e.g. an unresolved range because tags weren't fetched) must
-          # NOT collapse into "nothing to release": that turned a real
-          # detection miss into a green, benign-looking log and silently
-          # stalled the release. Fail loud instead.
-          if ! commits="$(git log "$range" --format='%s%n%b' 2>&1)"; then
-            echo "::error::git log '$range' failed — cannot determine releasable commits; refusing to silently report 'nothing to release'"
-            printf '%s\n' "$commits" >&2
-            exit 1
-          fi
-
-          # Conventional types that warrant a release (or any breaking
-          # `!` / `BREAKING CHANGE`). docs/chore/ci/test/style never bump.
-          matched="$(printf '%s\n' "$commits" \
-            | grep -Eim1 '^(feat|fix|perf|revert)(\(.+\))?!?:|^[a-z]+(\(.+\))?!:|BREAKING CHANGE' \
-            || true)"
-          if [ -n "$matched" ]; then
-            echo "release=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::releasable commit in $range — $matched"
-          else
-            echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::no releasable (feat/fix/perf/revert/breaking) commits since ${STATE_LAST_TAG:-repo start}; nothing to do"
-          fi
-
-      - name: Skip if a release PR is already open
-        id: openpr
-        if: ${{ steps.detect.outputs.release == 'true' }}
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Do NOT depend solely on the `release` label: the Copilot
-          # agent cannot self-apply labels (no labels permission), so a
-          # real in-flight release PR is routinely unlabelled. Match it
-          # by ANY robust signal — label, the agent's branch prefix, or
-          # the conventional release title — so a second push/dispatch
-          # can't spawn a duplicate agent session / second release PR.
-          n="$(gh pr list --state open \
-                --json number,title,headRefName,labels \
-                --jq '[ .[]
-                        | select(
-                            (.labels | any(.name == "release"))
-                            or (.headRefName | startswith("copilot/release-"))
-                            or (.title | test("^chore: release "))
-                          ) ][0].number // empty')"
-          if [ -n "$n" ]; then
-            echo "Release PR #$n already open — Copilot owns it; leaving it alone."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Verify Copilot coding agent is available
-        id: copilot
-        if: ${{ steps.detect.outputs.release == 'true' && steps.openpr.outputs.skip == 'false' }}
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          login="$(gh api graphql \
-            -H 'GraphQL-Features: issues_copilot_assignment_api_support,coding_agent_model_selection' \
-            -f query='query($o:String!,$r:String!){repository(owner:$o,name:$r){suggestedActors(capabilities:[CAN_BE_ASSIGNED],first:50){nodes{login __typename}}}}' \
-            -F o='${{ github.repository_owner }}' -F r="${GITHUB_REPOSITORY#*/}" \
-            --jq '.data.repository.suggestedActors.nodes[]?|select(.login=="copilot-swe-agent")|.login' || true)"
-          if [ "$login" != "copilot-swe-agent" ]; then
-            echo "::error::Copilot coding agent is not assignable here. Enable it in repo/org settings, and ensure RELEASE_PLZ_TOKEN is a user PAT with issues/PR/contents/actions write."
-            exit 1
-          fi
-          echo "ok=true" >> "$GITHUB_OUTPUT"
-
-      - name: Hand the release to the Copilot agent
-        if: ${{ steps.detect.outputs.release == 'true' && steps.openpr.outputs.skip == 'false' && steps.copilot.outputs.ok == 'true' }}
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-          REPO: ${{ github.repository }}
-          LAST_TAG: ${{ steps.detect.outputs.last_tag }}
-          RANGE: ${{ steps.detect.outputs.range }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # Commit log + diffstat since the last tag — the evidence the
-          # agent reasons over to pick the bump and write the changelog.
-          {
-            echo "## Commits since ${LAST_TAG:-repo start}"
-            echo
-            echo '```'
-            git log "$RANGE" --no-merges --format='- %s (%h)'
-            echo '```'
-            echo
-            echo '## Diffstat'
-            echo
-            echo '```'
-            git diff --stat "${LAST_TAG:+$LAST_TAG..}HEAD" | tail -40
-            echo '```'
-          } > /tmp/evidence.md
-
-          PLAYBOOK=$(cat <<'EOF'
-          # Release task — prepare the next version PR
-
-          You are managing this repository's release. Produce ONE pull
-          request that cuts the next version. Do NOT create tags or
-          GitHub Releases — CI does that deterministically only after a
-          fully green build of the merged PR.
-
-          ## ⚠️ HARD CONSTRAINTS — read first
-
-          **You are running on a small ephemeral runner with limited
-          disk space.** This repository's Rust workspace pulls hundreds
-          of dependencies (ONNX Runtime, tree-sitter grammars,
-          etc.). A single `cargo build` / `cargo check` / `cargo update`
-          / `just *` invocation downloads + compiles gigabytes and will
-          exhaust the runner's disk, failing the release.
-
-          Your task is **pure text edits**. You MUST NOT run any of:
-
-          - `cargo build`, `cargo check`, `cargo test`, `cargo run`
-          - `cargo update`, `cargo metadata`, `cargo tree`,
-            `cargo package`, `cargo publish`
-          - `just *` (every recipe transitively invokes cargo)
-          - `rustc`, `rustup`, anything that compiles or resolves
-            dependencies
-          - any script that runs the above (e.g. `scripts/ci/ci.py`)
-
-          Validation of your bump happens **in CI after the PR merges**
-          — that's the entire point of the deterministic `gate → build →
-          tag` pipeline downstream. Your job ends when the PR is open.
-
-          ## Decide the version (SemVer, pre-1.0 aware)
-          - From the commits/diffstat below, pick the next X.Y.Z from the
-            last tag using Conventional Commits: breaking (`!` /
-            `BREAKING CHANGE`) bumps MINOR while 0.x (MAJOR once >= 1.0);
-            `feat` -> MINOR; `fix`/`perf` -> PATCH.
-          - If nothing is actually releasable (docs/chore/ci only),
-            comment saying so and do not open a PR.
-
-          ## Make the change (text edits only — no cargo, no just)
-
-          1. **Crate `version` strings.** In each of these files, find
-             the line `version = "OLD"` under the `[package]` table and
-             replace `OLD` with the new X.Y.Z:
-             - `ministr-api/Cargo.toml`
-             - `ministr-core/Cargo.toml`
-             - `ministr-daemon/Cargo.toml`
-             - `ministr-backend/Cargo.toml`
-             - `ministr-mcp/Cargo.toml`
-             - `ministr-cli/Cargo.toml`
-             - `ministr-tui/Cargo.toml`
-             Keep `tree-sitter-unreal-cpp` (vendored, separate version)
-             untouched — it is not part of the product version.
-
-          2. **Workspace path-dep requirements.** In the root
-             `Cargo.toml` under `[workspace.dependencies]`, each of the
-             internal crates appears as e.g.
-             `ministr-api = { path = "ministr-api", version = "OLD" }`.
-             Replace `OLD` with the new X.Y.Z on all seven lines
-             (ministr-api, ministr-core, ministr-daemon, ministr-backend,
-             ministr-mcp, ministr-cli, ministr-tui) —
-             required for `cargo package/publish` to accept the
-             workspace.
-
-          3. **`Cargo.lock` (text edit, NOT `cargo update`).** Open
-             `Cargo.lock` as plain text. Find each `[[package]]` block
-             whose `name = "ministr-XXX"` matches a workspace crate
-             (api / core / daemon / backend / mcp / cli / tui) and update its
-             `version = "OLD"` line to
-             the new X.Y.Z. **Do not run `cargo update` — it will
-             explode the runner's disk.** No other `[[package]]` blocks
-             need editing; transitive deps don't change.
-
-          4. **`CHANGELOG.md`.** Prepend a new
-             `## [X.Y.Z](https://github.com/OlsonSoftware/ministr/releases/tag/vX.Y.Z) - <UTC date>`
-             section (Keep a Changelog format), with grouped
-             `### Added / Changed / Fixed / Removed` entries written for
-             humans — one bullet per real change, never raw squashed
-             subjects. If there are breaking changes, include a
-             prominent `### Breaking changes — migration` block listing
-             every renamed/removed public API, MCP tool id, HTTP route,
-             response field, config flag, or doc slug as `old → new`.
-             Do not leave an empty `[Unreleased]` stub.
-
-          ## Open the PR
-          - Branch: `release/vX.Y.Z`. Base: `main`.
-          - PR title (exact): `chore: release vX.Y.Z`.
-          - Label the PR `release`.
-          - PR body: the bump rationale + the CHANGELOG section; note
-            that merging triggers build-then-tag and only a green build
-            tags `vX.Y.Z`.
-          - Request review when done. Make no other changes.
-
-          ## Self-check before opening the PR
-          - The diff touches **only** the 10 files listed in steps 1-4
-            (7 crate Cargo.toml, root Cargo.toml, Cargo.lock,
-            CHANGELOG.md). If you find yourself touching anything else
-            you have drifted off-task; stop and re-read the constraints.
-          - No `target/` directory, no `cargo-*` binaries, no fetched
-            registry caches should appear in `git status`.
-          - The PR description does **not** mention having run any
-            build/test command — because you didn't run any.
-          EOF
-          )
-
-          title='release: prepare next version'
-          body="$(printf '%s\n\n%s\n' "$PLAYBOOK" "$(cat /tmp/evidence.md)")"
-
-          # Keep exactly ONE open tracking issue. If it exists, re-ping
-          # the agent with fresh evidence instead of opening a duplicate.
-          issue="$(gh issue list --state open --label release \
-                    --json number,title \
-                    --jq '.[]|select(.title=="'"$title"'")|.number' | head -n1 || true)"
-
-          if [ -n "${issue:-}" ]; then
-            echo "Re-pinging existing release issue #$issue"
-            gh issue comment "$issue" --body "$body"
-          else
-            issue="$(gh issue create --title "$title" --label release \
-                      --body "$body" | grep -oE '[0-9]+$' | tail -n1)"
-            echo "Opened release issue #$issue"
-          fi
-
-          # Assign the Copilot cloud agent. A user-PAT-authored issue is
-          # required for the agent to pick it up.
-          #
-          # Model: we prefer Claude Opus 4.7. GitHub does not publish a
-          # stable assignment-API model slug, so this is BEST-EFFORT and
-          # MUST NOT break the release path: try the model-pinned
-          # assignment, and on any failure fall back to the plain
-          # assignment (which runs the org/Agents default — set that to
-          # Claude Opus 4.7 in org Copilot policy for a guaranteed
-          # global effect; this step only nudges it).
-          COPILOT_MODEL="${COPILOT_MODEL:-claude-opus-4.7}"
-          assigned=false
-          for m in "$COPILOT_MODEL" "Claude Opus 4.7"; do
-            if gh api --method POST \
-                 -H 'GraphQL-Features: issues_copilot_assignment_api_support,coding_agent_model_selection' \
-                 "repos/$REPO/issues/$issue/assignees" \
-                 -f 'assignees[]=copilot-swe-agent[bot]' \
-                 -f "model=$m" >/dev/null 2>&1; then
-              echo "Assigned Copilot coding agent to #$issue (model: $m)."
-              assigned=true
-              break
-            fi
-          done
-          if [ "$assigned" != true ]; then
-            # Fallback: known-good plain assignment (default model). The
-            # release flow must never hinge on the model pin.
-            gh api --method POST \
-              -H 'GraphQL-Features: issues_copilot_assignment_api_support' \
-              "repos/$REPO/issues/$issue/assignees" \
-              -f 'assignees[]=copilot-swe-agent[bot]'
-            echo "Assigned Copilot coding agent to #$issue (default model — model pin not honored by the API; set the org/Agents default to Claude Opus 4.7)."
-          fi
-
-  # ── F31.5: tag here + dispatch private; build moved out ─────────────
-  #
-  # The release-bump commit fires `tag` (push v<X.Y.Z>) +
-  # `dispatch-private` (fire repository_dispatch into ministr-private,
-  # which owns the build matrix + signing + cross-repo artifact upload
-  # back to THIS repo's release). `is_release` is true iff
-  # `v<manifest>` is still untagged AND this push is the release commit
-  # (HEAD subject `chore: release vX.Y.Z`, or the push changed
-  # ministr-cli's `version`).
-  #
-  # The "no tag until green build" property is preserved on the
-  # PRIVATE side now: private's release.yml gates the GitHub Release
-  # create on the entire matrix being green. If the private build
-  # fails after this job pushes the tag here, the tag exists but the
-  # release at that tag has no attached artifacts — re-dispatch
-  # private's workflow with the same `version` input to retry the
-  # upload (idempotent — softprops/action-gh-release appends rather
-  # than replaces).
+  # Decide whether to build+tag+publish. Requires the manifest version to
+  # be UNTAGGED, plus either a `chore: release vX.Y.Z` HEAD or an
+  # explicit `force` dispatch input.
   gate:
     name: Detect pending release
     needs: state
     runs-on: ubuntu-latest
     if: ${{ github.repository_owner == 'OlsonSoftware' }}
     outputs:
-      # `version` is the shared state's version verbatim — no second
-      # parse. `build`/`tag-and-release` keep consuming gate outputs.
       is_release: ${{ steps.d.outputs.is_release }}
       version: ${{ needs.state.outputs.version }}
+      prerelease: ${{ steps.d.outputs.prerelease }}
     steps:
-      # No checkout / git here: this is a pure decision over the shared
-      # `state` outputs. BUILD+TAG only when the manifest is UNTAGGED
-      # *and* HEAD is the release-bump commit — identical contract to
-      # before, now sourced from the single state computation.
       - id: d
         env:
           VER: ${{ needs.state.outputs.version }}
           TAGGED: ${{ needs.state.outputs.tagged }}
           RELEASE_COMMIT: ${{ needs.state.outputs.release_commit }}
+          FORCE: ${{ inputs.force }}
         shell: bash
         run: |
           set -euo pipefail
           if [ "$TAGGED" = true ]; then
-            echo "v$VER is already tagged - nothing to release"
+            echo "::error::v$VER is already tagged — bump the version before releasing"
             echo "is_release=false" >> "$GITHUB_OUTPUT"
-          elif [ "$RELEASE_COMMIT" = true ]; then
-            echo "v$VER untagged and this is the release commit - release pending"
+          elif [ "$RELEASE_COMMIT" = true ] || [ "$FORCE" = true ]; then
+            echo "::notice::v$VER untagged and releasable — build → tag → publish"
             echo "is_release=true" >> "$GITHUB_OUTPUT"
           else
-            echo "v$VER untagged but this push is not the release commit - skipping build (re-run the chore: release PR to retry a failed release)"
+            echo "::error::v$VER is untagged but HEAD is not 'chore: release v$VER'. Commit the bump with that subject, or re-run with force=true."
             echo "is_release=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # F31.5 (2026-05-27): build + tag-and-release replaced with `tag` +
-  # `dispatch-private`. The PUBLIC repo no longer builds release
-  # artifacts itself — that work moved to ministr-private's release.yml,
-  # which clones both repos as siblings, builds the cloud-capable
-  # `ministr-cli-cloud` binary, signs + bundles, then uploads to THIS
-  # repo's release at the same v<X.Y.Z> tag via a cross-repo PAT. This
-  # repo still OWNS the version + tag (single source of truth for
-  # ministr's version number), but the release-binary artifacts are
-  # populated by the private workflow.
-  #
-  # See STEWARDSHIP.md → "Release pipeline" + ../ministr-private/.github/README.md
-  # for the secret + PAT setup.
+          # A SemVer prerelease (1.0.0-beta.1) carries a hyphen in the
+          # version core. Mark those as GitHub prereleases so `latest`
+          # keeps pointing at the newest STABLE release. install.sh
+          # resolves prereleases explicitly — see its find_tag().
+          case "$VER" in
+            *-*) echo "prerelease=true"  >> "$GITHUB_OUTPUT" ;;
+            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
 
-  # Push the v<X.Y.Z> tag on a green release-bump commit. NO BUILD here —
-  # the deterministic "no tag without green build" property is now
-  # enforced by ministr-private's release.yml (which only creates the
-  # release after every matrix shard is green). Failure path: if
-  # ministr-private's build fails, the tag still exists here (this job
-  # ran first) but the release at that tag has no artifacts attached.
-  # The user fixes the failure and re-dispatches the private workflow
-  # with the same version input — re-runs are append-only on the
-  # existing release.
+  # Build every release artifact for THIS commit, before any tag exists.
+  # release.yml is a build-only reusable workflow: 4-target matrix →
+  # cargo build -p ministr-cli → package → per-file .sha256 → one
+  # `release-artifacts` bundle with a unified SHA256SUMS.
+  build:
+    name: Build release artifacts
+    needs: gate
+    if: ${{ needs.gate.outputs.is_release == 'true' }}
+    uses: ./.github/workflows/release.yml
+    secrets: inherit
+
+  # Only now — after a fully green matrix — does the tag exist.
   tag:
     name: Push tag v<X.Y.Z>
-    needs: gate
-    if: ${{ github.repository_owner == 'OlsonSoftware' && needs.gate.outputs.is_release == 'true' }}
+    needs: [gate, build]
+    if: ${{ needs.gate.outputs.is_release == 'true' }}
     concurrency:
       group: release-tag-v${{ needs.gate.outputs.version }}
       cancel-in-progress: false
@@ -524,7 +177,6 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
       - name: Push tag
         env:
@@ -540,36 +192,80 @@ jobs:
             git push origin "refs/tags/v$VER"
           fi
 
-  # Trigger ministr-private's release.yml via repository_dispatch. The
-  # private workflow handles the entire build matrix + signing + upload
-  # back to THIS repo's release. We don't wait for it — the private
-  # workflow is independently observable in github.com/OlsonSoftware/
-  # ministr-private/actions. Resilient: failures there don't block
-  # other work on this branch (the chore: release PR is already
-  # merged, the tag is pushed; only the artifact upload is pending).
-  dispatch-private:
-    name: Trigger ministr-private build
+  # Publish the GitHub Release with every artifact attached. Uses `gh`
+  # + the built-in GITHUB_TOKEN rather than a third-party action, so
+  # there is no extra commit SHA to pin and audit.
+  publish:
+    name: Publish GitHub Release
     needs: [gate, tag]
-    if: ${{ github.repository_owner == 'OlsonSoftware' && needs.gate.outputs.is_release == 'true' }}
+    if: ${{ needs.gate.outputs.is_release == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
+    permissions:
+      contents: write
     steps:
-      - name: repository_dispatch into ministr-private
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Reusable-workflow jobs upload into the CALLER's run, so the
+      # bundle `build` produced is retrievable here by name.
+      - name: Download release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-artifacts
+          path: artifacts
+
+      # Release notes = this version's CHANGELOG section, verbatim. A
+      # missing section is a hard error: shipping a release whose notes
+      # silently degrade to "see the changelog" is how changelogs rot.
+      - name: Extract release notes
         env:
-          # F31.5 secret: PAT with `actions: write` on
-          # github.com/OlsonSoftware/ministr-private (lets us fire its
-          # release.yml via repository_dispatch).
-          GH_TOKEN: ${{ secrets.MINISTR_PRIVATE_DISPATCH_TOKEN }}
           VER: ${{ needs.gate.outputs.version }}
+        shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::error::MINISTR_PRIVATE_DISPATCH_TOKEN unset. Configure a fine-grained PAT (actions:write on OlsonSoftware/ministr-private) in this repo's Secrets → Actions."
-            exit 1
+          python3 - <<'PY'
+          import os, re, sys, pathlib
+
+          ver = os.environ["VER"]
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+
+          # Match `## [1.0.0-beta.1] ...` or `## 1.0.0-beta.1 ...`, then
+          # take everything up to the next `## ` heading.
+          pattern = re.compile(
+              r"^##\s+\[?" + re.escape(ver) + r"\]?[^\n]*\n(.*?)(?=^##\s|\Z)",
+              re.S | re.M,
+          )
+          m = pattern.search(text)
+          if not m:
+              sys.exit(f"::error::no CHANGELOG.md section for {ver} — write one before releasing")
+
+          body = m.group(1).strip()
+          if not body:
+              sys.exit(f"::error::CHANGELOG.md section for {ver} is empty")
+
+          pathlib.Path("release-notes.md").write_text(body + "\n", encoding="utf-8")
+          print(f"::notice::release notes: {len(body)} chars from CHANGELOG.md")
+          PY
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VER: ${{ needs.gate.outputs.version }}
+          PRERELEASE: ${{ needs.gate.outputs.prerelease }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          flags=()
+          [ "$PRERELEASE" = true ] && flags+=(--prerelease)
+
+          if gh release view "v$VER" >/dev/null 2>&1; then
+            echo "::notice::release v$VER exists — uploading assets (clobbering same-named)"
+            gh release upload "v$VER" artifacts/* --clobber
+          else
+            gh release create "v$VER" artifacts/* \
+              --title "v$VER" \
+              --notes-file release-notes.md \
+              "${flags[@]}"
           fi
-          gh api --method POST \
-            -H "Accept: application/vnd.github+json" \
-            "repos/OlsonSoftware/ministr-private/dispatches" \
-            -f event_type="build-release" \
-            -f "client_payload[version]=$VER"
-          echo "::notice::dispatched ministr-private/release.yml for v$VER — watch github.com/OlsonSoftware/ministr-private/actions"
+
+          echo "::notice::published https://github.com/${GITHUB_REPOSITORY}/releases/tag/v$VER"

@@ -5,10 +5,15 @@
 #   iwr -useb https://ministr.ai/install.ps1 | iex
 #
 # Honors env-var overrides:
+#   MINISTR_VERSION      install this version instead of the newest
+#                        (e.g. 1.0.0-beta.1; a leading `v` is optional)
 #   MINISTR_GITHUB_REPO  override the repo (default: OlsonSoftware/ministr)
 #   MINISTR_DL_HOST      override the download host (testing / mirrors)
 #   INSTALL_DIR          override the install location
 #                        (default: %USERPROFILE%\.ministr\bin)
+#
+# NOTE: the Windows build is published but NOT covered by CI — see the
+# supported-platforms table in docs/getting-started/installation.md.
 
 [CmdletBinding()]
 param()
@@ -40,14 +45,45 @@ $target  = "$arch-pc-windows-msvc"
 $archive = "ministr-$target.zip"
 
 Write-Info 'Finding latest ministr release...'
-try {
-    $latest = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -UseBasicParsing
-} catch {
-    Write-Err "could not reach GitHub API — check your network. ($_)"
+
+# Resolve which tag to install.
+#
+#   MINISTR_VERSION=1.0.0-beta.1  -> pin exactly (leading `v` optional)
+#   otherwise                     -> newest stable, else newest prerelease
+#
+# /releases/latest EXCLUDES prereleases and 404s on a repo that has only
+# prereleases -- exactly the state of a beta line. Falling back to
+# /releases (newest first, all kinds) is what keeps this working during
+# a beta.
+$tag = $null
+if ($env:MINISTR_VERSION) {
+    $tag = if ($env:MINISTR_VERSION.StartsWith('v')) { $env:MINISTR_VERSION } else { "v$($env:MINISTR_VERSION)" }
+} else {
+    try {
+        $tag = (Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -UseBasicParsing).tag_name
+    } catch {
+        $tag = $null
+    }
+    if (-not $tag) {
+        try {
+            $tag = (Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases?per_page=1" -UseBasicParsing | Select-Object -First 1).tag_name
+            if ($tag) { Write-Info 'No stable release yet - installing the newest prerelease.' }
+        } catch {
+            Write-Err "could not reach the GitHub API - check your network. ($_)"
+        }
+    }
 }
-$tag = $latest.tag_name
-if (-not $tag) { Write-Err "could not determine latest release tag from $DlHost/latest" }
-Write-Info "Latest release: $tag"
+
+if (-not $tag) {
+    Write-Err @"
+no published releases found for $Repo.
+  Install from source instead:
+    cargo install --git https://github.com/$Repo --locked ministr-cli
+  Or pin a specific version once one is published:
+    `$env:MINISTR_VERSION='1.0.0-beta.1'; iwr -useb https://ministr.ai/install.ps1 | iex
+"@
+}
+Write-Info "Installing: $tag"
 
 $url = "$DlHost/$tag/$archive"
 
