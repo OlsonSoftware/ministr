@@ -133,7 +133,10 @@ async fn test_concurrent_session_isolation() {
 
 #[tokio::test]
 async fn test_high_concurrency_survey() {
-    let result = tokio::time::timeout(Duration::from_secs(30), async {
+    // Deadlock guard, not a performance bar: 500 debug-build surveys
+    // measure ~28s on a quiet dev machine, so 30s had zero margin and
+    // any background load tipped it into a false timeout.
+    let result = tokio::time::timeout(Duration::from_secs(90), async {
         let daemon = TestDaemon::start().await;
         let num_clients = 50;
         let queries_per_client = 10;
