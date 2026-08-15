@@ -107,8 +107,8 @@ enum Command {
     /// the MCP proxy) and leaves it running on quit.
     Ui,
 
-    /// Search the corpus via the daemon (requires the ministr daemon to
-    /// be running).
+    /// Search the corpus — through the shared daemon when one is
+    /// running, otherwise in-process against the local index.
     Search {
         /// Search query.
         query: String,
@@ -408,9 +408,7 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
         }
         Command::Status => commands::cmd_daemon_status().await,
         Command::Ui => commands::cmd_ui().await,
-        Command::Search { query, top_k } => {
-            commands::cmd_daemon_search(&rc.corpus_paths, &query, top_k).await
-        }
+        Command::Search { query, top_k } => dispatch_search(&rc, &query, top_k).await,
         Command::Init {
             force,
             interactive,
@@ -439,4 +437,19 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
             unreachable!("ministr __daemon is dispatched before resolve_config in main()")
         }
     }
+}
+
+/// `ministr search` argument plumbing — the resolved config carries the
+/// model/dimension/rerank knobs the in-process fallback needs.
+async fn dispatch_search(rc: &ResolvedConfig, query: &str, top_k: usize) -> Result<()> {
+    commands::cmd_search(
+        &rc.corpus_paths,
+        &rc.config,
+        &rc.resolved_model,
+        rc.resolved_dimension,
+        rc.rerank_depth,
+        query,
+        top_k,
+    )
+    .await
 }

@@ -459,6 +459,28 @@ fn create_fresh_index(
     Ok(Arc::new(fresh))
 }
 
+/// Assemble the in-process [`QueryService`](ministr_core::service::QueryService)
+/// from initialized infrastructure: storage + embedder + vector index, plus
+/// the optional Matryoshka-rerank and sparse-hybrid stages the corpus opted
+/// into. Shared by the serve path and the seam-based query commands.
+pub(crate) fn build_query_service(
+    ctx: &InfrastructureContext,
+) -> Arc<ministr_core::service::QueryService> {
+    let mut service = ministr_core::service::QueryService::new(
+        (*ctx.storage).clone(),
+        Arc::clone(&ctx.embedder),
+        Arc::clone(&ctx.index),
+    );
+    if let Some(ref dual_emb) = ctx.dual_embedder {
+        service = service.with_matryoshka_rerank(Arc::clone(dual_emb), ctx.rerank_depth);
+    }
+    // hybrid fusion on the survey path when the corpus opted in.
+    if let (Some(se), Some(si)) = (&ctx.sparse_embedder, &ctx.sparse_index) {
+        service = service.with_sparse(Arc::clone(se), Arc::clone(si), ctx.sparse_weight);
+    }
+    Arc::new(service)
+}
+
 /// Build a fully configured `MinistrServer` with web fetcher, git fetcher, and coherence watcher.
 ///
 /// Returns the server and a coherence handle that must be kept alive.
@@ -494,19 +516,7 @@ pub(crate) async fn build_server(
     )
     .await?;
 
-    let mut service = ministr_core::service::QueryService::new(
-        (*ctx.storage).clone(),
-        Arc::clone(&ctx.embedder),
-        Arc::clone(&ctx.index),
-    );
-    if let Some(ref dual_emb) = ctx.dual_embedder {
-        service = service.with_matryoshka_rerank(Arc::clone(dual_emb), ctx.rerank_depth);
-    }
-    // hybrid fusion on the survey path when the corpus opted in.
-    if let (Some(se), Some(si)) = (&ctx.sparse_embedder, &ctx.sparse_index) {
-        service = service.with_sparse(Arc::clone(se), Arc::clone(si), ctx.sparse_weight);
-    }
-    let service = Arc::new(service);
+    let service = build_query_service(&ctx);
 
     let session_id = corpus_session_id(corpus_paths);
     let budget_config = UsageConfig {

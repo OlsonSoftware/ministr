@@ -29,6 +29,10 @@ workspace = true
 
 [dependencies]
 ministr-api.workspace = true
+# arch-backend-seam-promotion — query commands (`ministr search`) ride
+# the shared QueryBackend seam: daemon-forward when a daemon is running,
+# in-process LocalBackend otherwise. Same seam the MCP server uses.
+ministr-backend.workspace = true
 # `ministr ui` — the terminal console (GUI-BLUEPRINT-v8). The TUI crate
 # owns terminal setup/teardown and the event loop; the CLI only routes
 # the subcommand to `ministr_tui::run()`.

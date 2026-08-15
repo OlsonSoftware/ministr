@@ -1325,6 +1325,16 @@ pub async fn cmd_index(
         return Ok(());
     }
 
+    // arch-backend-seam-promotion: when a daemon is running it is the
+    // index's single writer (daemon-SSOT) — hand the job over by default
+    // instead of competing for the ownership lease. The lease refusal
+    // below stays as the backstop for a daemon that comes up mid-run.
+    let daemon = ministr_api::client::DaemonClient::new();
+    if daemon.is_healthy().await {
+        eprintln!("A ministr daemon is running — handing the indexing job to it.");
+        return register_and_wait_for_index(&daemon, corpus_paths).await;
+    }
+
     let ctx = match infra::init_infrastructure(
         corpus_paths,
         config,
@@ -1374,17 +1384,27 @@ async fn forward_index_to_daemon(corpus_paths: &[String], holder: &str) -> Resul
         ));
     }
 
-    let resp = client
-        .register_corpus(corpus_paths)
-        .await
-        .into_diagnostic()
-        .wrap_err("the daemon owns this index, but forwarding the job to it failed")?;
     eprintln!(
         "The shared ministr daemon already looks after this project's index — \
          handed the job to it instead of writing alongside it."
     );
+    register_and_wait_for_index(&client, corpus_paths).await
+}
 
-    wait_for_daemon_indexing(&client, &resp.corpus_id).await;
+/// Register the corpus with a healthy daemon (idempotent) and wait for any
+/// indexing that kicked off, preserving the one-shot contract (returns when
+/// the index is ready). Shared by the default daemon-forward path and the
+/// lease-refusal fallback.
+async fn register_and_wait_for_index(
+    client: &ministr_api::client::DaemonClient,
+    corpus_paths: &[String],
+) -> Result<()> {
+    let resp = client
+        .register_corpus(corpus_paths)
+        .await
+        .into_diagnostic()
+        .wrap_err("forwarding the indexing job to the daemon failed")?;
+    wait_for_daemon_indexing(client, &resp.corpus_id).await;
     Ok(())
 }
 
@@ -1900,36 +1920,64 @@ pub async fn cmd_daemon_status() -> Result<()> {
     Ok(())
 }
 
-/// `ministr search` — search the corpus via the daemon.
-pub async fn cmd_daemon_search(corpus_paths: &[String], query: &str, top_k: usize) -> Result<()> {
+/// `ministr search` — semantic search through the shared query seam
+/// (arch-backend-seam-promotion): forwarded to the daemon when one is
+/// running (it owns the index — daemon-SSOT), run in-process against the
+/// local index otherwise. Both paths are the same [`ministr_backend::Backend`]
+/// the MCP server queries through.
+pub async fn cmd_search(
+    corpus_paths: &[String],
+    config: &ministr_core::config::MinistrConfig,
+    resolved_model: &str,
+    resolved_dimension: Option<usize>,
+    rerank_depth: Option<usize>,
+    query: &str,
+    top_k: usize,
+) -> Result<()> {
     let client = ministr_api::client::DaemonClient::new();
-    if !client.is_available() {
-        miette::bail!(
-            "ministr daemon is not running (no endpoint at {})",
-            client.endpoint()
-        );
+    if client.is_healthy().await {
+        // Register is idempotent; the daemon answers from its warm index.
+        let resp = client
+            .register_corpus(corpus_paths)
+            .await
+            .into_diagnostic()
+            .wrap_err("failed to register corpus with the daemon")?;
+        let backend = ministr_backend::Backend::daemon(Arc::new(client), resp.corpus_id, None);
+        run_search(&backend, query, top_k).await
+    } else {
+        // No daemon — run in-process through the same seam. The ownership
+        // lease inside init_infrastructure keeps the one-writer invariant:
+        // if another live process owns the index dir, this surfaces the
+        // plain refusal instead of opening the index alongside it.
+        let ctx = infra::init_infrastructure(
+            corpus_paths,
+            config,
+            Some(resolved_model),
+            resolved_dimension,
+            rerank_depth,
+        )
+        .await?;
+        let backend = ministr_backend::Backend::local(infra::build_query_service(&ctx));
+        // `ctx` (and its lease) stays alive until the query finishes.
+        run_search(&backend, query, top_k).await
     }
+}
 
-    // Register corpus if needed.
-    let resp = client
-        .register_corpus(corpus_paths)
-        .await
-        .into_diagnostic()
-        .wrap_err("failed to register corpus")?;
-
-    let results = client
-        .survey(&resp.corpus_id, query, Some(top_k))
+/// Execute one survey through the seam and print the ranked results.
+async fn run_search(backend: &ministr_backend::Backend, query: &str, top_k: usize) -> Result<()> {
+    let results = backend
+        .survey(None, None, query, top_k)
         .await
         .into_diagnostic()
         .wrap_err("search failed")?;
 
-    for r in &results.results {
+    for r in &results {
         eprintln!("[{:8}] {:.3}  {}", r.resolution, r.score, r.content_id);
         eprintln!("  {}", r.text.lines().next().unwrap_or(""));
         eprintln!();
     }
 
-    if results.results.is_empty() {
+    if results.is_empty() {
         eprintln!("No results found.");
     }
 
