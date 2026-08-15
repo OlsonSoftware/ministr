@@ -10,7 +10,11 @@
 pub mod a2a;
 pub mod admin;
 pub mod auth;
-pub mod backend;
+// arch-backend-seam-promotion (2026-08-15): the backend module was
+// promoted to the shared `ministr-backend` crate so the CLI (and any
+// future non-MCP surface) consumes the same seam. The re-export keeps
+// every pre-existing `ministr_mcp::backend::*` path compiling.
+pub use ministr_backend as backend;
 pub mod bundle_routes;
 pub mod error;
 pub mod pg_tls;

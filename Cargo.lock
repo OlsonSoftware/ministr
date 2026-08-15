@@ -3891,6 +3891,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ministr-backend"
+version = "0.7.0"
+dependencies = [
+ "ministr-api",
+ "ministr-core",
+ "ministr-daemon",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "ministr-cli"
 version = "0.7.0"
 dependencies = [
@@ -4054,6 +4067,7 @@ dependencies = [
  "hmac 0.12.1",
  "miette",
  "ministr-api",
+ "ministr-backend",
  "ministr-core",
  "ministr-daemon",
  "rmcp",

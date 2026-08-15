@@ -36,6 +36,7 @@ FORBIDDEN: list[tuple[str, str]] = [
     ("ministr-daemon/src", "internal source path"),
     ("ministr-mcp/src", "internal source path"),
     ("ministr-api/src", "internal source path"),
+    ("ministr-backend/src", "internal source path"),
     ("ministr-cli/src", "internal source path"),
 ]
 

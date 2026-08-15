@@ -1,0 +1,32 @@
+[package]
+name = "ministr-backend"
+version = "0.7.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared query-backend seam for ministr — one QueryBackend trait with in-process and daemon-forwarding implementations, consumed by the MCP server and the CLI."
+readme = "README.md"
+homepage.workspace = true
+keywords = ["ministr", "backend", "query", "daemon"]
+categories = ["development-tools"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# The seam sits above the engine (service types, QueryService) and the
+# wire layer (DaemonClient, metadata) — and above ministr-daemon for the
+# Registry variant, which shares the daemon's in-process CorpusRegistry.
+# ministr-daemon does not depend on ministr-backend, so the arrow stays
+# acyclic: {core, api} <- daemon <- backend <- {mcp, cli}.
+ministr-api.workspace = true
+ministr-core.workspace = true
+ministr-daemon.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+tempfile.workspace = true

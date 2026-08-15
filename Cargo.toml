@@ -4,7 +4,7 @@
 # github.com/OlsonSoftware/ministr-private via `git filter-repo`. Their
 # history is preserved there with original authorship + dates; this
 # workspace now ships ONLY the MIT open-core crates. See STEWARDSHIP.md.
-members = ["ministr-api", "ministr-core", "ministr-daemon", "ministr-mcp", "ministr-cli", "ministr-tui"]
+members = ["ministr-api", "ministr-core", "ministr-daemon", "ministr-backend", "ministr-mcp", "ministr-cli", "ministr-tui"]
 resolver = "3"
 
 [workspace.package]
@@ -274,6 +274,11 @@ insta = "1"
 ministr-api = { path = "ministr-api", version = "0.7.0" }
 ministr-core = { path = "ministr-core", version = "0.7.0" }
 ministr-daemon = { path = "ministr-daemon", version = "0.7.0" }
+# arch-backend-seam-promotion (2026-08-15): the QueryBackend seam
+# (trait + Local/Daemon/DaemonMulti/Registry impls) promoted out of
+# ministr-mcp so non-MCP surfaces (CLI today, others later) consume
+# one seam instead of hand-rolling their own in-process path.
+ministr-backend = { path = "ministr-backend", version = "0.7.0" }
 ministr-mcp = { path = "ministr-mcp", version = "0.7.0" }
 # F31.2b-ii-B — `ministr-cloud-tools serve` (which lives in the
 # private sibling repo post-F31.4) depends on ministr-cli's lib

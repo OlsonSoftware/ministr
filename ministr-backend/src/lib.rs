@@ -1,7 +1,8 @@
-//! Pluggable backend abstraction for MCP tool handlers.
+//! Pluggable query-backend seam shared by every ministr query surface.
 //!
-//! [`QueryBackend`] is the trait MCP tool handlers code against. Two concrete
-//! implementations cover the two deployment shapes:
+//! [`QueryBackend`] is the trait surfaces (the MCP server's tool handlers,
+//! the CLI's query commands) code against. Two concrete implementations
+//! cover the two deployment shapes:
 //!
 //! - [`LocalBackend`] (in [`local`]) — calls an in-process [`QueryService`]
 //!   directly.
@@ -9,12 +10,12 @@
 //!   running `ministr-daemon` via [`DaemonClient`].
 //!
 //! [`Backend`] is a concrete enum that holds one of the two impls and also
-//! implements [`QueryBackend`], so the MCP server can hold a single concrete
+//! implements [`QueryBackend`], so a consumer can hold a single concrete
 //! field without giving up the abstraction.
 //!
 //! Adding a third backend (mock for tests, remote-only over TLS, etc.) means
-//! adding one module under `backend/` with `impl QueryBackend for NewBackend`
-//! and one variant on [`Backend`]. No existing handler changes — Open/Closed.
+//! adding one module to this crate with `impl QueryBackend for NewBackend`
+//! and one variant on [`Backend`]. No existing consumer changes — Open/Closed.
 //!
 //! ## Out of scope
 //!

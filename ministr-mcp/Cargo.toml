@@ -17,6 +17,9 @@ workspace = true
 
 [dependencies]
 ministr-api.workspace = true
+# arch-backend-seam-promotion — the QueryBackend seam lives in the
+# shared ministr-backend crate; `ministr_mcp::backend` re-exports it.
+ministr-backend.workspace = true
 ministr-core.workspace = true
 # F1.2 sub-bullet 3 — MinistrServer holds an optional
 # `Arc<ministr_daemon::registry::CorpusRegistry>` so the `/mcp` surface
