@@ -224,6 +224,59 @@ fn write_cache_token(index_dir: &Path, token: &CacheToken) {
     }
 }
 
+/// Persist the live index dump AND a fresh, matching validity token — the
+/// post-ingest counterpart of the load-time cache write in
+/// [`load_cached_or_rebuild_hnsw`] (f-ingest-hnsw-cache-postingest-refresh).
+///
+/// Why this must exist: [`HnswIndex::persist`] atomically swaps the ENTIRE
+/// index directory (stage to tmp, rename into place), so a bare post-ingest
+/// `index.persist(dir)` *deletes* whatever token the load-time seam wrote —
+/// which is why real corpora never kept a `cache_token.json` and every
+/// restart paid a full O(N·log N·M) rebuild. Routing the end-of-ingest
+/// persist through here writes the dump and then stamps a token that
+/// describes it, so the FIRST restart after an ingest is already a cache
+/// hit.
+///
+/// Ordering is deliberate: the fingerprint is read BEFORE the persist. If a
+/// concurrent mutation slips in between, the token is *older* than the dump
+/// and the next start's compare fails → a harmless rebuild. Reading it after
+/// could stamp a too-new token on an older dump — a stale cache hit, the one
+/// failure mode this seam exists to make impossible.
+///
+/// Token failure is best-effort (logged): it only costs the next start a
+/// rebuild, never correctness.
+///
+/// # Errors
+///
+/// Returns [`IndexError`] if the dump itself cannot be persisted.
+pub async fn persist_hnsw_cache<S: IndexedVectorStore + ?Sized>(
+    store: &S,
+    index: &dyn VectorIndex,
+    index_dir: &Path,
+    model_name: Option<&str>,
+) -> Result<(), IndexError> {
+    let fingerprint = match store.indexed_vector_fingerprint().await {
+        Ok(fp) => fp,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "could not fingerprint the vector store — persisting the dump without a cache token (next start rebuilds)"
+            );
+            None
+        }
+    };
+    index.persist(index_dir)?;
+    // Written AFTER the dir swap so the token lands in (and only ever
+    // describes) the live directory.
+    if let Some(fp) = fingerprint {
+        write_cache_token(
+            index_dir,
+            &CacheToken::new(index.dimension(), model_name, fp),
+        );
+    }
+    Ok(())
+}
+
 /// Load a persisted HNSW dump as a validated *derived cache*, or rebuild it.
 ///
 /// This is the drift-safe near-instant-restart seam (f-ingest-hnsw-cache-token):
@@ -549,6 +602,92 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(after_version.rebuilds(), 1, "version bump must rebuild");
+    }
+
+    // --- f-ingest-hnsw-cache-postingest-refresh: token survives ingest ---
+
+    #[tokio::test]
+    async fn post_ingest_persist_keeps_the_next_start_a_cache_hit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("idx");
+
+        // Boot 1: rebuild + cache written by the load-time seam.
+        let boot1 = CountingStore::new(vec![("a", vec![1.0, 0.0, 0.0])], Some(fp(1, 1)));
+        load_cached_or_rebuild_hnsw(&boot1, &dir, 3, Some("m"), None)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // An ingest mutates the source of truth and re-persists THROUGH THE
+        // SEAM — dump and token refreshed together.
+        let after_ingest = CountingStore::new(
+            vec![("a", vec![1.0, 0.0, 0.0]), ("b", vec![0.0, 1.0, 0.0])],
+            Some(fp(2, 2)),
+        );
+        let live = rebuild_hnsw_from_store(&after_ingest, 3, Some("m"), None)
+            .await
+            .unwrap();
+        persist_hnsw_cache(&after_ingest, &live, &dir, Some("m"))
+            .await
+            .unwrap();
+        assert!(
+            dir.join(CACHE_TOKEN_FILE).exists(),
+            "the seam re-stamps the token after the dir swap"
+        );
+
+        // Boot 2 — the FIRST restart after the ingest — must be a cache hit.
+        let boot2 = CountingStore::new(
+            vec![("a", vec![1.0, 0.0, 0.0]), ("b", vec![0.0, 1.0, 0.0])],
+            Some(fp(2, 2)),
+        );
+        let idx = load_cached_or_rebuild_hnsw(&boot2, &dir, 3, Some("m"), None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            boot2.rebuilds(),
+            0,
+            "first post-ingest restart must load the cache, not rebuild"
+        );
+        assert_eq!(idx.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn bare_persist_deletes_the_token_and_stays_rebuild_safe() {
+        // Documents the historical failure this seam exists for:
+        // `HnswIndex::persist` swaps the whole dir, deleting the token — so a
+        // bare post-ingest persist silently forfeits the cache. The next
+        // start must then (safely) rebuild, never trust the tokenless dump.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("idx");
+        let v = vec![("a", vec![1.0, 0.0, 0.0])];
+
+        let boot1 = CountingStore::new(v.clone(), Some(fp(1, 1)));
+        load_cached_or_rebuild_hnsw(&boot1, &dir, 3, Some("m"), None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(dir.join(CACHE_TOKEN_FILE).exists());
+
+        let live = rebuild_hnsw_from_store(&boot1, 3, Some("m"), None)
+            .await
+            .unwrap();
+        live.persist(&dir).unwrap();
+        assert!(
+            !dir.join(CACHE_TOKEN_FILE).exists(),
+            "a bare persist deletes the token (the dir swap) — the bug the seam fixes"
+        );
+
+        let boot2 = CountingStore::new(v, Some(fp(1, 1)));
+        load_cached_or_rebuild_hnsw(&boot2, &dir, 3, Some("m"), None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            boot2.rebuilds(),
+            1,
+            "tokenless dump must rebuild, not be trusted"
+        );
     }
 
     #[tokio::test]

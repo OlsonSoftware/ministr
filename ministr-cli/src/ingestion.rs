@@ -169,10 +169,19 @@ pub(crate) async fn run_corpus_ingestion(
             "no vectors to persist — skipping HNSW dump"
         );
     } else {
-        index
-            .persist(&ctx.index_dir)
-            .into_diagnostic()
-            .wrap_err("failed to persist vector index")?;
+        // persist_hnsw_cache (not a bare `index.persist`): the dump swap
+        // deletes any load-time cache token, so the seam re-stamps a fresh
+        // one — the next `ministr` start loads the cache instead of paying
+        // a full rebuild (f-ingest-hnsw-cache-postingest-refresh).
+        ministr_core::index::persist_hnsw_cache(
+            &*ctx.storage,
+            index,
+            &ctx.index_dir,
+            Some(&ctx.model_name),
+        )
+        .await
+        .into_diagnostic()
+        .wrap_err("failed to persist vector index")?;
     }
 
     let elapsed_ms = crate::infra::elapsed_millis(start);

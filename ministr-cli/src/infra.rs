@@ -56,6 +56,10 @@ pub(crate) struct InfrastructureContext {
     pub(crate) _lease: Arc<ministr_core::storage::IndexLease>,
     pub(crate) corpus_dir: PathBuf,
     pub(crate) index_dir: PathBuf,
+    /// The resolved embedding model name — the SAME string the load-time
+    /// cache seam stamps into the HNSW cache token, so the post-ingest
+    /// token refresh (`persist_hnsw_cache`) matches on the next start.
+    pub(crate) model_name: String,
     pub(crate) storage: Arc<ministr_core::storage::SqliteStorage>,
     pub(crate) embedder: Arc<dyn ministr_core::embedding::Embedder>,
     /// The embedder BEFORE the `CachedEmbedder` wrapper (`embedder` = this +
@@ -331,6 +335,7 @@ pub(crate) async fn init_infrastructure(
         _lease: lease,
         corpus_dir,
         index_dir,
+        model_name,
         storage: Arc::new(storage),
         embedder,
         uncached_embedder,

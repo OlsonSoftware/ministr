@@ -246,7 +246,19 @@ pub(crate) async fn run_body(registry: &CorpusRegistry, corpus_id: &str, paths: 
                 "indexing complete"
             );
 
-            if let Err(e) = index.persist(&index_dir) {
+            // persist_hnsw_cache (not a bare `index.persist`): the dump swap
+            // deletes any load-time cache token, so the seam re-stamps a
+            // fresh one — the first restart after this ingest loads the
+            // cache instead of paying a full rebuild
+            // (f-ingest-hnsw-cache-postingest-refresh).
+            if let Err(e) = ministr_core::index::persist_hnsw_cache(
+                &*storage,
+                &*index,
+                &index_dir,
+                Some(&model),
+            )
+            .await
+            {
                 error!(corpus_id, error = %e, "failed to persist vector index");
             }
             // persist the sparse sidecar next to the HNSW files (the
