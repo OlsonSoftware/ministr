@@ -57,7 +57,7 @@ rustls-pki-types = "1"
 webpki-roots = "1"
 
 # Markdown parsing
-comrak = "0.36"
+comrak = "0.54"
 
 # HTTP client
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "charset", "http2"] }
