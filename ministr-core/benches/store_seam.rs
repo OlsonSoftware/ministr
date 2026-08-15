@@ -199,7 +199,13 @@ fn hnsw_build() {
     let dir = hnsw_dir();
     let t = Instant::now();
     let index = rt()
-        .block_on(load_cached_or_rebuild_hnsw(&store, &dir, DIM, Some(MODEL)))
+        .block_on(load_cached_or_rebuild_hnsw(
+            &store,
+            &dir,
+            DIM,
+            Some(MODEL),
+            None,
+        ))
         .expect("rebuild")
         .expect("non-empty corpus");
     let build_s = t.elapsed().as_secs_f64();
@@ -219,7 +225,13 @@ fn hnsw_serve() {
 
     let t = Instant::now();
     let index = rt()
-        .block_on(load_cached_or_rebuild_hnsw(&store, &dir, DIM, Some(MODEL)))
+        .block_on(load_cached_or_rebuild_hnsw(
+            &store,
+            &dir,
+            DIM,
+            Some(MODEL),
+            None,
+        ))
         .expect("load")
         .expect("cache present");
     let startup_s = t.elapsed().as_secs_f64();

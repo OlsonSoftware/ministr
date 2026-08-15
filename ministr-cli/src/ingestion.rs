@@ -149,10 +149,10 @@ pub(crate) async fn run_corpus_ingestion(
 
     // Clone and ingest git repositories (from --corpus args and .ministr.toml).
     if !git_urls.is_empty() {
-        ingest_git_sources(&git_urls, &pipeline, storage, embedder, index).await;
+        ingest_git_sources(&git_urls, &pipeline, storage, embedder, index, progress).await;
     }
     if !git_includes.is_empty() {
-        ingest_git_includes(git_includes, &pipeline, storage, embedder, index).await;
+        ingest_git_includes(git_includes, &pipeline, storage, embedder, index, progress).await;
     }
 
     // HNSW's tar dump fails on an empty index (`Hnsw nb point 0` →
@@ -235,11 +235,19 @@ async fn ingest_git_sources(
     storage: &ministr_core::storage::SqliteStorage,
     embedder: &dyn ministr_core::embedding::Embedder,
     index: &dyn ministr_core::index::VectorIndex,
+    progress: &ministr_core::ingestion::IngestionProgress,
 ) {
     let git_fetcher = ministr_core::git::GitFetcher::with_defaults();
 
     for url in urls {
-        match git_fetcher.clone(url, None, None, None).await {
+        // Surface the fetch itself: a large clone is minutes of otherwise
+        // silent wait (daemon-progress-telemetry-gaps — the repo URL rides
+        // `current_file` while the phase reads "cloning").
+        progress.set_phase(ministr_core::ingestion::IngestionPhase::Cloning);
+        progress.set_current_file(url);
+        let cloned = git_fetcher.clone(url, None, None, None).await;
+        progress.set_current_file("");
+        match cloned {
             Ok(clone_result) => {
                 // Register a corpus root for the clone so it persists across sessions.
                 let root_id = ministr_core::ingestion::compute_root_id(&clone_result.clone_dir);
@@ -342,15 +350,20 @@ async fn ingest_git_includes(
     storage: &ministr_core::storage::SqliteStorage,
     embedder: &dyn ministr_core::embedding::Embedder,
     index: &dyn ministr_core::index::VectorIndex,
+    progress: &ministr_core::ingestion::IngestionProgress,
 ) {
     let git_fetcher = ministr_core::git::GitFetcher::with_defaults();
 
     for inc in includes {
         let paths_ref: Option<Vec<String>> = inc.paths.clone();
-        match git_fetcher
+        // Same cloning-phase surface as `ingest_git_sources`.
+        progress.set_phase(ministr_core::ingestion::IngestionPhase::Cloning);
+        progress.set_current_file(&inc.repo);
+        let cloned = git_fetcher
             .clone(&inc.repo, paths_ref.as_deref(), inc.branch.as_deref(), None)
-            .await
-        {
+            .await;
+        progress.set_current_file("");
+        match cloned {
             Ok(clone_result) => {
                 let root_id = ministr_core::ingestion::compute_root_id(&clone_result.clone_dir);
                 let clone_root = ministr_core::types::CorpusRoot {

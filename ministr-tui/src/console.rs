@@ -88,10 +88,38 @@ pub enum Standing {
     },
     /// Enqueued behind another build.
     Waiting,
-    /// The engine is loading this project into memory.
-    Warming,
+    /// The engine is loading this project into memory; the meter is
+    /// alive at this fraction (the engine reports the load's position —
+    /// daemon-progress-telemetry-gaps).
+    Warming {
+        /// How far along, `0.0..=1.0`.
+        fraction: f64,
+    },
     /// The last build failed.
     Failed,
+}
+
+impl Standing {
+    /// The live meter fraction, when this standing drives a meter
+    /// (a build, or the engine loading the project into memory).
+    #[must_use]
+    pub(crate) fn meter_fraction(self) -> Option<f64> {
+        match self {
+            Self::Building { fraction } | Self::Warming { fraction } => Some(fraction),
+            _ => None,
+        }
+    }
+
+    /// The same standing with its meter fraction replaced; a standing
+    /// without a meter is returned unchanged.
+    #[must_use]
+    pub(crate) fn with_fraction(self, fraction: f64) -> Self {
+        match self {
+            Self::Building { .. } => Self::Building { fraction },
+            Self::Warming { .. } => Self::Warming { fraction },
+            other => other,
+        }
+    }
 }
 
 /// Below this width strips compress (§3).
@@ -343,7 +371,7 @@ fn draw_strip(
         frame.render_widget(view, lawn_area);
     }
 
-    if let Standing::Building { fraction } = strip.standing {
+    if let Some(fraction) = strip.standing.meter_fraction() {
         frame.render_widget(Meter::new(fraction, depth), meter_row);
     }
     if confirming {
@@ -376,7 +404,8 @@ pub(crate) fn standing_line(standing: Standing, depth: ColorDepth) -> Line<'stat
             Line::from(strings::updating_line(fraction)).style(palette::accent_ramp(depth, 1.0))
         }
         Standing::Waiting => Line::from(strings::STANDING_WAITING).dim(),
-        Standing::Warming => Line::from(strings::STANDING_WARMING).dim(),
+        // The load's position lives in the meter; the word stays plain.
+        Standing::Warming { .. } => Line::from(strings::STANDING_WARMING).dim(),
         Standing::Failed => {
             let line = Line::from(strings::STANDING_FAILED);
             if depth == ColorDepth::Mono {
@@ -532,8 +561,11 @@ fn draw_bar(
     depth: ColorDepth,
     confirming: bool,
 ) {
-    let building = matches!(strip.standing, Standing::Building { .. });
-    let meter_w = if building { BAR_METER_WIDTH } else { 0 };
+    let meter_w = if strip.standing.meter_fraction().is_some() {
+        BAR_METER_WIDTH
+    } else {
+        0
+    };
     let [name_area, meter_area, foot_area] = Layout::horizontal([
         Constraint::Fill(1),
         Constraint::Length(meter_w),
@@ -546,7 +578,7 @@ fn draw_bar(
     let name = if selected { name } else { name.dim() };
     frame.render_widget(name, name_area);
 
-    if let Standing::Building { fraction } = strip.standing {
+    if let Some(fraction) = strip.standing.meter_fraction() {
         frame.render_widget(Meter::new(fraction, depth), meter_area);
     }
 
@@ -570,7 +602,7 @@ fn foot_width(strip: &Strip, confirming: bool) -> u16 {
             Standing::NeedsUpdate => strings::STANDING_NEEDS_UPDATE.len(),
             Standing::Building { fraction } => strings::updating_line(fraction).len(),
             Standing::Waiting => strings::STANDING_WAITING.len(),
-            Standing::Warming => strings::STANDING_WARMING.len(),
+            Standing::Warming { .. } => strings::STANDING_WARMING.len(),
             Standing::Failed => strings::STANDING_FAILED.len(),
         }
     };

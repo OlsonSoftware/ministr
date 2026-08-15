@@ -19,7 +19,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 
-use crate::console::{self, Standing, Strip};
+use crate::console::{self, Strip};
 use crate::detail::{self, Detail, Facts, PathsEditor};
 use crate::ease::Glide;
 use crate::engine::{Action, EngineState, FreshSig, Outcome, ProgressTarget};
@@ -197,7 +197,7 @@ impl App {
                 model
                     .strips
                     .iter()
-                    .any(|s| s.id == *id && matches!(s.standing, Standing::Building { .. }))
+                    .any(|s| s.id == *id && s.standing.meter_fraction().is_some())
             });
             // A pulse outlives its project by nothing; its 250ms decay
             // handles the end of a build on its own.
@@ -348,8 +348,9 @@ impl App {
                     .insert(target.id.clone(), (target.current_file.clone(), now));
                 moved = true;
             }
-            // Only a building strip has a meter to drive.
-            let Standing::Building { fraction } = strip.standing else {
+            // Only a strip with a live meter (building or warming) has
+            // a needle to drive.
+            let Some(fraction) = strip.standing.meter_fraction() else {
                 continue;
             };
             let glide = self
@@ -404,7 +405,7 @@ impl App {
         model
             .strips
             .iter()
-            .any(|s| matches!(s.standing, Standing::Building { .. }))
+            .any(|s| s.standing.meter_fraction().is_some())
     }
 
     /// The strips the frame shows: the engine's projects, with a
@@ -678,12 +679,10 @@ impl App {
     fn eased_strips(&self, now: Instant) -> Vec<Strip> {
         let mut strips = self.strips();
         for strip in &mut strips {
-            if matches!(strip.standing, Standing::Building { .. })
+            if strip.standing.meter_fraction().is_some()
                 && let Some(glide) = self.meters.get(&strip.id)
             {
-                strip.standing = Standing::Building {
-                    fraction: glide.at(now),
-                };
+                strip.standing = strip.standing.with_fraction(glide.at(now));
             }
             // The lawn's pulse at this instant, while it still has any
             // light left — not gated on the standing, which can lag
@@ -721,12 +720,10 @@ impl App {
             }
             View::Detail(open) => {
                 let mut open = open.clone();
-                if let Standing::Building { .. } = open.standing
+                if open.standing.meter_fraction().is_some()
                     && let Some(glide) = self.meters.get(&open.id)
                 {
-                    open.standing = Standing::Building {
-                        fraction: glide.at(now),
-                    };
+                    open.standing = open.standing.with_fraction(glide.at(now));
                 }
                 detail::draw(frame, body, &open, self.confirming_remove, self.depth);
                 body

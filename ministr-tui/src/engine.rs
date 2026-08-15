@@ -70,7 +70,9 @@ pub async fn probe(client: &DaemonClient) -> EngineState {
 async fn reduce_strip(client: &DaemonClient, info: CorpusInfo) -> Strip {
     let mut fresh_sig = None;
     let standing = if info.warming {
-        Standing::Warming
+        // The probe's corpus report carries no load position; the fast
+        // progress poll retargets the meter within its first tick.
+        Standing::Warming { fraction: 0.0 }
     } else {
         match &info.status {
             IndexingStatus::Indexing {

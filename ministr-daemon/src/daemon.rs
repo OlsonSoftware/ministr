@@ -3503,25 +3503,42 @@ async fn ask_handler(
 /// app's old in-process atomics. Reads the in-memory `IngestionProgress` (the
 /// self-hosted / desktop path — no `IndexJobSink`).
 async fn ingestion_progress_all(State(state): State<AppState>) -> impl IntoResponse {
-    let corpora = state.registry.corpora().read().await;
-    let snapshot: Vec<ministr_api::corpus::IngestionProgressInfo> = corpora
-        .iter()
-        .map(|(corpus_id, handle)| {
-            let p = &handle.progress;
-            ministr_api::corpus::IngestionProgressInfo {
-                corpus_id: corpus_id.clone(),
-                status: p.status(),
-                phase: p.phase().as_str().to_string(),
-                files_total: p.files_total(),
-                files_done: p.files_done(),
-                sections_done: p.sections_done(),
-                embeddings_total: p.embeddings_total(),
-                embeddings_done: p.embeddings_done(),
-                current_file: p.current_file(),
-            }
-        })
-        .collect();
+    let mut snapshot: Vec<ministr_api::corpus::IngestionProgressInfo> = {
+        let corpora = state.registry.corpora().read().await;
+        corpora
+            .iter()
+            .map(|(corpus_id, handle)| progress_info(corpus_id, &handle.progress, false))
+            .collect()
+    };
+    // Warming corpora (loads in flight) get real entries too — the warm is
+    // exactly the window a client could previously only render as a silent
+    // "warming up" (daemon-progress-telemetry-gaps).
+    for (corpus_id, progress) in state.registry.warming_progress_snapshot().await {
+        snapshot.push(progress_info(&corpus_id, &progress, true));
+    }
     Json(ministr_api::corpus::ProgressSnapshotResponse { corpora: snapshot })
+}
+
+/// One corpus's live counters as the wire snapshot shape.
+fn progress_info(
+    corpus_id: &str,
+    p: &ministr_core::ingestion::IngestionProgress,
+    warming: bool,
+) -> ministr_api::corpus::IngestionProgressInfo {
+    ministr_api::corpus::IngestionProgressInfo {
+        corpus_id: corpus_id.to_string(),
+        status: p.status(),
+        phase: p.phase().as_str().to_string(),
+        files_total: p.files_total(),
+        files_done: p.files_done(),
+        sections_done: p.sections_done(),
+        embeddings_total: p.embeddings_total(),
+        embeddings_done: p.embeddings_done(),
+        current_file: p.current_file(),
+        started_at_epoch_ms: p.started_at_epoch_ms(),
+        phase_started_at_epoch_ms: p.phase_started_at_epoch_ms(),
+        warming,
+    }
 }
 
 async fn ingestion_progress(
@@ -3543,10 +3560,14 @@ async fn ingestion_progress(
         let corpora = state.registry.corpora().read().await;
         match corpora.get(&id) {
             Some(handle) => Arc::clone(&handle.progress),
-            None => {
-                return err(StatusCode::NOT_FOUND, "not_found", format!("corpus '{id}'"))
-                    .into_response();
-            }
+            None => match state.registry.warming_progress(&id).await {
+                // A load in flight streams its warm — same wire shape.
+                Some(progress) => progress,
+                None => {
+                    return err(StatusCode::NOT_FOUND, "not_found", format!("corpus '{id}'"))
+                        .into_response();
+                }
+            },
         }
     };
 
@@ -3578,6 +3599,8 @@ fn progress_stream(
                 embeddings_total: progress.embeddings_total(),
                 embeddings_done: progress.embeddings_done(),
                 current_file: progress.current_file(),
+                started_at_epoch_ms: progress.started_at_epoch_ms(),
+                phase_started_at_epoch_ms: progress.phase_started_at_epoch_ms(),
                 error: None,
             };
             if let Ok(json) = serde_json::to_string(&event) {
@@ -3661,6 +3684,10 @@ fn queue_progress_stream(
                     .as_ref()
                     .and_then(|s| s.current_file.clone())
                     .unwrap_or_default(),
+                // JobProgress (the Postgres row) doesn't record wall-clock
+                // starts — honestly absent rather than fabricated.
+                started_at_epoch_ms: None,
+                phase_started_at_epoch_ms: None,
                 error,
             };
             if let Ok(json) = serde_json::to_string(&event) {

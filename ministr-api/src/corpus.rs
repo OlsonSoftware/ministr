@@ -323,7 +323,8 @@ pub struct IngestionProgressEvent {
     /// Phase: `"pending"`, `"running"`, `"complete"`, or `"failed"`.
     pub status: String,
     /// Current ingestion phase: `"idle"`, `"discovering"`, `"parsing"`,
-    /// `"embedding"`, or `"finalizing"`.
+    /// `"embedding"`, `"finalizing"`, `"warming"`, `"cloning"`, or
+    /// `"downloading-model"`.
     pub phase: String,
     /// Total files discovered for ingestion.
     pub files_total: usize,
@@ -338,6 +339,13 @@ pub struct IngestionProgressEvent {
     /// Relative path of the file currently being processed (empty if idle).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub current_file: String,
+    /// Epoch-ms wall-clock start of the run (absent before the first start).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_epoch_ms: Option<u64>,
+    /// Epoch-ms wall-clock start of the current phase (absent before the
+    /// first phase transition).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_started_at_epoch_ms: Option<u64>,
     /// Terminal error message — set on the final event when `status == "failed"`.
     /// Lets clients surface the cause without re-querying.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -358,7 +366,8 @@ pub struct IngestionProgressInfo {
     /// Status: `0` = pending, `1` = running, `2` = complete.
     pub status: u8,
     /// Current ingestion phase (`"idle"`, `"discovering"`, `"parsing"`,
-    /// `"embedding"`, `"finalizing"`).
+    /// `"embedding"`, `"finalizing"`, `"warming"`, `"cloning"`,
+    /// `"downloading-model"`).
     pub phase: String,
     /// Total files discovered for ingestion.
     pub files_total: usize,
@@ -373,6 +382,18 @@ pub struct IngestionProgressInfo {
     /// Relative path of the file currently being processed (empty if idle).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub current_file: String,
+    /// Epoch-ms wall-clock start of the run (absent before the first start).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_epoch_ms: Option<u64>,
+    /// Epoch-ms wall-clock start of the current phase (absent before the
+    /// first phase transition).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_started_at_epoch_ms: Option<u64>,
+    /// True while this corpus is loading into memory (the daemon's warming
+    /// window) rather than running an ingest — the counters then measure the
+    /// HNSW load-or-rebuild, not files/embeddings work.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub warming: bool,
 }
 
 /// Response for `GET /api/v1/progress` — one [`IngestionProgressInfo`] per

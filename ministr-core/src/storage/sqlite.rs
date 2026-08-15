@@ -3542,7 +3542,7 @@ mod tests {
 
         // Rebuild the in-memory ANN index straight from the ACID store — no
         // separate on-disk graph dump involved.
-        let index = rebuild_hnsw_from_store(&storage, 3, Some("test-model"))
+        let index = rebuild_hnsw_from_store(&storage, 3, Some("test-model"), None)
             .await
             .unwrap();
         assert_eq!(index.len(), 2);

@@ -176,7 +176,7 @@ pub fn draw(frame: &mut Frame, area: Rect, detail: &Detail, confirming: bool, de
         strings::DETAIL_STANDING,
         standing_line(detail.standing, depth),
     );
-    if let Standing::Building { fraction } = detail.standing {
+    if let Some(fraction) = detail.standing.meter_fraction() {
         meter_row(frame, inner, &mut y, fraction, depth);
     }
     fact_row(

@@ -387,6 +387,9 @@ async fn load_or_create_index(
         index_dir,
         dim,
         Some(model_name),
+        // In-process load at CLI boot — no progress consumer exists yet
+        // (the daemon's warming meter threads a handle here instead).
+        None,
     )
     .await
     {

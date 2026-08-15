@@ -95,6 +95,10 @@ pub struct VectorFingerprint {
 /// `model_name`, when provided, is stamped on the index so a later
 /// [`HnswIndex::check_compatible`] can detect a vector-space mismatch.
 ///
+/// `progress`, when provided, receives the vector count as embeddings-total
+/// and a per-insert done tick — the granular meter behind the daemon's
+/// warming window (daemon-progress-telemetry-gaps).
+///
 /// # Errors
 ///
 /// - [`IndexError::LoadFailed`] if the store cannot be read.
@@ -104,6 +108,7 @@ pub async fn rebuild_hnsw_from_store<S: IndexedVectorStore + ?Sized>(
     store: &S,
     dimension: usize,
     model_name: Option<&str>,
+    progress: Option<&crate::ingestion::IngestionProgress>,
 ) -> Result<HnswIndex, IndexError> {
     let vectors = store
         .list_indexed_vectors()
@@ -137,11 +142,17 @@ pub async fn rebuild_hnsw_from_store<S: IndexedVectorStore + ?Sized>(
         index.set_model_name(name);
     }
 
+    if let Some(p) = progress {
+        p.add_embeddings_total(vectors.len());
+    }
     for (id, vector) in &vectors {
         // `insert` applies the dimension check + the degenerate-vector guard:
         // a zero / non-finite vector is silently skipped (poison structurally
         // impossible), a dimension mismatch is a hard error (fail loud).
         index.insert(id, vector)?;
+        if let Some(p) = progress {
+            p.add_embeddings_done(1);
+        }
     }
 
     Ok(index)
@@ -243,6 +254,7 @@ pub async fn load_cached_or_rebuild_hnsw<S: IndexedVectorStore + ?Sized>(
     index_dir: &Path,
     dimension: usize,
     model_name: Option<&str>,
+    progress: Option<&crate::ingestion::IngestionProgress>,
 ) -> Result<Option<HnswIndex>, IndexError> {
     // (1) Fingerprint the source of truth. A backend that can't fingerprint
     // (default `None`) simply skips the fast path and always rebuilds.
@@ -285,7 +297,7 @@ pub async fn load_cached_or_rebuild_hnsw<S: IndexedVectorStore + ?Sized>(
 
     // (3) Rebuild from the source of truth (today's safe behavior), then
     // persist the dump + a fresh token so the next restart is a cache hit.
-    let rebuilt = rebuild_hnsw_from_store(store, dimension, model_name).await?;
+    let rebuilt = rebuild_hnsw_from_store(store, dimension, model_name, progress).await?;
     if rebuilt.is_empty() {
         // Legacy corpus with no indexed_vectors — let the caller fall back.
         return Ok(None);
@@ -327,7 +339,7 @@ mod tests {
             ("zero".to_string(), vec![0.0, 0.0, 0.0]),
         ]);
 
-        let index = rebuild_hnsw_from_store(&store, 3, Some("test-model"))
+        let index = rebuild_hnsw_from_store(&store, 3, Some("test-model"), None)
             .await
             .unwrap();
 
@@ -351,9 +363,30 @@ mod tests {
     #[tokio::test]
     async fn rebuild_empty_store_yields_empty_index() {
         let store = MockStore(vec![]);
-        let index = rebuild_hnsw_from_store(&store, 384, None).await.unwrap();
+        let index = rebuild_hnsw_from_store(&store, 384, None, None)
+            .await
+            .unwrap();
         assert!(index.is_empty());
         assert_eq!(index.dimension(), 384);
+    }
+
+    #[tokio::test]
+    async fn rebuild_ticks_the_warming_meter() {
+        // daemon-progress-telemetry-gaps: a threaded progress handle sees the
+        // vector count as total and one done-tick per insert — the counters
+        // behind the warming meter. The degenerate vector still ticks (it was
+        // visited), so done always reaches total and the meter can't stall.
+        let store = MockStore(vec![
+            ("a".to_string(), vec![1.0, 0.0, 0.0]),
+            ("b".to_string(), vec![0.0, 1.0, 0.0]),
+            ("zero".to_string(), vec![0.0, 0.0, 0.0]),
+        ]);
+        let progress = crate::ingestion::IngestionProgress::new();
+        rebuild_hnsw_from_store(&store, 3, None, Some(&progress))
+            .await
+            .unwrap();
+        assert_eq!(progress.embeddings_total(), 3);
+        assert_eq!(progress.embeddings_done(), 3);
     }
 
     // --- f-ingest-hnsw-cache-token: validated derived-HNSW cache ---
@@ -410,7 +443,7 @@ mod tests {
 
         // First start: no cache → rebuild + persist + write token.
         let first = CountingStore::new(v.clone(), Some(fp(2, 1)));
-        let idx = load_cached_or_rebuild_hnsw(&first, &dir, 3, Some("m"))
+        let idx = load_cached_or_rebuild_hnsw(&first, &dir, 3, Some("m"), None)
             .await
             .unwrap()
             .expect("non-empty rebuild");
@@ -420,7 +453,7 @@ mod tests {
 
         // Second start, identical fingerprint: must LOAD the cache (no rebuild).
         let second = CountingStore::new(v, Some(fp(2, 1)));
-        let idx = load_cached_or_rebuild_hnsw(&second, &dir, 3, Some("m"))
+        let idx = load_cached_or_rebuild_hnsw(&second, &dir, 3, Some("m"), None)
             .await
             .unwrap()
             .expect("cache hit");
@@ -437,7 +470,7 @@ mod tests {
             vec![("a", vec![1.0, 0.0, 0.0]), ("b", vec![0.0, 1.0, 0.0])],
             Some(fp(2, 1)),
         );
-        load_cached_or_rebuild_hnsw(&first, &dir, 3, Some("m"))
+        load_cached_or_rebuild_hnsw(&first, &dir, 3, Some("m"), None)
             .await
             .unwrap()
             .unwrap();
@@ -449,7 +482,7 @@ mod tests {
             vec![("c", vec![0.0, 0.0, 1.0]), ("d", vec![1.0, 1.0, 0.0])],
             Some(fp(2, 2)),
         );
-        let idx = load_cached_or_rebuild_hnsw(&churned, &dir, 3, Some("m"))
+        let idx = load_cached_or_rebuild_hnsw(&churned, &dir, 3, Some("m"), None)
             .await
             .unwrap()
             .unwrap();
@@ -463,7 +496,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("idx");
         let first = CountingStore::new(vec![("a", vec![1.0, 0.0, 0.0])], Some(fp(1, 1)));
-        load_cached_or_rebuild_hnsw(&first, &dir, 3, Some("m"))
+        load_cached_or_rebuild_hnsw(&first, &dir, 3, Some("m"), None)
             .await
             .unwrap()
             .unwrap();
@@ -472,7 +505,7 @@ mod tests {
             vec![("a", vec![1.0, 0.0, 0.0]), ("b", vec![0.0, 1.0, 0.0])],
             Some(fp(2, 2)),
         );
-        load_cached_or_rebuild_hnsw(&grown, &dir, 3, Some("m"))
+        load_cached_or_rebuild_hnsw(&grown, &dir, 3, Some("m"), None)
             .await
             .unwrap()
             .unwrap();
@@ -487,7 +520,7 @@ mod tests {
 
         // Build a real cache first.
         let first = CountingStore::new(v.clone(), Some(fp(1, 1)));
-        load_cached_or_rebuild_hnsw(&first, &dir, 3, Some("m"))
+        load_cached_or_rebuild_hnsw(&first, &dir, 3, Some("m"), None)
             .await
             .unwrap()
             .unwrap();
@@ -495,7 +528,7 @@ mod tests {
         // Corrupt the token sidecar → treated as a miss → rebuild.
         fs::write(dir.join(CACHE_TOKEN_FILE), b"{ not json").unwrap();
         let after_corrupt = CountingStore::new(v.clone(), Some(fp(1, 1)));
-        load_cached_or_rebuild_hnsw(&after_corrupt, &dir, 3, Some("m"))
+        load_cached_or_rebuild_hnsw(&after_corrupt, &dir, 3, Some("m"), None)
             .await
             .unwrap()
             .unwrap();
@@ -511,7 +544,7 @@ mod tests {
         };
         write_cache_token(&dir, &stale);
         let after_version = CountingStore::new(v, Some(fp(1, 1)));
-        load_cached_or_rebuild_hnsw(&after_version, &dir, 3, Some("m"))
+        load_cached_or_rebuild_hnsw(&after_version, &dir, 3, Some("m"), None)
             .await
             .unwrap()
             .unwrap();
@@ -525,11 +558,11 @@ mod tests {
 
         // No fingerprint (legacy/other backend) → never trusts a cache.
         let no_fp = CountingStore::new(vec![("a", vec![1.0, 0.0, 0.0])], None);
-        load_cached_or_rebuild_hnsw(&no_fp, &dir, 3, Some("m"))
+        load_cached_or_rebuild_hnsw(&no_fp, &dir, 3, Some("m"), None)
             .await
             .unwrap()
             .unwrap();
-        load_cached_or_rebuild_hnsw(&no_fp, &dir, 3, Some("m"))
+        load_cached_or_rebuild_hnsw(&no_fp, &dir, 3, Some("m"), None)
             .await
             .unwrap()
             .unwrap();
@@ -537,7 +570,7 @@ mod tests {
 
         // Empty source of truth ⇒ None so the caller can do its legacy fallback.
         let empty = CountingStore::new(vec![], Some(fp(0, 0)));
-        let out = load_cached_or_rebuild_hnsw(&empty, &dir, 3, Some("m"))
+        let out = load_cached_or_rebuild_hnsw(&empty, &dir, 3, Some("m"), None)
             .await
             .unwrap();
         assert!(out.is_none(), "empty store yields None");

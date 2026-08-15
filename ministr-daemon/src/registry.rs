@@ -172,14 +172,25 @@ pub struct CorpusRegistry {
     /// restore attempts will re-create as needed.
     restore_locks: tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// gd6/gd9 — corpora whose load is in flight: `register` marks a corpus
-    /// here (`corpus_id` → paths) the moment it begins `create_handle` and clears
-    /// it once the handle is in [`corpora`](Self::corpora), so a corpus is never
-    /// in *neither* set. [`warming_placeholders`](Self::warming_placeholders)
-    /// reads this (NOT the on-disk manifest, which `save_manifest` rewrites from
-    /// the *loaded* set mid-restore and so transiently drops the corpus being
-    /// rebuilt) — the GUI can then show "Warming up…" for the whole multi-second
-    /// HNSW rebuild instead of the card vanishing.
-    warming: RwLock<HashMap<String, Vec<String>>>,
+    /// here the moment it begins `create_handle` and clears it once the handle
+    /// is in [`corpora`](Self::corpora), so a corpus is never in *neither* set.
+    /// [`warming_placeholders`](Self::warming_placeholders) reads this (NOT
+    /// the on-disk manifest, which `save_manifest` rewrites from the *loaded*
+    /// set mid-restore and so transiently drops the corpus being rebuilt) —
+    /// the GUI can then show "Warming up…" for the whole multi-second HNSW
+    /// rebuild instead of the card vanishing. Each entry carries the live
+    /// progress counters `create_handle` feeds (daemon-progress-telemetry:
+    /// the warming meter), so `/api/v1/progress` can report the load itself.
+    warming: RwLock<HashMap<String, WarmingEntry>>,
+}
+
+/// One in-flight corpus load: the paths it was registered with plus the live
+/// counters `create_handle` feeds while the corpus warms (HNSW rebuild ticks,
+/// model-download phases). The same `Arc` becomes the handle's `progress` on
+/// success, so the SSE stream a client opened mid-warm stays valid.
+pub(crate) struct WarmingEntry {
+    pub(crate) paths: Vec<String>,
+    pub(crate) progress: Arc<IngestionProgress>,
 }
 
 /// A single managed corpus with its resources.
@@ -601,7 +612,12 @@ impl CorpusRegistry {
             }
         }
         let display = display_name.unwrap_or_else(|| display_name_from_paths(paths));
-        let handle = self.create_handle(corpus_id, paths, display).await?;
+        let restore_progress = Arc::new(IngestionProgress::new());
+        restore_progress.start(0);
+        restore_progress.set_phase(ministr_core::ingestion::IngestionPhase::Warming);
+        let handle = self
+            .create_handle(corpus_id, paths, display, &restore_progress)
+            .await?;
 
         // Seed CorpusInfo.files_indexed from the restored content.db so
         // /api/v1/corpora reports the bundle's true count instead of the
@@ -1141,10 +1157,18 @@ impl CorpusRegistry {
         // manifest was racy — `save_manifest` rewrites the manifest from the
         // *loaded* set as each corpus finishes, transiently dropping the one
         // still rebuilding, so its GUI card vanished mid-rebuild.
-        self.warming
-            .write()
-            .await
-            .insert(corpus_id.clone(), canonical.clone());
+        // The entry carries live counters so the warm renders as a real
+        // meter, not a bare "warming up" (daemon-progress-telemetry-gaps).
+        let warm_progress = Arc::new(IngestionProgress::new());
+        warm_progress.start(0);
+        warm_progress.set_phase(ministr_core::ingestion::IngestionPhase::Warming);
+        self.warming.write().await.insert(
+            corpus_id.clone(),
+            WarmingEntry {
+                paths: canonical.clone(),
+                progress: Arc::clone(&warm_progress),
+            },
+        );
 
         // Display name is derived from the *original* paths so we
         // preserve the user's casing — `canonical` is lowercased on
@@ -1152,7 +1176,7 @@ impl CorpusRegistry {
         // "Ministr", not "ministr".
         let display_name = display_name_from_paths(paths);
         let handle = match self
-            .create_handle(&corpus_id, &canonical, display_name)
+            .create_handle(&corpus_id, &canonical, display_name, &warm_progress)
             .await
         {
             Ok(handle) => handle,
@@ -1573,10 +1597,10 @@ impl CorpusRegistry {
         warming
             .iter()
             .filter(|(id, _)| !loaded.contains_key(*id))
-            .map(|(id, paths)| CorpusInfo {
+            .map(|(id, entry)| CorpusInfo {
                 id: id.clone(),
-                display_name: display_name_from_paths(paths),
-                paths: paths.clone(),
+                display_name: display_name_from_paths(&entry.paths),
+                paths: entry.paths.clone(),
                 status: IndexingStatus::Idle,
                 files_indexed: 0,
                 sections_count: 0,
@@ -1586,10 +1610,33 @@ impl CorpusRegistry {
                 symbols_count: 0,
                 model: String::new(),
                 warming: true,
-                stack: ministr_core::init::detect_stack(paths),
+                stack: ministr_core::init::detect_stack(&entry.paths),
                 size_on_disk_bytes: None,
             })
             .collect()
+    }
+
+    /// Live progress handles for every in-flight (warming) corpus load —
+    /// the daemon's `/api/v1/progress` merges these with the loaded set so
+    /// a warm renders as a moving meter instead of a silent gap.
+    pub async fn warming_progress_snapshot(&self) -> Vec<(String, Arc<IngestionProgress>)> {
+        let loaded = self.corpora.read().await;
+        let warming = self.warming.read().await;
+        warming
+            .iter()
+            .filter(|(id, _)| !loaded.contains_key(*id))
+            .map(|(id, entry)| (id.clone(), Arc::clone(&entry.progress)))
+            .collect()
+    }
+
+    /// The live progress handle for one warming corpus, if its load is
+    /// currently in flight (per-corpus SSE fallback during the warm).
+    pub async fn warming_progress(&self, corpus_id: &str) -> Option<Arc<IngestionProgress>> {
+        self.warming
+            .read()
+            .await
+            .get(corpus_id)
+            .map(|entry| Arc::clone(&entry.progress))
     }
 
     /// Extract a corpus's `info` handle without holding the corpora-map
@@ -1694,11 +1741,11 @@ impl CorpusRegistry {
             // loaded-so-far subset, and a restart (or crash) then permanently
             // orphaned every corpus that hadn't finished loading yet. Including
             // the warming set keeps the manifest whole throughout restore.
-            for (id, paths) in warming.iter() {
+            for (id, entry) in warming.iter() {
                 if !corpora.contains_key(id) {
                     entries.push(ManifestEntry {
                         id: id.clone(),
-                        paths: paths.clone(),
+                        paths: entry.paths.clone(),
                     });
                 }
             }
@@ -1739,6 +1786,7 @@ impl CorpusRegistry {
         sparse_weight: f32,
         sparse_encoder: Option<&str>,
         index_dir: &std::path::Path,
+        progress: &Arc<IngestionProgress>,
     ) -> Result<
         (
             Option<Arc<dyn ministr_core::embedding::SparseEmbedder>>,
@@ -1750,10 +1798,18 @@ impl CorpusRegistry {
             return Ok((None, None));
         }
         let kind = ministr_core::embedding::SparseEncoderKind::parse(sparse_encoder);
+        // The SPLADE model downloads on first use (opt-in knob) — same honest
+        // file-level phase as the dense model; cached loads pass through in
+        // milliseconds, below any poll cadence.
+        progress.set_phase(ministr_core::ingestion::IngestionPhase::DownloadingModel);
+        progress.set_current_file(kind.tag());
         let models_dir = self.config.data_dir.join("models");
-        let (se, si) =
+        let built =
             ministr_core::embedding::build_sparse_components(kind, Some(&models_dir), index_dir)
-                .map_err(|e| RegistryError::Embedder(format!("sparse components: {e}")))?;
+                .map_err(|e| RegistryError::Embedder(format!("sparse components: {e}")));
+        progress.set_current_file("");
+        progress.set_phase(ministr_core::ingestion::IngestionPhase::Warming);
+        let (se, si) = built?;
         info!(
             corpus_id,
             sparse_weight,
@@ -1766,11 +1822,32 @@ impl CorpusRegistry {
         ))
     }
 
+    /// Resolve the corpus's dense embedder (per-corpus model pool + optional
+    /// Matryoshka truncation), surfacing a first-use model download as its
+    /// own honest phase — the model name rides `current_file` while the phase
+    /// reads "downloading-model". Cached loads pass through in milliseconds,
+    /// below any poll cadence.
+    fn embedder_with_download_phase(
+        &self,
+        model: &str,
+        dimension: Option<usize>,
+        progress: &Arc<IngestionProgress>,
+    ) -> Result<DimensionedEmbedder, RegistryError> {
+        progress.set_phase(ministr_core::ingestion::IngestionPhase::DownloadingModel);
+        progress.set_current_file(model);
+        let pooled = self.embedder_for(model)?;
+        let dimensioned = apply_dimension(&pooled.embedder, dimension);
+        progress.set_current_file("");
+        progress.set_phase(ministr_core::ingestion::IngestionPhase::Warming);
+        dimensioned
+    }
+
     async fn create_handle(
         &self,
         corpus_id: &str,
         paths: &[String],
         display_name: String,
+        progress: &Arc<IngestionProgress>,
     ) -> Result<CorpusHandle, RegistryError> {
         let corpus_dir = self.config.data_dir.join("corpora").join(corpus_id);
         let db_path = corpus_dir.join("content.db");
@@ -1806,11 +1883,11 @@ impl CorpusRegistry {
         // and query share one (possibly truncated) vector space.
         let cfg = resolve_corpus_config(paths, &corpus_dir, &self.config);
         let model = cfg.model.clone();
-        let pooled = self.embedder_for(&model)?;
-        let (embedder, dual) = apply_dimension(&pooled.embedder, cfg.dimension)?;
+        let (embedder, dual) =
+            self.embedder_with_download_phase(&model, cfg.dimension, progress)?;
 
         let dim = embedder.dimension();
-        let index = load_or_create_index(&index_dir, dim, &model, &storage).await?;
+        let index = load_or_create_index(&index_dir, dim, &model, &storage, Some(progress)).await?;
 
         let query_storage = SqliteStorage::open(&db_path)
             .map_err(|e| RegistryError::Storage(format!("open query db: {e}")))?;
@@ -1843,6 +1920,7 @@ impl CorpusRegistry {
             sparse_weight,
             cfg.sparse_encoder.as_deref(),
             &index_dir,
+            progress,
         )?;
         if let (Some(se), Some(si)) = (&sparse_embedder, &sparse_index) {
             service = service.with_sparse(Arc::clone(se), Arc::clone(si), sparse_weight);
@@ -1913,7 +1991,13 @@ impl CorpusRegistry {
             prefetch: Arc::new(tokio::sync::Mutex::new(
                 PrefetchEngine::with_default_capacity(),
             )),
-            progress: Arc::new(IngestionProgress::new()),
+            // The warming progress BECOMES the handle's progress: the warm is
+            // over (complete, fraction 1.0), and an SSE stream opened mid-warm
+            // keeps reading the same counters through the first real ingest.
+            progress: {
+                progress.complete();
+                Arc::clone(progress)
+            },
             cancel: CancellationToken::new(),
             data_dir: corpus_dir,
             tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -2182,6 +2266,7 @@ async fn load_or_create_index(
     dim: usize,
     model_name: &str,
     storage: &SqliteStorage,
+    progress: Option<&IngestionProgress>,
 ) -> Result<Arc<dyn VectorIndex>, RegistryError> {
     // ADR 0001 D4 + f-ingest-hnsw-cache-token: the ACID `indexed_vectors`
     // table is the source of truth; the HNSW is a derived structure. On
@@ -2196,6 +2281,7 @@ async fn load_or_create_index(
         index_dir,
         dim,
         Some(model_name),
+        progress,
     )
     .await
     {
@@ -2670,13 +2756,18 @@ mod tests {
         // size immediately — not the placeholder 0 — so cq-priority can order a
         // restore-storm by real size instead of FIFO.
         let corpus_path = tmp.path().to_str().unwrap().to_string();
+        let warm = Arc::new(IngestionProgress::new());
         let handle = registry
-            .create_handle(corpus_id, &[corpus_path], "cs".to_string())
+            .create_handle(corpus_id, &[corpus_path], "cs".to_string(), &warm)
             .await
             .unwrap();
         let info = handle.info.read().await;
         assert_eq!(info.files_indexed, 2, "two documents on disk");
         assert_eq!(info.sections_count, 3, "three sections total");
+        // The warming progress is complete and IS the handle's progress
+        // (daemon-progress-telemetry: SSE continuity across the warm).
+        assert_eq!(warm.status(), 2, "warm marked complete");
+        assert!(Arc::ptr_eq(&warm, &handle.progress));
     }
 
     #[tokio::test]
@@ -2687,7 +2778,12 @@ mod tests {
         let registry = test_registry_in(tmp.path());
         let corpus_path = tmp.path().to_str().unwrap().to_string();
         let handle = registry
-            .create_handle("brand-new", &[corpus_path], "n".to_string())
+            .create_handle(
+                "brand-new",
+                &[corpus_path],
+                "n".to_string(),
+                &Arc::new(IngestionProgress::new()),
+            )
             .await
             .unwrap();
         assert_eq!(handle.info.read().await.files_indexed, 0);

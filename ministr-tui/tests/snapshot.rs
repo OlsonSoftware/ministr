@@ -132,7 +132,7 @@ fn console_engine_unreachable() {
 fn console_waiting_warming_failed() {
     let mut app = App::with_engine(running(vec![
         strip("ministr", Standing::Waiting, 812),
-        strip("cohaero", Standing::Warming, 0),
+        strip("cohaero", Standing::Warming { fraction: 0.36 }, 0),
         strip("tock", Standing::Failed, 97),
     ]));
     insta::assert_snapshot!(render(&mut app, 120, 36));

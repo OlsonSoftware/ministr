@@ -144,6 +144,13 @@ pub enum IngestionPhase {
     Embedding = 3,
     /// Resolving cross-references and cleaning up stale data.
     Finalizing = 4,
+    /// Loading the corpus into memory (engine construction / HNSW
+    /// load-or-rebuild) — the daemon's warm-up window, not an ingest stage.
+    Warming = 5,
+    /// Fetching a remote git corpus.
+    Cloning = 6,
+    /// Downloading an embedding model on first use.
+    DownloadingModel = 7,
 }
 
 impl IngestionPhase {
@@ -154,6 +161,9 @@ impl IngestionPhase {
             2 => Self::Parsing,
             3 => Self::Embedding,
             4 => Self::Finalizing,
+            5 => Self::Warming,
+            6 => Self::Cloning,
+            7 => Self::DownloadingModel,
             _ => Self::Idle,
         }
     }
@@ -166,8 +176,18 @@ impl IngestionPhase {
             Self::Parsing => "parsing",
             Self::Embedding => "embedding",
             Self::Finalizing => "finalizing",
+            Self::Warming => "warming",
+            Self::Cloning => "cloning",
+            Self::DownloadingModel => "downloading-model",
         }
     }
+}
+
+/// Milliseconds since the Unix epoch, saturating on the (impossible) overflow.
+fn now_epoch_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 /// Shared progress tracker for background ingestion.
@@ -220,6 +240,13 @@ pub struct IngestionProgress {
     /// Wall-clock start of the current run, set by [`IngestionProgress::start`].
     /// Backs the throughput/latency getters (fg4 — per-stage observability).
     started_at: parking_lot::Mutex<Option<std::time::Instant>>,
+    /// Epoch-milliseconds twin of `started_at`, for the wire (an `Instant`
+    /// can't cross a process boundary; a GUI restarted mid-index needs the
+    /// absolute start to compute elapsed honestly). 0 = not started.
+    started_at_epoch_ms: std::sync::atomic::AtomicU64,
+    /// Epoch-milliseconds when the CURRENT phase began (daemon-progress
+    /// telemetry: phase-duration weighting client-side). 0 = unset.
+    phase_started_at_epoch_ms: std::sync::atomic::AtomicU64,
 }
 
 impl IngestionProgress {
@@ -235,6 +262,8 @@ impl IngestionProgress {
             embeddings_done: AtomicUsize::new(0),
             current_file: parking_lot::Mutex::new(String::new()),
             started_at: parking_lot::Mutex::new(None),
+            started_at_epoch_ms: std::sync::atomic::AtomicU64::new(0),
+            phase_started_at_epoch_ms: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -245,12 +274,20 @@ impl IngestionProgress {
         self.embeddings_total.store(0, Ordering::Relaxed);
         self.embeddings_done.store(0, Ordering::Relaxed);
         *self.started_at.lock() = Some(std::time::Instant::now());
+        self.started_at_epoch_ms
+            .store(now_epoch_ms(), Ordering::Relaxed);
         self.set_phase(IngestionPhase::Parsing);
         self.status.store(1, Ordering::Relaxed);
     }
 
     pub fn set_phase(&self, phase: IngestionPhase) {
-        self.phase.store(phase as u8, Ordering::Relaxed);
+        // Stamp the phase clock only on a real transition — a repeated
+        // set to the same phase must not reset its start time.
+        let prev = self.phase.swap(phase as u8, Ordering::Relaxed);
+        if prev != phase as u8 {
+            self.phase_started_at_epoch_ms
+                .store(now_epoch_ms(), Ordering::Relaxed);
+        }
     }
 
     pub fn set_current_file(&self, file: &str) {
@@ -324,6 +361,26 @@ impl IngestionProgress {
     #[must_use]
     pub fn status(&self) -> u8 {
         self.status.load(Ordering::Relaxed)
+    }
+
+    /// Epoch-ms wall-clock start of the current run, or `None` before the
+    /// first [`IngestionProgress::start`].
+    #[must_use]
+    pub fn started_at_epoch_ms(&self) -> Option<u64> {
+        match self.started_at_epoch_ms.load(Ordering::Relaxed) {
+            0 => None,
+            ms => Some(ms),
+        }
+    }
+
+    /// Epoch-ms wall-clock start of the current phase, or `None` before the
+    /// first phase transition.
+    #[must_use]
+    pub fn phase_started_at_epoch_ms(&self) -> Option<u64> {
+        match self.phase_started_at_epoch_ms.load(Ordering::Relaxed) {
+            0 => None,
+            ms => Some(ms),
+        }
     }
 
     // ── Per-stage observability (fg4) ──────────────────────────────────────

@@ -978,7 +978,7 @@ mod tests {
             use crate::index::{IndexedVectorStore, VectorIndex, rebuild_hnsw_from_store};
             let stored = storage.list_indexed_vectors().await.unwrap();
             assert_eq!(stored.len(), 4, "all 4 indexed vectors persisted to SQLite");
-            let rebuilt = rebuild_hnsw_from_store(&storage, embedder.dimension(), None)
+            let rebuilt = rebuild_hnsw_from_store(&storage, embedder.dimension(), None, None)
                 .await
                 .unwrap();
             assert_eq!(rebuilt.len(), 4, "index reconstructed from the ACID store");
