@@ -22,6 +22,7 @@
 - [Tool reference](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/reference/tools/README.md): the MCP tool surface, generated from the live schemas
 - [CLI](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/reference/cli.md): every ministr subcommand and flag
 - [Daemon HTTP API](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/reference/http-api.md): routes served to local clients
+- [Stability](https://raw.githubusercontent.com/OlsonSoftware/ministr/main/docs/reference/stability.md): which surfaces 1.x promises not to break, and which are excluded
 
 ## Concepts
 

@@ -1,5 +1,23 @@
 # Installation
 
+## From a release
+
+```sh
+curl -fsSL https://ministr.ai/install.sh | bash
+```
+
+On Windows:
+
+```powershell
+iwr -useb https://ministr.ai/install.ps1 | iex
+```
+
+Both install the newest stable release, falling back to the newest prerelease
+while only prereleases exist. Set `MINISTR_VERSION` to pin an exact version,
+and `INSTALL_DIR` to change where the binary lands.
+
+## From source
+
 ```sh
 cargo install --git https://github.com/OlsonSoftware/ministr --locked ministr-cli
 ```
@@ -13,6 +31,25 @@ From a clone:
 ```sh
 cargo install --path ministr-cli --locked
 ```
+
+## Supported platforms
+
+| Platform | Prebuilt binary | Tested in CI |
+|---|---|---|
+| macOS, Apple Silicon | yes | yes |
+| Linux x86_64 | yes | yes |
+| Linux aarch64 | yes | no — built, not exercised |
+| Windows x86_64 | yes | **no — built, not exercised** |
+| macOS, Intel | no | no |
+| Windows on ARM | no | no |
+
+Windows binaries are published but no continuous-integration job builds or runs
+the test suite on Windows, so treat that target as unproven and report anything
+that breaks. Intel Macs have no artifact and will not get one — the ONNX
+Runtime dependency dropped Intel-mac prebuilts. Build from source there.
+
+Platform coverage is part of the [stability
+policy](../reference/stability.md#unstable-surfaces).
 
 ## PATH setup
 

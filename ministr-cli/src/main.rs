@@ -102,11 +102,15 @@ enum Command {
     /// Show daemon status (requires the ministr daemon to be running).
     Status,
 
-    /// Open the ministr console — a full-screen terminal view of the
-    /// index engine: which projects are indexed and their state.
+    /// [PREVIEW] Open the ministr console — a full-screen terminal view
+    /// of the index engine: which projects are indexed and their state.
     ///
     /// Spawns the shared daemon if none is running (same handshake as
     /// the MCP proxy) and leaves it running on quit.
+    ///
+    /// Preview: the console is under active development and is excluded
+    /// from the 1.x stability promise — its layout and keys may change
+    /// in any release. See docs/reference/stability.md.
     Ui,
 
     /// Search the corpus — through the shared daemon when one is

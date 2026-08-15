@@ -17,9 +17,9 @@ You should receive an acknowledgment within 72 hours. Confirmed vulnerabilities 
 
 | Version | Supported |
 |---------|-----------|
-| 0.7.x   | Yes       |
+| 1.0.x (incl. `1.0.0-beta.N`) | Yes |
 
-Older pre-release versions are not supported. If you're running a development snapshot, update to the latest tagged release before reporting.
+Versions before `1.0.0-beta.1` were development milestones and were never published as installable releases; they are not supported. If you're running a development snapshot, update to the latest published release before reporting.
 
 ## Scope
 

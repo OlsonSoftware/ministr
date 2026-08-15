@@ -635,6 +635,51 @@ jobs:
       - run: cargo deny check
       - run: cargo audit
 
+  # ────────────────────────────────────────────────────────────────
+  # msrv: prove the declared rust-version floor is real.
+  #
+  # `[workspace.package] rust-version` is a public compatibility claim
+  # (docs/reference/stability.md), and an untested floor is just a
+  # guess — the toolchain everything else uses is pinned to 1.95.0 by
+  # rust-toolchain.toml, so nothing else would ever notice the floor
+  # drifting. `cargo check` on the declared version is the cheapest
+  # thing that actually falsifies it. No sccache/container: this needs
+  # its own toolchain, and it only type-checks.
+  # ────────────────────────────────────────────────────────────────
+  msrv:
+    name: msrv (declared floor builds)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Read declared MSRV
+        id: msrv
+        shell: bash
+        run: |
+          set -euo pipefail
+          v="$(sed -n 's/^rust-version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' Cargo.toml | head -1)"
+          [ -n "$v" ] || { echo "::error::no rust-version in [workspace.package]"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "::notice::declared MSRV: $v"
+
+      # RUSTUP_TOOLCHAIN overrides rust-toolchain.toml's 1.95.0 pin for
+      # this job only — without it cargo silently uses the pinned
+      # toolchain and the check proves nothing.
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master @ 2026-05-17
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - name: cargo check on the MSRV
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
+          # The pinned-toolchain lints aren't the point here; a floor
+          # violation shows up as a hard compile error, not a warning.
+          RUSTFLAGS: ""
+        run: cargo check --workspace --locked
+
   # docker-build: full release cook of the application image. Heavy
   # (≈ a duplicate of rust-release), so it runs on the large runner and
   # is narrowly gated — only when the application Dockerfile changes, or
@@ -714,7 +759,7 @@ jobs:
 
   ci-complete:
     name: ci complete
-    needs: [changes, ci-image, fmt, blackbox, docs, rust-dev, rust-release, security, docker-build]
+    needs: [changes, ci-image, fmt, blackbox, docs, rust-dev, rust-release, security, msrv, docker-build]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -729,6 +774,7 @@ jobs:
           RUST_DEV_RESULT: ${{ needs.rust-dev.result }}
           RUST_RELEASE_RESULT: ${{ needs.rust-release.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
+          MSRV_RESULT: ${{ needs.msrv.result }}
           DOCKER_RESULT: ${{ needs.docker-build.result }}
         run: |
           echo "changes:       $CHANGES_RESULT"
@@ -739,6 +785,7 @@ jobs:
           echo "rust-dev:      $RUST_DEV_RESULT"
           echo "rust-release:  $RUST_RELEASE_RESULT"
           echo "security:      $SECURITY_RESULT"
+          echo "msrv:          $MSRV_RESULT"
           echo "docker-build:  $DOCKER_RESULT"
 
           # The `changes` job MUST have succeeded — it drives gating.
@@ -756,6 +803,7 @@ jobs:
           ok "$RUST_DEV_RESULT"     || { echo "::error::rust-dev $RUST_DEV_RESULT";           fail=1; }
           ok "$RUST_RELEASE_RESULT" || { echo "::error::rust-release $RUST_RELEASE_RESULT";   fail=1; }
           ok "$SECURITY_RESULT"     || { echo "::error::security $SECURITY_RESULT";           fail=1; }
+          ok "$MSRV_RESULT"         || { echo "::error::msrv $MSRV_RESULT";                   fail=1; }
           ok "$DOCKER_RESULT"       || { echo "::error::docker-build $DOCKER_RESULT";         fail=1; }
           [ $fail -eq 0 ] || exit 1
           echo "✓ all required jobs passed or were intentionally skipped"

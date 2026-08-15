@@ -11,13 +11,24 @@ works with any MCP client — Claude Code, Cursor, VS Code / Copilot.
 ## Install
 
 ```sh
+curl -fsSL https://ministr.ai/install.sh | bash
+```
+
+Or build it yourself:
+
+```sh
 cargo install --git https://github.com/OlsonSoftware/ministr --locked ministr-cli
 ```
 
-Requires [Rust](https://rustup.rs) (rustup picks up the pinned toolchain
-automatically) and a C toolchain. From a clone:
+Building requires [Rust](https://rustup.rs) (rustup picks up the pinned
+toolchain automatically) and a C toolchain. From a clone:
 `cargo install --path ministr-cli --locked`. On Windows, add
 `--features directml` for DirectML GPU acceleration.
+
+Prebuilt binaries cover macOS on Apple Silicon, Linux x86_64 and aarch64, and
+Windows x86_64. The Windows build is published but not exercised by CI, and
+Intel Macs need a source build — details in
+[installation](docs/getting-started/installation.md#supported-platforms).
 
 ## Use
 
@@ -37,6 +48,10 @@ Documentation — installation, client setup, configuration, tool reference —
 lives in [docs/](docs/README.md). Configuration examples in
 [examples/](examples/README.md); agent-facing usage notes in
 [AGENTS.md](AGENTS.md).
+
+[Stability](docs/reference/stability.md) states which surfaces the 1.x line
+promises not to break. `ministr ui`, the terminal console, is a preview and is
+deliberately excluded from that promise.
 
 [CHANGELOG](CHANGELOG.md) · [CONTRIBUTING](CONTRIBUTING.md) ·
 [SECURITY](SECURITY.md) · [STEWARDSHIP](STEWARDSHIP.md)
