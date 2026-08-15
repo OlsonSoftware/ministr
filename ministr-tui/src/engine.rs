@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use ministr_api::client::DaemonClient;
-use ministr_api::corpus::{CorpusInfo, IndexingStatus};
+use ministr_api::corpus::{CorpusInfo, IndexingStatus, IngestionProgressInfo};
 
 use crate::console::{ConsoleModel, Standing, Strip};
 
@@ -80,15 +80,57 @@ async fn reduce_strip(client: &DaemonClient, info: CorpusInfo) -> Strip {
         }
     };
     let name = if info.display_name.is_empty() {
-        info.id
+        info.id.clone()
     } else {
         info.display_name
     };
     Strip {
+        id: info.id,
         name,
         standing,
         files: info.files_indexed,
     }
+}
+
+/// One project's live build position, from the engine's progress
+/// counters.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProgressTarget {
+    /// The engine's identifier for the project — [`Strip::id`].
+    pub id: String,
+    /// The reported position, `0.0..=1.0`.
+    pub fraction: f64,
+}
+
+/// Poll the engine's progress counters — the fast poll that feeds the
+/// live meters between status probes. `None` when the engine did not
+/// answer; the meters simply hold until the next answer.
+pub async fn progress(client: &DaemonClient) -> Option<Vec<ProgressTarget>> {
+    let infos = client.ingestion_progress().await.ok()?;
+    Some(
+        infos
+            .into_iter()
+            .map(|info| ProgressTarget {
+                fraction: progress_fraction(&info),
+                id: info.corpus_id,
+            })
+            .collect(),
+    )
+}
+
+/// A build's overall position: parsed files and generated embeddings
+/// counted as one pool of work, so the needle keeps moving through the
+/// whole build instead of parking at full while the tail finishes.
+/// A finished report reads full regardless of its counters.
+fn progress_fraction(info: &IngestionProgressInfo) -> f64 {
+    const COMPLETE: u8 = 2;
+    if info.status == COMPLETE {
+        return 1.0;
+    }
+    fraction_of(
+        info.files_done + info.embeddings_done,
+        info.files_total + info.embeddings_total,
+    )
 }
 
 /// `done / total`, honest at zero.

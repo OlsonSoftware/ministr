@@ -271,21 +271,22 @@ fn sweep_open_midframe_is_deterministic() {
 
 #[test]
 fn a_playing_transition_marks_the_app_animating() {
+    let now = std::time::Instant::now();
     let mut app = App::new();
-    assert!(!app.animating(), "the console starts at rest");
+    assert!(!app.animating(now), "the console starts at rest");
     app.motion = Motion::start(Transition::Materialize);
-    assert!(app.animating());
+    assert!(app.animating(now));
 
     // Drawing past the transition's end returns the app to rest.
     let mut terminal = Terminal::new(TestBackend::new(40, 8)).expect("test terminal");
     terminal
-        .draw(|frame| app.draw(frame, MAX_TRANSITION))
+        .draw(|frame| app.draw(frame, MAX_TRANSITION, now))
         .expect("draw frame");
     terminal
-        .draw(|frame| app.draw(frame, Duration::ZERO))
+        .draw(|frame| app.draw(frame, Duration::ZERO, now))
         .expect("draw frame");
     assert!(
-        !app.animating(),
+        !app.animating(now),
         "a finished transition must not keep the clock running"
     );
 }

@@ -4,7 +4,8 @@
 //! machine state top-right, one channel strip per project, the master
 //! section, and a foot key-line carrying only the verbs that work.
 
-use std::time::Duration;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -12,8 +13,9 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 
-use crate::console::{self, Strip};
-use crate::engine::EngineState;
+use crate::console::{self, Standing, Strip};
+use crate::ease::Glide;
+use crate::engine::{EngineState, ProgressTarget};
 use crate::motion::{Motion, Transition};
 use crate::palette::ColorDepth;
 use crate::strings;
@@ -31,6 +33,11 @@ pub struct App {
     /// A removed project's strip, kept in place while its dissolve
     /// plays — dropped the moment the transition completes.
     leaving: Option<(Strip, usize)>,
+    /// One eased needle per building project, keyed by [`Strip::id`].
+    /// Born on the first live progress report, pruned when the strip
+    /// stops building. A building strip without one renders the
+    /// probe's own position unchanged.
+    meters: HashMap<String, Glide>,
     /// Which strip is selected (index into [`App::strips`]).
     pub selected: usize,
     /// The color ladder rung every widget renders at.
@@ -63,6 +70,7 @@ impl App {
             motion: Motion::none(),
             motion_strip: None,
             leaving: None,
+            meters: HashMap::new(),
             selected: 0,
             depth: ColorDepth::TrueColor,
             should_quit: false,
@@ -104,8 +112,60 @@ impl App {
             }
         }
         self.engine = state;
+        if let EngineState::Running(model) = &self.engine {
+            // A needle outlives its build by nothing: the moment a
+            // strip stops building, its glide goes with it.
+            self.meters.retain(|id, _| {
+                model
+                    .strips
+                    .iter()
+                    .any(|s| s.id == *id && matches!(s.standing, Standing::Building { .. }))
+            });
+        } else {
+            self.meters.clear();
+        }
         self.selected = self.selected.min(self.strips().len().saturating_sub(1));
         true
+    }
+
+    /// Absorb one round of live progress reports — the fast poll that
+    /// runs only while something is building. Each report points its
+    /// strip's needle at the new position; the glide from here to
+    /// there is what the frames draw. Returns whether any needle
+    /// actually moved (the pacer draws only then).
+    pub fn absorb_progress(&mut self, targets: &[ProgressTarget], now: Instant) -> bool {
+        let EngineState::Running(model) = &self.engine else {
+            return false;
+        };
+        let mut moved = false;
+        for target in targets {
+            // Only a building strip has a meter to drive.
+            let Some(strip) = model.strips.iter().find(|s| s.id == target.id) else {
+                continue;
+            };
+            let Standing::Building { fraction } = strip.standing else {
+                continue;
+            };
+            let glide = self
+                .meters
+                .entry(target.id.clone())
+                .or_insert_with(|| Glide::new(fraction, now));
+            moved |= glide.retarget(target.fraction, now);
+        }
+        moved
+    }
+
+    /// Is anything building? While yes, the event loop runs the fast
+    /// progress poll that feeds the live meters.
+    #[must_use]
+    pub fn building(&self) -> bool {
+        let EngineState::Running(model) = &self.engine else {
+            return false;
+        };
+        model
+            .strips
+            .iter()
+            .any(|s| matches!(s.standing, Standing::Building { .. }))
     }
 
     /// The strips the frame shows: the engine's projects, with a
@@ -149,16 +209,39 @@ impl App {
         }
     }
 
-    /// Is a transition playing? While yes, the event loop paces frames
-    /// at the delta-time clock instead of resting.
+    /// Is anything moving at `now` — a transition playing, or a needle
+    /// still gliding toward its target? While yes, the event loop
+    /// paces frames at the delta-time clock instead of resting; the
+    /// moment every needle settles and no transition plays, the
+    /// console rests again at zero redraws.
     #[must_use]
-    pub fn animating(&self) -> bool {
-        self.motion.running()
+    pub fn animating(&self, now: Instant) -> bool {
+        self.motion.running() || self.meters.values().any(|glide| !glide.settled(now))
     }
 
-    /// Draw one frame: title row, the console body, foot key-line, and
-    /// whatever transition is playing, advanced by `delta`.
-    pub fn draw(&mut self, frame: &mut Frame, delta: Duration) {
+    /// The strips the frame draws: [`App::strips`] with each building
+    /// strip's position replaced by its needle's eased position at
+    /// `now` — a pure function of the glide state and the instant, so
+    /// fixed-instant renders are deterministic. Both the meter and the
+    /// percent under it read the same eased value.
+    fn eased_strips(&self, now: Instant) -> Vec<Strip> {
+        let mut strips = self.strips();
+        for strip in &mut strips {
+            if matches!(strip.standing, Standing::Building { .. })
+                && let Some(glide) = self.meters.get(&strip.id)
+            {
+                strip.standing = Standing::Building {
+                    fraction: glide.at(now),
+                };
+            }
+        }
+        strips
+    }
+
+    /// Draw one frame at instant `now`: title row, the console body
+    /// with its meters eased to `now`, foot key-line, and whatever
+    /// transition is playing, advanced by `delta`.
+    pub fn draw(&mut self, frame: &mut Frame, delta: Duration, now: Instant) {
         let [title, body, foot] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Fill(1),
@@ -168,7 +251,7 @@ impl App {
         .areas(frame.area());
 
         self.draw_title(frame, title);
-        let strips = self.strips();
+        let strips = self.eased_strips(now);
         let layout = self.draw_body(frame, body, &strips);
         let foot_line = if strips.is_empty() {
             strings::FOOT_QUIT

@@ -17,6 +17,7 @@
 
 pub mod app;
 pub mod console;
+pub mod ease;
 pub mod engine;
 pub mod event;
 pub mod meter;
@@ -37,6 +38,10 @@ use crate::pacing::Pacer;
 /// How often the frame re-probes the engine for machine state.
 const PROBE_INTERVAL: Duration = Duration::from_secs(2);
 
+/// How often the live meters poll the engine's progress counters —
+/// only while something is building; at rest this poll never runs.
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(500);
+
 /// Errors the console can exit with.
 #[derive(Debug, thiserror::Error)]
 pub enum UiError {
@@ -56,10 +61,17 @@ pub enum UiError {
 /// Returns [`UiError::Io`] when terminal control or drawing fails.
 pub async fn run() -> Result<(), UiError> {
     let client = DaemonClient::new();
-    engine::ensure_engine(&client).await;
+    // The engine handshake (spawn if missing, wait until it answers)
+    // runs in the background: the console opens at once and the title
+    // reads "starting…" honestly until the engine is up — a cold
+    // machine never stares at a blank shell.
+    let spawning = tokio::spawn(async {
+        let client = DaemonClient::new();
+        engine::ensure_engine(&client).await;
+    });
 
     let mut terminal = ratatui::init();
-    let result = event_loop(&mut terminal, &client).await;
+    let result = event_loop(&mut terminal, &client, spawning).await;
     ratatui::restore();
     result
 }
@@ -70,24 +82,35 @@ pub async fn run() -> Result<(), UiError> {
 /// wakes on input and probe answers but draws nothing; while a
 /// transition plays it draws at the frame clock, feeding effects real
 /// elapsed time. Every draw goes through [`sync::draw_synced`].
-async fn event_loop(terminal: &mut DefaultTerminal, client: &DaemonClient) -> Result<(), UiError> {
+async fn event_loop(
+    terminal: &mut DefaultTerminal,
+    client: &DaemonClient,
+    mut spawning: tokio::task::JoinHandle<()>,
+) -> Result<(), UiError> {
     let mut app = App::new();
     let mut events = event::spawn_reader();
     // `interval` fires immediately, so the first frame after this one
     // already carries a real probe result instead of a stuck "starting".
     let mut probe_timer = tokio::time::interval(PROBE_INTERVAL);
+    // While nothing builds this timer is not polled and its ticks go
+    // missing; skipping them keeps a build's first poll from replaying
+    // the whole quiet spell as a burst.
+    let mut progress_timer = tokio::time::interval(PROGRESS_INTERVAL);
+    progress_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut spawn_done = false;
     let mut pacer = Pacer::new();
     let mut last_frame = Instant::now();
 
     loop {
-        pacer.set_animating(app.animating());
+        pacer.set_animating(app.animating(Instant::now()));
         if pacer.take_redraw() {
-            let delta = last_frame.elapsed().min(pacing::MAX_FRAME_DELTA);
-            last_frame = Instant::now();
+            let now = Instant::now();
+            let delta = now.duration_since(last_frame).min(pacing::MAX_FRAME_DELTA);
+            last_frame = now;
             // Stdout is the same stream the default backend writes to,
             // so the sync sequences bracket the frame bytes in order.
             sync::draw_synced(&mut std::io::stdout(), terminal, |frame| {
-                app.draw(frame, delta);
+                app.draw(frame, delta, now);
             })?;
         }
 
@@ -106,12 +129,34 @@ async fn event_loop(terminal: &mut DefaultTerminal, client: &DaemonClient) -> Re
             },
             _ = probe_timer.tick() => {
                 let state = engine::probe(client).await;
-                if app.absorb(state) {
+                // While the background handshake is still bringing the
+                // engine up, an unanswered probe is expected — the
+                // title keeps "starting…" instead of raising an alarm
+                // the machine is about to answer.
+                let starting_grace = !spawn_done
+                    && matches!(state, engine::EngineState::Unreachable)
+                    && matches!(app.engine, engine::EngineState::Starting);
+                if !starting_grace && app.absorb(state) {
                     pacer.mark_dirty();
                 }
             }
-            // The frame clock: armed only while a transition plays, so
-            // the rest state stays fully event-driven.
+            // The engine handshake finished: probe at once so the
+            // title flips the moment the engine is really up.
+            _ = &mut spawning, if !spawn_done => {
+                spawn_done = true;
+                probe_timer.reset_immediately();
+            }
+            // The fast progress poll: armed only while something is
+            // building, so the rest state never polls it.
+            _ = progress_timer.tick(), if app.building() => {
+                if let Some(targets) = engine::progress(client).await
+                    && app.absorb_progress(&targets, Instant::now())
+                {
+                    pacer.mark_dirty();
+                }
+            }
+            // The frame clock: armed only while a transition plays or
+            // a needle glides, so the rest state stays event-driven.
             () = tokio::time::sleep(pacing::FRAME_INTERVAL), if pacer.is_animating() => {}
         }
 

@@ -35,6 +35,11 @@ pub struct ConsoleModel {
 /// One project's channel strip.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Strip {
+    /// The engine's identifier for the project — the key live progress
+    /// reports arrive under. Never rendered; the head shows [`name`].
+    ///
+    /// [`name`]: Strip::name
+    pub id: String,
     /// The project's name, at the head of the strip.
     pub name: String,
     /// The project's standing, at the foot.
