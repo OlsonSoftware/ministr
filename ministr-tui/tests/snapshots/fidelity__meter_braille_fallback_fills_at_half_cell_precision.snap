@@ -1,0 +1,9 @@
+---
+source: ministr-tui/tests/fidelity.rs
+expression: "rows.join(\"\\n\")"
+---
+    0 |        |
+  0.3 |⣿⣿⡇     |
+  0.5 |⣿⣿⣿⣿    |
+ 0.98 |⣿⣿⣿⣿⣿⣿⣿⣿|
+    1 |⣿⣿⣿⣿⣿⣿⣿⣿|

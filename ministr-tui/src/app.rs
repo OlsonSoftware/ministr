@@ -4,6 +4,8 @@
 //! machine state right), a quiet body, and the foot key-line — the
 //! console's channel strips land in the next chunk.
 
+use std::time::Duration;
+
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -11,6 +13,7 @@ use ratatui::style::Stylize;
 use ratatui::text::Line;
 
 use crate::engine::EngineState;
+use crate::motion::Motion;
 use crate::strings;
 
 /// The console's whole state.
@@ -18,6 +21,9 @@ use crate::strings;
 pub struct App {
     /// What the last engine probe said.
     pub engine: EngineState,
+    /// The transition playing over the frame, if any (motion law:
+    /// one starts only on a real state change and never loops).
+    pub motion: Motion,
     /// Set by [`App::on_key`]; the event loop exits on the next pass.
     pub should_quit: bool,
 }
@@ -41,24 +47,36 @@ impl App {
     pub fn with_engine(engine: EngineState) -> Self {
         Self {
             engine,
+            motion: Motion::none(),
             should_quit: false,
         }
     }
 
-    /// Handle one key press. Quit keys: `q`, Esc, Ctrl-C.
-    pub fn on_key(&mut self, key: KeyEvent) {
+    /// Handle one key press. Quit keys: `q`, Esc, Ctrl-C. Returns
+    /// whether state changed (the pacer draws a frame only then).
+    pub fn on_key(&mut self, key: KeyEvent) -> bool {
         if key.kind != KeyEventKind::Press {
-            return;
+            return false;
         }
         let ctrl_c =
             key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
         if ctrl_c || matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
             self.should_quit = true;
+            return true;
         }
+        false
     }
 
-    /// Draw one frame: title row, body, foot key-line.
-    pub fn draw(&self, frame: &mut Frame) {
+    /// Is a transition playing? While yes, the event loop paces frames
+    /// at the delta-time clock instead of resting.
+    #[must_use]
+    pub fn animating(&self) -> bool {
+        self.motion.running()
+    }
+
+    /// Draw one frame: title row, body, foot key-line, and whatever
+    /// transition is playing, advanced by `delta`.
+    pub fn draw(&mut self, frame: &mut Frame, delta: Duration) {
         let [title, body, foot] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Fill(1),
@@ -70,6 +88,9 @@ impl App {
         self.draw_title(frame, title);
         self.draw_body(frame, body);
         frame.render_widget(Line::from(strings::FOOT_QUIT).dim(), foot);
+
+        let area = frame.area();
+        self.motion.render(frame, area, delta);
     }
 
     /// Name at the head, machine state top-right — plainly worded, and

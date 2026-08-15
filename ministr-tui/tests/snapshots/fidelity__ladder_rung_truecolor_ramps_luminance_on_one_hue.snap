@@ -1,0 +1,46 @@
+---
+source: ministr-tui/tests/fidelity.rs
+expression: "ramp_swatch(ColorDepth::TrueColor)"
+---
+[
+    Rgb(
+        19,
+        115,
+        134,
+    ),
+    Rgb(
+        22,
+        132,
+        154,
+    ),
+    Rgb(
+        25,
+        150,
+        175,
+    ),
+    Rgb(
+        28,
+        167,
+        195,
+    ),
+    Rgb(
+        31,
+        185,
+        215,
+    ),
+    Rgb(
+        45,
+        195,
+        225,
+    ),
+    Rgb(
+        65,
+        201,
+        228,
+    ),
+    Rgb(
+        85,
+        207,
+        231,
+    ),
+]

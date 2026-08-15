@@ -237,6 +237,12 @@ dialoguer = "0.11"
 # so the event-reading side can never drift out of version-sync with the
 # rendering backend.
 ratatui = "0.30"
+# Effects layer for the console's transitions (GUI-BLUEPRINT-v8
+# Amendment A): short, eased, non-looping frame-buffer effects. 0.25.x
+# is the line that pairs with ratatui 0.30 — a mismatch between the two
+# is tachyonfx's most-reported integration failure, so bump them in
+# lockstep only.
+tachyonfx = "0.25"
 
 # Cross-shell PATH management for `ministr setup` and the Tauri first-run flow
 onpath = "0.2"

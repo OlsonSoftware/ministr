@@ -1,0 +1,17 @@
+---
+source: ministr-tui/tests/fidelity.rs
+expression: buf
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 8, height: 1 },
+    content: [
+        "████    ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Rgb(22, 130, 152), bg: Reset, underline: Reset, modifier: NONE,
+        x: 1, y: 0, fg: Rgb(27, 161, 187), bg: Reset, underline: Reset, modifier: NONE,
+        x: 2, y: 0, fg: Rgb(32, 191, 223), bg: Reset, underline: Reset, modifier: NONE,
+        x: 3, y: 0, fg: Rgb(68, 201, 228), bg: Reset, underline: Reset, modifier: NONE,
+        x: 4, y: 0, fg: Rgb(85, 207, 231), bg: Reset, underline: Reset, modifier: NONE,
+    ]
+}

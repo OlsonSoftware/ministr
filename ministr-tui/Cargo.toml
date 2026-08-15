@@ -20,6 +20,7 @@ workspace = true
 # the local transport; zero new protocol (GUI-BLUEPRINT-v8 §7).
 ministr-api.workspace = true
 ratatui.workspace = true
+tachyonfx.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 

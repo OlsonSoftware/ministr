@@ -1,0 +1,25 @@
+---
+source: ministr-tui/tests/fidelity.rs
+expression: terminal.backend().buffer()
+---
+Buffer {
+    area: Rect { x: 0, y: 0, width: 16, height: 2 },
+    content: [
+        "three projects  ",
+        "                ",
+    ],
+    styles: [
+        x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 11, y: 0, fg: Rgb(191, 191, 191), bg: Rgb(0, 0, 0), underline: Reset, modifier: NONE,
+        x: 12, y: 0, fg: Rgb(186, 186, 186), bg: Rgb(0, 0, 0), underline: Reset, modifier: NONE,
+        x: 13, y: 0, fg: Rgb(179, 179, 179), bg: Rgb(0, 0, 0), underline: Reset, modifier: NONE,
+        x: 14, y: 0, fg: Rgb(168, 168, 168), bg: Rgb(0, 0, 0), underline: Reset, modifier: NONE,
+        x: 15, y: 0, fg: Rgb(155, 155, 155), bg: Rgb(0, 0, 0), underline: Reset, modifier: NONE,
+        x: 0, y: 1, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 11, y: 1, fg: Rgb(191, 191, 191), bg: Rgb(0, 0, 0), underline: Reset, modifier: NONE,
+        x: 12, y: 1, fg: Rgb(186, 186, 186), bg: Rgb(0, 0, 0), underline: Reset, modifier: NONE,
+        x: 13, y: 1, fg: Rgb(179, 179, 179), bg: Rgb(0, 0, 0), underline: Reset, modifier: NONE,
+        x: 14, y: 1, fg: Rgb(168, 168, 168), bg: Rgb(0, 0, 0), underline: Reset, modifier: NONE,
+        x: 15, y: 1, fg: Rgb(155, 155, 155), bg: Rgb(0, 0, 0), underline: Reset, modifier: NONE,
+    ]
+}

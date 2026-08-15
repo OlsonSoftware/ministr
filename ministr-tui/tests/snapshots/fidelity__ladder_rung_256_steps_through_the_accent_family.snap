@@ -1,0 +1,30 @@
+---
+source: ministr-tui/tests/fidelity.rs
+expression: "ramp_swatch(ColorDepth::Ansi256)"
+---
+[
+    Indexed(
+        30,
+    ),
+    Indexed(
+        30,
+    ),
+    Indexed(
+        37,
+    ),
+    Indexed(
+        37,
+    ),
+    Indexed(
+        44,
+    ),
+    Indexed(
+        44,
+    ),
+    Indexed(
+        51,
+    ),
+    Indexed(
+        51,
+    ),
+]

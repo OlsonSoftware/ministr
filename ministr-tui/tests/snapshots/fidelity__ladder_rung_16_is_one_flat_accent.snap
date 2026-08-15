@@ -1,0 +1,14 @@
+---
+source: ministr-tui/tests/fidelity.rs
+expression: "ramp_swatch(ColorDepth::Ansi16)"
+---
+[
+    Cyan,
+    Cyan,
+    Cyan,
+    Cyan,
+    Cyan,
+    Cyan,
+    Cyan,
+    Cyan,
+]
