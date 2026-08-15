@@ -79,7 +79,7 @@ scraper = "0.26"
 pdf-extract = "0.12"
 
 # Token counting
-tiktoken-rs = "0.6"
+tiktoken-rs = "0.12"
 
 # Embeddings
 fastembed = "5"
