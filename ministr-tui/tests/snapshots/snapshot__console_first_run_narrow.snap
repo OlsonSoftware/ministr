@@ -1,8 +1,8 @@
 ---
 source: ministr-tui/tests/snapshot.rs
-expression: "render(&app, 60, 20)"
+expression: "render(&mut app, 60, 20)"
 ---
-"  ministr                               engine ○ starting…  "
+"  ministr                                 engine ● running  "
 "                                                            "
 "                                                            "
 "                                                            "
@@ -12,7 +12,7 @@ expression: "render(&app, 60, 20)"
 "                                                            "
 "                                                            "
 "                                                            "
-"                                                            "
+"                      no projects yet                       "
 "                                                            "
 "                                                            "
 "                                                            "

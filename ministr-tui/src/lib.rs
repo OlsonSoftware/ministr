@@ -3,11 +3,11 @@
 //! Opened with `ministr ui`. This crate owns terminal setup/teardown
 //! (raw mode, alternate screen, panic-hook restore), the event loop, the
 //! engine plumbing, and every frame. The binding design direction is
-//! GUI-BLUEPRINT-v8 (Master-Control Console); the console screens land
-//! in the next chunk. What ships here besides the placeholder frame is
-//! the rendering infrastructure every screen builds on (Amendment A):
-//! synchronized frames ([`sync`]), the color capability ladder
-//! ([`palette`]), adaptive frame pacing ([`pacing`]), lawful
+//! GUI-BLUEPRINT-v8 (Master-Control Console). The home screen is S1 —
+//! The Console ([`console`]): one channel strip per project beside a
+//! master section, rendered through the rendering infrastructure of
+//! Amendment A: synchronized frames ([`sync`]), the color capability
+//! ladder ([`palette`]), adaptive frame pacing ([`pacing`]), lawful
 //! transitions ([`motion`]), and the sub-cell meter ([`meter`]).
 //!
 //! Language rule (blueprint §4): every user-facing string lives in
@@ -16,6 +16,7 @@
 //! over all string literals in this crate.
 
 pub mod app;
+pub mod console;
 pub mod engine;
 pub mod event;
 pub mod meter;
@@ -105,8 +106,7 @@ async fn event_loop(terminal: &mut DefaultTerminal, client: &DaemonClient) -> Re
             },
             _ = probe_timer.tick() => {
                 let state = engine::probe(client).await;
-                if state != app.engine {
-                    app.engine = state;
+                if app.absorb(state) {
                     pacer.mark_dirty();
                 }
             }

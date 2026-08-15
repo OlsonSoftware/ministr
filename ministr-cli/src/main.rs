@@ -253,9 +253,17 @@ async fn main() -> Result<()> {
     }))
     .expect("miette hook should be set once");
 
-    ministr_core::tracing::init_tracing();
-
     let command = cli.command.take().unwrap_or_default();
+
+    // `ministr ui` owns the terminal: nothing may print outside the
+    // alternate screen while the console runs (GUI-BLUEPRINT-v8 §8 —
+    // the scaffold's PTY pass caught a spawn log line landing before
+    // the alt screen opened). With no subscriber installed, every
+    // tracing event in this process is a no-op; the engine keeps its
+    // own log file, and the console reports engine trouble in-frame.
+    if !matches!(command, Command::Ui) {
+        ministr_core::tracing::init_tracing();
+    }
 
     // `ministr setup` runs *before* resolve_config() so a malformed
     // .ministr.toml in cwd can't lock the user out of the subcommand that

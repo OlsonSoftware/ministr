@@ -1,0 +1,16 @@
+---
+source: ministr-tui/tests/snapshot.rs
+expression: "render(&mut app, 60, 12)"
+---
+"  ministr                                 engine ● running  "
+"  ‹ 4 more                                                  "
+"  project-05                         up to date  500 files  "
+"  project-06                         up to date  600 files  "
+"  project-07                         up to date  700 files  "
+"  project-08                         up to date  800 files  "
+"  project-09                         up to date  900 files  "
+"  project-10                        up to date  1000 files  "
+"  project-11                        up to date  1100 files  "
+"  project-12                        up to date  1200 files  "
+"                                                            "
+"  ← → select   q quit                                       "
