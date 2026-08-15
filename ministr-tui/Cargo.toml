@@ -1,0 +1,27 @@
+[package]
+name = "ministr-tui"
+version = "0.7.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Terminal console for the ministr index engine — see and manage indexed projects."
+readme = "README.md"
+categories = ["command-line-utilities", "development-tools"]
+keywords = ["ministr", "tui", "terminal", "console"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# The engine client — same DaemonClient the CLI and MCP proxy use over
+# the local transport; zero new protocol (GUI-BLUEPRINT-v8 §7).
+ministr-api.workspace = true
+ratatui.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+insta.workspace = true

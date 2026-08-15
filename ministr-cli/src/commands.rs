@@ -1677,6 +1677,20 @@ pub fn cmd_import(
 }
 
 // ---------------------------------------------------------------------------
+// ministr ui
+// ---------------------------------------------------------------------------
+
+/// `ministr ui` — open the terminal console (GUI-BLUEPRINT-v8).
+///
+/// ministr-tui owns terminal setup/teardown, the event loop, and the
+/// frames; it spawns the shared daemon if none is running (the same
+/// `ensure_daemon_spawned` handshake the MCP proxy uses) and talks to it
+/// through `ministr_api::client::DaemonClient`.
+pub async fn cmd_ui() -> Result<()> {
+    ministr_tui::run().await.into_diagnostic()
+}
+
+// ---------------------------------------------------------------------------
 // ministr status / search
 // ---------------------------------------------------------------------------
 

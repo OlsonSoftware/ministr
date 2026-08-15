@@ -1,7 +1,7 @@
 //! ministr-cli — binary entry point for the ministr MCP server.
 //!
-//! Provides subcommands: `serve` (default), `index`, `status`, `search`,
-//! `init`, `export`, `import`, and `hooks test`.
+//! Provides subcommands: `serve` (default), `index`, `status`, `ui`,
+//! `search`, `init`, `export`, `import`, and `hooks test`.
 //!
 //! This module handles CLI argument parsing and dispatch. Implementation
 //! lives in:
@@ -99,6 +99,13 @@ enum Command {
 
     /// Show daemon status (requires the ministr daemon to be running).
     Status,
+
+    /// Open the ministr console — a full-screen terminal view of the
+    /// index engine: which projects are indexed and their state.
+    ///
+    /// Spawns the shared daemon if none is running (same handshake as
+    /// the MCP proxy) and leaves it running on quit.
+    Ui,
 
     /// Search the corpus via the daemon (requires the ministr daemon to
     /// be running).
@@ -392,6 +399,7 @@ async fn dispatch(command: Command, rc: ResolvedConfig) -> Result<()> {
             .await
         }
         Command::Status => commands::cmd_daemon_status().await,
+        Command::Ui => commands::cmd_ui().await,
         Command::Search { query, top_k } => {
             commands::cmd_daemon_search(&rc.corpus_paths, &query, top_k).await
         }

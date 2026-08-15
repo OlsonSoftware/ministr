@@ -29,6 +29,10 @@ workspace = true
 
 [dependencies]
 ministr-api.workspace = true
+# `ministr ui` — the terminal console (GUI-BLUEPRINT-v8). The TUI crate
+# owns terminal setup/teardown and the event loop; the CLI only routes
+# the subcommand to `ministr_tui::run()`.
+ministr-tui.workspace = true
 # Non-macOS: fastembed/ONNX path only. candle-core pulls in the Apple-only
 # `metal` crate stack (objc2), which refuses to compile on Linux/Windows.
 ministr-mcp.workspace = true
