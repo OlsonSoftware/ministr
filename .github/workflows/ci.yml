@@ -367,7 +367,7 @@ jobs:
       # rust-release's `release` key. Harmless no-op on a persistent
       # self-hosted runner where CARGO_HOME is already warm.
       - name: Cargo registry cache (dev)
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: dev
           cache-targets: "false"
@@ -455,7 +455,7 @@ jobs:
       # Registry + git only; `release` shared-key disjoint from
       # rust-dev's `dev`. sccache owns the compile artifacts.
       - name: Cargo registry cache (release)
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: release
           cache-targets: "false"
@@ -625,7 +625,7 @@ jobs:
       # Share rust-dev's cache (registry + git) read-only — cargo-deny /
       # cargo-audit only need the crate metadata, not a target/ tree.
       - name: Cargo cache (registry + git)
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: dev
           save-if: false
