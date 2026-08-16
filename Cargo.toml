@@ -250,7 +250,7 @@ tachyonfx = "0.25"
 onpath = "0.2"
 
 # MCP
-rmcp = { version = "1.7", features = ["server", "transport-io", "transport-streamable-http-server", "elicitation", "schemars"] }
+rmcp = { version = "3.1", features = ["server", "transport-io", "transport-streamable-http-server", "elicitation", "schemars"] }
 axum = "0.8"
 
 # Testing
