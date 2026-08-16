@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
-"""Black-box lint: fail if a PUBLIC-FACING surface leaks closed-source internals.
+"""Black-box lint: guard the surfaces users actually see.
 
-ministr is proprietary. Public surfaces (the README, the docs site, and
-the agent-rule constants scaffolded into *users'* repos) must describe
-*what* ministr does, never *how* - no internal crate source paths and no
-legacy/internal jargon.
+Two independent checks:
 
-Scope is deliberately narrow to stay false-positive-free: it does NOT
-forbid generic `src/foo.rs` (those appear as legitimate example payloads
-in the tool docs), only unambiguous internal leaks.
+1. **No internal leaks.** Public surfaces (the README and the agent-rule
+   constants scaffolded into *users'* repos) describe *what* ministr does,
+   never *how* - no internal crate source paths, no legacy jargon. Scope is
+   deliberately narrow to stay false-positive-free: it does NOT forbid a
+   generic `src/foo.rs` (those appear as legitimate example payloads in the
+   tool docs), only unambiguous internal leaks.
+
+2. **The published installers match the ones in the repo.** `install.sh` and
+   `install.ps1` exist twice: at the repo root, and under `web/public/` where
+   the static site serves them as ministr.ai/install.sh. Nothing synced them,
+   and they silently drifted - the site served an installer that could not
+   resolve a prerelease long after the root copy was fixed. Byte-equality is
+   now a gate.
 """
 
 from __future__ import annotations
@@ -24,7 +31,18 @@ TARGETS: list[str] = [
     "README.md",
     "ministr-core/src/scaffold.rs",  # constants written into users' repos
 ]
-TARGET_DIRS: list[str] = ["docs-next/content"]
+# Empty by design. This once pointed at `docs-next/content`, a marketing-site
+# content tree that no longer exists (it became `web/`, which is JSX, not
+# prose). Do NOT point it at `docs/`: the in-repo documentation legitimately
+# names crate paths, and it already has its own gate in check_docs.py.
+TARGET_DIRS: list[str] = []
+
+# (repo copy, published-by-the-site copy). These must stay byte-identical:
+# the second is what `curl https://ministr.ai/install.sh | bash` actually runs.
+INSTALLER_PAIRS: list[tuple[str, str]] = [
+    ("install.sh", "web/public/install.sh"),
+    ("install.ps1", "web/public/install.ps1"),
+]
 
 # Unambiguous internal leaks. Case-insensitive, substring match.
 FORBIDDEN: list[tuple[str, str]] = [
@@ -54,8 +72,27 @@ def iter_files():
                     yield p
 
 
+def installer_drift() -> list[str]:
+    """Report installers whose served copy no longer matches the repo copy."""
+    out: list[str] = []
+    for src_rel, pub_rel in INSTALLER_PAIRS:
+        src, pub = ROOT / src_rel, ROOT / pub_rel
+        if not src.is_file():
+            out.append(f"{src_rel}: missing (the canonical installer)")
+            continue
+        if not pub.is_file():
+            out.append(f"{pub_rel}: missing - the site would 404 on this installer")
+            continue
+        if src.read_bytes() != pub.read_bytes():
+            out.append(
+                f"{pub_rel}: out of sync with {src_rel} - the site would serve a "
+                f"stale installer. Fix with: cp {src_rel} {pub_rel}"
+            )
+    return out
+
+
 def main() -> int:
-    violations: list[str] = []
+    violations: list[str] = installer_drift()
     for path in iter_files():
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -70,15 +107,16 @@ def main() -> int:
                         violations.append(f"{rel}:{n}: '{needle}' - {why}")
 
     if violations:
-        print("Black-box lint FAILED - public surfaces must stay black-box:\n")
+        print("Black-box lint FAILED - the surfaces users see are wrong:\n")
         print("\n".join(sorted(violations)))
         print(
-            "\nFix the wording (describe behavior, not internals) or, if this "
-            "file is not actually public, narrow scripts/ci/blackbox_lint.py."
+            "\nFor wording: describe behavior, not internals (or, if the file is "
+            "not actually public, narrow scripts/ci/blackbox_lint.py). For an "
+            "installer: copy the root file over the web/public one."
         )
         return 1
 
-    print("black-box lint: clean - no internal leaks in public surfaces.")
+    print("black-box lint: clean - no internal leaks, installers in sync.")
     return 0
 
 
