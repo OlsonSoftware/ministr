@@ -59,7 +59,7 @@ rustls-pki-types = "1"
 webpki-roots = "1"
 
 # Markdown parsing
-comrak = "0.36"
+comrak = "0.54"
 
 # HTTP client
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "charset", "http2"] }
@@ -92,7 +92,7 @@ ort = { version = "=2.0.0-rc.11", default-features = false, features = ["coreml"
 candle-core = { version = "0.11", features = ["metal", "accelerate"] }
 candle-nn = "0.11"
 candle-transformers = "0.11"
-hf-hub = "0.5"
+hf-hub = { version = "1.0", default-features = false, features = ["blocking", "rustls-tls"] }
 tokenizers = "0.22"
 
 # Vector index
