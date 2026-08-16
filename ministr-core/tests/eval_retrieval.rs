@@ -542,10 +542,15 @@ async fn measure_truncation_content_loss() {
     assert!(!texts.is_empty(), "no sections were embedded");
 
     // Real WordPiece tokenizer with truncation disabled, so we see true lengths.
-    let api = hf_hub::api::sync::Api::new().expect("failed to init hf-hub api");
-    let tok_path = api
-        .model("sentence-transformers/all-MiniLM-L6-v2".to_string())
-        .get("tokenizer.json")
+    let client = hf_hub::HFClientBuilder::new()
+        .build_sync()
+        .expect("failed to init hf-hub client");
+    let (owner, name) = hf_hub::split_id("sentence-transformers/all-MiniLM-L6-v2");
+    let tok_path = client
+        .model(owner, name)
+        .download_file()
+        .filename("tokenizer.json")
+        .send()
         .expect("failed to download tokenizer.json");
     let mut tokenizer =
         tokenizers::Tokenizer::from_file(&tok_path).expect("failed to load tokenizer");

@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::Config as BertConfig;
-use hf_hub::api::sync::ApiBuilder;
+use hf_hub::{HFClientBuilder, HFRepositorySync, RepoTypeModel, split_id};
 use parking_lot::Mutex;
 use tokenizers::{Tokenizer, TruncationParams};
 use tracing::{info, instrument};
@@ -183,29 +183,27 @@ impl CandleEmbedder {
         let model_info = find_model(model_name)?;
         let device = select_device()?;
 
-        // Set up HuggingFace Hub API with optional cache directory.
-        let mut builder = ApiBuilder::new();
+        // Set up HuggingFace Hub client with optional cache directory.
+        let mut builder = HFClientBuilder::new();
         if let Some(dir) = cache_dir {
-            builder = builder.with_cache_dir(PathBuf::from(dir));
+            builder = builder.cache_dir(PathBuf::from(dir));
         }
-        let api = builder.build().map_err(|e| IndexError::EmbeddingFailed {
-            reason: format!("failed to initialize HuggingFace Hub API: {e}"),
-        })?;
+        let client = builder
+            .build_sync()
+            .map_err(|e| IndexError::EmbeddingFailed {
+                reason: format!("failed to initialize HuggingFace Hub client: {e}"),
+            })?;
 
-        let repo = api.model(model_info.repo_id.to_string());
+        // hf-hub 1.0 takes owner and name separately rather than one
+        // "owner/name" id. `split_id` splits on the FIRST slash only, so a
+        // nested repo name keeps its tail intact.
+        let (owner, name) = split_id(model_info.repo_id);
+        let repo = client.model(owner, name);
 
         // Download model files.
         info!(repo_id = model_info.repo_id, "downloading model files");
-        let config_path = repo
-            .get("config.json")
-            .map_err(|e| IndexError::EmbeddingFailed {
-                reason: format!("failed to download config.json: {e}"),
-            })?;
-        let tokenizer_path =
-            repo.get("tokenizer.json")
-                .map_err(|e| IndexError::EmbeddingFailed {
-                    reason: format!("failed to download tokenizer.json: {e}"),
-                })?;
+        let config_path = Self::download_file(&repo, "config.json")?;
+        let tokenizer_path = Self::download_file(&repo, "tokenizer.json")?;
         let weights_path = Self::download_weights(&repo)?;
 
         // Load config.
@@ -287,14 +285,30 @@ impl CandleEmbedder {
         Self::new(model_name, Some(&cache_dir.to_string_lossy()))
     }
 
+    /// Fetch one file from the repo, resolving through the local cache.
+    ///
+    /// hf-hub 1.0 replaced `ApiRepo::get(name)` with a builder finished by
+    /// `send()`; this keeps the one-line call shape the callers had.
+    fn download_file(
+        repo: &HFRepositorySync<RepoTypeModel>,
+        filename: &str,
+    ) -> Result<PathBuf, IndexError> {
+        repo.download_file()
+            .filename(filename)
+            .send()
+            .map_err(|e| IndexError::EmbeddingFailed {
+                reason: format!("failed to download {filename}: {e}"),
+            })
+    }
+
     /// Try downloading model.safetensors first, fall back to pytorch_model.bin → convert.
-    fn download_weights(repo: &hf_hub::api::sync::ApiRepo) -> Result<PathBuf, IndexError> {
+    fn download_weights(repo: &HFRepositorySync<RepoTypeModel>) -> Result<PathBuf, IndexError> {
         // Try safetensors first (preferred — zero-copy mmap).
-        if let Ok(path) = repo.get("model.safetensors") {
+        if let Ok(path) = Self::download_file(repo, "model.safetensors") {
             return Ok(path);
         }
         // Some models split weights across multiple shards.
-        if let Ok(path) = repo.get("model.safetensors.index.json") {
+        if let Ok(path) = Self::download_file(repo, "model.safetensors.index.json") {
             // For sharded models, return the index — VarBuilder handles it.
             return Ok(path);
         }
