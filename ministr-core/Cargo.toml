@@ -202,7 +202,7 @@ lang-make = ["dep:tree-sitter-make"]
 [dev-dependencies]
 serde_json.workspace = true
 criterion = { version = "0.5", features = ["html_reports"] }
-rand = "0.8"
+rand = "0.10"
 # RQ1 content-loss measurement (tests/eval_retrieval.rs::measure_truncation_…):
 # counts real WordPiece tokens per embedded section to quantify what the 128/256
 # truncation cap drops. Test-only — these are already in the dep tree behind the

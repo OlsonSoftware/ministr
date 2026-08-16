@@ -39,7 +39,7 @@ use ministr_core::index::{
     IndexedVectorStore, VectorFingerprint, VectorIndex, load_cached_or_rebuild_hnsw,
 };
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use usearch::{IndexOptions, MetricKind, ScalarKind, new_index};
 
 const N: usize = 20_000;
@@ -79,7 +79,7 @@ fn corpus() -> Vec<Vec<f32>> {
             let center = &centers[i % CLUSTERS];
             let mut v: Vec<f32> = center
                 .iter()
-                .map(|c| c + 0.15 * rng.gen_range(-0.5..0.5))
+                .map(|c| c + 0.15 * rng.random_range(-0.5..0.5))
                 .collect();
             normalize(&mut v);
             v
@@ -96,7 +96,7 @@ fn queries(corpus: &[Vec<f32>]) -> Vec<Vec<f32>> {
             let base = &corpus[(q * (N / QUERIES)) % N];
             let mut v: Vec<f32> = base
                 .iter()
-                .map(|c| c + 0.10 * rng.gen_range(-0.5..0.5))
+                .map(|c| c + 0.10 * rng.random_range(-0.5..0.5))
                 .collect();
             normalize(&mut v);
             v
@@ -122,7 +122,7 @@ fn ground_truth(corpus: &[Vec<f32>], queries: &[Vec<f32>]) -> Vec<Vec<usize>> {
 }
 
 fn unit_vector(rng: &mut StdRng) -> Vec<f32> {
-    let mut v: Vec<f32> = (0..DIM).map(|_| rng.gen_range(-1.0..1.0)).collect();
+    let mut v: Vec<f32> = (0..DIM).map(|_| rng.random_range(-1.0..1.0)).collect();
     normalize(&mut v);
     v
 }
