@@ -196,7 +196,7 @@ tree-sitter-svelte-ng = "1"
 # the documented text fallback below rather than pinned, to keep the
 # build green on a single `cargo build --workspace`.
 tree-sitter-css = "0.25"
-tree-sitter-graphql = "0.1"
+tree-sitter-graphql = "0.2"
 tree-sitter-groovy = "0.1"
 tree-sitter-nix = "0.3"
 tree-sitter-erlang = "0.20"
