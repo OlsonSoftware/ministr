@@ -25,7 +25,7 @@ $binPath  = Join-Path $binDir 'ministr.exe'
 # we have to verify the process is actually gone before we attempt the
 # Copy-Item further down. Mirrors wait_for_exit() in scripts/reinstall.sh.
 # 'ministr-app' is the legacy desktop binary (removed in the GUI v8 reset,
-# 2026-08) — still stopped here so a stale install can't hold a lock.
+# 2026-08) - still stopped here so a stale install can't hold a lock.
 function Stop-MinistrAnd-Wait {
     Get-Process -Name 'ministr-app', 'ministr' -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
@@ -35,12 +35,12 @@ function Stop-MinistrAnd-Wait {
         if (-not $still) { return }
         Start-Sleep -Milliseconds 250
     }
-    Write-Warning 'ministr-app / ministr still alive after Stop-Process — rename-aside fallback in install step will handle it'
+    Write-Warning 'ministr-app / ministr still alive after Stop-Process - rename-aside fallback in install step will handle it'
 }
 
 # Copy a fresh file over a (possibly running) target. Windows blocks
 # overwriting a running .exe with a plain Copy-Item, but it *does* allow
-# renaming it — exactly the trick refresh_shadowing_binaries() uses in
+# renaming it - exactly the trick refresh_shadowing_binaries() uses in
 # ministr-cli/src/commands.rs. So on a plain-copy failure we move the
 # locked file aside and copy the new bytes into place; the leftover
 # .stale orphan is best-effort swept here too.
@@ -53,7 +53,7 @@ function Install-Atomic {
         Copy-Item -Force -Path $Source -Destination $Destination -ErrorAction Stop
         return
     } catch {
-        Write-Host "   $Destination is locked — moving aside and replacing"
+        Write-Host "   $Destination is locked - moving aside and replacing"
     }
     $aside = "$Destination.stale"
     Remove-Item -Force -ErrorAction SilentlyContinue $aside
@@ -72,7 +72,7 @@ Write-Host '==> Clean rebuild (release)...'
 & cargo clean -p ministr-mcp -p ministr-cli -p ministr-daemon
 Assert-LastExitOk 'cargo clean'
 # --features directml turns on fastembed's DirectML execution provider so
-# embedding / indexing runs on the GPU (any DX12 card — NVIDIA, AMD,
+# embedding / indexing runs on the GPU (any DX12 card - NVIDIA, AMD,
 # Intel, Qualcomm). The feature is a no-op on non-Windows, and the code
 # falls back to CPU ONNX at runtime if DirectML fails to initialize.
 & cargo build --release -p ministr-cli --features directml
@@ -86,16 +86,16 @@ Write-Host '   stopping any running ministr processes first...'
 Stop-MinistrAnd-Wait
 
 # Legacy/duplicate install roots (~/.cargo\bin, %LOCALAPPDATA%\ministr)
-# are no longer cleaned here — `ministr setup` below is the single
+# are no longer cleaned here -`ministr setup` below is the single
 # source of truth: it de-PATHs and refreshes every stale shadow.
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 Install-Atomic -Source 'target\release\ministr.exe' -Destination $binPath
 
 # Hand off PATH wiring to `ministr setup`, which uses the onpath crate to
-# write HKCU\Environment\PATH and broadcast WM_SETTINGCHANGE. Idempotent —
+# write HKCU\Environment\PATH and broadcast WM_SETTINGCHANGE. Idempotent -
 # re-runs of this dev recipe won't duplicate the entry. Existing shells
 # still need to be restarted to pick up the change (Win32 env-block copy
-# semantics — no API can change that for already-running processes).
+# semantics -no API can change that for already-running processes).
 #
 # Non-fatal: the binary is already at $binPath either way, so PATH-wiring
 # trouble shouldn't abort the rest of the reinstall. Wrapped in try/catch
@@ -112,9 +112,9 @@ try {
 }
 if ($setupLaunchError -or $LASTEXITCODE -ne 0) {
     if ($setupLaunchError) {
-        Write-Warning "ministr setup failed to launch: $setupLaunchError — PATH not updated."
+        Write-Warning "ministr setup failed to launch: $setupLaunchError - PATH not updated."
     } else {
-        Write-Warning "ministr setup exited $LASTEXITCODE — PATH not updated."
+        Write-Warning "ministr setup exited $LASTEXITCODE -PATH not updated."
     }
     Write-Host "   Add manually with: [Environment]::SetEnvironmentVariable('Path', `"$binDir;`" + [Environment]::GetEnvironmentVariable('Path','User'), 'User')" -ForegroundColor Yellow
 }
